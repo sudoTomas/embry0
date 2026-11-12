@@ -5,6 +5,7 @@ import { useQueue } from "@/hooks/useQueue";
 import { useProposals } from "@/hooks/useProposals";
 import { usePendingMergeApprovals } from "@/hooks/useMergeApprovals";
 import { usePendingSetupProposals } from "@/hooks/useSetupProposal";
+import { usePendingAreasProposals } from "@/hooks/useRepoAreas";
 import { useTweenedNumber } from "@/hooks/useTweenedNumber";
 import { hasAnswered, useFirstPaint } from "@/hooks/useFirstPaint";
 import { cn } from "@/lib/utils";
@@ -37,11 +38,11 @@ function plural(count: number, one: string, many: string): string {
  * dashboards': today's date, what waits for a person, and what is running,
  * each number bold and linked to the page that answers it. Every number comes
  * from a poll the dashboard already runs (queue, proposals), the merge-ask
- * list or the test setups waiting for review; a source that is off or failing
- * leaves its item out. Below the sm breakpoint the items wrap onto a second
+ * list, the test setups waiting for review or the areas maps waiting to be
+ * applied; a source that is off or failing leaves its item out. Below the sm breakpoint the items wrap onto a second
  * line instead of scrolling out of sight.
  *
- * The items wait for all four sources' first answers and arrive together:
+ * The items wait for all five sources' first answers and arrive together:
  * drawn as each answer landed, the line wrapped onto one more line after
  * another on a phone. `onReady` tells the layout when they are in.
  */
@@ -50,6 +51,7 @@ export function BriefBar({ onReady }: { onReady?: (ready: boolean) => void }) {
   const proposals = useProposals();
   const approvals = usePendingMergeApprovals();
   const setupProposals = usePendingSetupProposals();
+  const areasProposals = usePendingAreasProposals();
 
   const cases = proposals.data?.cases ?? [];
   const orgNeeds = cases.filter((c) => c.origin === "org").length;
@@ -58,6 +60,7 @@ export function BriefBar({ onReady }: { onReady?: (ready: boolean) => void }) {
   const paused = queue.data?.paused ?? 0;
   const asks = approvals.data?.length ?? 0;
   const setups = setupProposals.data ?? [];
+  const maps = areasProposals.data ?? [];
 
   const items: BriefItem[] = [
     { key: "awaiting", count: awaiting, text: "awaiting input", to: "/console", needsPerson: true },
@@ -73,6 +76,14 @@ export function BriefBar({ onReady }: { onReady?: (ready: boolean) => void }) {
       to: setups.length === 1 ? `/repos/${setups[0].repo}` : "/repos",
       needsPerson: true,
     },
+    {
+      key: "areas-maps",
+      count: maps.length,
+      text: plural(maps.length, "areas map to apply", "areas maps to apply"),
+      // One map opens its repository's Areas section, where the card is; several open the list.
+      to: maps.length === 1 ? `/repos/${maps[0].repo}#advanced-areas` : "/repos",
+      needsPerson: true,
+    },
   ].filter((item) => item.count > 0);
 
   if (queue.data) {
@@ -82,7 +93,7 @@ export function BriefBar({ onReady }: { onReady?: (ready: boolean) => void }) {
     );
   }
 
-  const ready = useFirstPaint([queue, proposals, approvals, setupProposals].every(hasAnswered));
+  const ready = useFirstPaint([queue, proposals, approvals, setupProposals, areasProposals].every(hasAnswered));
   // Before paint, so the layout reveals the page in the frame the items arrive.
   useLayoutEffect(() => {
     onReady?.(ready);

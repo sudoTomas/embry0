@@ -160,6 +160,8 @@ async def done_inputs(
             "approval_ask": _json(approval.get("ask")) or {},
             # Merge on the card merges through a pending merge approval, as the review bar does.
             "approval_id": approval.get("id") if approval.get("status") == "pending" else None,
+            # A map of the repository's areas (spec 2026-11-10): its card links where its areas wait for a person.
+            "areas_proposal_id": merged.get("areas_proposal_id"),
             "brief": briefs.get(job_id) or {},
             "report": report[:report_chars],
         }

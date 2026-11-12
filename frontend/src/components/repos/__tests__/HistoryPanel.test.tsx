@@ -99,6 +99,24 @@ describe("HistoryPanel", () => {
     expect(within(starter).getByTestId("history-entry-meta")).toHaveTextContent(`sam@example.com · Starter · ${when}`);
   });
 
+  it("names how a change of the areas came in: a map, the import of the old file, a file", async () => {
+    mockFetchHistory.mockResolvedValue({
+      entries: [
+        entry({ id: 9, surface: "areas", what: "Areas changed: Search added", source: "proposal" }),
+        entry({ id: 8, surface: "areas", what: "Areas created", actor: "embry0:areas-import", source: "import" }),
+        entry({ id: 7, surface: "areas", what: "Areas changed", source: "file" }),
+      ],
+      before_history: false,
+    } satisfies RepoHistory);
+    renderPanel();
+    await screen.findAllByTestId("history-entry");
+    const metas = screen.getAllByTestId("history-entry-meta").map((m) => m.textContent ?? "");
+    expect(metas[0]).toContain("Areas map");
+    expect(metas[0]).not.toContain("Setup proposal");
+    expect(metas[1]).toContain("Imported from the repository's old file");
+    expect(metas[2]).toContain("Applied from a file");
+  });
+
   it("offers Undo only where it can work, and says why elsewhere", async () => {
     mockFetchHistory.mockResolvedValue(HISTORY);
     renderPanel();

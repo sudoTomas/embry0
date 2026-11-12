@@ -110,6 +110,23 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
     expect(screen.getByRole("tab", { name: /Quests on offer/ })).toHaveTextContent("2");
   });
 
+  it("links a map of a repository's areas to where its areas wait for a person, and no other card", () => {
+    const map: Decision = {
+      ...REVIEW,
+      id: "done:job-map",
+      kind: "map-areas",
+      title: "Map the areas of acme/web",
+      links: { job: "job-map", areas_map: "areas-000000000001" },
+    };
+    mockUseDecisions.mockImplementation((filters: { for?: string }) =>
+      filters.for === "me" ? { data: [] } : { data: [map, REVIEW] },
+    );
+    renderPage("/decisions?stage=done");
+    const [first, second] = screen.getAllByTestId("decision-card").map((card) => within(card));
+    expect(first.getByRole("link", { name: "Areas to apply" })).toHaveAttribute("href", "/repos/acme/web#advanced-areas");
+    expect(second.queryByRole("link", { name: "Areas to apply" })).toBeNull();
+  });
+
   it("offers the likely answer first, then sending it to someone better placed", () => {
     renderPage("/decisions?stage=done");
     const buttons = within(screen.getByTestId("decision-card")).getAllByRole("button").map((b) => b.textContent);

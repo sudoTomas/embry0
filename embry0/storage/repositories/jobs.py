@@ -179,7 +179,11 @@ def job_repository(job: Mapping[str, Any]) -> str | None:
 _CARD_ROWS_SQL = f"""
 SELECT job_id, {job_repository_sql()} AS repo, area, task, status, delivery_state, pr_url, pipeline_template,
        created_at, started_at, finished_at, total_cost_usd, error_code, error_message, work_nature, done_when,
-       left(result_summary, $2) AS result_summary
+       left(result_summary, $2) AS result_summary,
+       -- A map of a repository's areas links its card to the map while it waits for a person, and only its own.
+       (SELECT p.id FROM repo_areas_proposals p
+         WHERE p.id = jobs.pipeline_config->>'areas_proposal_id' AND p.job_id = jobs.job_id AND p.status = 'pending')
+         AS areas_proposal_id
 FROM jobs
 WHERE job_id = ANY($1::text[])
 """

@@ -16,7 +16,7 @@ interface MapCanvasProps {
 /**
  * Knowledge maps (spec 2026-10-27): the parts on the scanner's own layout, drawn on a canvas so a map of
  * thousands of parts stays smooth. Drag to pan, wheel or +/- to zoom, 0 to fit, click a part to open it.
- * Areas are labelled rings, a selected part's links are drawn bright. Nothing moves by itself.
+ * Groups (the map format's `areas`) are labelled rings, a selected part's links are drawn bright. Nothing moves by itself.
  */
 export function MapCanvas({ graph, colorBy, marks, work, selected, highlight, onSelect }: MapCanvasProps) {
   const wrap = useRef<HTMLDivElement>(null);

@@ -252,6 +252,11 @@ export function DecisionCard({ decision, canAnswer, by, runWith, hide = [], me =
               Job
             </Link>
           )}
+          {links.areas_map && decision.repo && (
+            <Link className="underline hover:text-white" to={`/repos/${decision.repo}#advanced-areas`}>
+              Areas to apply
+            </Link>
+          )}
           {links.url && (
             <a className="underline hover:text-white" href={links.url} target="_blank" rel="noreferrer">
               Open
