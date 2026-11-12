@@ -275,17 +275,20 @@ async def summarize_prebuilt_images(
     *,
     budget_seconds: float = 5.0,
     clock: Callable[[], float] = time.monotonic,
+    keep: Callable[[str], bool] | None = None,
 ) -> dict[str, Any] | None:
     """Active pre-built images grouped by freshness, for ``GET /stats``.
 
     One wall-clock budget covers the whole summary: a dashboard poll must not
     wait on a registry, however many rows there are. Rows left unresolved when
     the budget runs out are reported UNKNOWN - the honest answer, and the
-    refresh they started keeps running, so the next poll has it.
+    refresh they started keeps running, so the next poll has it. ``keep``, when
+    given, keeps only the images of the repositories it passes, before anything
+    is counted or resolved.
     """
     if image_repo is None or resolver is None:
         return None
-    rows: list[QAImageTagRow] = await image_repo.list_active()
+    rows: list[QAImageTagRow] = [r for r in await image_repo.list_active() if keep is None or keep(r.repo)]
     groups: dict[BaseFreshness, list[dict[str, str]]] = {f: [] for f in BaseFreshness}
     deadline = clock() + budget_seconds
     for row in rows:

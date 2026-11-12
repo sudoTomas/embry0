@@ -104,7 +104,7 @@ class UsersRepository:
 
     async def list_users(self, limit: int = 100, offset: int = 0) -> list[UserRow]:
         rows = await self._db.fetch(
-            "SELECT * FROM users ORDER BY last_login_at DESC LIMIT $1 OFFSET $2",
+            "SELECT * FROM users ORDER BY last_login_at DESC, id DESC LIMIT $1 OFFSET $2",
             limit,
             offset,
         )

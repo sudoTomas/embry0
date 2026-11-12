@@ -1167,11 +1167,28 @@ and data. These routes narrow to the key's repositories today, by one rule
 about repositories and owners by `embry0/api/repository_reads.py`, to jobs
 by `embry0/api/job_allowlist.py`, to issues by
 `embry0/api/issue_allowlist.py` and to healing cases by
-`embry0/api/case_allowlist.py`). The trace reads (`GET /traces`), the stats
-(`GET /stats`), the audit log (`GET /audit`, which lists every audit row,
-a case's acceptance and closing among them), the container logs
-(`GET /logs/query`), and the account's and the characters' totals, are not
-narrowed yet and follow in stages of their own:
+`embry0/api/case_allowlist.py`). These reads are not narrowed yet and
+follow in stages of their own, so a key with an allowlist still reads them
+for the whole deployment:
+
+- the audit log (`GET /audit`, which lists every audit row, a case's
+  acceptance and closing among them);
+- the container logs and the list of containers they come from
+  (`GET /logs/query`, `GET /logs/containers`);
+- the account's and the characters' experience, levels, skills and
+  achievements (in `GET /progression`, `GET /progression/preview`,
+  `GET /world` and `GET /world/characters/{agent}`), the levels reached,
+  rares dropped and achievements unlocked among their `recent` entries,
+  which therefore also decide which of the key's own quest and diary
+  entries are among the newest 20, a character that exists only because
+  another repository's work made it, and the preview's `changes`;
+- what the retention sweeps would remove (`GET /admin/retention/preview`,
+  admin tier): every repository's old job events, agent sessions and
+  pre-built QA images;
+- what a model provider says the deployment's own key spent
+  (`GET /config/providers/{provider}/usage`).
+
+Everything below narrows to the repositories the key covers:
 
 - `GET /decisions`, `GET /proposals`, `GET /asks/due`, `GET /asks`,
   `GET /leads`, `GET /handoffs`, `GET /world` (its parties, quests, inbox,
@@ -1185,8 +1202,39 @@ narrowed yet and follow in stages of their own:
   work is on it however much newer work another repository has. An
   achievement or a quest still shows; its evidence or place is null unless
   it names a repository the key covers, or, for evidence, characters
-  rather than work. The account's and the characters' totals count every
-  repository's work, without naming any.
+  rather than work. The account's and the characters' experience, levels
+  and achievements, and the preview's `changes`, count every repository's
+  work, without naming any (the rollup folds them per day for the
+  deployment); the characters' quest totals and the quests do not (below).
+- Totals. These count, for a key with an allowlist, the work of the
+  repositories it covers alone, in the query, exactly as a deployment
+  holding only those repositories counts it: a job by the
+  repository it works on (its `repo`, else its git `context`'s), an agent's
+  run by its job's, an issue and a background feature's model call by their
+  own `repo`; work of no repository is counted by no such key.
+  `GET /stats`: the jobs, their outcomes, costs and failure categories, the
+  pull requests, the background features' spend, the issues, the recent and
+  the costliest issues (each with only its jobs in those repositories: a
+  job of another repository on an issue that moved after it ran is left
+  out),
+  the cost by repository, the tokens by agent, and the pre-built QA images;
+  its `credentials` count the credentials the key reads, as
+  `GET /credentials` lists them, with no environment key in
+  `env_fallback_keys`. `GET /traces` (with every filter, its pages and its
+  `total`) lists only the runs of the jobs the key reads, narrowed before the
+  page, so `?job_id=` another repository's job answers as a job with no
+  runs; a page holds 1 to 200 runs. The characters' quest totals (`stats`
+  in `GET /world` and `GET /world/characters/{agent}`: quests, outcomes,
+  average cost and time, the last quest, the ratings) count only the quests
+  in those repositories. `GET /progression`, `GET /progression/preview` and
+  `GET /world` evaluate the quests, the quest points, the cloak trim a
+  quest earns, the quest cloak and the repo diaries from those
+  repositories' work alone, so a quest's steps are the ones that work took. The setup cost
+  (`GET /repos/{repo}/-/setup/cost`) counts the recorded setup runs, and
+  their typical cost, of those repositories. The MCP `stats` tool reads
+  `GET /stats`, so it is narrowed too. A test compares every GET route's
+  answer to such a key before and after another repository is given work of
+  every kind a total counts (`tests/unit/api/test_aggregate_reads_inventory.py`).
 - Jobs. A job belongs to the repository it works on: its `repo`, else the
   repository its git `context` names. `GET /jobs` (with every filter, its
   pages and its `total`), `GET /queue`, `GET /sandboxes/active`,

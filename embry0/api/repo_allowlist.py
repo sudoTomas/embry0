@@ -57,6 +57,11 @@ embry0 stores about a repository and an owner is held to it by
 :mod:`embry0.api.repository_reads`: a repository outside the list reads as
 one nobody registered, and what belongs to an owner as a whole reads only to
 a key that covers the owner as a whole (:func:`key_covers_organization`).
+A total, a count or a list of work (``GET /stats``, the agents' runs, the
+characters' quest totals, the quests and repo diaries, the setup cost) counts
+the work of the repositories the key covers alone, narrowed in its query to
+:func:`covered_slugs`, as a deployment holding only them would count it
+(:mod:`embry0.api.v1.stats`).
 """
 
 from __future__ import annotations
@@ -70,15 +75,18 @@ from fastapi import Depends, HTTPException, Request
 from embry0.api.deps import Principal, request_actor
 from embry0.audit.helpers import emit_audit
 from embry0.orchestration.dispatch_actors import REPO_ALLOWLIST
-from embry0.storage.repo_renames import normalize_repo_slug, repo_slug_variants
+from embry0.storage.repo_renames import repo_slug_variants
 
 logger = structlog.get_logger(__name__)
 
 REFUSAL_CODE = "repo_not_allowed"
 
 
-def _canonical(slug: str) -> str:
-    return normalize_repo_slug(slug.strip()).lower()
+def allowed_slugs(allowed_repos: Iterable[str]) -> set[str]:
+    """Every slug, lower-cased, a stored row may carry for a repository on this allowlist: each entry's current slug
+    and its old ones from ``REPO_RENAMES``. The one resolution both :func:`repo_allowed` and :func:`covered_slugs`
+    read, so a query narrowed to these slugs and a check of one row always agree."""
+    return {variant.lower() for entry in allowed_repos for variant in repo_slug_variants(entry.strip())}
 
 
 def repo_allowed(allowed_repos: Iterable[str] | None, repo: str | None) -> bool:
@@ -91,8 +99,7 @@ def repo_allowed(allowed_repos: Iterable[str] | None, repo: str | None) -> bool:
         return True
     if not repo:
         return False
-    target = _canonical(repo)
-    return any(_canonical(entry) == target for entry in allowed_repos)
+    return repo.strip().lower() in allowed_slugs(allowed_repos)
 
 
 def _owners(entry: str) -> set[str]:
@@ -129,7 +136,7 @@ def covered_slugs(request: Request) -> list[str] | None:
     principal = getattr(request.state, "principal", None)
     if principal is None or principal.allowed_repos is None:
         return None
-    return sorted({v.lower() for entry in principal.allowed_repos for v in repo_slug_variants(entry.strip())})
+    return sorted(allowed_slugs(principal.allowed_repos))
 
 
 def wider_than_allowlist(request: Request, allowed_repos: Iterable[str] | None) -> str | None:

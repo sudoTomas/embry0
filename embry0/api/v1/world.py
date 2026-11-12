@@ -225,13 +225,19 @@ async def _brief_titles(request: Request, job_ids: list[str]) -> dict[str, str]:
 async def read_world(request: Request) -> dict[str, Any]:
     """Everything the guild hall and the map show, read in one go; the parties are always fresh."""
     repo = _state(request, "world_repo")
-    progression = await _state(request, "progression").read()
+    service = _state(request, "progression")
+    progression = await service.read()
     cache = _cache(request)
     now = datetime.now(UTC)
     # What the caller's key covers only: the parties, quests, inbox, loot, regions and dungeons of its
-    # repositories. The parties, inbox and loot are read narrowed to them, before each list's limit; the cache
-    # holds every repository's, shared by every caller, so what comes from it is narrowed after it.
+    # repositories, and the characters' quest totals over them. The parties, inbox, loot and totals are read
+    # narrowed to them, before each list's limit; the cache holds every repository's, shared by every caller, so
+    # what comes from it is narrowed after it, and a key's totals are not read from it. The progression's quests
+    # (the quest points, the cloaks they trim, the quest cloak and the quests among the recent entries) are the
+    # key's repositories' as GET /progression reads them.
     covered = covered_slugs(request)
+    if covered is not None:
+        progression = await service.narrowed(progression, covered)
     jobs = [
         j
         for j in await repo.jobs(returning_seconds=RETURN_SECONDS, repos=covered)
@@ -245,7 +251,7 @@ async def read_world(request: Request) -> dict[str, Any]:
         repo.last_event_at(ids),
         cache.get("leads", lambda: _leads(request)),
         cache.get("regions", lambda: _regions(request)),
-        cache.get("stats", repo.stats),
+        cache.get("stats", repo.stats) if covered is None else repo.stats(repos=covered),
         repo.inbox(days=INBOX_DAYS, player_actors=list(PLAYER_ACTORS), repos=covered),
         repo.loot(days=LOOT_DAYS, repos=covered),
         cache.get("cleaned", lambda: repo.cleaned(days=CLEANED_DAYS)),
@@ -333,13 +339,15 @@ def covered_places(request: Request, places: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/world/characters/{agent_type}")
 async def read_character(agent_type: str, request: Request) -> dict[str, Any]:
-    """One character: its sheet's numbers, its totals and its quest log, newest first."""
+    """One character: its sheet's numbers, its totals and its quest log, newest first; the totals and the log of the
+    repositories the caller's key covers."""
     progression = await _state(request, "progression").read()
     character = progression.characters.get(agent_type)
     if character is None:
         raise HTTPException(status_code=404, detail=f"no character {agent_type}")
     repo = _state(request, "world_repo")
-    stats, log = await asyncio.gather(repo.stats(agent_type), repo.quest_log(agent_type, repos=covered_slugs(request)))
+    covered = covered_slugs(request)
+    stats, log = await asyncio.gather(repo.stats(agent_type, repos=covered), repo.quest_log(agent_type, repos=covered))
     log = [r for r in log if key_covers(request, r.get("repo"))]
     titles = await _brief_titles(request, [str(r["job_id"]) for r in log])
     rows = await _behaviour_rows(request, _cache(request))

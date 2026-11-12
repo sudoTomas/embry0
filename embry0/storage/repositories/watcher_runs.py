@@ -182,7 +182,7 @@ class WatcherRunsRepository:
         ticks of those stacks, before the limit."""
         rows = await self._db.fetch(
             "SELECT * FROM watcher_runs WHERE ($2::text IS NULL OR repo = $2) "
-            "AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[])) ORDER BY created_at DESC LIMIT $1",
+            "AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[])) ORDER BY created_at DESC, id DESC LIMIT $1",
             limit,
             repo,
             None if repos is None else list(repos),

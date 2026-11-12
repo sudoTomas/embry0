@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories.jobs import job_repository_sql
 
 if TYPE_CHECKING:
     from embry0.metrics import LoopMetrics
@@ -175,12 +177,25 @@ class TracesRepository:
         result: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        repos: Sequence[str] | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """List traces with optional filters. Returns (rows, total_count)."""
+        """List traces with optional filters. Returns (rows, total_count).
+
+        ``repos`` (lower-cased slugs) keeps only the runs of jobs working on those repositories
+        (``job_repository_sql``), before the count and the page; a run whose job is gone or works on no
+        repository is kept by no list. None keeps every run.
+        """
         conditions: list[str] = []
         args: list[Any] = []
         idx = 1
 
+        if repos is not None:
+            conditions.append(
+                f"EXISTS (SELECT 1 FROM jobs j WHERE j.job_id = traces.job_id "
+                f"AND lower({job_repository_sql('j')}) = ANY(${idx}::text[]))"
+            )
+            args.append(list(repos))
+            idx += 1
         if job_id:
             conditions.append(f"job_id = ${idx}")
             args.append(job_id)
@@ -200,7 +215,7 @@ class TracesRepository:
 
         args.extend([limit, offset])
         rows = await self._db.fetch(
-            f"SELECT * FROM traces {where} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
+            f"SELECT * FROM traces {where} ORDER BY created_at DESC, trace_id DESC LIMIT ${idx} OFFSET ${idx + 1}",
             *args,
         )
         return [dict(r) for r in rows], int(total or 0)
@@ -214,7 +229,7 @@ class TracesRepository:
             SELECT trace_id, agent_type, model, error_code, result_summary, stderr_tail, created_at
             FROM traces
             WHERE job_id = $1 AND result = 'error'
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, trace_id DESC
             LIMIT $2
             """,
             job_id,

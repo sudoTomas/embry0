@@ -20,7 +20,7 @@ no list; :data:`MASTER` is the deployment's key.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -125,15 +125,15 @@ def ids(repo: str) -> dict[str, str]:
     }
 
 
-async def seed(db: DatabasePool) -> dict[str, dict[str, str]]:
-    """Work of every kind in both repositories; each repository's ids, by path parameter, after what was minted."""
+async def seed(db: DatabasePool, repos: Sequence[str] = (COVERED, UNCOVERED)) -> dict[str, dict[str, str]]:
+    """Work of every kind in ``repos`` (both repositories); each one's ids, by path parameter, after what was minted."""
     from embry0.services.leads import Lead
     from embry0.storage.repositories.handoffs import HandoffsRepository
     from embry0.storage.repositories.leads import LeadsRepository
 
     out: dict[str, dict[str, str]] = {}
-    for repo, tag in TAG.items():
-        owner = OWNER[repo]
+    for repo in repos:
+        tag, owner = TAG[repo], OWNER[repo]
         values = ids(repo)
         await db.execute("INSERT INTO organizations (owner, forge) VALUES ($1, 'github') ON CONFLICT DO NOTHING", owner)
         await db.execute("INSERT INTO repos (repo, active) VALUES ($1, true) ON CONFLICT DO NOTHING", repo)
@@ -279,9 +279,10 @@ async def mint(db: DatabasePool) -> Keys:
 
 @asynccontextmanager
 async def repository_writes_app(
-    db: DatabasePool, monkeypatch: pytest.MonkeyPatch
+    db: DatabasePool, monkeypatch: pytest.MonkeyPatch, repos: Sequence[str] = (COVERED, UNCOVERED)
 ) -> AsyncIterator[tuple[FastAPI, Keys, Mapping[str, Mapping[str, str]]]]:
-    """The app over ``db`` (migrated, empty), seeded, with its keys and each repository's ids."""
+    """The app over ``db`` (migrated, empty), with ``repos`` seeded (both repositories), its keys and each seeded
+    repository's ids."""
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _no_network)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _no_network)
     url = db._url  # noqa: SLF001
@@ -323,7 +324,7 @@ async def repository_writes_app(
     )
     app = create_app(config, lifespan_override=lifespan)
     async with lifespan(app):
-        values = await seed(db)
+        values = await seed(db, repos)
         keys = await mint(db)
         # A forge credential in the registry, for the routes that bind one.
         made = await call(

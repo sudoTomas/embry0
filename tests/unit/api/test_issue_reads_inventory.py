@@ -90,6 +90,10 @@ ISSUE_ROUTES: dict[str, str] = {
     "/api/v1/jobs/{job_id}/inputs": "leaves out a question about an issue the key does not read",
     "/api/v1/merge-approvals": "lists the approvals of the repositories the key covers, narrowed before the limit (#318)",
     "/api/v1/merge-approvals/{approval_id}": "reads another repository's approval as a missing one (404), since #318",
+    "/api/v1/stats": (
+        "lists the recent and the costliest issues of the repositories the key covers, each with only its jobs "
+        "there, and counts only theirs (the totals)"
+    ),
     # Earlier stages: what names an issue, or a job's merge approval, among the work offered and decided.
     "/api/v1/proposals": "lists the issues offered in the repositories the key covers, since #297",
     "/api/v1/decisions": "lists the issues offered in the repositories the key covers, since #297",
@@ -107,7 +111,6 @@ ISSUE_ROUTES: dict[str, str] = {
 #: thing as a whole in a stage of their own, and which.
 ELSEWHERE: dict[str, str] = {
     "/api/v1/audit": "an issue's activity among every audit row: the audit reads",
-    "/api/v1/stats": "the recent issues and the counts of the deployment: the stats reads",
 }
 
 _SECONDS = 10.0

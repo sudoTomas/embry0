@@ -17,9 +17,9 @@ exist:
   (:func:`stream_scope`, ``scoped_tokens.reads_nothing``);
 - a route that acts on one such job answers as for a job that does not
   exist, and logs and audits the refusal (:func:`hide_job_unless_covered`);
-- something else that names such a job, a merge approval, a watcher tick, a
-  knowledge map's work, an issue's jobs and questions
-  (:mod:`embry0.api.issue_allowlist`), a healing case's jobs, pull requests
+- something else that names such a job, a merge approval, a watcher tick,
+  an agent's run (``GET /traces``), a knowledge map's work, an issue's jobs
+  and questions (:mod:`embry0.api.issue_allowlist`), a healing case's jobs, pull requests
   and history (:mod:`embry0.api.case_allowlist`), leaves it out of its list,
   as a list of jobs does;
   a view of the job's repository, its test setup proposal, its checklist, a

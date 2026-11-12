@@ -92,7 +92,7 @@ class MergeApprovalsRepository:
         rows = await self._db.fetch(
             f"SELECT {_COLUMNS} FROM merge_approvals WHERE ($1::text IS NULL OR status = $1) "
             "AND ($3::text[] IS NULL OR lower(repo) = ANY($3::text[])) "
-            "ORDER BY created_at DESC LIMIT $2",
+            "ORDER BY created_at DESC, id DESC LIMIT $2",
             status,
             limit,
             None if repos is None else list(repos),

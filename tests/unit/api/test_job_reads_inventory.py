@@ -115,13 +115,12 @@ JOB_ROUTES: dict[str, str] = {
         "reads another repository's case as a missing one (404), and lists only the jobs and pull requests of the "
         "repositories the key covers (the case reads)"
     ),
+    "/api/v1/traces": "lists and counts the runs of the jobs the key reads, narrowed before the page (the totals)",
 }
 
 #: GET routes that name a job of another repository inside something else they read, narrowed with that thing as a
 #: whole in a stage of their own, and which.
-ELSEWHERE: dict[str, str] = {
-    "/api/v1/traces": "the agents' runs, by job: the trace reads",
-}
+ELSEWHERE: dict[str, str] = {}
 
 #: GET routes that stream until the client leaves: read in test_job_streams_allowlist.py.
 STREAMS: dict[str, str] = {

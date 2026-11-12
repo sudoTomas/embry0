@@ -61,7 +61,7 @@ def _issue_columns(repos: str | None = None) -> str:
                 (SELECT t.agent_type FROM jobs j
                  JOIN traces t ON t.job_id = j.job_id
                  WHERE j.issue_id = i.id AND j.status = 'running'{job}
-                 ORDER BY t.created_at DESC LIMIT 1) AS active_agent"""
+                 ORDER BY t.created_at DESC, t.trace_id DESC LIMIT 1) AS active_agent"""
 
 
 def _repos_arg(repos: Sequence[str] | None) -> list[str] | None:
@@ -278,7 +278,7 @@ class IssuesRepository:
             SELECT {_issue_columns(within)}
             FROM issues i
             {where}
-            ORDER BY i.{sort_col} {sort_dir}
+            ORDER BY i.{sort_col} {sort_dir}, i.id {sort_dir}
             LIMIT ${idx} OFFSET ${idx + 1}
             """,
             *args,
@@ -468,7 +468,7 @@ class IssuesRepository:
             SELECT {_issue_columns("$2")}
             FROM issues i
             WHERE i.parent_issue_id = $1 AND ($2::text[] IS NULL OR lower(i.repo) = ANY($2::text[]))
-            ORDER BY i.created_at ASC
+            ORDER BY i.created_at ASC, i.id ASC
             """,
             parent_issue_id,
             _repos_arg(repos),
@@ -569,7 +569,7 @@ class IssuesRepository:
             SELECT *
             FROM audit_log
             WHERE issue_id = $1
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, id DESC
             LIMIT $2 OFFSET $3
             """,
             issue_id,

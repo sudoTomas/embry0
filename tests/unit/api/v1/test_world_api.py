@@ -71,7 +71,7 @@ class FakeRepo:
     async def last_event_at(self, ids: list[str]) -> dict[str, Any]:
         return {i: NOW for i in ids}
 
-    async def stats(self, agent: str | None = None) -> dict[str, dict[str, Any]]:
+    async def stats(self, agent: str | None = None, *, repos: Any = None) -> dict[str, dict[str, Any]]:
         return {"developer": {"quests": 2, "succeeded": 1, "last_quest_at": NOW}}
 
     async def inbox(
@@ -130,6 +130,11 @@ class FakeRepo:
 class FakeProgression:
     async def rules(self) -> Rules:
         return default_rules()
+
+    async def narrowed(self, progression: Progression, repos: Any) -> Progression:
+        """The service evaluates a key's quests and diaries again from its repositories' journal; a fake keeps its
+        own, so what a route's own filters leave is what a test reads."""
+        return progression
 
     async def read(self) -> Progression:
         rules = default_rules()

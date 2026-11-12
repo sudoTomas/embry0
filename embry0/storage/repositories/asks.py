@@ -27,7 +27,7 @@ LEFT JOIN LATERAL (
         (SELECT c.repo FROM healing_cases c WHERE {id} LIKE 'offer:case:%' AND c.id = substr({id}, 12)),
         (SELECT l.repo FROM leads l WHERE {id} LIKE 'offer:%' AND l.id = substr({id}, 7)),
         (SELECT pd.repo FROM proposal_decisions pd WHERE {id} LIKE 'offer:%' AND pd.proposal_id = substr({id}, 7)
-         ORDER BY pd.created_at DESC LIMIT 1)
+         ORDER BY pd.created_at DESC, pd.id DESC LIMIT 1)
     ) AS repo
 ) decision ON TRUE
 """
@@ -41,7 +41,7 @@ _CODE_PASSES = 3
 #: written (#293).
 HAND_OUT_LOCK = "asks:hand_out"
 
-_LIVE_SQL = "SELECT * FROM asks WHERE state = ANY($1::text[]) ORDER BY due_at"
+_LIVE_SQL = "SELECT * FROM asks WHERE state = ANY($1::text[]) ORDER BY due_at, id"
 
 #: Every write that changes several asks locks them first with one of these, in id order, then writes: a hand-out
 #: and the ask loop's close() or an answer then never each hold a row the other waits for (#293). An UPDATE alone
@@ -340,13 +340,13 @@ class AsksRepository:
         """The newest asks. With ``repos`` (lower-cased slugs), only the asks whose decision's repository is one of
         them (``decision_repo``, read at the time), or whose decision is in ``decision_ids``, before the limit."""
         if repos is None:
-            rows = await self._db.fetch("SELECT * FROM asks ORDER BY created_at DESC LIMIT $1", limit)
+            rows = await self._db.fetch("SELECT * FROM asks ORDER BY created_at DESC, id DESC LIMIT $1", limit)
             return [dict(r) for r in rows]
         rows = await self._db.fetch(
             "SELECT a.*, decision.repo AS decision_repo FROM asks a"
             + _DECISION_REPO.format(id="a.decision_id")
             + "WHERE LOWER(decision.repo) = ANY($2::text[]) OR a.decision_id = ANY($3::text[]) "
-            "ORDER BY a.created_at DESC LIMIT $1",
+            "ORDER BY a.created_at DESC, a.id DESC LIMIT $1",
             limit,
             list(repos),
             sorted(set(decision_ids)),

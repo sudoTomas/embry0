@@ -470,6 +470,32 @@ def test_renames_match_in_both_directions() -> None:
         assert not repo_allowed(("acme/old-widgets",), OTHER)
 
 
+@pytest.mark.parametrize(
+    "renames",
+    [
+        {"acme/old-widgets": ALLOWED},
+        # A chain, which parse_repo_renames refuses but a map installed another way can hold.
+        {"acme/oldest-widgets": "acme/old-widgets", "acme/old-widgets": ALLOWED},
+    ],
+)
+@pytest.mark.parametrize("entry", ["acme/oldest-widgets", "acme/old-widgets", ALLOWED, "ACME/Widgets"])
+def test_a_check_of_one_row_and_a_narrowed_query_agree_on_every_slug(renames: dict[str, str], entry: str) -> None:
+    """``repo_allowed`` passes exactly the slugs ``covered_slugs`` narrows a query to, whatever the renames hold: a
+    list read in SQL and a row checked after it never disagree."""
+    principal = MagicMock(allowed_repos=(entry,))
+    request = MagicMock()
+    request.state.principal = principal
+    slugs = ["acme/oldest-widgets", "acme/old-widgets", ALLOWED, "Acme/Widgets", OTHER]
+    with patch("embry0.storage.repo_renames.REPO_RENAMES", renames):
+        narrowed = set(covered_slugs(request) or [])
+        checked = {slug.lower() for slug in slugs if key_covers(request, slug)}
+        assert checked == {slug.lower() for slug in slugs} & narrowed, (
+            f"{entry} under {renames}: a row passes the check {sorted(checked)} exactly when the query selects it "
+            f"{sorted(narrowed)}"
+        )
+        assert repo_allowed((entry,), entry), "an entry covers itself"
+
+
 def test_a_rename_reaches_the_route(app) -> None:
     renames = {"acme/old-widgets": ALLOWED}
     with patch("embry0.storage.repo_renames.REPO_RENAMES", renames):

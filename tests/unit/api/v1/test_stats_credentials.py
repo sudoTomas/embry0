@@ -7,6 +7,7 @@ from embry0.api.v1.stats import _credentials_summary
 
 async def test_summary_counts_and_env_keys():
     request = MagicMock()
+    request.state.principal = None  # a session: no repository allowlist
     request.app.state.credentials_repo = MagicMock(
         list_all=AsyncMock(
             return_value=[
@@ -28,6 +29,7 @@ async def test_summary_counts_and_env_keys():
 
 async def test_expired_quarantine_is_not_counted():
     request = MagicMock()
+    request.state.principal = None
     past = datetime.now(UTC) - timedelta(minutes=1)
     future = datetime.now(UTC) + timedelta(minutes=1)
     request.app.state.credentials_repo = MagicMock(

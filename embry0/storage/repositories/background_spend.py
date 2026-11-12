@@ -6,16 +6,21 @@ the budget gate's rollup (``BudgetSpendRepository``) and by ``/stats``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
 from embry0.storage.database import DatabasePool
 
+
 # This month's rows only, the widest window anything reads (the budget gate's
 # monthly cap, /stats' day and month), so the read is a range of
 # idx_background_spend_at however long the table grows. It has no retention,
-# like the jobs' and traces' spend beside it.
-_MONTH_SQL = """
+# like the jobs' and traces' spend beside it. ``repos`` keeps only the calls
+# about the repositories bound as $1 (lower-cased slugs).
+def _month_sql(*, repos: bool = False) -> str:
+    narrowed = "\n  AND lower(repo) = ANY($1::text[])" if repos else ""
+    return f"""
 SELECT
     feature,
     COUNT(*)                                                                   AS calls,
@@ -24,10 +29,13 @@ SELECT
     COALESCE(SUM(cost_usd) FILTER (WHERE at >= date_trunc('day', NOW())), 0)   AS daily_usd,
     COALESCE(SUM(cost_usd), 0)                                                 AS monthly_usd
 FROM background_spend
-WHERE at >= date_trunc('month', NOW())
+WHERE at >= date_trunc('month', NOW()){narrowed}
 GROUP BY feature
 ORDER BY monthly_usd DESC, feature
 """
+
+
+_MONTH_SQL = _month_sql()
 
 
 class BackgroundSpendRepository:
@@ -71,8 +79,13 @@ class BackgroundSpendRepository:
             max(float(cost_usd), 0.0),
         )
 
-    async def this_month(self) -> list[dict[str, Any]]:
-        """Each feature's calls, tokens and spend this month, and its spend today, the costliest first."""
+    async def this_month(self, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
+        """Each feature's calls, tokens and spend this month, and its spend today, the costliest first.
+
+        ``repos`` (lower-cased slugs) counts only the calls about those repositories; a call about no repository
+        is counted by no such read. None counts every call."""
+        sql = _MONTH_SQL if repos is None else _month_sql(repos=True)
+        args = [] if repos is None else [list(repos)]
         return [
             {
                 "feature": str(r["feature"]),
@@ -82,5 +95,5 @@ class BackgroundSpendRepository:
                 "daily_usd": float(r["daily_usd"]),
                 "monthly_usd": float(r["monthly_usd"]),
             }
-            for r in await self._db.fetch(_MONTH_SQL)
+            for r in await self._db.fetch(sql, *args)
         ]

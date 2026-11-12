@@ -61,7 +61,7 @@ class HandoffsRepository:
 
     async def open_to(self, email: str) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
-            "SELECT * FROM handoffs WHERE state = 'open' AND LOWER(to_email) = LOWER($1) ORDER BY created_at DESC",
+            "SELECT * FROM handoffs WHERE state = 'open' AND LOWER(to_email) = LOWER($1) ORDER BY created_at DESC, id DESC",
             email,
         )
         return [dict(r) for r in rows]
@@ -69,10 +69,10 @@ class HandoffsRepository:
     async def recent(self, *, limit: int = 100, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
         """The newest hand-offs; ``repos`` (lower-cased slugs) narrows them to those repositories."""
         if repos is None:
-            rows = await self._db.fetch("SELECT * FROM handoffs ORDER BY created_at DESC LIMIT $1", limit)
+            rows = await self._db.fetch("SELECT * FROM handoffs ORDER BY created_at DESC, id DESC LIMIT $1", limit)
         else:
             rows = await self._db.fetch(
-                "SELECT * FROM handoffs WHERE LOWER(repo) = ANY($2::text[]) ORDER BY created_at DESC LIMIT $1",
+                "SELECT * FROM handoffs WHERE LOWER(repo) = ANY($2::text[]) ORDER BY created_at DESC, id DESC LIMIT $1",
                 limit,
                 list(repos),
             )

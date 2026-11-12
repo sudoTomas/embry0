@@ -206,7 +206,7 @@ class ProgressionRepository:
             if r["at"] is not None
         ]
 
-    async def journal(self, agents: Collection[str] | None = None) -> Journal:
+    async def journal(self, agents: Collection[str] | None = None, *, repos: Collection[str] | None = None) -> Journal:
         """Every job and every successful run, with its repo and issue: what quests and repo diaries read.
 
         Jobs and runs at one time come in the order of their ids, so a quest
@@ -214,13 +214,17 @@ class ProgressionRepository:
 
         With ``agents``, only those agents' runs: the quests and diaries read
         no other (``quests.run_agents``), and the read stays on the
-        ``idx_traces_success_agent`` index (migration 131).
+        ``idx_traces_success_agent`` index (migration 131). With ``repos``
+        (lower-cased slugs), only the jobs, and the runs of the jobs, working
+        on those repositories: the journal of a caller that reads no other.
         """
-        jobs: list[Any] = await self._db.fetch(_JOBS_SQL)
-        if agents is None:
-            runs: list[Any] = await self._db.fetch(_RUNS_SQL.format(agents=""))
-        else:
-            runs = await self._db.fetch(_RUNS_SQL.format(agents="AND t.agent_type = ANY($1::text[])"), sorted(agents))
+        of_repos: list[Any] = [] if repos is None else [sorted(repos)]
+        jobs: list[Any] = await self._db.fetch(_JOBS_SQL.format(repos=_of_repos(1) if of_repos else ""), *of_repos)
+        args = ([sorted(agents)] if agents is not None else []) + of_repos
+        of_agents = "AND t.agent_type = ANY($1::text[])" if agents is not None else ""
+        runs: list[Any] = await self._db.fetch(
+            _RUNS_SQL.format(agents=of_agents + (_of_repos(len(args)) if of_repos else "")), *args
+        )
         return Journal(
             jobs=[
                 JobRow(
@@ -579,13 +583,15 @@ class Journal:
     runs: list[RunRow]
 
 
+# The journal's jobs and runs, through ``str.format``: the jobs' ``{repos}`` keeps only those of some repositories
+# (:func:`_of_repos`), and the runs' ``{agents}`` only some agents' runs, and of some repositories.
 _JOBS_SQL = f"""
 SELECT {_J_REPO} AS repo, j.issue_id, j.pipeline_template AS template, j.status, j.created_at,
        COALESCE(j.finished_at, j.updated_at) AS finished_at, j.delivery_state_at, j.dispatched_by,
        j.leader_agent AS leader,
        CASE WHEN {an_audit("j")} AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
-WHERE {_J_REPO} IS NOT NULL
+WHERE {_J_REPO} IS NOT NULL{{repos}}
 ORDER BY COALESCE(j.finished_at, j.updated_at), j.job_id
 """
 
@@ -600,3 +606,8 @@ WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL
 ORDER BY t.created_at, t.trace_id
 """
 )
+
+
+def _of_repos(n: int) -> str:
+    """The condition that the job ``j`` works on one of the repositories bound as ``$n`` (lower-cased slugs)."""
+    return f"\n  AND lower({_J_REPO}) = ANY(${n}::text[])"

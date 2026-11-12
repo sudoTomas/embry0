@@ -20,6 +20,7 @@ skill packs.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import time
 from collections.abc import Callable, Collection, Iterable
@@ -455,11 +456,22 @@ def pack_changes(before: Progression, after: Progression) -> dict[str, Any]:
 class _Repository(Protocol):
     async def facts(self, queries: Iterable[FactFragment], timezone: str) -> list[Fact]: ...
 
-    async def journal(self, agents: Collection[str] | None = None) -> Journal: ...
+    async def journal(
+        self, agents: Collection[str] | None = None, *, repos: Collection[str] | None = None
+    ) -> Journal: ...
 
     async def events(self, *, since: datetime | None = None, until: datetime | None = None) -> list[ProgressEvent]: ...
 
     async def agent_types(self) -> list[str]: ...
+
+
+def _quests_and_diaries(journal: Journal, progression: Progression, rules: Rules) -> tuple[list[Any], list[Any]]:
+    """The repo diaries and the quests ``journal`` completes under ``rules``, with ``progression``'s levels."""
+    diaries = evaluate_diaries(journal, rules=rules)
+    quests = evaluate_quests(
+        journal, diaries, lambda total: first_total(progression.level_ups, total, rules=rules), rules=rules
+    )
+    return diaries, quests
 
 
 class ProgressionService:
@@ -576,14 +588,18 @@ class ProgressionService:
             progression.drops,
             rules=rules,
         )
-        progression.diaries = evaluate_diaries(journal, rules=rules)
-        progression.quests = evaluate_quests(
-            journal,
-            progression.diaries,
-            lambda total: first_total(progression.level_ups, total, rules=rules),
-            rules=rules,
-        )
+        progression.diaries, progression.quests = _quests_and_diaries(journal, progression, rules)
         return progression
+
+    async def narrowed(self, progression: Progression, repos: Collection[str]) -> Progression:
+        """``progression`` as a caller that reads only ``repos`` (lower-cased slugs) reads it: its quests and repo
+        diaries evaluated again from the journal of those repositories' work alone, so the quests' steps, the quest
+        points and the diaries count no other repository's. Its levels, experience and achievements are the
+        deployment's, as computed. Never cached: a key with a repository allowlist reads it through this."""
+        journal = await self._repository.journal(run_agents(progression.rules), repos=repos)
+        narrowed = dataclasses.replace(progression)
+        narrowed.diaries, narrowed.quests = _quests_and_diaries(journal, progression, progression.rules)
+        return narrowed
 
     async def _levels(
         self, rules: Rules, agent_types: list[str], rewards: list[tuple[datetime, Reward]]
