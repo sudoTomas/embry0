@@ -175,7 +175,14 @@ def test_one_retry_then_the_old_pause(settings: dict[str, Any]) -> None:
         return {"choice": "abandon"}
 
     listed = {**LIST, "report": {"items": [], "unmet": ["d1"], "reported": True}}
-    paused = {"job_id": "J", "current_stage": "done_when_unmet", "done_when": listed, "retry_count": 0, **settings}
+    paused = {
+        "job_id": "J",
+        "current_stage": "done_when_unmet",
+        "done_when": listed,
+        "retry_count": 0,
+        "branch_name": _BRANCH,  # the done-when pause comes after the branch is pushed
+        **settings,
+    }
 
     async def go() -> None:
         with (

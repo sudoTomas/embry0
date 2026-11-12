@@ -266,6 +266,14 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
     unpushed = not_on_the_forge(unfinished)
     if in_sandbox or unpushed:
         options = [option for option in options if option != "merge_as_is"]
+    # #459: a job with neither a branch nor a change request has nothing a merge as is could deliver; offered, it
+    # would come back here with "no branch" every time.
+    nothing_to_merge = not pr_url and not state.get("branch_name")
+    if nothing_to_merge and "merge_as_is" in options:
+        options = [option for option in options if option != "merge_as_is"]
+        message = message.rstrip(".") + (
+            ". Merging it as it is is not offered: the job has no branch and no change request to deliver"
+        )
 
     # A job over its cap: continuing it lets it spend one more cap (or what
     # the deployment's budget section says), so the pause says how much (the
@@ -299,6 +307,11 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
                 f". It has reached this deployment's ceiling of ${ceiling:.2f} per job, which a continue may "
                 "not pass (budget.continue_may_exceed_ceiling is false)"
             )
+    # #459: a "merge as is" whose change request did not open came back here: the pause says what the forge said,
+    # and offers what it offered before (merge as is again, once the forge would take it).
+    merge_failed = str(state.get("merge_as_is_failed") or "")
+    if merge_failed:
+        message = message.rstrip(".") + f". Merging it as it is opened no change request: {merge_failed.rstrip('.')}."
     summary: dict[str, Any] = {
         "message": message,
         "reason": reason,
@@ -306,6 +319,8 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         "retry_count": retry_count,
         "options": options,
     }
+    if merge_failed:
+        summary["merge_as_is_failed"] = merge_failed
     if budget_summary is not None:
         summary["budget"] = budget_summary
 
@@ -369,6 +384,10 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         # Not offered (above): read as a stop, as for work left in the sandbox (#435).
         logger.warning("merge_as_is_rejected_salvage_not_on_forge", job_id=state.get("job_id"))
         choice = "abandon"
+    if nothing_to_merge and choice == "merge_as_is":
+        # Not offered (above): read as a stop (#459).
+        logger.warning("merge_as_is_rejected_nothing_to_merge", job_id=state.get("job_id"))
+        choice = "abandon"
 
     if choice == "continue_retrying":
         user_rounds = int(state.get("user_retry_rounds", 0) or 0)
@@ -384,6 +403,8 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             "current_stage": "developer_retry",
             "user_retry_rounds": user_rounds + 1,
         }
+        if merge_failed:
+            updates["merge_as_is_failed"] = None
         if over_budget or extra_budget:
             # Continuing past the cap is the person's call: the job may spend
             # what it has spent plus one more cap (or what they named, at most
@@ -407,7 +428,13 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         # #182: the job completes as it stands, not by finishing, so its end
         # never settles an earlier job's "did not finish" note. A resume's
         # result holds only the nodes' updates, so the facts go with this one.
-        merged: dict[str, Any] = {"current_stage": "completed", "merged_as_is": True}
+        merged: dict[str, Any] = {"merged_as_is": True}
+        if pr_url:
+            # The job has its change request already: it completes here, and the executor notes on it what is
+            # unfinished (_open_fallback_pr).
+            merged["current_stage"] = "completed"
+        # Otherwise deliver_as_is_node opens it and completes the job, or sends it back here with the forge's
+        # answer (#459); the stage stays the one this pause came from until then.
         if committed_unfinished(unfinished):
             # The branch ends in salvage's "Do not merge it as it is" commit:
             # the job's pull request is opened human-merge-only and says why
@@ -415,7 +442,42 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             merged["unfinished_work"] = unfinished
         return merged
     else:
-        return {"current_stage": "abandoned", "errors": [f"Abandoned after {retry_count} retries"]}
+        stopped: dict[str, Any] = {"current_stage": "abandoned", "errors": [f"Abandoned after {retry_count} retries"]}
+        if merge_failed:
+            stopped["merge_as_is_failed"] = None
+        return stopped
+
+
+async def deliver_as_is_node(state: dict[str, Any], config: RunnableConfig) -> Command[str]:
+    """Open the change request of a job a person chose to merge as is (#459).
+
+    It completes the job with the change request; when none opens, the job
+    goes back to the pause it came from (``max_retries_node``, the stage
+    unchanged) with the forge's answer, so it never ends ``completed`` with
+    nothing delivered, and its sandbox is kept with the pause. The executor
+    hands the opener in ``configurable["deliver_as_is"]``; without one (a
+    graph run outside the executor) the job completes and the executor opens
+    it afterwards, as before.
+    """
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    deliver = configurable.get("deliver_as_is")
+    if deliver is None:
+        return Command(goto=END, update={"current_stage": "completed"})
+    url, reason = await deliver(state)
+    if url:
+        return Command(
+            goto=END,
+            update={
+                "current_stage": "completed",
+                "pr_url": url,
+                "merge_as_is_delivered": True,
+                "merge_as_is_failed": None,
+            },
+        )
+    writer = _nodes.get_stream_writer()
+    writer(events.system(message=f"Merging it as it is opened no change request: {reason}. Back to the pause."))
+    logger.warning("merge_as_is_change_request_failed", job_id=state.get("job_id"), reason=reason)
+    return Command(goto="max_retries", update={"merged_as_is": None, "merge_as_is_failed": reason})
 
 
 async def _raise_budget(

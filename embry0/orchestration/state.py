@@ -485,6 +485,12 @@ class JobState(TypedDict, total=False):
     # earlier job's "did not finish" note (embry0.services.unfinished_note).
     # MUST stay declared (the merge reducer drops undeclared keys).
     merged_as_is: Annotated[bool | None, FoldingLastValue]
+    # #459: why a "merge as is" opened no change request (what the forge said), set by deliver_as_is_node when it
+    # sends the job back to the pause it came from; the pause says it, and a choice there clears it. MUST stay
+    # declared (the merge reducer drops undeclared keys).
+    merge_as_is_failed: Annotated[str | None, FoldingLastValue]
+    # #459: True once deliver_as_is_node opened the change request, so the executor does not open it again.
+    merge_as_is_delivered: Annotated[bool | None, FoldingLastValue]
     result_summary: Annotated[str | None, FoldingLastValue]
     # RAV-603: typed deliverables collected by finalize_output_node
     # ({type, title, content, url, storage_bucket, storage_key, media_type,
