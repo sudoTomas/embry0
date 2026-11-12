@@ -147,6 +147,29 @@ def format_open_prs_block(open_prs: list[dict[str, Any]], max_entries: int = 20)
     return "\n".join(lines)
 
 
+def forge_said(exc: BaseException) -> str:
+    """What a forge answered, for a person: its status and message when it sent one, else the error itself."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return str(exc)[:300]
+    message = ""
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - a body that is not JSON is read as text
+        payload = None
+    if isinstance(payload, dict):
+        message = str(payload.get("message") or "")
+        details = [
+            str(e.get("message") or e.get("code") or "") for e in payload.get("errors") or [] if isinstance(e, dict)
+        ]
+        details = [d for d in details if d]
+        if details:
+            message = f"{message} ({'; '.join(details)})" if message else "; ".join(details)
+    if not message:
+        message = (getattr(response, "text", "") or "")[:200]
+    return f"{response.status_code} {message}".strip()[:300]
+
+
 async def ensure_pr_for_branch(
     *,
     repo: str,
@@ -158,6 +181,7 @@ async def ensure_pr_for_branch(
     http_client: httpx.AsyncClient | None = None,
     target_branch: str | None = None,
     credential_resolver: Any | None = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> str | None:
     """Open (or find) a PR for ``branch`` orchestrator-side (RAV-1247).
 
@@ -181,24 +205,36 @@ async def ensure_pr_for_branch(
     ``target_branch`` (Spec 1A §3.7) is the job's resolved base branch; when
     given it is used verbatim instead of re-reading the repo record, so the
     PR targets the same branch the clone fetched.
+
+    ``diagnostics``, when given, receives ``change_request_error``: why no PR
+    came of it, in words a person reads (#459). The return stays None.
     """
+
+    def _why(reason: str) -> None:
+        if diagnostics is not None:
+            diagnostics["change_request_error"] = reason[:300]
+
     if not repo or "/" not in repo or not branch:
+        _why("the job has no repository or no branch to open a pull request from")
         return None
     # Same reasoning as gitlab_mrs.ensure_mr_for_branch: an explicit target is
     # compared exactly; without one the literals are the cheap pre-check for a
     # default we would otherwise have to fetch.
     if branch == target_branch or (target_branch is None and branch in ("main", "master")):
+        _why(f"the branch {branch!r} is the base branch, so there is nothing to merge")
         return None
     from embry0.services.credentials.resolver import forge_token
 
     try:
         token = await forge_token(credential_resolver, repo, "github", github_token)
-    except Exception:
+    except Exception as exc:
         # NEVER raises (see docstring): a pinned credential that is
         # unavailable skips the PR.
         logger.warning("pr_fallback_token_lookup_failed", repo=repo, exc_info=True)
+        _why(f"embry0 could not read a GitHub token for {repo}: {exc}")
         return None
     if not token:
+        _why(f"embry0 has no GitHub token for {repo}")
         return None
     owner = repo.split("/")[0]
     client = GitHubClient(default_token=github_token, http_client=http_client, credential_resolver=credential_resolver)
@@ -222,6 +258,7 @@ async def ensure_pr_for_branch(
             # Nothing to merge into itself — the repo's default happens to be
             # the branch the developer pushed.
             logger.info("pr_fallback_skipped_same_branch", repo=repo, branch=branch)
+            _why(f"the branch {branch!r} is the repository's default branch, so there is nothing to merge")
             return None
 
         create = await client.post(
@@ -239,6 +276,7 @@ async def ensure_pr_for_branch(
         # GitHubClient owns the httpx lifecycle: it closes a client it created
         # and leaves an injected one alone, so there is no `finally` here.
         logger.warning("pr_fallback_failed", repo=repo, branch=branch, error=str(exc))
+        _why(f"GitHub refused it: {forge_said(exc)}")
         return None
 
 

@@ -127,6 +127,9 @@ def _paused(job: Mapping[str, Any], interrupt: Mapping[str, Any] | None) -> dict
         headline = f"Paused: {_lower_first(_sentence(str(summary['message'])))}."
     else:
         headline = "Paused."
+    if summary.get("merge_as_is_failed"):
+        # #459: a "merge as is" came back to this pause because no change request opened: say what the forge said.
+        headline += f" Merging it as it is opened no change request: {_sentence(str(summary['merge_as_is_failed']))}."
     actions = options or ["continue_retrying", "abandon"]
     return {
         "state": "paused",

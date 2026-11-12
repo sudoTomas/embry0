@@ -454,3 +454,50 @@ async def test_ensure_pr_skips_when_the_head_equals_the_resolved_base():
         is None
     )
     assert posted["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ensure_pr_says_what_github_answered_when_it_opens_none():
+    """#459: the PR stays None, and the caller that asks gets GitHub's own answer, not a silent skip."""
+
+    def handler(request):
+        if request.method == "POST":
+            return httpx.Response(
+                422,
+                json={
+                    "message": "Validation Failed",
+                    "errors": [
+                        {"resource": "PullRequest", "code": "custom", "message": "No commits between main and x"}
+                    ],
+                },
+            )
+        if request.url.path.endswith("/pulls"):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={"default_branch": "main"})
+
+    diagnostics: dict = {}
+    try:
+        url = await ensure_pr_for_branch(
+            repo="o/r",
+            branch="embry0/iss-abc-fix",
+            title="t",
+            body="b",
+            github_token="tok",
+            http_client=_client(handler),
+            target_branch="main",
+            diagnostics=diagnostics,
+        )
+    except TypeError as exc:
+        pytest.fail(f"ensure_pr_for_branch cannot say why it opened no PR: {exc}")
+    assert url is None
+    why = diagnostics.get("change_request_error", "")
+    assert "422" in why and "Validation Failed" in why and "No commits between main and x" in why, (
+        f"the reason does not say what GitHub answered: {why!r}"
+    )
+    for kwargs, said in (
+        ({"repo": "o/r", "branch": "embry0/x", "github_token": ""}, "no GitHub token"),
+        ({"repo": "o/r", "branch": "main", "github_token": "tok"}, "is the base branch"),
+    ):
+        skipped: dict = {}
+        assert await ensure_pr_for_branch(title="t", body="b", diagnostics=skipped, **kwargs) is None
+        assert said in skipped.get("change_request_error", ""), (kwargs, skipped)

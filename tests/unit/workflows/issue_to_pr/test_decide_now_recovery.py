@@ -376,8 +376,10 @@ async def _run_max_retries(state: dict[str, Any]) -> tuple[dict[str, Any], dict[
         captured.update(summary)
         return "abandon"
 
+    # Every coding pause has the job's branch (the developer names it): a state without one has nothing a "merge as
+    # is" could deliver, and that pause says so (#459).
     with patch.object(nodes_module, "interrupt", _fake_interrupt):
-        result = await max_retries_node(state, config=None)
+        result = await max_retries_node({"branch_name": "embry0/x", **state}, config=None)
     return captured, result
 
 

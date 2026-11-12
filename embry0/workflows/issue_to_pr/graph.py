@@ -65,6 +65,7 @@ from embry0.workflows.issue_to_pr.generic_agent import (
 )
 from embry0.workflows.issue_to_pr.nodes import (
     ask_user_interrupt,
+    deliver_as_is_node,
     developer_node,
     init_node,
     max_retries_node,
@@ -152,6 +153,16 @@ async def _qa_exhausted_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _after_max_retries(state: dict[str, Any]) -> str:
+    """Where the pause's answer goes: a continue to ``retry``; a "merge as is" without a change request yet to
+    ``deliver_as_is`` (#459); anything else ends the job."""
+    if state.get("current_stage") == "developer_retry":
+        return "retry"
+    if state.get("merged_as_is") and state.get("current_stage") != "completed":
+        return "deliver"
+    return END
+
+
 class IssueToprWorkflow:
     name = "issue-to-pr"
     description = "Autonomous issue-to-PR pipeline: triage → develop → review → PR"
@@ -219,6 +230,12 @@ class IssueToprWorkflow:
         builder.add_node("generic_agent", generic_agent_node)  # type: ignore[type-var]
         builder.add_node("retry", retry_node)  # type: ignore[type-var]
         builder.add_node("max_retries", max_retries_node)  # type: ignore[type-var]
+        # #459: a "merge as is" opens its change request here; a refusal goes back to the pause it came from.
+        builder.add_node(
+            "deliver_as_is",
+            deliver_as_is_node,  # type: ignore[type-var]
+            destinations=("max_retries", END),
+        )
         # RAV-1271: resumes route back to the ASKING node via Command —
         # a triage QA-escalation answer re-enters triage, a review question
         # answer re-enters review; zero-question arrivals fail to END.
@@ -317,11 +334,12 @@ class IssueToprWorkflow:
 
         builder.add_edge("retry", "developer")
 
-        # max_retries can loop back to developer (if user says continue) or end
+        # max_retries can loop back to developer (if user says continue), open a
+        # "merge as is" change request (#459), or end
         builder.add_conditional_edges(
             "max_retries",
-            lambda state: "retry" if state.get("current_stage") == "developer_retry" else END,
-            {"retry": "retry", END: END},
+            _after_max_retries,
+            {"retry": "retry", "deliver": "deliver_as_is", END: END},
         )
 
         checkpointer = config.get("checkpointer") if isinstance(config, dict) else None

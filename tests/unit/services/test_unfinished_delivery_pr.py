@@ -119,9 +119,17 @@ def _merge_as_is(state: dict[str, Any]) -> dict[str, Any]:
 async def test_merge_as_is_after_a_salvage_commit_opens_a_human_merge_only_pull_request_saying_why() -> None:
     after = await asyncio.to_thread(
         _merge_as_is,
-        {"job_id": "job-1", "current_stage": "dev_run_unfinished", "unfinished_work": SALVAGED, "pr_url": ""},
+        {
+            "job_id": "job-1",
+            "current_stage": "dev_run_unfinished",
+            "unfinished_work": SALVAGED,
+            "pr_url": "",
+            "branch_name": BRANCH,
+        },
     )
-    assert after == {"current_stage": "completed", "merged_as_is": True, "unfinished_work": SALVAGED}, (
+    # The stage stays the pause's until deliver_as_is_node opens the change request and completes the job, or
+    # sends it back to this pause (#459).
+    assert after == {"merged_as_is": True, "unfinished_work": SALVAGED}, (
         f"a resume's result holds only the nodes' updates: the salvage record must go with this one: {after}"
     )
     # A resumed run's result: the resume's updates plus the carried keys (_execute_checkpointed).
@@ -143,9 +151,16 @@ async def test_merge_as_is_after_a_salvage_commit_opens_a_human_merge_only_pull_
 @pytest.mark.asyncio
 async def test_merge_as_is_with_no_salvage_commit_is_delivered_as_before() -> None:
     after = await asyncio.to_thread(
-        _merge_as_is, {"job_id": "job-1", "current_stage": "review_retries_exhausted", "retry_count": 2, "pr_url": ""}
+        _merge_as_is,
+        {
+            "job_id": "job-1",
+            "current_stage": "review_retries_exhausted",
+            "retry_count": 2,
+            "pr_url": "",
+            "branch_name": BRANCH,
+        },
     )
-    assert after == {"current_stage": "completed", "merged_as_is": True}
+    assert after == {"merged_as_is": True}, after
     _, opened, noted = await _outcome({**after, "branch_name": BRANCH})
     assert opened.await_args.kwargs["labels"] == ["embry0"]
     assert "did not finish" not in opened.await_args.kwargs["body"]

@@ -68,6 +68,7 @@ async def ensure_mr_for_branch(
     body: str,
     client: GitLabClient,
     target_branch: str | None = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> str | None:
     """Open (or find) a merge request for ``branch``. Returns its URL or None.
 
@@ -80,13 +81,23 @@ async def ensure_mr_for_branch(
     given it is used verbatim: the resolver already answered, and a second
     round trip could only disagree with the branch the clone actually
     fetched. Without it the project's own default is read, as before.
+
+    ``diagnostics``, when given, receives ``change_request_error``: why no
+    merge request came of it, in words a person reads (#459).
     """
+
+    def _why(reason: str) -> None:
+        if diagnostics is not None:
+            diagnostics["change_request_error"] = reason[:300]
+
     if not repo or "/" not in repo or not branch:
+        _why("the job has no repository or no branch to open a merge request from")
         return None
     # Nothing to merge into itself. With an explicit target that comparison is
     # exact; without one the resolved default is only known after an API round
     # trip, so the historical literals stay as the cheap pre-check.
     if branch == target_branch or (target_branch is None and branch in ("main", "master")):
+        _why(f"the branch {branch!r} is the base branch, so there is nothing to merge")
         return None
 
     try:
@@ -100,6 +111,7 @@ async def ensure_mr_for_branch(
             # Nothing to merge into itself; also guards a repo whose default
             # branch happens to match the pipeline's branch name.
             logger.info("mr_fallback_skipped_same_branch", repo=repo, branch=branch)
+            _why(f"the branch {branch!r} is the project's default branch, so there is nothing to merge")
             return None
 
         resp = await client.post(
@@ -133,7 +145,9 @@ async def ensure_mr_for_branch(
             status=resp.status_code,
             body=resp.text[:200],
         )
+        _why(f"GitLab refused it: {resp.status_code} {resp.text[:200]}")
         return None
     except Exception as exc:
         logger.warning("mr_fallback_failed", repo=repo, branch=branch, error=str(exc))
+        _why(f"GitLab refused it: {exc}"[:300])
         return None

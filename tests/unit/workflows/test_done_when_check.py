@@ -143,7 +143,8 @@ def test_the_pause_names_the_unmet_items() -> None:
         return {"choice": "abandon"}
 
     listed = {**LIST, "report": {"items": [], "unmet": ["d2"], "reported": True}}
-    state = {"job_id": "J", "current_stage": UNMET_STAGE, "done_when": listed, "retry_count": 0}
+    # The done-when pause comes after the branch is pushed.
+    state = {"job_id": "J", "current_stage": UNMET_STAGE, "done_when": listed, "retry_count": 0, "branch_name": "b"}
 
     async def go() -> None:
         with (
@@ -257,7 +258,14 @@ def test_the_pause_says_how_many_retries_ran() -> None:
         return {"choice": "abandon"}
 
     listed = {**LIST, "report": {"items": [], "unmet": ["d2"], "reported": True}}
-    state = {"job_id": "J", "current_stage": UNMET_STAGE, "done_when": listed, "retry_count": 0, **_with(retries=2)}
+    state = {
+        "job_id": "J",
+        "current_stage": UNMET_STAGE,
+        "done_when": listed,
+        "retry_count": 0,
+        "branch_name": "b",
+        **_with(retries=2),
+    }
 
     async def go() -> None:
         with (

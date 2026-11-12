@@ -350,6 +350,7 @@ async def _open_change_request(
     body: str,
     labels: list[str] | None = None,
     target_branch: str = "",
+    diagnostics: dict[str, Any] | None = None,
 ) -> str | None:
     """Open (or find) the change request for ``branch`` on the repo's forge.
 
@@ -367,16 +368,27 @@ async def _open_change_request(
     ``target_branch`` is the job's resolved base branch (state["base_branch"],
     Spec 1A §3.7). Empty means "ask the forge", which is the pre-3.7
     behaviour — it must NOT become the empty branch name.
+
+    ``diagnostics``, when given, receives ``change_request_error`` when no
+    change request came of it: what the forge, or embry0 before it, said
+    (#459). It is still None that comes back, so every caller that does not
+    ask goes on exactly as before.
     """
     from embry0.storage.repositories.repos import UnregisteredRepoError
+
+    def _why(reason: str) -> None:
+        if diagnostics is not None:
+            diagnostics["change_request_error"] = reason[:300]
 
     try:
         forge = await _forge_for(self, repo)
     except UnregisteredRepoError:
         logger.warning("change_request_skipped_unregistered_repo", repo=repo, branch=branch)
+        _why(f"{repo} is not registered in embry0, so it does not know which forge to ask")
         return None
-    except Exception:
+    except Exception as exc:
         logger.warning("change_request_skipped_forge_lookup_failed", repo=repo, branch=branch, exc_info=True)
+        _why(f"embry0 could not look up {repo}'s forge: {exc}")
         return None
 
     target = target_branch or None
@@ -390,13 +402,15 @@ async def _open_change_request(
         # plain GITLAB_TOKEN.
         try:
             token = await forge_token(resolver, repo, "gitlab", getattr(config, "gitlab_token", "") or "")
-        except Exception:
+        except Exception as exc:
             # Fail-open (see docstring): a pinned credential that is
             # unavailable skips the MR, it must not abort the job's outcome.
             logger.warning("mr_fallback_token_lookup_failed", repo=repo, exc_info=True)
+            _why(f"embry0 could not read a GitLab token for {repo}: {exc}")
             return None
         if not token:
             logger.warning("mr_fallback_skipped_no_token", repo=repo)
+            _why(f"embry0 has no GitLab token for {repo}")
             return None
         from embry0.execution.gitlab_client import make_gitlab_client
         from embry0.services.gitlab_mrs import ensure_mr_for_branch
@@ -408,6 +422,7 @@ async def _open_change_request(
             body=body,
             client=make_gitlab_client(config, credential_resolver=resolver),
             target_branch=target,
+            diagnostics=diagnostics,
         )
 
     from embry0.services.github_prs import ensure_pr_for_branch
@@ -423,7 +438,35 @@ async def _open_change_request(
         github_token=getattr(self, "_github_token", None) or "",
         target_branch=target,
         credential_resolver=resolver,
+        diagnostics=diagnostics,
     )
+
+
+#: How much of the forge's answer a refused "merge as is" keeps (#459).
+MERGE_AS_IS_REASON_CHARS = 300
+
+
+async def _deliver_as_is(self: IssueExecutor, state: dict[str, Any]) -> tuple[str | None, str]:
+    """Open the change request of a job a person chose to merge as is (#459): its URL, or why there is none.
+
+    The graph's ``deliver_as_is_node`` calls it with the job's state, so a
+    refusal can send the job back to the pause it came from instead of ending
+    it ``completed`` with nothing delivered and its sandbox destroyed. The
+    change request is the one ``_open_fallback_pr`` opens after any run that
+    did not deliver; the reason is what the forge, or embry0 before it, said.
+    """
+    from embry0.safety.redaction import redact_bounded
+
+    diagnostics: dict[str, Any] = {}
+    url, _job_row = await _open_fallback_pr(
+        self, state.get("issue_id"), str(state.get("job_id") or ""), state, error_code=None, diagnostics=diagnostics
+    )
+    if url:
+        return url, ""
+    # The forge's answer goes into the pause, the card's line, an event, the checkpoint and the logs: whatever a
+    # proxy page echoed back (a header, a token) is redacted here, once, and the answer bounded.
+    reason = str(diagnostics.get("change_request_error") or "no change request was opened")
+    return None, redact_bounded(reason, MERGE_AS_IS_REASON_CHARS)
 
 
 async def _finish_credential_uses(self: IssueExecutor, job_id: str, *, error_code: str | None) -> None:
@@ -650,6 +693,7 @@ async def _open_fallback_pr(
     state: dict[str, Any],
     *,
     error_code: str | None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Open (or find) the PR for a branch the job pushed and did not deliver.
 
@@ -676,6 +720,8 @@ async def _open_fallback_pr(
     job_row: dict[str, Any] | None = None
     existing = state.get("pr_url")
     if not existing and not state.get("branch_name"):
+        if diagnostics is not None:
+            diagnostics["change_request_error"] = "the job has no branch to open a change request from"
         return None, job_row
     try:
         if existing:
@@ -707,6 +753,8 @@ async def _open_fallback_pr(
             logger.warning("pr_fallback_job_fetch_failed", job_id=job_id, exc_info=True)
         repo_for_pr = str(state.get("repo") or (job_row or {}).get("repo") or "")
         if not repo_for_pr or "/" not in repo_for_pr:
+            if diagnostics is not None:
+                diagnostics["change_request_error"] = "the job's repository is not known"
             return None, job_row
         task_text = str(state.get("task") or (job_row or {}).get("task") or "").strip()
         # A step other than the developer that pushed the branch (the context
@@ -775,6 +823,7 @@ async def _open_fallback_pr(
             body="\n\n".join(body_parts),
             labels=labels,
             target_branch=target_branch,
+            diagnostics=diagnostics,
         )
         if url and area is not None:
             try:
@@ -794,8 +843,10 @@ async def _open_fallback_pr(
                 settle=_finished(state, error_code),
             )
         return url, job_row
-    except Exception:
+    except Exception as exc:
         logger.warning("pr_fallback_failed", job_id=job_id, exc_info=True)
+        if diagnostics is not None:
+            diagnostics["change_request_error"] = f"embry0 failed while opening it: {exc}"[:300]
         return None, job_row
 
 
@@ -1005,7 +1056,9 @@ async def _handle_workflow_result(
         # on the JOB ROW (RAV-1282); the row is shared with the webhook payload
         # below, so it is fetched at most once.
         job_row: dict[str, Any] | None = None
-        if error_code != ErrorCode.ABANDONED.value:
+        # #459: a merge as is opened its change request inside the graph (deliver_as_is_node), where a refusal sends
+        # the job back to its pause; opening it again here would only note it twice.
+        if error_code != ErrorCode.ABANDONED.value and not result.get("merge_as_is_delivered"):
             fallback_url, job_row = await _open_fallback_pr(self, issue_id, job_id, result, error_code=error_code)
             if fallback_url:
                 result["pr_url"] = fallback_url

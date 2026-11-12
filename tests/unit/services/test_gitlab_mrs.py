@@ -3,6 +3,7 @@
 import json as json_mod
 
 import httpx
+import pytest
 
 from embry0.execution.gitlab_client import GitLabClient
 from embry0.services.gitlab_mrs import (
@@ -188,3 +189,31 @@ async def test_main_is_mergeable_when_the_target_is_a_different_branch():
     )
     assert url == "https://gitlab.com/mr/8"
     assert seen["body"]["target_branch"] == "dev"
+
+
+async def test_says_what_gitlab_answered_when_it_opens_none():
+    """#459: the MR stays None, and the caller that asks gets GitLab's answer."""
+
+    def handler(request):
+        if request.method == "POST":
+            return httpx.Response(422, json={"message": ["Source branch does not exist"]})
+        return httpx.Response(200, json=[])
+
+    diagnostics: dict = {}
+    try:
+        url = await ensure_mr_for_branch(
+            repo=REPO,
+            branch=BRANCH,
+            title="t",
+            body="b",
+            client=_client(handler),
+            target_branch="main",
+            diagnostics=diagnostics,
+        )
+    except TypeError as exc:
+        pytest.fail(f"ensure_mr_for_branch cannot say why it opened no merge request: {exc}")
+    assert url is None
+    why = diagnostics.get("change_request_error", "")
+    assert "422" in why and "Source branch does not exist" in why, (
+        f"the reason does not say what GitLab answered: {why!r}"
+    )

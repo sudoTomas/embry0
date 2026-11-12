@@ -377,6 +377,9 @@ class IssueExecutor:
                 # getattr: unit tests build the executor via __new__ and set
                 # only what their path touches (same reason as _github_token).
                 "repos_repo": getattr(self, "_repos", None),
+                # #459: a "merge as is" opens its change request inside the graph (deliver_as_is_node), so a
+                # refusal goes back to the pause instead of ending the job without one.
+                "deliver_as_is": self._deliver_as_is,
                 "credential_resolver": getattr(self, "_credential_resolver", None),
                 "traces_repo": self._traces,
                 "credentials": credentials,
@@ -1532,6 +1535,7 @@ class IssueExecutor:
     _persist_deliverables = _executor_outcomes._persist_deliverables
     _handle_workflow_result = _executor_outcomes._handle_workflow_result
     _open_fallback_pr = _executor_outcomes._open_fallback_pr
+    _deliver_as_is = _executor_outcomes._deliver_as_is
     _record_pr_opened = _executor_outcomes._record_pr_opened
     _handle_split = _executor_outcomes._handle_split
     _broadcast_event = _executor_outcomes._broadcast_event
