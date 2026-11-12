@@ -92,7 +92,8 @@ class RepoAreasProposalsRepository:
 
     async def latest(self, repo: str) -> dict[str, Any] | None:
         row = await self._db.fetchrow(
-            f"SELECT {_COLUMNS} FROM repo_areas_proposals WHERE repo = $1 ORDER BY created_at DESC LIMIT 1", repo
+            f"SELECT {_COLUMNS} FROM repo_areas_proposals WHERE repo = $1 ORDER BY created_at DESC, id DESC LIMIT 1",
+            repo,
         )
         return dict(row) if row else None
 
@@ -101,7 +102,7 @@ class RepoAreasProposalsRepository:
         repositories'; None keeps every one."""
         rows = await self._db.fetch(
             f"SELECT {_COLUMNS} FROM repo_areas_proposals WHERE status = 'pending' "
-            "AND ($1::text[] IS NULL OR lower(repo) = ANY($1::text[])) ORDER BY created_at DESC",
+            "AND ($1::text[] IS NULL OR lower(repo) = ANY($1::text[])) ORDER BY created_at DESC, id DESC",
             None if repos is None else list(repos),
         )
         return [dict(r) for r in rows]
