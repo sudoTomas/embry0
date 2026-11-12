@@ -123,9 +123,10 @@ WHERE m.status = 'pr_merged' AND m.issue_id IS NOT NULL
     ),
     (
         "j.finished_at",
-        f"""-- an interrupted job resumed to the end: the agent of its last run
+        f"""-- an interrupted job resumed to the end: the agent of its last run (of runs started at one time, the
+-- highest trace id: every read credits the same agent, the rollup's folded days and a full read alike)
 SELECT 5, j.job_id, 'resumed',
-       (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id ORDER BY t.created_at DESC LIMIT 1),
+       (SELECT t.agent_type FROM traces t WHERE t.job_id = j.job_id ORDER BY t.created_at DESC, t.trace_id DESC LIMIT 1),
        j.finished_at, NULL, NULL, NULL
 FROM jobs j WHERE j.resume_attempts > 0 AND {finished_well("j")}""",
     ),
@@ -207,6 +208,9 @@ class ProgressionRepository:
 
     async def journal(self, agents: Collection[str] | None = None) -> Journal:
         """Every job and every successful run, with its repo and issue: what quests and repo diaries read.
+
+        Jobs and runs at one time come in the order of their ids, so a quest
+        that keeps the first of several reads the same one on every read.
 
         With ``agents``, only those agents' runs: the quests and diaries read
         no other (``quests.run_agents``), and the read stays on the
@@ -317,7 +321,9 @@ healed AS (
 
 #: One fragment per metric (``progression_vocabulary.METRICS[...].fragment``): a SELECT of
 #: ``(at, value, label, url, report)``. ``{name}`` is a parameter of the metric and ``{tz}``
-#: the pack's timezone; :func:`facts_sql` binds each as a value.
+#: the pack's timezone; :func:`facts_sql` binds each as a value. A fragment that keeps one of
+#: several rows (``DISTINCT ON``) breaks a tie in time on the job's id, so every read keeps the
+#: same one, whatever order Postgres stores or scans the rows in (#443).
 FRAGMENTS: dict[str, str] = {
     # shipping
     "merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m",
@@ -341,7 +347,7 @@ FRAGMENTS: dict[str, str] = {
         WHERE m.at - m.created_at < make_interval(secs => {hours}::float8 * 3600)""",
     "repo_hopper": """
         SELECT f.at, 1, f.repo, f.pr_url, NULL
-        FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM merged WHERE repo IS NOT NULL ORDER BY repo, at) f""",
+        FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM merged WHERE repo IS NOT NULL ORDER BY repo, at, job_id) f""",
     "area_merged": "SELECT m.at, 1, m.label || ' · ' || m.area, m.pr_url, NULL FROM merged m WHERE m.area IS NOT NULL",
     "merges_in_a_day": """
         SELECT max(m.at), 1, to_char(max(m.at) AT TIME ZONE {tz}, 'YYYY-MM-DD'), NULL, NULL
@@ -377,11 +383,11 @@ FRAGMENTS: dict[str, str] = {
     # questing
     "issue_done": """
         SELECT f.at, 1, COALESCE(i.title, f.label), f.pr_url, NULL
-        FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at) f
+        FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at, job_id) f
         LEFT JOIN issues i ON i.id = f.issue_id""",
     "side_quest": """
         SELECT f.at, 1, COALESCE(i.title, f.label), f.pr_url, NULL
-        FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at) f
+        FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at, job_id) f
         JOIN issues i ON i.id = f.issue_id WHERE i.parent_issue_id IS NOT NULL""",
     "owner_answer": "SELECT d.created_at, 1, d.repo || ' · ' || d.decision, NULL, NULL FROM proposal_decisions d",
     "proposal_accepted": """
@@ -405,7 +411,8 @@ FRAGMENTS: dict[str, str] = {
     "audit_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE " + an_audit("m"),
     "areas_mapped": """
         SELECT f.at, 1, f.repo, f.pr_url, NULL
-        FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM merged WHERE pipeline_template = 'map-areas' ORDER BY repo, at) f""",
+        FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM merged WHERE pipeline_template = 'map-areas'
+              ORDER BY repo, at, job_id) f""",
     "design_score": """
         SELECT s.last_audit_at, 1, s.repo || ' · ' || s.kind || ' ' || s.score, NULL, NULL
         FROM repo_standard_state s WHERE s.score >= {min_score}::int AND s.last_audit_at IS NOT NULL""",
@@ -445,7 +452,7 @@ FRAGMENTS: dict[str, str] = {
     "followup_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE m.pipeline_template = 'pr-followup'",
     "merged_on_attempt": """
         SELECT f.at, 1, f.label, f.pr_url, NULL
-        FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at) f
+        FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at, job_id) f
         WHERE (SELECT count(*) FROM jobs e WHERE e.issue_id = f.issue_id AND e.created_at <= f.created_at)
               >= {min_attempts}::int""",
     # oddities, on the pack's calendar
@@ -473,7 +480,11 @@ def facts_sql(queries: Iterable[FactFragment], timezone: str) -> tuple[str, list
 
     Each fragment's rows carry its position in ``queries`` as ``fragment``,
     a number the code generates, so the caller files them under the
-    query's key.
+    query's key. Facts at one time are ordered by everything the caller
+    reads of them: a metric's evidence is its last step, so two reads of the
+    same rows must list them in one order, whatever order Postgres stores
+    or scans them in (#443). Two facts equal in all of it are the same fact
+    to the caller.
     """
     args: list[Any] = []
     parts: list[str] = []
@@ -498,7 +509,7 @@ def facts_sql(queries: Iterable[FactFragment], timezone: str) -> tuple[str, list
             f"q.label::text AS label, q.url::text AS url, q.report::text AS report "
             f"FROM ({body}) AS q(at, value, label, url, report)"
         )
-    return _FACTS_CTES + "\nUNION ALL\n".join(parts) + "\nORDER BY at", args
+    return _FACTS_CTES + "\nUNION ALL\n".join(parts) + "\nORDER BY at, fragment, label, url, value, report", args
 
 
 @dataclass(frozen=True)
@@ -569,7 +580,7 @@ SELECT {_J_REPO} AS repo, j.issue_id, j.pipeline_template AS template, j.status,
        CASE WHEN {an_audit("j")} AND {finished_well("j")} THEN j.result_summary END AS report
 FROM jobs j
 WHERE {_J_REPO} IS NOT NULL
-ORDER BY COALESCE(j.finished_at, j.updated_at)
+ORDER BY COALESCE(j.finished_at, j.updated_at), j.job_id
 """
 
 _RUNS_SQL = (
@@ -580,6 +591,6 @@ FROM traces t JOIN jobs j ON j.job_id = t.job_id
 WHERE t.error_code IS NULL AND t.result = 'success' AND t.agent_type IS NOT NULL AND """
     + _J_REPO
     + """ IS NOT NULL {agents}
-ORDER BY t.created_at
+ORDER BY t.created_at, t.trace_id
 """
 )
