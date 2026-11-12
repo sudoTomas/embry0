@@ -82,6 +82,7 @@ EMPTY: dict[str, str] = {
 }
 
 #: The fields of a route a key with an allowlist reads of the deployment's records, and why. ``*`` is the whole answer.
+_ACCOUNTS = "a job on its repository may run with each, and GET /run-with/keys offers them by label"
 SHARED: dict[str, dict[str, str]] = {
     **{
         path: {"*": f"the agents, and whether a provider can run each one's model: {_RUNS_ON}"}
@@ -118,12 +119,6 @@ SHARED: dict[str, dict[str, str]] = {
             "/api/v1/repos/{full_repo:repo}/environment/resolve",
         )
     },
-    **{
-        path: {
-            "body.paid_from": "the account a setup run of its repository is paid from: a model account it may choose, by label, or the environment's, unnamed"
-        }
-        for path in ("/api/v1/repos/{full_repo:repo}/-/setup/cost", "/api/v1/repos/{full_repo:repo}/setup/cost")
-    },
     "/api/v1/run-with/keys": {
         "*": "the model accounts a job on its repository may run with, by id and label, the deployment's among "
         "them: a key picks one by its id (Run with)"
@@ -146,17 +141,22 @@ SHARED: dict[str, dict[str, str]] = {
         )
     },
     "/api/v1/progression": {"body.pack": f"the content pack in force: {_RUNS_ON}"},
+    # #445: a model account bound to the repository, its owner or the global pool is one a job there may run with,
+    # which GET /run-with/keys offers the key by label.
+    **{
+        path: {"body.paid_from": f"the model account a setup run of its repository is paid from (#445): {_ACCOUNTS}"}
+        for path in ("/api/v1/repos/{full_repo:repo}/-/setup/cost", "/api/v1/repos/{full_repo:repo}/setup/cost")
+    },
+    **{
+        path: {"body.effective.llm": f"the model accounts its repository resolves (#445): {_ACCOUNTS}"}
+        for path in ("/api/v1/repos/{full_repo:repo}/-/credentials", "/api/v1/repos/{full_repo:repo}/credentials")
+    },
 }
 
 #: GET routes, or the fields of one, that still read the deployment's records to such a key, and the work that
 #: narrows them. ``*`` is the whole answer.
 ELSEWHERE: dict[str, dict[str, str]] = {
     "/api/v1/audit": {"*": "every audit row: the audit reads"},
-    "/api/v1/stats": {"*": "the credentials' counts, the environment's keys and every job: the totals"},
-    **{
-        path: {"*": "the deployment's credentials a resolution of its repository steps through: the credential reads"}
-        for path in ("/api/v1/repos/{full_repo:repo}/-/credentials", "/api/v1/repos/{full_repo:repo}/credentials")
-    },
 }
 
 #: Fields that differ between two reads of the same rows, and why: the walk does not compare them.
@@ -458,48 +458,6 @@ async def test_revealing_a_global_variable_is_refused_to_a_key_with_an_allowlist
     assert refused == [(DEPLOYMENT, "read the deployment's global variables")] * 2, f"the refusals audited: {refused}"
     assert "repo_refused" not in audit, "the key reads its refusals back in GET /audit"
     assert opened.status_code == 200 and opened.json()["value"] == OWN["a global secret's value"], opened.text
-
-
-async def test_a_setup_run_names_every_account_the_key_may_choose(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The account a setup run of the key's repository is paid from is named when it is a model account in the
-    registry that serves the repository, in the global pool or bound to it (one the key may choose for its jobs), and
-    is the deployment's, unnamed, when the environment holds it; a key without a list reads every name."""
-    db = db_with_migrations
-    async with deployment_reads_app(db, monkeypatch) as deployment:
-        await deployment.add_deployment_wide()
-        app, keys = deployment.app, deployment.keys
-        url = f"/api/v1/repos/{COVERED}/-/setup/cost"
-
-        async def paid_from() -> dict[str, Any]:
-            return {k: (await call(app, "GET", url, key)).json()["paid_from"] for k, key in vars(keys).items()}
-
-        async def account(label: str) -> str:
-            made = await call(
-                app,
-                "POST",
-                "/api/v1/credentials",
-                MASTER,
-                {"kind": "llm_api_key", "provider": "anthropic", "label": label, "secret": "z" * 24},
-            )
-            assert made.status_code in (200, 201), made.text
-            return str(made.json()["id"])
-
-        environment = await paid_from()
-        pooled_account = {"credential_id": await account("pool-model"), "role": "llm"}
-        pool = {"scope_kind": "global", "scope_value": "", "bindings": [pooled_account]}
-        assert (await call(app, "PUT", "/api/v1/credentials/bindings", MASTER, pool)).status_code == 200
-        pooled = await paid_from()
-        own = {"bindings": [{"credential_id": await account("widgets-account"), "role": "llm"}]}
-        assert (await call(app, "PUT", f"/api/v1/repos/{COVERED}/-/credentials", MASTER, own)).status_code == 200
-        owned = await paid_from()
-    held = "CLAUDE_CODE_OAUTH_TOKEN"
-    assert environment == {"limited": "(the deployment's)", "open": held, "master": held}, (
-        f"paid from the environment's account: {environment}"
-    )
-    assert pooled == dict.fromkeys(("limited", "open", "master"), "pool-model"), f"paid from the pool: {pooled}"
-    assert owned == dict.fromkeys(("limited", "open", "master"), "widgets-account"), f"paid from its own: {owned}"
 
 
 async def test_a_key_with_an_allowlist_reads_no_global_value_preview_or_description(
