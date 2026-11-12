@@ -524,8 +524,8 @@ class _Metric:
 async def _write_tied(db: DatabasePool, order: str) -> None:
     """Two jobs merged on one issue of one repo, two runs of a resumed job, and runs in two other repos, at one time.
 
-    ``order`` is the order the rows are written in, which is the order
-    Postgres stores them in: ``"ab"`` or ``"ba"``.
+    ``order`` is the order the rows are written in: ``"ab"`` or ``"ba"``.
+    Where Postgres stores them is up to it; :func:`_store_in` decides that.
     """
     for name in order:
         await _job(
@@ -547,15 +547,29 @@ async def _write_tied(db: DatabasePool, order: str) -> None:
         await _trace(db, f"trc-{name}-elsewhere", f"j-{name}-elsewhere", "developer", TIED)
 
 
-async def _fresh_heap(db: DatabasePool) -> None:
-    """Empty the tables the tied rows are written to, with a new heap each.
-
-    Rows are stored in the order they are written only into an empty heap:
-    one the database emptied before (an earlier test's rows, the first write
-    of this one) has free space a new row can be put in, ahead of a row
-    written before it.
-    """
+async def _empty_tied(db: DatabasePool) -> None:
+    """Empty the tables the tied rows are written to."""
     await db.execute("TRUNCATE traces, jobs CASCADE")
+
+
+async def _store_in(db: DatabasePool, order: str) -> None:
+    """Store each tied pair on disk in ``order`` (``"ab"`` or ``"ba"``), whatever order it was written in (#475).
+
+    Where an insert lands is up to Postgres: it can reuse a slot an earlier
+    row left, even one written and deleted before this test, so writing the
+    rows in an order, or deleting a row and writing it back, does not decide
+    their order on disk. CLUSTER does: it writes the table out again in the
+    order of an index. The index is made for it and dropped after, so the
+    schema is as the test found it.
+    """
+    direction = {"ab": "ASC", "ba": "DESC"}[order]
+    for table, key in (("jobs", "job_id"), ("traces", "trace_id")):
+        index = f"{table}_stored_{order}"
+        await db.execute(f'CREATE INDEX {index} ON {table} ({key} COLLATE "C" {direction})')
+        try:
+            await db.execute(f"CLUSTER {table} USING {index}")
+        finally:
+            await db.execute(f"DROP INDEX {index}")
 
 
 async def _tied_setup(db: DatabasePool) -> None:
@@ -632,8 +646,9 @@ async def test_rows_at_one_time_read_the_same_whatever_order_they_were_stored_in
     answers: dict[str, list[Any]] = {}
     stored: dict[str, list[str]] = {}
     for order in ("ab", "ba"):
-        await _fresh_heap(db)
+        await _empty_tied(db)
         await _write_tied(db, order)
+        await _store_in(db, order)
         stored[order] = await _stored_first(db)
         answers[order] = await TIED_READS[read](repo)
     assert stored == {"ab": ["a"] * len(TIED_PAIRS), "ba": ["b"] * len(TIED_PAIRS)}, (
@@ -644,19 +659,12 @@ async def test_rows_at_one_time_read_the_same_whatever_order_they_were_stored_in
     )
 
 
-async def _store_again(db: DatabasePool, table: str, key: str, value: str) -> None:
-    """Delete the row and write it back unchanged: Postgres now stores it after the rows written since."""
-    await db.execute(
-        f"WITH gone AS (DELETE FROM {table} WHERE {key} = $1 RETURNING *) INSERT INTO {table} SELECT * FROM gone", value
-    )
-
-
 async def test_the_rollup_and_a_full_read_keep_the_same_of_rows_at_one_time(db_with_migrations: DatabasePool) -> None:
     """#443: the same rows answer the same, through the rollup or not, however Postgres happens to store them."""
     db = db_with_migrations
     await _tied_setup(db)
-    await _fresh_heap(db)
     await _write_tied(db, "ab")
+    await _store_in(db, "ab")
     clock = [TIED + timedelta(days=5)]
     packs = Packs(RULES)
     service = ProgressionService(
@@ -672,13 +680,11 @@ async def test_the_rollup_and_a_full_read_keep_the_same_of_rows_at_one_time(db_w
     folded = await service.read()
     assert folded.rollup is not None and datetime.fromisoformat(folded.rollup["boundary"]) > TIED, folded.rollup
 
-    # Nothing changes but where Postgres keeps the first row of each pair.
-    moved = TIED_PAIRS[:2]
-    assert await _stored_first(db, moved) == ["a", "a"], "the rows were written a first"
-    await _store_again(db, "jobs", "job_id", "j-a")
-    await _store_again(db, "traces", "trace_id", "trc-a")
-    assert await _stored_first(db, moved) == ["b", "b"], (
-        "storing a again must put it after b on disk, or the reads below compare one order with itself"
+    # Nothing changes but where Postgres keeps the rows of each pair.
+    assert await _stored_first(db) == ["a"] * len(TIED_PAIRS), "the rows were stored a first"
+    await _store_in(db, "ba")
+    assert await _stored_first(db) == ["b"] * len(TIED_PAIRS), (
+        "the rows must now be stored b first, or the reads below compare one order with itself"
     )
 
     _same(folded, await reference.read(), "the same rows, stored again")
