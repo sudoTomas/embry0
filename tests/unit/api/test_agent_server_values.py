@@ -94,6 +94,9 @@ async def test_a_writer_sends_the_masked_view_back_unchanged(
             MASTER,
             {"type": "helper", "description": "Helps.", "model": "claude-sonnet-5", "mcp_servers": fresh},
         )
+        edited = json.loads(json.dumps(shown))
+        edited["remote"]["url"] = edited["remote"]["url"].replace("/v1?", "/v2?")
+        half_edited = await call(app, "PUT", "/api/v1/agents/developer", MASTER, {"mcp_servers": edited})
     stored = json.loads(after) if isinstance(after, str) else after
     assert saved.status_code == 200, saved.text
     assert stored == {
@@ -105,3 +108,20 @@ async def test_a_writer_sends_the_masked_view_back_unchanged(
         "mcp_servers.fresh.env.TOKEN holds a masked value with no stored value behind it: send the value itself",
     ), f"a mask with no stored value behind it is refused: {refused.status_code} {refused.text[:200]}"
     assert created.status_code == 422 and "holds a masked value" in created.text, f"a new agent: {created.text}"
+    assert (half_edited.status_code, half_edited.json().get("detail")) == (
+        422,
+        "mcp_servers.remote.url was edited from a masked value and still holds the mask: send the value itself",
+    ), f"a masked URL edited around its mask would store the mask: {half_edited.status_code} {half_edited.text[:200]}"
+
+
+async def test_a_job_s_agent_is_given_the_servers_as_stored(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The masked view is the readers': a job loads the agent's definition as stored, credentials included."""
+    from embry0.orchestration.nodes.agent import load_agent_definition_or_none
+
+    db = db_with_migrations
+    async with repository_writes_app(db, monkeypatch) as (app, _keys, _values):
+        await call(app, "PUT", "/api/v1/agents/developer", MASTER, {"mcp_servers": SERVERS})
+        loaded = await load_agent_definition_or_none({"configurable": {"db": db}}, "developer")
+    assert loaded is not None and loaded["mcp_servers"] == SERVERS, f"what a job's agent is given: {loaded}"

@@ -91,14 +91,16 @@ async def _shown(request: Request, agents: list[dict[str, Any]]) -> list[dict[st
 
 def _servers_sent(sent: Any, stored: Any) -> Any:
     """The ``mcp_servers`` a write sends, with each value it was shown masked and sends back unchanged read as the
-    stored one; 422 for a masked value nothing stored stands behind."""
+    stored one; 422 for a masked value nothing stored stands behind, and for one edited that still holds the mask."""
     try:
         return restore_unchanged(sent, stored or {})
     except MaskedValueWithoutStored as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=f"{exc.path} holds a masked value with no stored value behind it: send the value itself",
-        ) from None
+        why = (
+            "was edited from a masked value and still holds the mask"
+            if exc.edited
+            else "holds a masked value with no stored value behind it"
+        )
+        raise HTTPException(status_code=422, detail=f"{exc.path} {why}: send the value itself") from None
 
 
 @router.get("/agents")

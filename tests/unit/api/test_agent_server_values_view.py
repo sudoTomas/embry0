@@ -76,7 +76,8 @@ def test_every_credential_is_masked_and_the_shape_is_kept() -> None:
             "headers": {"Authorization": MASK},
             "client_secret": MASK,
             "timeout": 30,
-            "oauth": {"client_id": "widgets-app", "private_key": MASK},
+            # Named like a credential (``auth``), so all of it.
+            "oauth": {"client_id": MASK, "private_key": MASK},
         },
     }, json.dumps(shown, indent=1)
 
@@ -97,7 +98,6 @@ def test_what_a_writer_sends_back_as_shown_keeps_the_stored_values() -> None:
     ("sent", "where"),
     [
         ({"fresh": {"env": {"TOKEN": MASK}}}, "mcp_servers.fresh.env.TOKEN"),
-        ({"remote": {"url": f"https://{MASK}@other.example.test/"}}, "mcp_servers.remote.url"),
         ({"tracker": {"args": ["--api-key", MASK]}}, "mcp_servers.tracker.args[1]"),
     ],
 )
@@ -112,3 +112,105 @@ def test_values_that_are_not_masked_pass_as_they_are() -> None:
     assert masked_servers(plain) == plain, "nothing in it may be a credential"
     assert restore_unchanged(plain, {}) == plain
     assert masked_servers(None) is None and masked_servers([]) == []
+
+
+#: The other ways a server's definition commonly holds a credential, each in a value that must be masked.
+COMMON: dict[str, Any] = {
+    "cli": {
+        "command": "tool-mcp",
+        "args": [
+            "--header",
+            "Authorization: Bearer value-000000000021",
+            "--header=X-Api-Key: value-000000000022",
+            "-H",
+            "Cookie: sid=value-000000000023",
+            "--auth",
+            "ops:value-000000000024",
+            "--bearer=value-000000000025",
+            "-p",
+            "value-000000000026",
+            "--pwd",
+            "value-000000000027",
+            "https://tool.example.test/api?auth=value-000000000028&page=2",
+        ],
+        "ENV": {"PORT_SECRET_NUMBER": 1234, "ENABLED": True, "BLANK": ""},
+        "Headers": {"X-Trace": "value-000000000029"},
+    },
+    "web": {
+        "type": "http",
+        "url": "https://tool.example.test/mcp?session_id=value-000000000030",
+        "Authorization": "Bearer value-000000000031",
+        "cookie": "sid=value-000000000032",
+    },
+}
+
+
+def test_the_common_ways_of_writing_a_credential_are_masked() -> None:
+    shown = masked_servers(COMMON)
+    named = [s for s in _strings(shown) if "value-0000" in s]
+    assert named == [], f"credentials a reader is shown: {named}"
+    assert shown["cli"]["ENV"] == {"PORT_SECRET_NUMBER": MASK, "ENABLED": MASK, "BLANK": ""}, shown["cli"]
+    assert shown["cli"]["args"][:4] == ["--header", MASK, f"--header={MASK}", "-H"], shown["cli"]["args"]
+    assert shown["cli"]["args"][-1] == f"https://tool.example.test/api?auth={MASK}&page=2", shown["cli"]["args"]
+    assert restore_unchanged(shown, COMMON) == COMMON, "the masked view sent back changes nothing, numbers included"
+
+
+def test_a_masked_item_moved_in_a_list_is_refused() -> None:
+    """A list is restored only while its unmasked items stand where they stood, so a masked value never moves to a
+    place where it would read in clear."""
+    sent = masked_servers(COMMON)
+    sent["cli"]["args"] = ["--verbose", *sent["cli"]["args"][1:]]
+    with pytest.raises(MaskedValueWithoutStored) as raised:
+        restore_unchanged(sent, COMMON)
+    assert raised.value.path == "mcp_servers.cli.args[1]"
+
+
+def test_a_value_that_holds_the_mask_among_other_characters_is_stored_as_sent() -> None:
+    sent = {"tracker": {"command": "npx", "env": {"NOTE": f"stars {MASK} in it"}}}
+    assert restore_unchanged(sent, STORED) == sent
+
+
+#: Credentials inside a JSON object or array passed as a string: an argument, a flag's value, a key of its own.
+IN_JSON: dict[str, Any] = {
+    "cfg": {
+        "command": "cfg-mcp",
+        "args": [
+            "--config",
+            json.dumps({"token": "value-000000000041", "region": "eu", "nested": {"api_key": "value-000000000042"}}),
+            "--settings=" + json.dumps({"password": "value-000000000043", "retries": 3}),
+            json.dumps([{"url": "https://ops:value-000000000044@cfg.example.test/"}, "plain"]),
+            '{"region":"eu",  "retries":3}',
+            "{not json",
+        ],
+        "options": json.dumps({"headers": {"X-Api-Key": "value-000000000045"}, "timeout": 5}),
+    },
+}
+
+
+def test_a_credential_inside_a_json_string_is_masked() -> None:
+    shown = masked_servers(IN_JSON)
+    named = [s for s in _strings(shown) if "value-0000" in s]
+    assert named == [], f"credentials a reader is shown inside JSON strings: {named}"
+    args = shown["cfg"]["args"]
+    assert json.loads(args[1]) == {"token": MASK, "region": "eu", "nested": {"api_key": MASK}}, args[1]
+    assert args[2] == "--settings=" + json.dumps({"password": MASK, "retries": 3}), args[2]
+    assert args[4:] == IN_JSON["cfg"]["args"][4:], "a JSON string with no credential in it, and text, read as stored"
+    assert json.loads(shown["cfg"]["options"]) == {"headers": {"X-Api-Key": MASK}, "timeout": 5}
+    assert restore_unchanged(shown, IN_JSON) == IN_JSON, "the masked view sent back keeps every stored string"
+
+
+@pytest.mark.parametrize(
+    ("edit", "where"),
+    [
+        (lambda s: s["remote"].update(url=s["remote"]["url"].replace("team=widgets", "team=gadgets")), "url"),
+        (lambda s: s["tracker"]["args"].__setitem__(7, s["tracker"]["args"][7] + "&page=2"), "args[7]"),
+    ],
+)
+def test_a_masked_value_edited_around_its_mask_is_refused(edit: Any, where: str) -> None:
+    """What the mask stood for cannot be known, so a value edited from a masked one that still holds the mask would
+    store the mask itself in place of the credential."""
+    sent = copy.deepcopy(masked_servers(STORED))
+    edit(sent)
+    with pytest.raises(MaskedValueWithoutStored) as raised:
+        restore_unchanged(sent, STORED)
+    assert raised.value.edited and raised.value.path.endswith(where), raised.value.path
