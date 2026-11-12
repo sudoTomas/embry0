@@ -241,11 +241,16 @@ ENTRY_POINTS: list[tuple[str, str, str, Any, Any]] = [
         {"title": "t", "repo": ALLOWED, "auto_triage": True},
         {"title": "t", "repo": OTHER, "auto_triage": True},
     ),
-    ("run the watcher", "POST", "/api/v1/watcher/run?stack={stack}", None, None),
     ("build a QA image", "POST", "/api/v1/qa/images/build", {"repo": ALLOWED}, {"repo": OTHER}),
     ("bootstrap a repo", "POST", "/api/v1/repos/bootstrap", {"repo": ALLOWED}, {"repo": OTHER}),
 ]
 
+
+# Ticking a stack: to a key whose list does not cover it, the stack answers as one nobody watches, whether it is
+# watched or not, and the refusal is logged and audited all the same (test_watcher_routes_allowlist.py).
+STACK_ACTIONS: list[tuple[str, str, str, Any, Any]] = [
+    ("run the watcher", "POST", "/api/v1/watcher/run?stack={stack}", None, None),
+]
 
 # The routes that act on one job: to a key whose list does not cover the job's repository, the job answers as one
 # that does not exist (embry0.api.job_allowlist), and the refusal is logged and audited all the same.
@@ -360,7 +365,7 @@ def _assert_refusal_logged_and_nothing_done(app: Any, label: str, logs: list[dic
 
 @pytest.mark.parametrize(
     ("label", "method", "template", "allowed_body", "other_body"),
-    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + CASE_ACTIONS + APPROVAL_ACTIONS,
+    ENTRY_POINTS + STACK_ACTIONS + JOB_ACTIONS + ISSUE_ACTIONS + CASE_ACTIONS + APPROVAL_ACTIONS,
 )
 def test_a_restricted_key_reaches_its_listed_repository(app, label, method, template, allowed_body, other_body):
     response = _call(app, LIMITED_TOKEN, method, template, allowed_body, "allowed")
@@ -372,7 +377,7 @@ def test_a_restricted_key_reaches_its_listed_repository(app, label, method, temp
 @pytest.mark.parametrize("token", [OPEN_TOKEN, "master-key"], ids=["unrestricted-key", "master-key"])
 @pytest.mark.parametrize(
     ("label", "method", "template", "allowed_body", "other_body"),
-    ENTRY_POINTS + JOB_ACTIONS + ISSUE_ACTIONS + CASE_ACTIONS + APPROVAL_ACTIONS,
+    ENTRY_POINTS + STACK_ACTIONS + JOB_ACTIONS + ISSUE_ACTIONS + CASE_ACTIONS + APPROVAL_ACTIONS,
 )
 def test_an_unrestricted_caller_is_unaffected(app, token, label, method, template, allowed_body, other_body):
     response = _call(app, token, method, template, other_body, "other")
@@ -404,10 +409,26 @@ def test_a_restricted_key_cannot_delete_its_issue_with_a_child_in_another_reposi
     assert not app.state.issue_executor.cancel_job.await_count, "a job was cancelled anyway"
 
 
-def test_a_restricted_key_runs_the_only_watcher_only_when_it_is_listed(app) -> None:
+@pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), STACK_ACTIONS)
+def test_a_restricted_key_acting_on_another_repository_s_stack_gets_an_unwatched_stack_s_answer(
+    app, label, method, template, allowed_body, other_body
+):
+    with capture_logs() as logs:
+        response = _call(app, LIMITED_TOKEN, method, template, other_body, "other")
+    answer = (response.status_code, response.json() if response.content else None)
+    assert answer == (404, {"detail": f"{OTHER} is not a watched stack"}), (
+        f"{label}: a key limited to {ALLOWED} is answered on {OTHER}'s stack as on one nobody watches: {answer}"
+    )
+    _assert_refusal_logged_and_nothing_done(app, label, logs)
+
+
+def test_a_restricted_key_covering_no_watched_stack_ticks_nothing(app) -> None:
     app.state.watcher_services = {OTHER: MagicMock(run_once=AsyncMock(return_value={}))}
     response = _call(app, LIMITED_TOKEN, "POST", "/api/v1/watcher/run", None, "other")
-    assert _refused(response), f"the unnamed single watcher ran for a restricted key: {response.text}"
+    assert (response.status_code, response.json()) == (503, {"detail": "watcher not initialized"}), (
+        f"a key covering no watched stack is answered as a deployment watching none: {response.text}"
+    )
+    assert not app.state.watcher_services[OTHER].run_once.await_count, "the only watcher ran for a restricted key"
 
 
 def test_the_refusal_is_audited(app) -> None:

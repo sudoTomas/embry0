@@ -365,7 +365,7 @@ BODY_TARGETS_ELSEWHERE: dict[tuple[str, str], str] = {
         ("POST", path): "test_api_key_repo_allowlist.py, the repository named"
         for path in ("/api/v1/jobs", "/api/v1/issues", "/api/v1/qa/images/build", "/api/v1/repos/bootstrap")
     },
-    ("POST", "/api/v1/watcher/run"): "test_api_key_repo_allowlist.py, the stack named",
+    ("POST", "/api/v1/watcher/run"): "test_watcher_routes_allowlist.py, the stack named",
     ("PUT", "/api/v1/issues/{issue_id}"): "test_api_key_repo_allowlist.py, moving an issue to another repository",
     ("PUT", "/api/v1/config/settings"): "test_settings_layers_api.py: ?owner= and ?repo= name the layer written",
     ("PATCH", "/api/v1/config/settings/{section}"): "test_settings_layers_api.py, as PUT /config/settings",

@@ -6,7 +6,7 @@ from typing import Any, cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, hide_unless_covered, key_covers
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 
@@ -44,8 +44,13 @@ async def trigger_watcher_run(
     are watched, every stack ticks, concurrently, and the answer is
     ``{"action": "every_stack_ticked", "stacks": [{"stack": ..., <that
     tick's answer>}, ...]}`` in stack order. Each tick may run one paid
-    analysis under its own stack's caps. A restricted key must be allowed
-    every stack, all checked before any tick starts.
+    analysis under its own stack's caps.
+
+    A key with a repository allowlist is answered as a deployment watching
+    only the stacks it covers (embry0.api.repository_reads): omitted, the
+    stacks it covers tick; a stack it does not cover answers as one nobody
+    watches, whether it is watched or not, and the refusal is logged and
+    audited; covering none, it is answered as a deployment watching none.
 
     Works even when the scheduled loop is disabled (`WATCHER_ENABLED=false`)
     so the flow can be exercised deliberately; the tick still enforces every
@@ -62,26 +67,34 @@ async def trigger_watcher_run(
         await enforce_repo_allowlist(request, stack, action="run the watcher")
         run_with = await checked_run_with(request, chosen, stack)
         return cast("dict[str, Any]", await single.run_once(run_with))
+    # The stacks the caller's key covers: every one for a caller without an allowlist.
+    watched = {name: service for name, service in services.items() if key_covers(request, name)}
+    if not watched or (stack and stack not in watched):
+        # A stack the key does not cover answers as one nobody watches, and a key covering none of them is
+        # answered as a deployment watching none (above); a stack it does not cover is a refusal on record.
+        unwatched = (
+            HTTPException(status_code=404, detail=f"{stack} is not a watched stack")
+            if watched
+            else HTTPException(status_code=503, detail="watcher not initialized")
+        )
+        if stack:
+            await hide_unless_covered(request, stack, unwatched, action="run the watcher")
+        raise unwatched
     if stack:
-        if stack not in services:
-            raise HTTPException(status_code=404, detail=f"{stack} is not a watched stack")
-        await enforce_repo_allowlist(request, stack, action="run the watcher")
         run_with = await checked_run_with(request, chosen, stack)
-        return cast("dict[str, Any]", await services[stack].run_once(run_with))
-    if len(services) > 1:
+        return cast("dict[str, Any]", await watched[stack].run_once(run_with))
+    if len(watched) > 1:
         # The dashboard's Run tick now and MCP watcher_trigger name no stack;
         # unnamed means all of them, never one picked for the caller.
-        names = sorted(services)
+        names = sorted(watched)
         chosen_for: dict[str, Any] = {}
         for name in names:
-            await enforce_repo_allowlist(request, name, action="run the watcher")
             chosen_for[name] = await checked_run_with(request, chosen, name)
-        results = await asyncio.gather(*(services[name].run_once(chosen_for[name]) for name in names))
+        results = await asyncio.gather(*(watched[name].run_once(chosen_for[name]) for name in names))
         return {
             "action": "every_stack_ticked",
             "stacks": [{"stack": name, **result} for name, result in zip(names, results, strict=True)],
         }
-    only_stack, service = next(iter(services.items()))
-    await enforce_repo_allowlist(request, only_stack, action="run the watcher")
+    only_stack, service = next(iter(watched.items()))
     run_with = await checked_run_with(request, chosen, only_stack)
     return cast("dict[str, Any]", await service.run_once(run_with))

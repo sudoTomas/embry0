@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from prometheus_client import CollectorRegistry
 
@@ -69,21 +68,16 @@ async def test_with_two_stacks_an_unnamed_tick_runs_every_stack() -> None:
         service.run_once.assert_awaited_once()
 
 
-async def test_an_unnamed_tick_needs_a_key_that_may_tick_every_stack(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A restricted key is checked against each stack before any ticks, so
-    it never starts some analyses and is refused the rest."""
-
-    async def _only_backend(request: Any, repo: str | None, *, action: str) -> None:
-        if repo != STACK:
-            raise HTTPException(status_code=403, detail=f"repo_not_allowed: {repo}")
-
-    monkeypatch.setattr(watcher_api, "enforce_repo_allowlist", _only_backend)
-    services = {STACK: _service(), SELF: _service()}
+async def test_an_unnamed_tick_ticks_only_the_stacks_the_key_covers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key with a repository allowlist is answered as a deployment watching
+    only the stacks it covers: unnamed, those tick, and never another one."""
+    monkeypatch.setattr(watcher_api, "key_covers", lambda _request, repo: repo == STACK, raising=False)
+    services = {STACK: _service("no_issue"), SELF: _service("proposed")}
     async with _client(_app(services)) as client:
         resp = await client.post("/api/v1/watcher/run")
-    assert resp.status_code == 403, resp.text
-    for service in services.values():
-        service.run_once.assert_not_awaited()
+    assert (resp.status_code, resp.json()) == (200, {"action": "no_issue"}), resp.text
+    services[STACK].run_once.assert_awaited_once()
+    services[SELF].run_once.assert_not_awaited()
 
 
 async def test_a_named_stack_ticks_only_itself() -> None:
