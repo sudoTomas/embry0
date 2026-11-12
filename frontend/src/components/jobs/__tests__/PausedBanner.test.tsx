@@ -11,6 +11,23 @@ describe("PausedBanner title", () => {
   });
 });
 
+describe("PausedBanner countdown", () => {
+  it("counts down to the instant the API says the pause ends (#471)", () => {
+    const expiresAt = new Date(Date.now() + 2 * 3600 * 1000 + 5 * 60 * 1000).toISOString();
+    render(<PausedBanner jobId="job-1" expiresAt={expiresAt} onResume={vi.fn()} onDiscard={vi.fn()} />);
+    expect(screen.queryByText(/^2h \d+m remaining$/), "the banner does not count down to the pause's end").not.toBeNull();
+  });
+
+  it("reads Expired once that instant has passed, and shows no countdown without one", () => {
+    const { rerender } = render(
+      <PausedBanner jobId="job-1" expiresAt={new Date(Date.now() - 1000).toISOString()} onResume={vi.fn()} onDiscard={vi.fn()} />,
+    );
+    expect(screen.queryByText("Expired"), "a pause past its end does not read as expired").not.toBeNull();
+    rerender(<PausedBanner jobId="job-1" onResume={vi.fn()} onDiscard={vi.fn()} />);
+    expect(screen.queryByText(/remaining$|^Expired$/), "a countdown without an end to count to").toBeNull();
+  });
+});
+
 describe("PausedBanner budget", () => {
   it("says how much more a continue lets a job over its budget spend", async () => {
     const onResume = vi.fn();

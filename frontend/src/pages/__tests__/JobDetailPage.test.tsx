@@ -385,6 +385,22 @@ describe("JobDetailPage", () => {
     ).toHaveLength(1);
   });
 
+  it("a job that paused again counts down from its pause, not from its start (#471)", () => {
+    const hour = 3600 * 1000;
+    state.job = job({
+      status: "paused",
+      current_stage: "review_unparseable",
+      // Started three days ago and never finished; the job's second pause began an hour ago.
+      started_at: new Date(Date.now() - 72 * hour).toISOString(),
+      finished_at: null,
+      pause_expires_at: new Date(Date.now() + 47 * hour + 30 * 60 * 1000).toISOString(),
+    });
+    state.events = [];
+    mount();
+    expect(screen.queryByText("Expired"), "a live pause reads as expired, counted from the job's start").toBeNull();
+    expect(screen.queryByText(/^47h \d+m remaining$/), "the banner does not count down to the pause's own end").not.toBeNull();
+  });
+
   it("the ledger is collapsed and holds the traces table", () => {
     mount();
     const ledger = screen.getByTestId("ledger") as HTMLDetailsElement;

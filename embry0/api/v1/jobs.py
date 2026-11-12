@@ -386,6 +386,12 @@ async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(
             structlog.get_logger(__name__).warning("agent_failures_query_failed", job_id=job_id, exc_info=True)
             job["agent_failures"] = []
     job["brief"], job["status_words"] = await _brief_and_words(request, jobs, job)
+    # #471: when this pause ends, by the expiry's own rule, so the dashboard counts down to what the sweeper does.
+    from embry0.execution.image_manager import paused_job_expires_at
+
+    ttl = getattr(getattr(request.app.state, "config", None), "paused_job_ttl_hours", 48)
+    expires = paused_job_expires_at(job, int(ttl))
+    job["pause_expires_at"] = expires.isoformat() if expires else None
     return job
 
 
