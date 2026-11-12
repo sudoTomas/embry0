@@ -250,7 +250,13 @@ async def ensure_pr_for_branch(
             url = str((existing[0] or {}).get("html_url") or "")
             if url:
                 logger.info("pr_fallback_found_existing", repo=repo, branch=branch, url=url)
-                await _apply_pr_labels(client, repo=repo, pr_number=(existing[0] or {}).get("number"), labels=labels)
+                await _labels_or_say_so(
+                    client,
+                    repo=repo,
+                    pr_number=(existing[0] or {}).get("number"),
+                    labels=labels,
+                    diagnostics=diagnostics,
+                )
                 return url
 
         base = target_branch or await client.get_repo_default_branch(repo)
@@ -270,7 +276,9 @@ async def ensure_pr_for_branch(
         created = create.json() or {}
         created_url = str(created.get("html_url") or "") or None
         logger.info("pr_fallback_created", repo=repo, branch=branch, url=created_url)
-        await _apply_pr_labels(client, repo=repo, pr_number=created.get("number"), labels=labels)
+        await _labels_or_say_so(
+            client, repo=repo, pr_number=created.get("number"), labels=labels, diagnostics=diagnostics
+        )
         return created_url
     except Exception as exc:
         # GitHubClient owns the httpx lifecycle: it closes a client it created
@@ -286,10 +294,18 @@ async def _apply_pr_labels(
     repo: str,
     pr_number: Any,
     labels: list[str] | None,
-) -> None:
-    """Best-effort labels on a PR (a PR is an issue to the labels API)."""
+) -> str | None:
+    """Labels on a PR (a PR is an issue to the labels API).
+
+    None when they are on it, or there is nothing to put on; otherwise what
+    GitHub said, redacted and bounded. The forge client already sends the call
+    again on an answer a retry can change (429, 5xx, a dropped connection);
+    adding labels twice changes nothing, so that is safe here (#472).
+    """
     if not labels or not isinstance(pr_number, int):
-        return
+        return None
+    from embry0.safety.redaction import redact_bounded
+
     try:
         resp = await client.post(
             f"/repos/{repo}/issues/{pr_number}/labels",
@@ -297,8 +313,55 @@ async def _apply_pr_labels(
             json={"labels": list(labels)},
         )
         resp.raise_for_status()
+        return None
     except Exception as exc:
         logger.warning("pr_label_failed", repo=repo, pr_number=pr_number, labels=labels, error=str(exc))
+        return redact_bounded(forge_said(exc), 300)
+
+
+async def _labels_or_say_so(
+    client: GitHubClient,
+    *,
+    repo: str,
+    pr_number: Any,
+    labels: list[str] | None,
+    diagnostics: dict[str, Any] | None,
+) -> None:
+    """Put ``labels`` on the PR; when they will not go on, say so on the PR and in ``diagnostics`` (#472).
+
+    The PR still counts: it is open and the job has its URL. But a missing
+    ``human-merge-only`` is what tells a person, and anything that keys on the
+    label, not to merge it, so the PR gets a comment naming the labels, and
+    ``diagnostics`` gets ``labels_missing`` (the labels), ``labels_error``
+    (what GitHub said) and ``labels_noted`` (whether the comment went on), for
+    the job to record.
+    """
+    said = await _apply_pr_labels(client, repo=repo, pr_number=pr_number, labels=labels)
+    if said is None or not labels:
+        return
+    named = ", ".join(f"`{label}`" for label in labels)
+    body = f"embry0 could not add the labels {named} to this pull request ({said})."
+    from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
+
+    if HUMAN_MERGE_LABEL in labels:
+        body += (
+            f" It should carry `{HUMAN_MERGE_LABEL}`: only a person should merge it, after reviewing it. "
+            "Please add the label by hand."
+        )
+    noted = False
+    try:
+        # Sent once: a comment the forge took but answered 5xx would be posted twice.
+        resp = await client.post(
+            f"/repos/{repo}/issues/{pr_number}/comments", repo=repo, json={"body": body}, retry_transient=False
+        )
+        resp.raise_for_status()
+        noted = True
+    except Exception as exc:
+        logger.warning("pr_label_note_failed", repo=repo, pr_number=pr_number, error=str(exc))
+    if diagnostics is not None:
+        diagnostics["labels_missing"] = list(labels)
+        diagnostics["labels_error"] = said
+        diagnostics["labels_noted"] = noted
 
 
 class OpenPRListError(RuntimeError):

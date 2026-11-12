@@ -6,6 +6,8 @@ against the job's KNOWN ticket identifiers — precision lives in the
 matcher, not the scanner.
 """
 
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 
@@ -501,3 +503,102 @@ async def test_ensure_pr_says_what_github_answered_when_it_opens_none():
         skipped: dict = {}
         assert await ensure_pr_for_branch(title="t", body="b", diagnostics=skipped, **kwargs) is None
         assert said in skipped.get("change_request_error", ""), (kwargs, skipped)
+
+
+# ---- labels that will not go on (#472) ----
+
+
+def _label_handler(*, label_answers: list[int], comment_status: int = 201, existing: bool = False):
+    """A GitHub that has or opens PR #5, answers each labels call in turn, and records what embry0 sent."""
+    seen: dict = {"labels": 0, "comments": []}
+    pr = {"html_url": "https://github.com/o/r/pull/5", "number": 5}
+
+    def handler(request):
+        path = request.url.path
+        if request.method == "GET" and path == "/repos/o/r/pulls":
+            return httpx.Response(200, json=[pr] if existing else [])
+        if request.method == "POST" and path == "/repos/o/r/pulls":
+            return httpx.Response(201, json=pr)
+        if request.method == "POST" and path == "/repos/o/r/issues/5/labels":
+            status = label_answers[min(seen["labels"], len(label_answers) - 1)]
+            seen["labels"] += 1
+            if status >= 400:
+                return httpx.Response(status, json={"message": "Resource not accessible by integration"})
+            return httpx.Response(status, json=[])
+        if request.method == "POST" and path == "/repos/o/r/issues/5/comments":
+            seen["comments"].append(_json.loads(request.content)["body"])
+            return httpx.Response(comment_status, json={})
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    return handler, seen
+
+
+@pytest.fixture
+def no_backoff(monkeypatch):
+    """The forge client's retries, without their sleeps."""
+    import embry0.services.github_prs as github_prs
+
+    class _NoBackoff(github_prs.GitHubClient):
+        def __init__(self, **kwargs):
+            super().__init__(sleep=AsyncMock(), **kwargs)
+
+    monkeypatch.setattr(github_prs, "GitHubClient", _NoBackoff)
+
+
+async def _open_labelled(handler, labels=("embry0", "human-merge-only")) -> tuple[str | None, dict]:
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="embry0/iss-abc-fix",
+        title="t",
+        body="b",
+        labels=list(labels),
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+        diagnostics=diagnostics,
+    )
+    return url, diagnostics
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing", [False, True], ids=["opened", "found open"])
+async def test_labels_that_will_not_go_on_are_said_on_the_pr_and_to_the_caller(no_backoff, existing):
+    """The PR still counts, but a missing human-merge-only is named on the PR and to the caller."""
+    handler, seen = _label_handler(label_answers=[403], existing=existing)
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5"
+    assert diagnostics.get("labels_missing") == ["embry0", "human-merge-only"], (
+        f"the caller is not told the labels are missing: {diagnostics}"
+    )
+    assert diagnostics.get("labels_error") == "403 Resource not accessible by integration", diagnostics
+    assert diagnostics.get("labels_noted") is True, diagnostics
+    assert len(seen["comments"]) == 1, f"the PR does not say its labels are missing: {seen['comments']}"
+    note = seen["comments"][0]
+    assert "`embry0`, `human-merge-only`" in note and "403 Resource not accessible" in note, note
+    assert "only a person should merge it" in note, f"the note does not say why the label matters: {note}"
+
+
+@pytest.mark.asyncio
+async def test_a_label_call_the_forge_cuts_short_is_sent_again_and_then_not_reported(no_backoff):
+    handler, seen = _label_handler(label_answers=[503, 200])
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5"
+    assert seen["labels"] == 2, f"a labels call answered 503 was asked for {seen['labels']} time(s)"
+    assert "labels_missing" not in diagnostics and seen["comments"] == [], (diagnostics, seen["comments"])
+
+
+@pytest.mark.asyncio
+async def test_a_note_that_will_not_go_on_is_said_to_the_caller_and_sent_once(no_backoff):
+    handler, seen = _label_handler(label_answers=[403], comment_status=503)
+    _url, diagnostics = await _open_labelled(handler)
+    assert diagnostics.get("labels_missing") and diagnostics.get("labels_noted") is False, diagnostics
+    assert len(seen["comments"]) == 1, f"the note was posted {len(seen['comments'])} times"
+
+
+@pytest.mark.asyncio
+async def test_a_note_about_other_labels_does_not_ask_for_human_merge_only(no_backoff):
+    handler, seen = _label_handler(label_answers=[403])
+    _url, diagnostics = await _open_labelled(handler, labels=("embry0",))
+    assert diagnostics.get("labels_missing") == ["embry0"], diagnostics
+    assert seen["comments"] and "human-merge-only" not in seen["comments"][0], seen["comments"]
