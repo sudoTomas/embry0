@@ -538,7 +538,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         exhausted, cap_updates = _enforce_ask_user_cap(state, pending_questions, job_id_for_log=state.get("job_id"))
         if exhausted:
             writer(events.node_completed(node="triage", agent="triage", attempt=attempt, action="failed"))
-            return Command(goto="max_retries", update=cap_updates)
+            # The run's record stays: its output and cost, and its own error before the cap's (#444).
+            return Command(goto="max_retries", update=with_cap_updates(result, cap_updates))
         # Only divert to ask_user_interrupt when there are blocking questions.
         # Auto-answerable-only emissions don't pause; fall through to the
         # normal needs_info / proceed routing.
@@ -767,7 +768,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             )
             if exhausted:
                 writer(events.node_completed(node="triage", agent="triage", attempt=attempt, action="failed"))
-                return Command(goto="max_retries", update=cap_updates)
+                # As on the first pass: the re-run's record stays beside the cap's (#444).
+                return Command(goto="max_retries", update=with_cap_updates(result, cap_updates))
             if cap_updates.get("pending_agent_questions"):
                 writer(events.node_completed(node="triage", agent="triage", attempt=attempt, action="ask_user"))
                 return Command(
