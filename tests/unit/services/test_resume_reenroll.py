@@ -253,3 +253,19 @@ async def test_a_read_only_resume_enrolls_no_push_branch(pipeline):
     await ex._execute_workflow_stream(Command(resume={"q1": "yes"}), "iss-1", "job-1", pipeline=pipeline)
 
     assert order[0][2]["git_push_branches"] == [], order[0][2]
+
+
+@pytest.mark.asyncio
+async def test_a_claimed_resume_knows_the_job_was_paused_and_gives_the_pause_back():
+    """#470: the route took the pause (it reads ``running``); a failed re-enroll still puts it back to ``paused``."""
+    ex = _resume_executor(SandboxReenrollError("enroll returned HTTP 503", error_code=ErrorCode.SANDBOX_INIT))
+    ex._jobs.get = AsyncMock(return_value={"job_id": "job-1", "status": "running"})
+
+    try:
+        await ex.resume("iss-1", "job-1", {"choice": "continue_retrying"}, claimed=True)
+    except TypeError as exc:
+        pytest.fail(f"a resume cannot be told the route already took its pause: {exc}")
+
+    writes = [c.kwargs.get("status") for c in ex._jobs.update.await_args_list if c.kwargs.get("status")]
+    assert "running" not in writes, f"the claimed resume wrote running again: {writes}"
+    assert writes[-1:] == ["paused"], f"a claimed pause the resume could not run must be given back: {writes}"

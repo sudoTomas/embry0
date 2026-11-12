@@ -37,8 +37,10 @@ def app() -> Any:
     jobs.get = AsyncMock(
         return_value={"job_id": "job-paused123", "status": "paused", "repo": "owner/repo", "issue_id": "iss-1"}
     )
+    # #470: a resume takes the pause first; this one is free to take.
+    jobs.claim_pause = AsyncMock(return_value=True)
     app.state.jobs_repo = jobs
-    app.state.issue_executor = MagicMock(schedule_resume=MagicMock())
+    app.state.issue_executor = MagicMock(schedule_resume=MagicMock(), draining=False)
     app.state.settings = _Store()
     return app
 

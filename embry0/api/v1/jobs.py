@@ -693,6 +693,14 @@ async def resume_job_as(
     if req.extra_budget_usd is not None:
         await _check_extra_budget(request, req.extra_budget_usd)
 
+    # #470: the pause is taken, paused -> running, in one statement before anything is scheduled, so two resumes of
+    # it sent at once cannot both run it: the second finds the job running and is refused with what it is now.
+    if executor.draining:
+        raise HTTPException(status_code=503, detail="embry0 is shutting down; try again once it is back")
+    if not await jobs.claim_pause(job_id):
+        now = await jobs.get(job_id)
+        raise HTTPException(status_code=409, detail=f"Job is {(now or {}).get('status') or 'gone'}, not paused")
+
     # issue_id is None for issue-less, API-submitted jobs (POST /jobs with a
     # task string). The workflow tolerates that on first run (submit_job
     # dispatches with a null issue_id from create_job) and
@@ -701,18 +709,26 @@ async def resume_job_as(
     # interrupt options can never be exercised; only /cancel works).
     issue_id = job.get("issue_id") or None
 
-    executor.schedule_resume(
-        issue_id,
-        job_id,
-        {
-            "choice": req.choice,
-            "guidance": req.guidance,
-            **({"extra_budget_usd": req.extra_budget_usd} if req.extra_budget_usd else {}),
-            # Who continued it, for the job.budget_raised audit row a raise writes.
-            "actor": actor,
-        },
-        kind="resume_via_api",
-    )
+    from embry0.orchestration.restart import ExecutorDraining
+
+    try:
+        executor.schedule_resume(
+            issue_id,
+            job_id,
+            {
+                "choice": req.choice,
+                "guidance": req.guidance,
+                **({"extra_budget_usd": req.extra_budget_usd} if req.extra_budget_usd else {}),
+                # Who continued it, for the job.budget_raised audit row a raise writes.
+                "actor": actor,
+            },
+            kind="resume_via_api",
+            claimed=True,
+        )
+    except ExecutorDraining:
+        # A drain began between the check and the schedule: nothing runs, so the pause is given back.
+        await jobs.update(job_id, status="paused")
+        raise HTTPException(status_code=503, detail="embry0 is shutting down; try again once it is back") from None
 
     return {"job_id": job_id, "status": "resuming", "choice": req.choice}
 
