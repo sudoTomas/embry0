@@ -88,6 +88,7 @@ async def readiness_inputs(
             env_keys=env_keys,
             docker_access=bool(registered.get("docker_access")),
             writing=False,  # the stored setup
+            repo=repo,
         )
         if stored is not None
         else None

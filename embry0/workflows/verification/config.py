@@ -8,12 +8,13 @@ when a job reads it. A job never fails because the stored object is unusable:
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
-from embry0.workflows.qa._glob_match import GlobPatternError, check_glob
+from embry0.workflows.qa._glob_match import NEGATION, GlobPatternError, check_glob, warn_once
 
 # A test command is executable text: it is refused when too long, never cut.
 COMMAND_MAX_CHARS = 2000
@@ -30,9 +31,12 @@ STORED: dict[str, bool] = {"stored": True}
 
 def _validated_globs(patterns: list[str], info: ValidationInfo) -> list[str]:
     cleaned = [p.strip() for p in patterns]
+    stored = bool((info.context or {}).get("stored"))
     for pattern in cleaned:
+        if pattern.startswith("!") and not stored:
+            raise ValueError(f"{NEGATION} (glob {pattern!r})")
         try:
-            check_glob(pattern, stored=bool((info.context or {}).get("stored")))
+            check_glob(pattern, stored=stored)
         except GlobPatternError as exc:
             raise ValueError(str(exc)) from exc
     return cleaned
@@ -126,20 +130,54 @@ class VerificationConfig(BaseModel):
         return v
 
 
-def load_verification_config(raw: Any) -> tuple[VerificationConfig | None, str | None]:
+def negated_globs(config: VerificationConfig) -> list[str]:
+    """Every glob of ``config`` (its targets' paths and its tier rules) that starts with ``!``, in order."""
+    globs = [p for target in config.test_targets for p in target.paths]
+    tiers = config.tiers
+    globs += [p for rule in (tiers.frontend_paths, tiers.backend_paths, tiers.neutral_paths) for p in rule or ()]
+    return [g for g in globs if g.startswith("!")]
+
+
+def negation_warning(config: VerificationConfig | None) -> str | None:
+    """What a person is told of a config holding a glob that starts with ``!``: it reads, and matches only paths
+    that start with ``!``. None when it holds none."""
+    negated = negated_globs(config) if config is not None else []
+    if not negated:
+        return None
+    listed = ", ".join(repr(g) for g in negated[:5]) + (f" and {len(negated) - 5} more" if len(negated) > 5 else "")
+    return (
+        f"This verification config holds globs that start with '!' ({listed}): negation is not supported, so each "
+        "matches only paths that start with '!'. It is kept as it was; a new save refuses them."
+    )
+
+
+def load_verification_config(raw: Any, *, repo: str = "") -> tuple[VerificationConfig | None, str | None]:
     """Parse a stored ``repo_preferences.verification`` value.
 
     Returns ``(config, None)``, or ``(None, reason)`` when nothing usable is
     stored. Never raises: a bad row degrades the gate to ``not_configured``.
+    A config holding a glob that starts with ``!`` reads, as it did, and
+    logs one warning naming them once per ``repo`` (the repository it is
+    read for) and config; a request is refused one.
     """
     if raw is None or raw == {}:
         return None, None
     if not isinstance(raw, dict):
         return None, "stored verification config is not an object"
     try:
-        return VerificationConfig.model_validate(raw, context=STORED), None
+        config = VerificationConfig.model_validate(raw, context=STORED)
     except ValidationError as exc:
         errors = exc.errors()
         where = ".".join(str(p) for p in errors[0]["loc"]) if errors else ""
         message = errors[0]["msg"] if errors else "invalid"
         return None, f"stored verification config is invalid at {where or '<root>'}: {message}"
+    negated = negated_globs(config)
+    if negated:
+        warn_once(
+            "verification_config_negated_globs",
+            repo=repo,
+            text=json.dumps(raw, sort_keys=True, default=str),
+            globs=[g[:100] for g in negated[:10]],
+            count=len(negated),
+        )
+    return config, None

@@ -506,3 +506,19 @@ async def test_get_fills_in_team_for_a_stored_pr_review_without_ready_authors(ap
     )
     assert anyone["ready_authors"] == "anyone", f"a stored anyone was rewritten: {anyone}"
     assert unset is None, f"a repo with no pr_review gained one: {unset}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verification",
+    [
+        {"test_targets": [{"name": "app", "command": "make test", "paths": ["!src/**"]}]},
+        {"tiers": {"frontend_paths": ["!web/**"]}},
+    ],
+    ids=["a test target", "a tier rule"],
+)
+async def test_put_refuses_a_verification_glob_that_starts_with_an_exclamation_mark(app, verification):
+    """There is no negation: '!src/**' only ever matched paths starting with '!', so the target never ran."""
+    resp = await _put(app, {"verification": verification})
+    assert resp.status_code == 422, f"a negated verification glob was stored: {resp.status_code}"
+    assert "negation is not supported" in resp.text, resp.text

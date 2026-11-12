@@ -47,6 +47,7 @@ async def check_qa_config(
     env_keys: set[str],
     docker_access: bool,
     writing: bool,
+    repo: str = "",
 ) -> dict[str, Any]:
     """Check one test setup document.
 
@@ -58,7 +59,7 @@ async def check_qa_config(
     would stop every run; ``summary`` is None when the text cannot be read.
     """
     try:
-        cfg = parse_qa_yaml_v2(text, writing=writing)
+        cfg = parse_qa_yaml_v2(text, writing=writing, repo=repo)
     except Exception as exc:  # noqa: BLE001 — every refusal PUT would 422 on is a problem here
         unreadable = [_problem(where, sentence) for where, sentence in located_plain_errors(exc)]
         return {"ok": False, "problems": unreadable, "warnings": [], "summary": None}

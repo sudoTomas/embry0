@@ -412,3 +412,25 @@ async def test_an_undo_puts_back_a_setup_with_a_body_pattern_no_boot_can_search_
         f"the undo's answer does not say the setup it put back holds such a pattern: {resp.json()}"
     )
     assert "'(?=.*ok)'" in warnings[0] and "every boot with it fails at once" in warnings[0], warnings
+
+
+@pytest.mark.requires_postgres
+async def test_an_undo_puts_back_a_verification_config_with_a_negated_glob_and_says_so(
+    client, db_with_migrations
+) -> None:
+    """As for a test setup (#486): a past state goes back exactly, with a warning, and the PUT refuses one now."""
+    negated = {"test_targets": [{"name": "app", "command": "make test", "paths": ["!src/**"]}]}
+    await client.put(PREFS, json={"notes": "first"})
+    await client.put(PREFS, json={"notes": "second"})
+    changed = (await _history(client))["entries"][0]["id"]
+    await db_with_migrations.execute(
+        "UPDATE repo_config_revisions SET before = jsonb_set(before, '{verification}', $1::jsonb) WHERE id = $2",
+        negated,
+        changed,
+    )
+    resp = await client.post(f"{HISTORY}/{changed}/undo")
+    assert resp.status_code == 200, f"an undo of a verification config with a negated glob was refused: {resp.text}"
+    warnings = resp.json().get("warnings") or []
+    assert len(warnings) == 1 and "'!src/**'" in warnings[0], (
+        f"the undo's answer does not say the config it put back holds a negated glob: {resp.json()}"
+    )

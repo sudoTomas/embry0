@@ -25,6 +25,16 @@ conditional_acceptance_criteria:
 """
 
 
+@pytest.fixture(autouse=True)
+def _nothing_warned_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each test starts with no warning logged, whatever another test in this process read."""
+    from collections import OrderedDict
+
+    from embry0.workflows.qa import _glob_match
+
+    monkeypatch.setattr(_glob_match, "_WARNED", OrderedDict())
+
+
 def test_a_setup_with_a_negated_glob_is_refused_when_written() -> None:
     try:
         parse_qa_yaml_v2(SETUP, writing=True)
@@ -34,12 +44,17 @@ def test_a_setup_with_a_negated_glob_is_refused_when_written() -> None:
         pytest.fail("a setup with a glob that starts with '!' is accepted when written")
 
 
-def test_a_stored_setup_with_one_reads_and_each_read_logs_one_warning() -> None:
+def test_a_stored_setup_with_one_reads_and_is_warned_of_once_per_repository_and_text() -> None:
+    """#486's review: a stored setup is read at every run; its warning is a line when it is first read, or changed."""
     with capture_logs() as logs:
-        cfg = parse_qa_yaml_v2(SETUP)
-        parse_qa_yaml_v2(SETUP)
-    warned = [(e["log_level"], e.get("globs"), e.get("count")) for e in logs if e["event"] == "qa_config_negated_globs"]
-    assert warned == [("warning", ["!docs/**"], 1)] * 2, f"each read of the setup is not warned of once: {warned}"
+        cfg = parse_qa_yaml_v2(SETUP, repo="acme/web")
+        parse_qa_yaml_v2(SETUP, repo="acme/web")
+        parse_qa_yaml_v2(SETUP, repo="acme/api")
+        parse_qa_yaml_v2(SETUP + "# changed\n", repo="acme/web")
+    warned = [(e.get("repo"), e.get("globs")) for e in logs if e["event"] == "qa_config_negated_globs"]
+    assert warned == [("acme/web", ["!docs/**"]), ("acme/api", ["!docs/**"]), ("acme/web", ["!docs/**"])], (
+        f"not once per repository and text: {warned}"
+    )
     assert cfg.conditional_acceptance_criteria[0].when.changed_paths == ["!docs/**", "web/**"]
 
 

@@ -307,7 +307,7 @@ async def _init_orchestrator_node_impl(
         # The bootstrap sandbox already has /workspace cloned; using the
         # local git tree is faster + free vs the GitHub PR API.
         try:
-            cfg_for_filter = parse_qa_yaml_v2(yaml_text)
+            cfg_for_filter = parse_qa_yaml_v2(yaml_text, repo=str(repo or ""))
             # workspace_provider may be None for all-deployed configs (EMB-27).
             affected_filter_text = (
                 cfg_for_filter.workspace_provider.config.get("affected_filter")
@@ -410,7 +410,7 @@ async def _init_orchestrator_node_impl(
                 pass
 
     try:
-        cfg = parse_qa_yaml_v2(yaml_text)
+        cfg = parse_qa_yaml_v2(yaml_text, repo=str(repo or ""))
     except Exception as exc:  # noqa: BLE001
         outcome = OrchestratorOutcome(
             overall_status="infra_error",
@@ -679,7 +679,7 @@ async def _qa_orchestrator_node_impl(
         # parsed_dict is None here, so the guard above guarantees yaml_text
         # is a non-empty str (always true at runtime).
         assert isinstance(yaml_text, str)
-        cfg = parse_qa_yaml_v2(yaml_text)
+        cfg = parse_qa_yaml_v2(yaml_text, repo=str(state.get("repo") or ""))
 
     if cfg.qa_required == "never":
         outcome = OrchestratorOutcome(
