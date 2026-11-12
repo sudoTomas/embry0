@@ -1,4 +1,4 @@
-"""Every change to a repo's test setup and preferences (migration 104, ADR 0019).
+"""Every change to a repo's test setup, preferences and areas (migrations 104 and 145, ADR 0019).
 
 One row per write that changed something: the surface it touched, the stored
 document before and after (None when the write created the row or removed
@@ -16,8 +16,8 @@ import asyncpg
 
 from embry0.storage.database import DatabasePool
 
-RevisionSurface = Literal["qa_config", "preferences"]
-RevisionSource = Literal["person", "bootstrap", "onboard", "proposal", "restore"]
+RevisionSurface = Literal["qa_config", "preferences", "areas"]
+RevisionSource = Literal["person", "bootstrap", "onboard", "proposal", "restore", "import", "file"]
 
 KEEP_PER_SURFACE: Final = 100
 """Rows kept per repo and surface. Each append trims the older ones."""
@@ -76,7 +76,7 @@ class RepoConfigRevisionsRepository:
         return int(revision_id)
 
     async def list_for_repo(self, repo: str, limit: int = 50) -> list[dict[str, Any]]:
-        """Both surfaces of one repo, newest first."""
+        """Every surface of one repo, newest first."""
         rows = await self._db.fetch(
             f"SELECT {_COLUMNS} FROM repo_config_revisions WHERE repo = $1 ORDER BY id DESC LIMIT $2",
             repo,

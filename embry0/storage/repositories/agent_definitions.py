@@ -333,10 +333,10 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
     "area-mapper": {
         "description": (
             "Reads a repository's tree, workspace manifests, ownership files "
-            "and deploy configuration, and writes the .embry0/areas.yml that "
+            "and deploy configuration, and writes the areas document that "
             "names its parts: each area's paths, the names its logs run "
-            "under, and its owners when the repository says them. embry0 opens "
-            "the pull request from its report. Read-only."
+            "under, and its owners when the repository says them. embry0 keeps "
+            "the document for a person to apply. Read-only."
         ),
         "model": "claude-sonnet-5",
         "tools": ["Read", "Glob", "Grep", "Bash"],

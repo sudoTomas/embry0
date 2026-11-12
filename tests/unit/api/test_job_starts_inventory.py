@@ -1340,6 +1340,7 @@ MCP_STARTS: dict[str, tuple[Callable[[Any, Mapping[str, str]], Awaitable[Any]], 
         True,
         _boot_hint,
     ),
+    "areas_map": (lambda s, v: s.areas_map(UNCOVERED, confirm=True), True, _templates),
 }
 
 

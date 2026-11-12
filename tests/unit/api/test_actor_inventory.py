@@ -131,6 +131,7 @@ NO_ACTOR_ROUTES: dict[str, tuple[str, ...]] = {
         "/api/v1/repos/{full_repo:repo}/-/setup/cost",
         "/api/v1/repos/{full_repo:repo}/-/readiness",
         "/api/v1/setup/proposals",
+        "/api/v1/areas/proposals",
         "/api/v1/repos",
         "/api/v1/hosts",
         "/api/v1/hosts/{host_id}",
@@ -176,10 +177,9 @@ NO_ACTOR_ROUTES: dict[str, tuple[str, ...]] = {
         "/api/v1/qa/repos/{repo:path}/flake",
         "/api/v1/qa/runs/{run_id}/events",
     ),
-    "findings, areas and the agents' progression: no one named as having done anything (areas name their owners)": (
+    "findings and the agents' progression: no one named as having done anything": (
         "/api/v1/cases",
         "/api/v1/cases/{case_id}",
-        "/api/v1/repos/{full_repo:repo}/-/areas",
         "/api/v1/repos/{full_repo:repo}/-/slop-meter",
         "/api/v1/watcher/runs",
         "/api/v1/progression",
@@ -239,6 +239,9 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
     "repo_config_revisions.actor": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/history",)),
     "repo_qa_configs.updated_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}",)),
     "repo_setup_proposals.created_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/setup/proposal",)),
+    "repo_areas.updated_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/areas",)),
+    "repo_areas_proposals.created_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/areas/proposal",)),
+    "repo_areas_proposals.decided_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/areas/proposal",)),
     "repo_setup_proposals.decided_by": (_HISTORY, ("/api/v1/repos/{full_repo:repo}/-/setup/proposal",)),
     "credential_bindings.created_by": (
         _HISTORY,

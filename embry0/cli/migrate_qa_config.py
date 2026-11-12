@@ -92,7 +92,7 @@ def migrate_v1_text_to_v2_text(v1_text: str, app_name: str) -> str:
 
     # Validate output against v2 schema before returning.
     out_text = yaml.safe_dump(v2, sort_keys=False, default_flow_style=False)
-    parse_qa_yaml_v2(out_text)
+    parse_qa_yaml_v2(out_text, writing=True)
     return out_text
 
 

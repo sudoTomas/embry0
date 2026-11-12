@@ -44,9 +44,11 @@ def _setup(
     )
 
 
-async def _check(text: str, *, env_keys: set[str] | None = None, docker_access: bool = False) -> dict[str, Any]:
+async def _check(
+    text: str, *, env_keys: set[str] | None = None, docker_access: bool = False, writing: bool = True
+) -> dict[str, Any]:
     return await check_qa_config(
-        text, profiles_repo=_Profiles(), env_keys=env_keys or set(), docker_access=docker_access
+        text, profiles_repo=_Profiles(), env_keys=env_keys or set(), docker_access=docker_access, writing=writing
     )
 
 
@@ -270,3 +272,16 @@ async def test_the_summary_marks_a_machine_without_a_browser():
     result = await _check(_setup(profile="slim", qa_required="always"))
     assert result["summary"]["when_plain"] == "On every change"
     assert result["summary"]["apps"][0]["machine_has_browser"] is False
+
+
+async def test_a_stored_setup_with_a_glob_only_the_release_before_wrote_is_ready_and_a_new_one_is_refused():
+    """#458's second review: a class ending in a backslash, which the release before read, keeps a stored setup
+    readable (the readiness check reads the stored one); a check before a save refuses it, saying why."""
+    text = _setup() + (
+        "conditional_acceptance_criteria:\n  - name: docs\n    when:\n      changed_paths: ['docs/[\\]*']\n"
+        "    criteria:\n      - The docs open\n"
+    )
+    stored = await _check(text, writing=False)
+    assert stored["ok"] is True and stored["problems"] == [], f"the stored setup no longer reads: {stored['problems']}"
+    written = await _check(text)
+    assert written["ok"] is False and "ends in a backslash" in str(written["problems"]), written["problems"]

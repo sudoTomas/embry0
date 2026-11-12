@@ -1412,6 +1412,9 @@ async def _run_workflow(
             # patch only when its organization turned that on.
             if overrides.get("open_pr") is True:
                 initial_state["open_pr"] = True
+            # Spec 2026-11-10: a map of a repository's areas delivers to this proposal.
+            if isinstance(overrides.get("areas_proposal_id"), str) and overrides["areas_proposal_id"]:
+                initial_state["areas_proposal_id"] = overrides["areas_proposal_id"]
 
         # RAV-1058: honour a job-create sandbox_profile and pipeline_template.
         # Both were persisted to the job row but never consumed on this path
@@ -1591,6 +1594,14 @@ async def _run_workflow(
         # #349: a run that raised after pushing its branch (a hard budget stop,
         # a sandbox that is gone) still gets its PR, so the work is not stranded.
         pr_url, _ = await self._open_fallback_pr(issue_id, job_id, last_state or {}, error_code=code.value)
+        from embry0.services._executor_outcomes import finish_areas_map
+
+        # Spec 2026-11-10: a map that raised leaves no document for a person; its proposal says why, before the
+        # job is marked over.
+        proposal_id = (last_state or {}).get("areas_proposal_id") or (
+            ((job_row or {}).get("pipeline_config") or {}).get("areas_proposal_id")
+        )
+        await finish_areas_map(self, job_id, proposal_id, None, str(exc))
         await self._jobs.update(
             job_id,
             status="failed",

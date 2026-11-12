@@ -117,6 +117,7 @@ def ids(repo: str) -> dict[str, str]:
         "slug": f"map-{tag}",
         "proposal_id": f"issue:iss-{tag}",
         "setup_proposal_id": f"setup-{tag}",
+        "areas_proposal_id": f"areas-{tag}",
         "decision_id": f"offer:issue:iss-{tag}",
         "handoff_id": f"ho-{tag}",
         "ask_id": f"ask-{tag}",
@@ -218,6 +219,13 @@ async def seed(db: DatabasePool) -> dict[str, dict[str, str]]:
             values["setup_proposal_id"],
             repo,
             "version: 2\n",
+        )
+        # Spec 2026-11-10: a map of the repository's areas waiting for a person.
+        await db.execute(
+            "INSERT INTO repo_areas_proposals (id, repo, status, proposed_text) VALUES ($1, $2, 'pending', $3)",
+            values["areas_proposal_id"],
+            repo,
+            f"areas:\n  - name: {tag.title()}\n    paths: [src/**]\n",
         )
         revision = await db.fetchval(
             "INSERT INTO repo_config_revisions (repo, surface, before, after, actor) "

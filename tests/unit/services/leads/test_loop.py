@@ -11,8 +11,9 @@ from types import SimpleNamespace
 from typing import Any
 
 from embry0.execution.forge_client import Listing
-from embry0.services.leads import Lead
+from embry0.services.areas import Area
 from embry0.services.leads.loop import LeadsLoop
+from tests.fixtures.areas import areas_for
 from tests.fixtures.leads import MemorySettings
 from tests.unit.services.leads.fakes import FakeForge, MemoryLeads
 from tests.unit.services.leads.test_backlog import READY_BODY
@@ -55,9 +56,6 @@ def _loop(store: MemoryLeads, client: Any, *, finders: set[str], linear: Any = N
     async def triggers() -> list[str]:
         return ["embry0"]
 
-    async def area_of(repo: str, client: Any, lead: Lead) -> str | None:
-        return "Web" if lead.kind == "ci" else None
-
     loop = LeadsLoop(
         settings=settings.leads,
         leads=store,
@@ -66,7 +64,8 @@ def _loop(store: MemoryLeads, client: Any, *, finders: set[str], linear: Any = N
         linear=get_linear,
         tracked=tracked,
         trigger_labels=triggers,
-        area_of=area_of,
+        # The repository's areas as embry0 keeps them: a failing check named build is in Web.
+        areas_for=areas_for({REPO: [Area("Web", logs=("build",))]}),
         clock=lambda: clock["now"],
     )
     return loop

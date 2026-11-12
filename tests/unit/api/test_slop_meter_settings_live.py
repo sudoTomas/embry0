@@ -152,6 +152,7 @@ def _meter(app: Any, clock: list[datetime]) -> SlopMeterLoop:
         bots=production._bots,  # noqa: SLF001
         calls=fakes.FakeCalls(),
         limits=limits(commits_per_tick=100),
+        areas_of=production._areas_of,  # noqa: SLF001 - the production reader is what this test pins
         clock=lambda: clock[0],
     )
 

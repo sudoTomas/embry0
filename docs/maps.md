@@ -17,7 +17,7 @@ One JSON document per map:
 | `repo` | `owner/name` of the repository the map describes, or `null` for an organization-wide map. |
 | `commit`, `generated_at`, `source` | The commit read, when (ISO 8601), and what produced it, as shown on the page. |
 | `kinds` | `[{"id", "label"}]`: the kinds of part, in the order a legend lists them. |
-| `areas` | `[{"id", "label", "summary", "x", "y", "r"}]`: groups of parts, drawn as labelled rings. |
+| `areas` | `[{"id", "label", "summary", "x", "y", "r"}]`: the scanner's **groups** of parts, drawn as labelled rings. The page calls them groups: they are the scanner's own and may hold parts with no path, unlike a repository's [areas](areas.md), which embry0 keeps. The key keeps its name in `embry0.map/1`. |
 | `nodes` | The parts, below. At most 20,000. |
 | `edges` | `[{"s", "t", "rel"}]`: a link from part `s` to part `t` (`rel` says how: `calls`, `reads`, `runs`, ...). At most 100,000; a link to a part the map does not have is dropped. |
 | `details` | `{"<part id>": {...}}`: one record per part, read when the part is opened (below). |
@@ -27,7 +27,7 @@ A part (`nodes[]`):
 | Field | What it holds |
 |---|---|
 | `id` | Unique in the map, at most 300 characters. Keep it stable across scans: marks and sends are kept by it. |
-| `kind`, `area`, `label`, `sub` | Its kind and area ids, its name, and a short line under the name. |
+| `kind`, `area`, `label`, `sub` | Its kind and group ids, its name, and a short line under the name. |
 | `path`, `line`, `url` | Its file in the repository, a line in it, and an `https://` link to it. |
 | `repo` | `owner/name` when the part lives in a repository other than the map's (an organization map names one per system). It must be one of the map owner's repositories. Otherwise a part with a `path` lives in the map's `repo`, and a part with neither (a database table, a host) lives in none. |
 | `x`, `y`, `r` | Its place and size on the plane, in any units; the page fits the whole map to the screen. A part without a place is put on a spiral. |
@@ -71,7 +71,7 @@ A weed lead is keyed by repository, slug and part id, so an unowned map and an o
 
 ## The Maps page
 
-`/maps` lists every map the viewer may see, with its owner. A map's page draws its parts on the scanner's layout: drag to move, the wheel or `+` and `-` to zoom, `0` to fit, a click to open a part. Colour the parts by bloat score, by marks, by agent work, by kind or by area; find parts by name, id or path; pick out the bloat candidates, the parts marked, or the parts sent. The address keeps the open part (`?part=<id>`), so a link opens it.
+`/maps` lists every map the viewer may see, with its owner. A map's page draws its parts on the scanner's layout: drag to move, the wheel or `+` and `-` to zoom, `0` to fit, a click to open a part. Colour the parts by bloat score, by marks, by agent work, by kind or by group; find parts by name, id or path; pick out the bloat candidates, the parts marked, or the parts sent. The address keeps the open part (`?part=<id>`), so a link opens it.
 
 An open part shows what the map knows about it (its signals, bloat score and reasons, what it does, use and history), everyone's marks, and its agent work: the newest job sent for it, running, its pull request open, merged or failed, with its cost.
 

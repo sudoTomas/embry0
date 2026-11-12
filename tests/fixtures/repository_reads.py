@@ -8,7 +8,7 @@ under the covered repository's owner and not on the limited key's list, so
 the limited key covers ``acme`` only in part and ``globex`` not at all. Each
 of the three repositories gets what a repository's reads serve: its
 registration notes and Docker access, a test setup, variables (a value and a
-secret), preferences, a forge credential bound to it, an agent context, a
+secret), preferences, its areas, a waiting map of them and their import's record, a forge credential bound to it, an agent context, a
 settings layer, a slop-o-meter reading, a host link, discovery facts, a
 watched stack, a waiting test setup proposal with its notes, failure, smoke
 results and proposed YAML, a standard's state with an audit score, findings
@@ -107,6 +107,30 @@ async def _seed_repository(app: FastAPI, db: DatabasePool, repo: str) -> None:
         },
     )
     await _ok(app, "PUT", f"/api/v1/repos/{repo}/-/preferences", {"notes": mark, "base_branch": "main"})
+    # Spec 2026-11-10: the repository's areas, a map of them waiting for a person, and their import's ledger.
+    await _ok(
+        app,
+        "PUT",
+        f"/api/v1/repos/{repo}/-/areas",
+        f"# {mark}\nareas:\n  - name: Area {mark}\n    paths: [src/**]\n    logs: [{mark}]\n",
+    )
+    await db.execute(
+        "INSERT INTO repo_areas_proposals (id, repo, status) SELECT $1, $2, 'pending' "
+        "WHERE NOT EXISTS (SELECT 1 FROM repo_areas_proposals WHERE repo = $2)",
+        f"areas-{mark}",
+        repo,
+    )
+    await db.execute(
+        "UPDATE repo_areas_proposals SET proposed_text = $2, notes_md = $3, created_by = 'ada' WHERE repo = $1",
+        repo,
+        f"# {mark}\nareas:\n  - name: Mapped {mark}\n    paths: [lib/**]\n",
+        f"notes of {mark}",
+    )
+    await db.execute(
+        "INSERT INTO repo_areas_imports (repo, outcome, detail, blob_sha) VALUES ($1, 'imported', $2, $2)",
+        repo,
+        mark,
+    )
     forge = await _credential(app, f"{mark}-forge")
     llm = await _credential(app, f"{mark}-llm", kind="llm_api_key", provider="anthropic")
     await _ok(

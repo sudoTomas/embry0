@@ -13,10 +13,21 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from embry0.workflows.qa._glob_match import GlobPatternError, compile_glob
+from embry0.workflows.qa._glob_match import GlobPatternError, check_glob
 from embry0.workflows.qa.browser_backends import backend_for
+
+#: The validation context a stored document is read with (:func:`parse_qa_yaml_v2`): a glob this grammar no
+#: longer writes, which the release before read, is read as it read it. Without it a glob must be one it writes.
+STORED: dict[str, bool] = {"stored": True}
+
+
+def _check_glob(pattern: str, info: ValidationInfo) -> None:
+    try:
+        check_glob(pattern, stored=bool((info.context or {}).get("stored")))
+    except GlobPatternError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _validate_browser_backend(v: str | None) -> str | None:
@@ -284,17 +295,14 @@ class AppWhen(BaseModel):
 
     @field_validator("changed_paths")
     @classmethod
-    def _globs_compile(cls, v: list[str]) -> list[str]:
+    def _globs_compile(cls, v: list[str], info: ValidationInfo) -> list[str]:
         # Same contract as ConditionalWhen: bad globs are parse errors, caught
         # at config-write time — never at QA-run time, where a stored typo
         # would crash the orchestrator node on every run for that repo.
         for pattern in v:
             if not pattern.strip():
                 raise ValueError("changed_paths entries must be non-empty")
-            try:
-                compile_glob(pattern)
-            except GlobPatternError as exc:
-                raise ValueError(str(exc)) from exc
+            _check_glob(pattern, info)
         return v
 
     @model_validator(mode="after")
@@ -419,12 +427,9 @@ class ConditionalWhen(BaseModel):
 
     @field_validator("changed_paths")
     @classmethod
-    def _globs_compile(cls, v: list[str]) -> list[str]:
+    def _globs_compile(cls, v: list[str], info: ValidationInfo) -> list[str]:
         for pattern in v:
-            try:
-                compile_glob(pattern)
-            except GlobPatternError as exc:
-                raise ValueError(str(exc)) from exc
+            _check_glob(pattern, info)
         return v
 
     @model_validator(mode="after")
@@ -573,8 +578,10 @@ QAYamlConfigV2.model_rebuild()
 # -------- Parsers --------
 
 
-def parse_qa_yaml_v2(raw: str) -> QAYamlConfigV2:
+def parse_qa_yaml_v2(raw: str, *, writing: bool = False) -> QAYamlConfigV2:
+    """``raw`` as a test setup. A stored one by default; ``writing`` for a text about to be stored, which may hold
+    only globs this release writes (a stored one also reads a glob the release before wrote, as it read it)."""
     data = yaml.safe_load(raw)
     if not isinstance(data, dict):
         raise ValueError("qa.yaml must be a YAML mapping at the top level")
-    return QAYamlConfigV2.model_validate(data)
+    return QAYamlConfigV2.model_validate(data, context=None if writing else STORED)

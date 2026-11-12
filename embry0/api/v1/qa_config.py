@@ -56,7 +56,7 @@ async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
     if not text.strip():
         raise HTTPException(status_code=400, detail="empty body — send the qa.yaml v2 text")
     try:
-        parse_qa_yaml_v2(text)
+        parse_qa_yaml_v2(text, writing=True)
     except Exception as exc:  # noqa: BLE001
         detail = "\n".join(plain_errors(exc)) + "\n\nTechnical details:\n" + str(exc)
         raise HTTPException(status_code=422, detail=detail) from exc
@@ -100,4 +100,5 @@ async def check_repo_qa_config(full_repo: str, request: Request) -> dict[str, An
         profiles_repo=state.profiles_repo,
         env_keys=env_keys,
         docker_access=await state.repos_repo.docker_access(full_repo) if reads else False,
+        writing=True,  # a check before a save
     )

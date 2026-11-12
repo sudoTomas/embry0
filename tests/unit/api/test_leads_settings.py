@@ -45,6 +45,7 @@ from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.leads import LeadsRepository
 from embry0.storage.repositories.repos import ReposRepository
+from tests.fixtures.areas import no_areas_for
 from tests.fixtures.leads import leads_section
 from tests.unit.api.v1.test_proposals_api import FakeLeads, FakeOrgs, FakeRepo
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
@@ -146,9 +147,6 @@ def _loop(store: SettingsStore, db: DatabasePool, clock: list[datetime], *repos:
     async def triggers() -> list[str]:
         return []
 
-    async def no_area(repo: str, client: Any, lead: Lead) -> str | None:
-        return None
-
     return LeadsLoop(
         settings=scoped_reader(store, leads_section()),
         leads=LeadsRepository(db),
@@ -157,7 +155,7 @@ def _loop(store: SettingsStore, db: DatabasePool, clock: list[datetime], *repos:
         linear=nothing,
         tracked=tracked,
         trigger_labels=triggers,
-        area_of=no_area,
+        areas_for=no_areas_for,
         clock=lambda: clock[0],
     )
 

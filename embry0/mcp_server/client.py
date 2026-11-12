@@ -1015,6 +1015,55 @@ class Embry0Client:
             )
         )
 
+    # ------------------------------------------------- areas (spec 2026-11-10) — kept in embry0, never in the repo
+
+    async def areas_get(self, repo: str) -> dict[str, Any]:
+        """The repository's stored areas document, its values and generation, and its newest map."""
+        return _as_dict(await self._request("GET", _repo_url(repo, "areas")))
+
+    async def areas_set(
+        self, repo: str, text: str, *, dry_run: bool = False, expected_generation: int | None = None, reason: str = ""
+    ) -> dict[str, Any]:
+        """Replace the repository's areas document (raw-YAML PUT); ``dry_run`` only reports what it would change.
+
+        ``expected_generation``, the generation the caller read, goes in
+        ``If-Match``, so a document someone else changed since is not
+        overwritten (409).
+        """
+        params: dict[str, Any] = {"source": "person"}
+        if dry_run:
+            params["dry_run"] = 1
+        if reason:
+            params["reason"] = reason
+        headers = {"Content-Type": "application/yaml"}
+        if expected_generation is not None:
+            headers["If-Match"] = f'"{int(expected_generation)}"'
+        return _as_dict(
+            await self._request(
+                "PUT", _repo_url(repo, "areas"), params=params, content=text.encode("utf-8"), headers=headers
+            )
+        )
+
+    async def areas_map(self, repo: str, *, model: str = "", credential_id: str = "") -> dict[str, Any]:
+        """Start the agent that maps the repository's areas; its document waits for a person to apply it."""
+        return _as_dict(await self._request("POST", _repo_url(repo, "areas/map"), body=_run_with(model, credential_id)))
+
+    async def areas_proposal_get(self, repo: str) -> dict[str, Any]:
+        """The repository's newest map: what applying it would change, owners first."""
+        return _as_dict(await self._request("GET", _repo_url(repo, "areas/proposal")))
+
+    async def areas_proposal_decide(self, repo: str, proposal_id: str, decision: str) -> dict[str, Any]:
+        """Apply or reject a waiting map (``decision`` is ``apply`` or ``reject``)."""
+        if decision not in ("apply", "reject"):
+            raise Embry0APIError(422, f"decision must be 'apply' or 'reject', got {decision!r}")
+        path = f"/api/v1/repos/{_repo_path(repo)}/-/areas/proposal/{_seg(proposal_id)}/{decision}"
+        return _as_dict(await self._request("POST", path))
+
+    async def areas_undo(self, repo: str, revision_id: int) -> dict[str, Any]:
+        """Undo one change of the repository's history (the areas' newest, for example)."""
+        path = f"/api/v1/repos/{_repo_path(repo)}/-/history/{int(revision_id)}/undo"
+        return _as_dict(await self._request("POST", path))
+
     # ----------------------- credentials (spec 2026-09-29 §3.9) — never creates or reveals a secret
 
     async def credential_list(self) -> list[dict[str, Any]]:

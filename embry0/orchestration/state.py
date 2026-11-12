@@ -391,6 +391,13 @@ class JobState(TypedDict, total=False):
     # absent, the executor's defaults for a developer's branch.
     pr_title: Annotated[str | None, FoldingLastValue]
     pr_note: Annotated[str | None, FoldingLastValue]
+    # Spec 2026-11-10: a map of a repository's areas. The executor sets the
+    # proposal's id once from the job's pipeline_config; finalize_output_node
+    # reads the document and notes its report carries, and the executor
+    # stores them on that proposal at completion. MUST stay declared here.
+    areas_proposal_id: Annotated[str | None, FoldingLastValue]
+    areas_document: Annotated[str | None, FoldingLastValue]
+    areas_notes: Annotated[str | None, FoldingLastValue]
     # RAV-1254: per-repo pre-PR self-checks from repo_preferences.dev_checks
     # ([{name, paths, command}]), seeded by _run_workflow and rendered into
     # the developer prompt. MUST stay declared here — LangGraph's state-merge

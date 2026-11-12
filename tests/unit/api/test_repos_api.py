@@ -48,6 +48,19 @@ async def test_put_qa_config_rejects_invalid_yaml(api_client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_put_qa_config_refuses_a_class_ending_in_a_backslash_saying_how_to_write_one(api_client) -> None:
+    """#458's second review: the release before read such a glob, so a stored setup still does; a new one is
+    refused when it is written."""
+    text = (
+        _V2_MIN + "conditional_acceptance_criteria:\n  - name: docs\n    when:\n"
+        "      changed_paths: ['docs/[\\]*']\n    criteria:\n      - The docs open\n"
+    )
+    r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=text)
+    assert r.status_code == 422, f"a glob this release no longer writes was stored: {r.status_code}"
+    assert "ends in a backslash" in r.json()["detail"] and "written \\\\" in r.json()["detail"], r.json()
+
+
+@pytest.mark.asyncio
 async def test_put_qa_config_explains_a_typo_before_the_technical_details(api_client) -> None:
     text = _V2_MIN + "apps:\n  web:\n    boot_comand: npm run dev\n    frontend_url: http://localhost:3000\n"
     r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=text)

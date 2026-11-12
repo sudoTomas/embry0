@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
+from embry0.forge_logins import GITHUB_LOGIN_RE as GITHUB_LOGIN_RE
 from embry0.git_refs import REF_RULE, valid_ref
 from embry0.workflows.verification.config import VerificationConfig
 
@@ -32,10 +32,6 @@ def validate_git_author_email(v: str | None) -> str | None:
     if "@" not in v or any(c.isspace() for c in v):
         raise ValueError("git_author_email must be a plausible email address (contain '@', no whitespace)")
     return v
-
-
-#: A GitHub login: up to 39 letters, digits and single hyphens, not starting or ending with one.
-GITHUB_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 
 
 class DevCheck(BaseModel):

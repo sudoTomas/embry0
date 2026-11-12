@@ -290,6 +290,7 @@ def _meter(app: Any, clock: list[datetime]) -> SlopMeterLoop:
         bots=no_bots,
         calls=NoCalls(),  # type: ignore[arg-type]
         limits=SlopMeterLimits(),
+        areas_of=production._areas_of,  # noqa: SLF001 - the production reader is what this test pins
         clock=lambda: clock[0],
     )
 
@@ -423,7 +424,7 @@ def _leads(app: Any) -> Any:
         return False
 
     return dataclasses.replace(
-        production, client_for=nothing, linear=nothing, trigger_labels=no_labels, tracked=untracked, area_of=nothing
+        production, client_for=nothing, linear=nothing, trigger_labels=no_labels, tracked=untracked
     )
 
 

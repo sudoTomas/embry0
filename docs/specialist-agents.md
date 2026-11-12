@@ -121,13 +121,14 @@ model or a job's `agent_models` outranks the one above.
 - **why**: the question and its target (a file, a symbol, a decision). The
   sandbox has no access to a tracker or chat, so paste any issue or pull
   request text the answer may rest on.
-- **area-mapper** maps a monorepo's parts into `.embry0/areas.yml`
-  ([areas.md](areas.md)): it reads the tree, the workspace manifests, the
-  docs and CODEOWNERS that say what the parts are, and the compose and deploy
-  configuration that names what their logs run under, then reports one table
-  and the whole file. The output step commits the file on the job's branch
-  and the executor opens the pull request; owners are named only where the
-  repository says them.
+- **area-mapper** maps a monorepo's parts into the areas document embry0
+  keeps for it ([areas.md](areas.md)): it reads the tree, the workspace
+  manifests, the docs and CODEOWNERS that say what the parts are, and the
+  compose and deploy configuration that names what their logs run under,
+  then reports one table and the whole document. The output step reads the
+  document from the report, and it waits for a person to apply or reject it;
+  nothing is written to the repository and no pull request is opened. Owners
+  are named only where the repository says them.
 - **design-auditor**: the standard: token roles, the type scale, the radius
   set, how many accent colors, where tables are required. Without one it uses
   a default (one accent color, one text font plus one monospace font, colors
@@ -135,8 +136,9 @@ model or a job's `agent_models` outranks the one above.
 - **context-auditor**: the files or directories to audit, or nothing for every
   instruction file in the repository.
 - **area-mapper**: started from the repository page's Areas section (or
-  `POST /repos/{repo}/-/areas/map`), whose task carries the file already on the
-  default branch and the LogQL the watcher reads the repository's logs with.
+  `POST /repos/{repo}/-/areas/map`), whose task carries the areas document
+  embry0 keeps for the repository and the LogQL the watcher reads its logs
+  with.
 
 ## Running one
 

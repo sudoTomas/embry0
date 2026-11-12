@@ -409,10 +409,16 @@ FRAGMENTS: dict[str, str] = {
     + " AND "
     + finished_well("j"),
     "audit_merged": "SELECT m.at, 1, m.label, m.pr_url, NULL FROM merged m WHERE " + an_audit("m"),
+    # A repository counts once, from the first of: a map pull request merged before areas were kept in embry0,
+    # or a map a person applied (spec 2026-11-10).
     "areas_mapped": """
         SELECT f.at, 1, f.repo, f.pr_url, NULL
-        FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM merged WHERE pipeline_template = 'map-areas'
-              ORDER BY repo, at, job_id) f""",
+        FROM (SELECT DISTINCT ON (repo) repo, at, pr_url FROM (
+                SELECT repo, at, pr_url, job_id AS row_key FROM merged WHERE pipeline_template = 'map-areas'
+                UNION ALL
+                SELECT p.repo, COALESCE(p.decided_at, p.updated_at), NULL, p.id
+                FROM repo_areas_proposals p WHERE p.status = 'applied'
+              ) mapped ORDER BY repo, at, row_key) f""",
     "design_score": """
         SELECT s.last_audit_at, 1, s.repo || ' · ' || s.kind || ' ' || s.score, NULL, NULL
         FROM repo_standard_state s WHERE s.score >= {min_score}::int AND s.last_audit_at IS NOT NULL""",

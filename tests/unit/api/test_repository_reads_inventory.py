@@ -77,6 +77,7 @@ READ_ROUTES: dict[str, str] = {
     "/api/v1/repos/{full_repo:repo}/-": "the same handler",
     "/api/v1/repos/{full_repo:repo}/-/": "the same handler",
     "/api/v1/repos/{full_repo:repo}/-/areas": f"{_UNREGISTERED} (404), no longer 403",
+    "/api/v1/repos/{full_repo:repo}/-/areas/proposal": f"{_UNREGISTERED}: no map (404), no job",
     "/api/v1/repos/{full_repo:repo}/-/credentials": f"{_UNREGISTERED}: nothing bound, nothing resolved",
     "/api/v1/repos/{full_repo:repo}/-/environment": f"{_UNREGISTERED}: no variables",
     "/api/v1/repos/{full_repo:repo}/-/environment/resolve": f"{_UNREGISTERED}: the global variables alone",
@@ -106,6 +107,7 @@ READ_ROUTES: dict[str, str] = {
         )
     },
     "/api/v1/setup/proposals": "lists the waiting proposals of the repositories the key covers, narrowed in the query",
+    "/api/v1/areas/proposals": "lists the waiting maps of the repositories the key covers, narrowed in the query",
     "/api/v1/config/context/repos": "lists the agent contexts of the repositories the key covers, narrowed in the query",
     "/api/v1/config/context/repos/{repo:path}": f"{_UNREGISTERED}: the empty context",
     "/api/v1/watcher/stacks": "lists the stacks of the repositories the key covers, narrowed in the query",

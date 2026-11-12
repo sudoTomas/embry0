@@ -32,6 +32,7 @@ from embry0.storage import repo_renames
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.repos import ReposRepository
 from embry0.storage.repositories.slop_meter import SlopMeterRepository
+from tests.fixtures.areas import no_areas_of
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -107,6 +108,7 @@ async def _deployment(db: DatabasePool, tmp_path: Path) -> tuple[Any, SettingsSt
         bots=no_bots,
         calls=None,  # type: ignore[arg-type]
         limits=SlopMeterLimits(),
+        areas_of=no_areas_of,
         clock=lambda: clock[0],
     )
     return loop, store, clock, audit
@@ -229,6 +231,7 @@ async def test_two_registry_spellings_of_one_repository_are_read_once_and_never_
         bots=nothing,
         calls=None,  # type: ignore[arg-type]
         limits=SlopMeterLimits(),
+        areas_of=no_areas_of,
     )
     read_counts = []
     for _tick in range(3):

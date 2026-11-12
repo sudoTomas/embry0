@@ -20,8 +20,9 @@ from typing import Any
 
 import pytest
 
-from embry0.services.leads import FinderResult, Lead
+from embry0.services.leads import FinderResult
 from embry0.services.leads.loop import LeadsLoop
+from tests.fixtures.areas import no_areas_for
 from tests.fixtures.leads import MemorySettings, leads_section
 from tests.unit.services.leads.fakes import FakeForge, MemoryLeads
 from tests.unit.services.leads.test_backlog import READY_BODY
@@ -99,9 +100,6 @@ def _loop(
     async def triggers() -> list[str]:
         return ["embry0"]
 
-    async def no_area(repo: str, client: Any, lead: Lead) -> str | None:
-        return None
-
     return LeadsLoop(
         settings=settings.leads,
         leads=store,
@@ -110,7 +108,7 @@ def _loop(
         linear=get_linear,
         tracked=tracked,
         trigger_labels=triggers,
-        area_of=no_area,
+        areas_for=no_areas_for,
         clock=lambda: clock[0],
     )
 

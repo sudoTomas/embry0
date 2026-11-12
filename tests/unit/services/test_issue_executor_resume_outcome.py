@@ -63,3 +63,39 @@ async def test_resume_posts_outcome_hook_even_on_repeat_interrupt():
 
     ex._handle_interrupt.assert_awaited_once()
     ex._post_tracker_outcome.assert_awaited_once_with(None, "job-2")
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_map_that_raises_fails_its_proposal_before_the_job():
+    """Spec 2026-11-10: a map of a repository's areas that raised leaves no document for a person; its proposal
+    says why, recorded before the job is marked failed."""
+    from unittest.mock import patch
+
+    ex = _executor()
+    order: list[str] = []
+    ex._jobs.update = AsyncMock(
+        side_effect=lambda *_a, **kw: order.append("job failed") if kw.get("status") == "failed" else None
+    )
+    ex._open_fallback_pr = AsyncMock(return_value=(None, None))
+    ex._finish_credential_uses = AsyncMock()
+    ex._announce_finished = AsyncMock()
+    ex._areas = MagicMock()
+    ex._areas_proposals = MagicMock()
+
+    async def stream(*_args, state_sink=None, **_kwargs):
+        if state_sink is not None:
+            state_sink["areas_proposal_id"] = "areas-000000000002"
+        raise RuntimeError("the sandbox is gone")
+
+    ex._execute_workflow_stream = stream
+    seen: list[tuple[str, str | None]] = []
+
+    async def finish_map(store, proposals, proposal_id, *, job_id, repo, document, notes, failure):
+        order.append("proposal")
+        seen.append((proposal_id, failure))
+        assert job_id == "job-3", job_id
+
+    with patch("embry0.services.areas_proposals.finish_map", new=finish_map):
+        await ex.resume("iss-1", "job-3", {"choice": "continue_retrying"})
+    assert seen == [("areas-000000000002", "the sandbox is gone")]
+    assert order == ["proposal", "job failed"], order

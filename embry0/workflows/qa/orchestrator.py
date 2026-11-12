@@ -625,7 +625,7 @@ async def _qa_orchestrator_node_impl(
     from embry0.workflows.qa.browser_backends import DEFAULT_BROWSER_BACKEND, backend_for
     from embry0.workflows.qa.conditional_criteria import evaluate_conditional_criteria
     from embry0.workflows.qa.qa_yaml_resolve import resolve_app_config
-    from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2, parse_qa_yaml_v2
+    from embry0.workflows.qa.qa_yaml_v2 import STORED, QAYamlConfigV2, parse_qa_yaml_v2
     from embry0.workflows.qa.subtask_result_schema import overall_status as compute_overall
 
     qa_state = dict(state.get("qa") or {})
@@ -674,7 +674,7 @@ async def _qa_orchestrator_node_impl(
         return {"qa": qa_state}
 
     if parsed_dict is not None:
-        cfg = QAYamlConfigV2.model_validate(parsed_dict)
+        cfg = QAYamlConfigV2.model_validate(parsed_dict, context=STORED)
     else:
         # parsed_dict is None here, so the guard above guarantees yaml_text
         # is a non-empty str (always true at runtime).

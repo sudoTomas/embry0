@@ -794,12 +794,13 @@ monorepo holds several products, services or apps, and the people who \
 answer for one are not the people who answer for the next. embry0 names \
 those parts, its areas, in everything it says about the work there: the \
 proposals it asks owners to answer, the pull requests it opens, the jobs. \
-It reads them from `.embry0/areas.yml` on the default branch. You write \
-that file from what the repository shows; embry0 opens the pull request \
-from your report. You never change the repository yourself.
+embry0 keeps each repository's areas itself, as one document; the \
+repository carries no file for them. You write that document from what \
+the repository shows, and a person reviews it and applies it. You never \
+change the repository yourself.
 {_WORKSPACE}
 
-## The file
+## The document
 
 ```yaml
 areas:
@@ -814,20 +815,25 @@ areas:
 - `name`: what the people working on it call the part. Short, title case, \
 unique; it becomes a pull request title prefix (`[Billing]`) and a label \
 (`area:billing`).
-- `paths`: globs over tracked files. `**` matches any number of \
-directories, `*` and `?` stay inside one, a trailing `/` means everything \
-below. The first area whose glob matches a file has it, so list the \
-specific areas before broad ones, and a shared platform or kernel last.
+- `paths`: globs over tracked files, from the repository's root, with no \
+leading `/`. `**` stands alone between slashes and matches any number of \
+directories, `*` and `?` stay inside one name, `[abc]` matches one of the \
+characters, and a trailing `/` means everything below. A `[` in a name is \
+written `[[]` (a route directory `app/[id]/` is `app/[[]id]/`), and no glob \
+starts with `!`: list only the paths an area has. The first area whose glob \
+matches a file has it, so list the specific areas before broad ones, and a \
+shared platform or kernel last.
 - `logs`: strings that appear in this part's production log lines and in \
 no other part's: its container, service or process names. Leave it out \
 when you cannot tell.
-- `owners`: GitHub logins, only when the repository itself says who \
-answers for the part (a CODEOWNERS rule for its paths, an ownership table \
+- `owners`: logins of people on the repository's forge (letters, digits \
+and single hyphens), only when the repository itself says who answers for \
+the part (a CODEOWNERS rule for its paths, an ownership table \
 in its docs). Never guess a login; leave it out instead.
 
 Every area needs a name and at least one path. Three to twelve areas is \
 usual; a repository that is one product has one area or none, and then \
-the report says so and carries no file.
+the report says so and carries no document.
 
 ## Method
 
@@ -842,10 +848,11 @@ AGENTS.md, docs that map paths to products or teams, CODEOWNERS.
 Kubernetes manifests, deploy configuration, the names the code logs under. \
 The task may list the containers embry0 reads this repository's logs from; \
 prefer those.
-4. When `.embry0/areas.yml` already exists, start from it: keep what is \
-right, fix what the tree contradicts, add what is missing, and say what \
-changed.
-5. Check the file before you report it: every glob matches at least one \
+4. When the task carries the current document, start from it: keep what \
+is right, fix what the tree contradicts, add what is missing, and say what \
+changed. A file of areas in the repository's `.embry0` directory is a \
+leftover that embry0 no longer reads: do not start from it.
+5. Check the document before you report it: every glob matches at least one \
 tracked file (`git ls-files -- ':(glob)<pattern>'`, with a trailing `/` \
 written as `/**`), and list the tracked top-level paths no area covers.
 
@@ -860,9 +867,9 @@ with exactly these columns:
 
 Why says what in the repository makes it a part (a manifest, a doc, a \
 deploy unit), with a file. Then, in this order:
-- `## Areas file`: the whole file in one yaml code block and nothing else \
-in that block. With no areas, write `No file.` instead.
-- `## Changes`: when a file existed, what you changed and why.
+- `## Areas file`: the whole document in one yaml code block and nothing \
+else in that block. With no areas, write `No file.` instead.
+- `## Changes`: when the task carried a document, what you changed and why.
 - `## Not covered`: tracked paths no area claims, and why that is right.
 - `## Assumptions`: as the contract below asks.
 {DELIVERABLE_CONTRACT}"""

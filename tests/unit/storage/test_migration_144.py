@@ -21,10 +21,8 @@ AT = datetime(2026, 10, 26, 6, tzinfo=UTC)
 REPO = "acme/widgets"
 
 
-def test_the_score_version_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_143.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must add slop_meter_scores.config_version"
+def test_the_score_version_migration_is_listed_once() -> None:
+    """ "Is the last entry" passed to tests/unit/storage/test_migration_145.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

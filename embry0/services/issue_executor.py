@@ -17,8 +17,10 @@ if TYPE_CHECKING:
     from embry0.api.events.bus import EventBus
     from embry0.metrics import LoopMetrics
     from embry0.orchestration.budget_gate import DispatchDecision
+    from embry0.services.areas_store import AreasStore
     from embry0.settings.store import SettingsStore
     from embry0.storage.repositories.environment import EnvironmentRepository
+    from embry0.storage.repositories.repo_areas_proposals import RepoAreasProposalsRepository
     from embry0.storage.repositories.repo_preferences import RepoPreferencesRepository
 
 import embry0.services._executor_outcomes as _executor_outcomes
@@ -32,7 +34,6 @@ from embry0.safety.error_codes import ErrorCode
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services._executor_outcomes import _fold_auto_answers_into_context
 from embry0.services.account_waits import LOCAL_BUSY, REENROLL_RETRY, AccountWait, JobParked
-from embry0.services.areas import AREAS
 from embry0.services.healing.recorder import record_case_event
 from embry0.services.run_with import RunWith, apply_run_with, models_with
 from embry0.storage.database import DatabasePool
@@ -136,13 +137,23 @@ class IssueExecutor:
         # done_when and salvage sections from when it starts (#182). None in
         # tests / legacy callers: every job runs on the sections' defaults.
         settings: SettingsStore | None = None,
+        # AreasStore (spec 2026-11-10): each repository's areas, which the
+        # pull requests it opens are labelled with. None in tests / legacy
+        # callers: they open their PRs without an area. Production passes it
+        # (tests/unit/api/test_areas_wiring.py).
+        areas: AreasStore | None = None,
+        # RepoAreasProposalsRepository: where a map of a repository's areas
+        # waits for a person. None in tests / legacy callers: a map's result
+        # is logged and dropped.
+        areas_proposals: RepoAreasProposalsRepository | None = None,
     ) -> None:
         self._metrics = metrics
         self._settings = settings
         self._case_recorder = case_recorder
         self._credential_resolver = credential_resolver
-        # Where the PRs it opens read a monorepo's areas (spec 2026-10-25).
-        self._area_reader = AREAS
+        # Where the PRs it opens read a monorepo's areas (spec 2026-10-25, kept in embry0 since 2026-11-10).
+        self._areas = areas
+        self._areas_proposals = areas_proposals
         self._credentials_repo = credentials_repo
         self._credential_health = credential_health
         self._tracker_channels = tracker_channels or {}
@@ -1322,6 +1333,10 @@ class IssueExecutor:
         # #349: a resumed run that raised after pushing its branch still
         # gets its PR; the carried facts (#482) name the branch.
         pr_url, _ = await self._open_fallback_pr(issue_id, job_id, last_state or {}, error_code=code.value)
+        # Spec 2026-11-10: a resumed map that raised leaves no document; its proposal says why first.
+        await _executor_outcomes.finish_areas_map(
+            self, job_id, (last_state or {}).get("areas_proposal_id"), None, str(exc)
+        )
         await self._jobs.update(
             job_id,
             status="failed",

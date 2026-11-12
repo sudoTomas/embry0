@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from embry0.branding import GIT_AUTHOR_EMAIL
+from embry0.services.areas import Area
 from embry0.services.background_scope import Enrollment, Registered
 from embry0.services.slop_meter import loop as loop_mod
 from embry0.services.slop_meter.context import job_meter, meter_sentence
@@ -21,6 +22,7 @@ from embry0.services.slop_meter.mirror import GitError, GitMirror, auth_env
 from embry0.services.slop_meter.score import Outlier
 from embry0.settings.sections.background import BackgroundSettings
 from embry0.settings.sections.slop_meter import SlopMeterSettings
+from tests.fixtures.areas import areas_of, no_areas_of
 
 START = datetime(2025, 1, 6, 9, 0, tzinfo=UTC)
 REPO = "acme/web"
@@ -36,6 +38,7 @@ class FakeMirror:
         self.records, self.order, self.files = records, order, files or {}
         self.synced: list[tuple[str, str]] = []
         self.logged: list[list[str]] = []
+        self.read_paths: list[str] = []
 
     async def sync(self, repo: str, *, forge: str, token: str, gitlab_url: str = "") -> None:
         self.synced.append((repo, forge))
@@ -48,6 +51,7 @@ class FakeMirror:
         return "".join(self.records[s] for s in shas)
 
     async def read(self, repo: str, path: str) -> str | None:
+        self.read_paths.append(path)
         return self.files.get(path)
 
 
@@ -195,6 +199,7 @@ def _loop(
     model: str = "",
     owner_bots: tuple[str, ...] = (),
     calls: Any = None,
+    areas: dict[str, list[Area]] | None = None,
 ) -> SlopMeterLoop:
     async def repos() -> Registered:
         return Registered(active=(REPO,))
@@ -220,6 +225,7 @@ def _loop(
         bots=bots,
         calls=calls if calls is not None else FakeCalls(),
         limits=SlopMeterLimits(commits_per_tick=per_tick),
+        areas_of=areas_of(areas),
         clock=lambda: START + timedelta(days=60),
     )
 
@@ -349,7 +355,9 @@ async def test_without_a_model_an_outlier_leaves_the_score_provisional() -> None
 
 
 @pytest.mark.asyncio
-async def test_areas_and_ignore_lists_come_from_the_head() -> None:
+async def test_areas_come_from_embry0_and_ignore_lists_from_the_head() -> None:
+    """The repository's areas are the ones embry0 keeps (spec 2026-11-10): an areas file left in the head is not
+    read, while the head's ignore lists still weigh its lines."""
     order = ["a", "b"]
     records = {
         "a": _record("a", START, [("api/x.py", 50, 0), ("web/dist/app.js", 900, 0)]),
@@ -357,13 +365,17 @@ async def test_areas_and_ignore_lists_come_from_the_head() -> None:
     }
     files = {
         ".prettierignore": "dist/\n",
-        ".embry0/areas.yml": "areas:\n  - name: Api\n    paths: [api/**]\n  - name: Web\n    paths: [web/**]\n",
+        ".embry0/areas.yml": "areas:\n  - name: Old\n    paths: [api/**]\n",
     }
+    mirror = FakeMirror(records, order, files)
     store = FakeStore()
-    await _loop(FakeMirror(records, order, files), store, per_tick=10).tick()
+    areas = {REPO: [Area("Api", ("api/**",)), Area("Web", ("web/**",))]}
+    await _loop(mirror, store, per_tick=10, areas=areas).tick()
     results = store.stored[REPO]
-    assert set(results) == {"", "Api", "Web"}
+    assert set(results) == {"", "Api", "Web"}, "each area embry0 keeps is scored, and the file's is not"
     assert results["Web"].weeks[-1].lines == 30, "the ignored build output weighs nothing"
+    assert ".prettierignore" in mirror.read_paths
+    assert not [p for p in mirror.read_paths if p.startswith(".embry0/")], "no embry0 file of the repository is read"
 
 
 class FakeResponse:
@@ -512,6 +524,7 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
         bots=lambda repo: _no_bots(),
         calls=FakeCalls(),
         limits=SlopMeterLimits(commits_per_tick=10, event_pages=100),
+        areas_of=no_areas_of,
         clock=lambda: START + timedelta(days=60),
     )
     assert await loop.tick() is True, "the big repository still has comments to read"
@@ -695,6 +708,7 @@ async def test_each_credential_keeps_its_own_budget() -> None:
         bots=no_bots,
         calls=FakeCalls(),
         limits=SlopMeterLimits(commits_per_tick=10, event_pages=100),
+        areas_of=no_areas_of,
         clock=lambda: START + timedelta(days=60),
     )
     assert await loop.tick() is True

@@ -27,6 +27,7 @@ from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitMirror
 from embry0.settings.sections import CATALOG
 from embry0.settings.store import build_snapshot
+from tests.fixtures.areas import no_areas_of
 
 
 def _module(name: str) -> Any:
@@ -717,6 +718,7 @@ def _meter(
         bots=no_bots,
         calls=None,  # type: ignore[arg-type]
         limits=SlopMeterLimits(),
+        areas_of=no_areas_of,
         clock=lambda: now[0],
     )
 

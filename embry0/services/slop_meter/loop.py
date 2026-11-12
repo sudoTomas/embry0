@@ -20,8 +20,9 @@ loop comes back sooner (``SLOP_METER_CATCHUP_SECONDS``).
 A tick reads its enrollment, its judge's model and the ``slop_meter``
 section from one snapshot of the settings documents (:func:`meter_reader`),
 and scores each repository with the section as that repository reads it
-(#169). Each score records the section's :func:`config_version` for it. The
-schedule looks at the settings every :data:`LOOK_SECONDS`, so turning the
+(#169), and its areas as embry0 keeps them (spec 2026-11-10). Each score
+records :func:`score_version`: the section's :func:`config_version` and,
+for a repository with areas, their digest. The schedule looks at the settings every :data:`LOOK_SECONDS`, so turning the
 meter on or off, or a new interval, applies within them. Between runs, each
 look compares every repository's stored version with the one it reads now and
 rescores only the repositories whose versions differ, from what was read,
@@ -41,7 +42,7 @@ from typing import Any, Final
 import httpx
 import structlog
 
-from embry0.services.areas import AREAS_PATH, area_of_path, parse_areas
+from embry0.services.areas import Area, area_of_path, digest
 from embry0.services.background_models import BackgroundCallRefused, BackgroundCalls, ModelLookup, model_lookup
 from embry0.services.background_scope import Enrollment, Registered, enrollment
 from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader, ShareBudget
@@ -204,6 +205,8 @@ class Inputs:
     settings: SlopMeterSettings = DEFAULTS
     #: Its file rules, built once for one score (they keep each path's weight); None builds them.
     rules: FileRules | None = None
+    #: Its areas as embry0 keeps them (spec 2026-11-10), each scored as a meter of its own.
+    areas: tuple[Area, ...] = ()
 
 
 def weigher_for(
@@ -238,11 +241,20 @@ def logins_from(commits: Iterable[Commit], looked_up: Mapping[str, str]) -> dict
     return out
 
 
+def score_version(settings: SlopMeterSettings, areas: Iterable[Area]) -> str:
+    """What a repository's score is computed from, as each score records it: the ``slop_meter`` section's
+    version (:func:`config_version`) and, when the repository names areas, their digest, so a change to either
+    rescores it. A repository without areas records the section's version alone, as before areas were stored."""
+    version = config_version(settings)
+    areas = list(areas)
+    return f"{version}+{digest(areas)}" if areas else version
+
+
 def compute(inputs: Inputs) -> dict[str, Meter]:
     """The repository's meter (``""``) and its areas', from the history as read, scored with ``inputs.settings``.
     Pure: runs in a thread."""
     weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules)
-    areas = parse_areas(inputs.files.get(AREAS_PATH))
+    areas = inputs.areas
 
     def area_of(path: str) -> str | None:
         found = area_of_path(areas, path)
@@ -365,6 +377,7 @@ class SlopMeterLoop:
         bots: Callable[[str], Awaitable[Iterable[str]]],
         calls: BackgroundCalls,
         limits: SlopMeterLimits,
+        areas_of: Callable[[Iterable[str]], Awaitable[Mapping[str, list[Area]]]],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         http: httpx.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
@@ -376,6 +389,7 @@ class SlopMeterLoop:
         self._pruner = Pruner(store=store, mirror=mirror, exits=exits, audit=audit, clock=clock)
         self._token_for = token_for
         self._client_for = client_for
+        self._areas_of = areas_of
         #: The tick's ``repo -> model`` and ``slop_meter`` section, read at its start.
         self._lookup: ModelLookup | None = None
         self._meter: PerRepository[SlopMeterSettings] = _Defaults()
@@ -662,9 +676,10 @@ class SlopMeterLoop:
         rows, event_rows = await self._store.commits(repo), await self._store.events(repo)
         # Building every commit of a long history takes a while: off the event loop, as the scoring is.
         commits, events = await asyncio.to_thread(history_of, rows, event_rows, bots, agents)
-        files = {name: await self._mirror.read(repo, name) for name in (*CONFIG_FILES, AREAS_PATH)}
+        files = {name: await self._mirror.read(repo, name) for name in CONFIG_FILES}
         logins, judgments = await self._store.logins(), await self._store.judgments(repo)
-        return Inputs(commits, events, logins, judgments, files, settings, FileRules.of(settings))
+        areas = tuple((await self._areas_of([repo])).get(repo.lower(), []))
+        return Inputs(commits, events, logins, judgments, files, settings, FileRules.of(settings), areas)
 
     async def _score(self, repo: str, *, judge: bool = True) -> None:
         """Score ``repo`` with the ``slop_meter`` section as it reads it, recording that section's version.
@@ -676,9 +691,9 @@ class SlopMeterLoop:
         and the score provisional, until the next run.
         """
         settings = self._meter.repo(repo)
-        version = config_version(settings)
-        self._tried[repo] = version
         inputs = await self._inputs(repo, settings)
+        version = score_version(settings, inputs.areas)
+        self._tried[repo] = version
         if judge:
             await self._judge(repo, inputs)
         results = await asyncio.to_thread(compute, inputs)
@@ -751,9 +766,11 @@ class SlopMeterLoop:
         if not names:
             return []
         stored = await self._store.versions()
+        areas = await self._areas_of(names)
+        versions = {repo: score_version(read.meter.repo(repo), areas.get(repo.lower(), [])) for repo in names}
         changed: list[str] = []
         for repo in names:
-            version = config_version(read.meter.repo(repo))
+            version = versions[repo]
             held = stored.get(repo)
             if held is not None and held != version and self._tried.get(repo) != version:
                 changed.append(repo)
@@ -763,7 +780,7 @@ class SlopMeterLoop:
         self._meter = read.meter
         rescored: list[str] = []
         for repo in changed:
-            self._tried[repo] = config_version(read.meter.repo(repo))
+            self._tried[repo] = versions[repo]
             state = await self._store.state(repo)
             if int(state.get("commits_read") or 0) < int(state.get("commits_total") or 0):
                 continue  # still reading its history: its catch-up scores it

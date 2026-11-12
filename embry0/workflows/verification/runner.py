@@ -39,7 +39,7 @@ from embry0.execution import sandbox_git
 from embry0.execution.docker_client import DEFAULT_MAX_OUTPUT_BYTES, OutputTooLargeError
 from embry0.git_refs import valid_ref
 from embry0.safety.redaction import secret_env_values
-from embry0.workflows.qa._glob_match import compile_glob, match_any
+from embry0.workflows.qa._glob_match import match_any, read_glob
 from embry0.workflows.verification.config import TestTarget, VerificationConfig
 from embry0.workflows.verification.gate import (
     GateReport,
@@ -121,7 +121,7 @@ def select_targets(targets: list[TestTarget], changed_files: list[str]) -> list[
         return list(targets)
     selected: list[TestTarget] = []
     for target in targets:
-        compiled = [compile_glob(p) for p in target.paths]
+        compiled = [read_glob(p) for p in target.paths]
         if not compiled or any(match_any(path, compiled) for path in changed_files):
             selected.append(target)
     return selected

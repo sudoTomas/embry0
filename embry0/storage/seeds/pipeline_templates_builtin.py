@@ -341,8 +341,8 @@ BUILTIN_PIPELINE_TEMPLATES: dict[str, dict[str, Any]] = {
         "map-areas",
         "area-mapper",
         "Read-only: triage → area-mapper → output. Maps a monorepo's parts (paths, the names their "
-        "logs run under, owners) into .embry0/areas.yml; the output step opens the pull request.",
-        delivers="a pull request that maps the repository's areas",
+        "logs run under, owners) into an areas document embry0 keeps for a person to apply.",
+        delivers="the repository's areas, for a person to apply",
     ),
 }
 

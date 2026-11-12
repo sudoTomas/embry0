@@ -4,7 +4,7 @@ embry0 runs git in a job's sandbox for steps of its own: the clone, a
 salvage commit and the rescue push of a developer's branch, the changed-file
 diff that scopes review and QA, the QA run's default-branch lookup, a pull
 request review's checkout, the verify gate's checkouts of the head and base
-commits, and the commit and push of an areas or audit delivery.
+commits, and the commit and push of an audit delivery.
 They run as the agent user, in the agent's workspace. This page says what
 those commands read, what they never read, and what happens when embry0
 refuses to run one.
@@ -120,7 +120,7 @@ What the operator sees, by step:
 | `verify_gate` | The gate reports `error` ("could not verify"), and its note is the refusal. |
 | `changed_files`, `base_branch`, `diff_lines` | Review and QA run unscoped, and the base falls back to `main`, as for any failed diff. |
 | `default_branch` | The QA run is not trusted with the repository's shared cache: it gets a per-job volume, and no pre-built image is selected for it ([qa-yaml-reference.md](qa-yaml-reference.md), `cache`). |
-| `areas_delivery`, `audit_delivery` | No pull request is opened; the report stays. `map_areas_pr_not_pushed` / `context_audit_pr_not_pushed` carry the refusal. |
+| `audit_delivery` | No pull request is opened; the report stays. `context_audit_pr_not_pushed` carries the refusal. |
 | `review_checkout`, `qa_checkout`, `clone` | The review, the QA run or the job's setup fails with the refusal. |
 | `configure` | Writing the agent's `~/.gitconfig` failed; the job's setup fails. |
 

@@ -287,7 +287,7 @@ async def validate_node(state: dict[str, Any], config: RunnableConfig) -> dict[s
         return {"onboard": ob}
 
     try:
-        cfg = parse_qa_yaml_v2(yaml_text)
+        cfg = parse_qa_yaml_v2(yaml_text, writing=True)  # the setup it proposes is stored as written
     except Exception as exc:  # noqa: BLE001
         ob["last_error"] = f"schema validation failed:\n{exc}"
         ob["validated"] = False
@@ -331,7 +331,7 @@ async def smoke_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
     from embry0.workflows.qa._subtask_prep import prep_qa_sandbox_clone
     from embry0.workflows.qa.boot import run_boot_phase
     from embry0.workflows.qa.qa_yaml_resolve import resolve_app_config
-    from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
+    from embry0.workflows.qa.qa_yaml_v2 import STORED, QAYamlConfigV2
     from embry0.workflows.qa.subtask_state import _synth_v1_qa_yaml
 
     ob = _onboard_state(state)
@@ -364,7 +364,7 @@ async def smoke_node(state: dict[str, Any], config: RunnableConfig) -> dict[str,
     except UnregisteredRepoError as exc:
         return _fail(state, f"{ErrorCode.REPO_UNREGISTERED}: {exc}")
 
-    cfg = QAYamlConfigV2.model_validate(ob["qa_yaml_parsed"])
+    cfg = QAYamlConfigV2.model_validate(ob["qa_yaml_parsed"], context=STORED)
     writer = _writer()
     writer(events.node_started(node="smoke"))
 

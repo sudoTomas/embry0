@@ -61,6 +61,11 @@ NOT_ITEMS: dict[str, str] = {
     "/api/v1/repos/{full_repo:repo}/-/setup/proposal/{proposal_id}/reject": "as apply",
     "/api/v1/repos/{full_repo:repo}/setup/proposal/{proposal_id}/apply": "the old path of apply",
     "/api/v1/repos/{full_repo:repo}/setup/proposal/{proposal_id}/reject": "the old path of reject",
+    "/api/v1/repos/{full_repo:repo}/-/areas/proposal/{proposal_id}/apply": (
+        "a map of a repository's areas, addressed by the repository the caller names, which the allowlist refuses "
+        "as every route naming a repository does (spec 2026-11-10)"
+    ),
+    "/api/v1/repos/{full_repo:repo}/-/areas/proposal/{proposal_id}/reject": "as apply",
 }
 
 #: The press of a button in a chat names its decision by code, in the body: the uncovered one's and an unknown one.

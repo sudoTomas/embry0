@@ -178,6 +178,32 @@ def _history(app: Any, mp: pytest.MonkeyPatch, actors: tuple[str, ...]) -> None:
     )
     app.state.qa_configs_repo = SimpleNamespace(get=AsyncMock(return_value=None))
     app.state.repo_preferences_repo = SimpleNamespace(get=AsyncMock(return_value=None))
+    app.state.areas = SimpleNamespace(current_snapshot=AsyncMock(return_value=None))
+
+
+def _areas(app: Any, mp: pytest.MonkeyPatch, actors: tuple[str, ...]) -> None:
+    from embry0.services.areas_store import StoredAreas
+
+    stored = StoredAreas("acme/widgets", "areas: []\n", {"areas": []}, 1, actors[0], NOW)
+    app.state.repos_repo = SimpleNamespace(registered_as=AsyncMock(return_value="acme/widgets"))
+    app.state.areas = SimpleNamespace(get=AsyncMock(return_value=stored))
+    app.state.repo_areas_imports_repo = SimpleNamespace(get=AsyncMock(return_value=None))
+    app.state.repo_areas_proposals_repo = SimpleNamespace(latest=AsyncMock(return_value=None))
+    app.state.jobs_repo = SimpleNamespace(newest_per_repo=AsyncMock(return_value={}))
+
+
+def _areas_proposal(app: Any, mp: pytest.MonkeyPatch, actors: tuple[str, ...]) -> None:
+    from embry0.api.v1 import areas
+
+    view = {
+        "id": "areas-1",
+        "repo": "acme/widgets",
+        "status": "applied",
+        "created_by": actors[0],
+        "decided_by": actors[1],
+    }
+    app.state.repos_repo = SimpleNamespace(registered_as=AsyncMock(return_value="acme/widgets"))
+    mp.setattr(areas, "proposal_view", AsyncMock(return_value=view))
 
 
 def _repo_detail(app: Any, mp: pytest.MonkeyPatch, actors: tuple[str, ...]) -> None:
@@ -292,6 +318,27 @@ CASES: list[Case] = [
         "/api/v1/repos/{full_repo:repo}/-/setup/proposal",
         "/api/v1/repos/acme/widgets/-/setup/proposal",
         _setup_proposal,
+        lambda body: [body["created_by"], body["decided_by"]],
+        actors=(EMBRY0, OTHER),
+    ),
+    Case(
+        "/api/v1/repos/{full_repo:repo}/-/areas",
+        "/api/v1/repos/acme/widgets/-/areas",
+        _areas,
+        lambda body: [body["updated_by"]],
+        actors=(OTHER,),
+    ),
+    Case(
+        "/api/v1/repos/{full_repo:repo}/-/areas/proposal",
+        "/api/v1/repos/acme/widgets/-/areas/proposal",
+        _areas_proposal,
+        lambda body: [body["created_by"], body["decided_by"]],
+        actors=(OTHER, OWN),
+    ),
+    Case(
+        "/api/v1/repos/{full_repo:repo}/-/areas/proposal",
+        "/api/v1/repos/acme/widgets/-/areas/proposal",
+        _areas_proposal,
         lambda body: [body["created_by"], body["decided_by"]],
         actors=(EMBRY0, OTHER),
     ),

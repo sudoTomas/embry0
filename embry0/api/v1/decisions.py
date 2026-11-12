@@ -187,24 +187,24 @@ async def with_reports(request: Request, shown: Sequence[dict[str, Any]]) -> lis
 
 
 async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Each finished quest's owners, as a quest on offer's are: its area's, else its repository's, else CODEOWNERS'."""
-    from embry0.api.v1.proposals import _areas, _codeowners
+    """Each finished quest's owners, as a quest on offer's are (:func:`embry0.services.owners.owners_for`): its
+    area's, else its repository's, else CODEOWNERS'."""
+    from embry0.api.v1.proposals import owner_sources
+    from embry0.services.owners import Owners, owners_for
 
-    proposals_repo = getattr(request.app.state, "proposals_repo", None)
-    if proposals_repo is None or not rows:
+    if getattr(request.app.state, "proposals_repo", None) is None or not rows:
         return {}
     repos = {str(r.get("repo") or "").lower() for r in rows if r.get("repo")}
     try:
-        set_owners = await proposals_repo.owners()
-        codeowners, areas = await asyncio.gather(_codeowners(request, repos - set(set_owners)), _areas(request, repos))
+        repository, areas = await owner_sources(request, repos)
     except Exception:  # noqa: BLE001 - a card without owners is asked of nobody, and still shown
         logger.warning("decisions_owners_unread", exc_info=True)
         return {}
     out: dict[str, list[str]] = {}
     for r in rows:
         name = str(r.get("repo") or "").lower()
-        area = next((a for a in areas.get(name, []) if a.name == r.get("area") and a.owners), None)
-        out[str(r["job_id"])] = list(area.owners if area else set_owners.get(name) or codeowners.get(name) or [])
+        area = next((a for a in areas.get(name, []) if a.name == r.get("area")), None)
+        out[str(r["job_id"])] = list(owners_for(area, repository.get(name, Owners())).logins)
     return out
 
 
