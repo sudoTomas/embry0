@@ -36,10 +36,17 @@ from urllib.parse import quote
 
 from embry0.workflows.qa._glob_match import Glob, GlobPatternError, compile_glob
 
+#: A combining dot above after an ``i`` or a ``j``, which carry their dot already (Unicode's Soft_Dotted letters).
+_SOFT_DOT = re.compile("(?<=[ij])\u0307")
+
 
 def _folded(text: str) -> str:
-    """``text`` NFC-normalised, case-folded and normalised again: how names are compared."""
-    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
+    """``text`` NFKC-normalised, case-folded and normalised again: how names are compared, so a lookalike spelling
+    of a name (``Ⅻ`` and ``XII``, a ligature, a full-width letter) is the same name. ``İ`` folds to an ``i`` with
+    a combining dot above, which an ``i`` or a ``j`` carries already, so the dot is dropped: ``İstanbul`` is
+    ``istanbul``."""
+    folded = unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", text).casefold())
+    return _SOFT_DOT.sub("", folded)
 
 
 def slug_of(name: str) -> str:

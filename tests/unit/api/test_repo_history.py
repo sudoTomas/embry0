@@ -360,3 +360,29 @@ _PR_OFF = {**_PR_ON, "enabled": False}
 )
 def test_what_each_change_reads(surface: str, before: Any, after: Any, what: str) -> None:
     assert change_what(surface, before, after) == what
+
+
+NEGATED = V1 + (
+    "conditional_acceptance_criteria:\n  - name: docs\n    when:\n      changed_paths: ['!docs/**', 'web/**']\n"
+    "    criteria:\n      - The docs open\n"
+)
+
+
+@pytest.mark.requires_postgres
+async def test_an_undo_puts_back_a_setup_with_a_negated_glob_as_it_was_and_says_so(client, db_with_migrations) -> None:
+    """A glob starting with '!' is refused when a setup is written, but an undo puts back a past state exactly,
+    with a warning in its answer, as the setup stored with one keeps reading."""
+    await client.put(QA, content=V1)
+    changed = (await client.put(QA, content=V2)).json()["revision_id"]
+    await db_with_migrations.execute(
+        "UPDATE repo_config_revisions SET before = $1::jsonb WHERE id = $2", {"yaml_text": NEGATED}, changed
+    )
+    resp = await client.post(f"{HISTORY}/{changed}/undo")
+    assert resp.status_code == 200, f"an undo of a setup with a negated glob was refused: {resp.text}"
+    assert (await client.get(QA)).text == NEGATED, "the earlier text, byte for byte"
+    warnings = resp.json().get("warnings") or []
+    assert len(warnings) == 1 and "'!docs/**'" in warnings[0] and "negation is not supported" in warnings[0], (
+        f"the undo's answer does not say the setup it put back holds a negated glob: {resp.json()}"
+    )
+    plain = await client.post(f"{HISTORY}/{resp.json()['revision_id']}/undo")
+    assert plain.status_code == 200 and "warnings" not in plain.json(), "an undo to a setup without one says nothing"

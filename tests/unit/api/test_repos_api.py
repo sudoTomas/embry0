@@ -61,6 +61,18 @@ async def test_put_qa_config_refuses_a_class_ending_in_a_backslash_saying_how_to
 
 
 @pytest.mark.asyncio
+async def test_put_qa_config_refuses_a_glob_that_starts_with_an_exclamation_mark(api_client) -> None:
+    """The grammar has no negation: '!docs/**' only ever matched paths starting with '!'. A write says so."""
+    text = (
+        _V2_MIN + "conditional_acceptance_criteria:\n  - name: docs\n    when:\n"
+        "      changed_paths: ['!docs/**']\n    criteria:\n      - The docs open\n"
+    )
+    r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=text)
+    assert r.status_code == 422, f"a negated glob was stored: {r.status_code}"
+    assert "negation is not supported" in r.json()["detail"], r.json()
+
+
+@pytest.mark.asyncio
 async def test_put_qa_config_explains_a_typo_before_the_technical_details(api_client) -> None:
     text = _V2_MIN + "apps:\n  web:\n    boot_comand: npm run dev\n    frontend_url: http://localhost:3000\n"
     r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=text)

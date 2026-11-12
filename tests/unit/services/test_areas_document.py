@@ -235,3 +235,15 @@ def test_a_name_is_one_area_however_its_letters_are_encoded_or_cased() -> None:
     slugs = [a.slug for a in areas_of(data)]
     assert slugs[:2] == ["cafe", "caf\u00e9"], f"an accent is part of the letter it marks: {slugs}"
     assert "-" not in slugs[2] and slugs[2].endswith("stanbul"), f"a dotted capital I splits the word: {slugs[2]}"
+
+
+def test_lookalike_spellings_of_a_name_are_one_area() -> None:
+    """#458's third review: İstanbul and istanbul, Ⅻ and XII were two areas each."""
+    for first, second in (("\u0130stanbul", "istanbul"), ("\u216b", "XII"), ("\ufb01le", "file"), ("\uff21bc", "Abc")):
+        try:
+            check(load_yaml(f"areas:\n  - name: {first}\n  - name: {second}\n"))
+            pytest.fail(f"{first!r} and {second!r} are two areas")
+        except DocumentInvalid as exc:
+            assert [p.type for p in exc.problems] == ["duplicate_slug"], exc.problems
+    data = check(load_yaml("areas:\n  - name: Caf\u00e9\n  - name: Cafe\n"))
+    assert [a.slug for a in areas_of(data)] == ["caf\u00e9", "cafe"], "an accent still tells two names apart"

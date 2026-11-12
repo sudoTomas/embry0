@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Final
 
+import structlog
 import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import ValidationError
@@ -36,6 +37,7 @@ from embry0.storage.repositories.repo_preferences import preferences_snapshot
 from embry0.workflows.verification.config import STORED as VERIFICATION_STORED
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
 
 WHY_NOT: Final = "This changed again later. Undo the newer change first."
 #: Why a change of a repository's areas cannot be undone once the repository is not registered.
@@ -191,8 +193,8 @@ async def _registered(request: Request, repo: str) -> bool:
 
 
 @router.post("/repos/{full_repo:repo}/-/history/{revision_id}/undo")
-async def undo_change(full_repo: str, revision_id: int, request: Request) -> dict[str, int | None]:
-    from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
+async def undo_change(full_repo: str, revision_id: int, request: Request) -> dict[str, Any]:
+    from embry0.workflows.qa.qa_yaml_v2 import negation_warning, parse_qa_yaml_v2
 
     await enforce_repo_allowlist(request, full_repo, action="undo a change")
     revision = await request.app.state.repo_config_revisions_repo.get(revision_id)
@@ -215,6 +217,7 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
     reason = f"undo of change {revision_id}"
     before = revision["before"]
     new_revision_id: int | None
+    warnings: list[str] = []
     if surface == "areas":
         # Spec 2026-11-10: the areas a change replaced, the empty ones when it created them, put back only while
         # the stored document is still the one it wrote.
@@ -233,9 +236,14 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
             new_revision_id = await configs.delete_recorded(full_repo, actor=actor, source="restore", reason=reason)
         else:
             try:
-                parse_qa_yaml_v2(before["yaml_text"])
+                # Read as stored: a setup with a glob only the release before wrote, or one that starts with '!',
+                # goes back as it was, and the answer says what it holds.
+                restored = parse_qa_yaml_v2(before["yaml_text"])
             except (ValueError, yaml.YAMLError) as exc:
                 raise _no_longer_valid(exc) from exc
+            warning = negation_warning(restored)
+            if warning:
+                warnings.append(warning)
             try:
                 _, new_revision_id = await configs.upsert_recorded(
                     full_repo, before["yaml_text"], updated_by=actor, source="restore", reason=reason
@@ -269,4 +277,6 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
         details={"repo": full_repo, "revision_id": revision_id, "new_revision_id": new_revision_id},
         audit_log_path=getattr(config, "audit_log_path", None),
     )
-    return {"revision_id": new_revision_id}
+    if warnings:
+        logger.warning("undo_restored_negated_globs", repo=full_repo, revision_id=revision_id)
+    return {"revision_id": new_revision_id, **({"warnings": warnings} if warnings else {})}

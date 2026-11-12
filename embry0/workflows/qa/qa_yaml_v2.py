@@ -12,6 +12,7 @@ import re
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -22,10 +23,19 @@ from embry0.workflows.qa.browser_backends import backend_for
 #: longer writes, which the release before read, is read as it read it. Without it a glob must be one it writes.
 STORED: dict[str, bool] = {"stored": True}
 
+logger = structlog.get_logger(__name__)
+
+#: Why a glob starting with ``!`` is refused when a setup is written. The grammar has no negation: such a glob only
+#: ever matched a path that starts with ``!``. A setup stored with one keeps reading, as before, and says so.
+NEGATION = "a glob cannot start with '!': negation is not supported, so list only the paths it should match"
+
 
 def _check_glob(pattern: str, info: ValidationInfo) -> None:
+    stored = bool((info.context or {}).get("stored"))
+    if pattern.startswith("!") and not stored:
+        raise ValueError(f"{NEGATION} (glob {pattern!r})")
     try:
-        check_glob(pattern, stored=bool((info.context or {}).get("stored")))
+        check_glob(pattern, stored=stored)
     except GlobPatternError as exc:
         raise ValueError(str(exc)) from exc
 
@@ -580,8 +590,50 @@ QAYamlConfigV2.model_rebuild()
 
 def parse_qa_yaml_v2(raw: str, *, writing: bool = False) -> QAYamlConfigV2:
     """``raw`` as a test setup. A stored one by default; ``writing`` for a text about to be stored, which may hold
-    only globs this release writes (a stored one also reads a glob the release before wrote, as it read it)."""
+    only globs this release writes (a stored one also reads a glob the release before wrote, as it read it).
+
+    A stored setup holding a glob that starts with ``!`` reads, and each read logs one warning naming them
+    (:func:`negated_globs`); a written one is refused (:data:`NEGATION`).
+    """
     data = yaml.safe_load(raw)
     if not isinstance(data, dict):
         raise ValueError("qa.yaml must be a YAML mapping at the top level")
-    return QAYamlConfigV2.model_validate(data, context=None if writing else STORED)
+    cfg = QAYamlConfigV2.model_validate(data, context=None if writing else STORED)
+    negated = negated_globs(cfg)
+    if negated:
+        logger.warning("qa_config_negated_globs", globs=[g[:100] for g in negated[:10]], count=len(negated))
+    return cfg
+
+
+def negated_globs(cfg: BaseModel) -> list[str]:
+    """Every ``changed_paths`` glob of ``cfg`` that starts with ``!``, in document order."""
+    found: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, AppWhen | ConditionalWhen):
+            found.extend(p for p in value.changed_paths if p.startswith("!"))
+        if isinstance(value, BaseModel):
+            for name in type(value).model_fields:
+                walk(getattr(value, name))
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list | tuple):
+            for item in value:
+                walk(item)
+
+    walk(cfg)
+    return found
+
+
+def negation_warning(cfg: BaseModel) -> str | None:
+    """What a person is told of a setup holding a glob that starts with ``!``: it reads, and matches only paths
+    that start with ``!``. None when it holds none."""
+    negated = negated_globs(cfg)
+    if not negated:
+        return None
+    listed = ", ".join(repr(g) for g in negated[:5]) + (f" and {len(negated) - 5} more" if len(negated) > 5 else "")
+    return (
+        f"This test setup holds globs that start with '!' ({listed}): negation is not supported, so each matches "
+        "only paths that start with '!'. It is kept as it was; a new save refuses them."
+    )
