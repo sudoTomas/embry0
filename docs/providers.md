@@ -826,7 +826,7 @@ stay native.
 routes grok to `DirectXaiExecutor` (`embry0/agents/executor_xai.py`)
 instead — an embry0-owned, CLI-free Messages-API tool loop with its own
 builtin tools, `gate_tool_call` enforcement, token-based cost, and an
-MCP stdio client (`embry0/agents/mcp_client.py`) for browser-backend parity (verified against both playwright-mcp and vibium 26.8.21).
+MCP stdio client (`embry0/agents/mcp_client.py`) for browser-backend parity (verified against both playwright-mcp and vibium 26.8.21). A line a server sends past the client's 16 MiB limit fails the request it was answering with an `McpClientError` naming the limit (`ERR_MCP_SERVER_FAILED` when it ends the run), and the client reads on from the line after it (#466).
 Verified green E2E on 2026-07-22; kept as insurance against a CLI
 release breaking on xAI's compat endpoint.
 

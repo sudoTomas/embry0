@@ -28,6 +28,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 
+from embry0.agents.stream_lines import read_line
 from embry0.api.deps import authenticate_stream, get_qa_minio, get_runtime
 from embry0.api.job_allowlist import artifact_job, job_hidden, stream_scope
 from embry0.api.scoped_tokens import mint_scoped_token, signing_material
@@ -302,7 +303,7 @@ async def get_log(
         try:
             assert proc.stdout is not None
             while True:
-                raw = await _read_log_line(proc.stdout)
+                raw = await read_line(proc.stdout)
                 if raw is None:
                     # A line longer than the reader's limit: the client sees
                     # that something was elided, and the stream goes on.
@@ -327,36 +328,6 @@ async def get_log(
                 _active_log_streams -= 1
 
     return _event_stream(_stream())
-
-
-async def _read_log_line(reader: asyncio.StreamReader) -> bytes | None:
-    """The next line of ``reader``: ``b""`` at its end, ``None`` for a line over the reader's limit.
-
-    A line longer than the limit (asyncio's default, 64 KiB, which
-    ``compose_log_stream`` keeps) is dropped through its newline, so the next
-    read starts at the line after it. ``readline()`` cannot do that: past the
-    limit it raises ``ValueError``, not ``LimitOverrunError``, and when the
-    newline has not arrived yet it leaves the rest of the long line to be read
-    as a line of its own (#386).
-    """
-    try:
-        return await reader.readuntil(b"\n")
-    except asyncio.IncompleteReadError as exc:
-        return exc.partial  # the last line, without a newline; b"" at the end
-    except asyncio.LimitOverrunError as exc:
-        buffered = exc.consumed
-    # readuntil leaves the long line in the buffer: drop what is buffered of it
-    # (up to its newline when that is there) and look for its end again.
-    while True:
-        await reader.readexactly(buffered)
-        try:
-            await reader.readuntil(b"\n")
-        except asyncio.IncompleteReadError:
-            return None  # the stream ended inside the long line
-        except asyncio.LimitOverrunError as exc:
-            buffered = exc.consumed
-        else:
-            return None
 
 
 def _event_stream(lines: AsyncIterable[bytes] | Iterable[bytes]) -> StreamingResponse:
