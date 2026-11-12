@@ -876,7 +876,10 @@ change wrote; otherwise the answer is 409 with the `why_not` text. An
 earlier value that would no longer be accepted is a 422 and nothing is
 written. The undo is itself recorded, with source `restore`, so it can be
 undone in turn. The `PUT /qa-config` response carries the new change's
-`revision_id`, `null` when the text was unchanged.
+`revision_id`, `null` when the text was unchanged. An undo puts a past
+state back exactly: a test setup holding a glob that starts with `!`,
+which a save refuses now, goes back as it was, and the answer carries
+`warnings`, a sentence naming those globs (it is logged too).
 
 ```bash
 # Put back the test setup the newest change replaced

@@ -476,3 +476,24 @@ async def test_a_map_whose_job_cannot_be_submitted_holds_nothing(app: Any, db_wi
     assert waiting == "pending", "the map waiting before stays waiting"
     app.state.issue_executor.submit_job = MagicMock()
     assert (await call(app, "POST", f"{AREAS}/map", MASTER, {})).status_code == 202, "the next map starts"
+
+
+async def test_a_map_refused_while_another_starts_never_names_a_finished_job(
+    app: Any, db_with_migrations: DatabasePool
+) -> None:
+    """#458's third review: two starts at once, and the second's 409 named the finished map job, not the one
+    starting."""
+    db = db_with_migrations
+    await db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status, pipeline_template, finished_at, dispatched_by) "
+        "VALUES ('job-done-map', $1, 'Map', 'completed', 'map-areas', NOW(), 'ada')",
+        COVERED,
+    )
+    await db.execute("UPDATE repo_areas_proposals SET status = 'running', job_id = NULL WHERE id = 'areas-widget'")
+    refused = await call(app, "POST", f"{AREAS}/map", MASTER, {})
+    assert refused.status_code == 409, refused.text
+    assert "job-done-map" not in refused.text, f"the 409 names a job that finished: {refused.text}"
+    assert "already starting" in refused.json()["detail"]
+    await db.execute("UPDATE repo_areas_proposals SET job_id = 'job-running-map' WHERE id = 'areas-widget'")
+    named = await call(app, "POST", f"{AREAS}/map", MASTER, {})
+    assert "job-running-map" in named.json()["detail"], named.json()

@@ -243,9 +243,13 @@ async def start_map(request: Request, repo: str, run_with: RunWith | None) -> di
     if latest is not None:
         latest, _ = await settle(state, latest)  # a run a restart cut off no longer holds the repository
     newest = await _newest_job(request, repo)
-    if (latest is not None and latest["status"] == "running") or (newest and newest.get("live")):
-        job_id = (latest or {}).get("job_id") or (newest or {}).get("job_id")
-        raise HTTPException(status_code=409, detail=f"a map of {repo}'s areas is already running ({job_id})")
+    starting = latest is not None and latest["status"] == "running"
+    if starting or (newest and newest.get("live")):
+        # Name the job that runs: the running map's own, else the newest job when it is live, never a finished one.
+        job_id = (latest or {}).get("job_id") if starting else None
+        job_id = job_id or ((newest or {}).get("job_id") if newest and newest.get("live") else None)
+        running = f"is already running ({job_id})" if job_id else "is already starting"
+        raise HTTPException(status_code=409, detail=f"a map of {repo}'s areas {running}")
     executor = getattr(state, "issue_executor", None)
     actor = request_actor(request)
     refusal = await executor.dispatch_refusal(actor=actor) if executor is not None else None

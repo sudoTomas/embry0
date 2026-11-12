@@ -285,3 +285,17 @@ async def test_a_stored_setup_with_a_glob_only_the_release_before_wrote_is_ready
     assert stored["ok"] is True and stored["problems"] == [], f"the stored setup no longer reads: {stored['problems']}"
     written = await _check(text)
     assert written["ok"] is False and "ends in a backslash" in str(written["problems"]), written["problems"]
+
+
+async def test_a_negated_glob_is_a_problem_before_a_save_and_a_stored_setup_with_one_is_ready():
+    """A check before a save refuses a glob that starts with '!'; the readiness check reads the stored one."""
+    text = _setup() + (
+        "conditional_acceptance_criteria:\n  - name: docs\n    when:\n      changed_paths: ['!docs/**']\n"
+        "    criteria:\n      - The docs open\n"
+    )
+    written = await _check(text)
+    assert written["ok"] is False and "negation is not supported" in str(written["problems"]), (
+        f"a check before a save accepts a glob that starts with '!': {written['problems']}"
+    )
+    stored = await _check(text, writing=False)
+    assert stored["ok"] is True, f"a stored setup with a negated glob no longer reads: {stored['problems']}"
