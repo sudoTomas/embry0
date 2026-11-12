@@ -43,6 +43,21 @@ way the job is stored under that repository, so `GET /jobs?repo=`, the world
 view and the stats find it there. A job over a URL (an `http` context) or
 with no context names none.
 
+A request's `pipeline_config` is stored on the job as given, but for the keys
+embry0 writes itself for the work it starts, which a request cannot set
+(`embry0.api.schemas.INTERNAL_PIPELINE_KEYS`: `run_with`,
+`agent_models_override`, `local_first_model`, `budget_overrun_mode`,
+`open_pr`, `context_fingerprint`, `head_sha`, `actor`, `proposal_id`,
+`areas_proposal_id`, and what a QA, onboarding or pull request review job
+runs on: `pipeline`, `branch`, `skip_smoke`, `qa`, `repo`, `number` and the
+other keys of a review's frozen config). Each is a 422,
+`pipeline_config cannot set <key>: embry0 sets it for the work it starts`,
+and nothing is stored; set the request's own field instead (`run_with`,
+`agent_models`, `pipeline`, `branch`, `qa`, `skip_smoke`, `number`). A
+`max_budget_usd` there is held to the field's bound (above 0, at most 1000),
+and the field wins when both are sent. Running a job again
+(`POST /jobs/{id}/run-again`) copies its stored `pipeline_config` as it is.
+
 ```bash
 # Create a job
 curl -X POST http://localhost:8200/api/v1/jobs \
