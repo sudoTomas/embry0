@@ -10,6 +10,7 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from embry0.api.route_table import route_template
 from embry0.api.session import TIER_ADMIN, TIER_OPERATOR, SessionData, request_session
+from embry0.api.ttl_cache import TtlLruCache
 from embry0.orchestration import dispatch_actors
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -141,14 +142,26 @@ async def validate_session_user(app: Any, session: SessionData) -> bool:
 # RAV-1056 Phase B: DB-backed API keys. Cache mirrors the user-gate cache:
 # 30s TTL, busted directly by mint/revoke (single-process deploy).
 _KEY_CACHE_TTL_SECONDS = 30.0
-# key_hash -> (expires, key_id, key_name, scope, user_id, revoked, expired, allowed_repos)
-_api_key_cache: dict[str, tuple[float, str, str, str, str | None, bool, bool, tuple[str, ...] | None]] = {}
-# user_id -> (expires, disabled, email) — owner gate for owned keys
-_key_owner_cache: dict[str, tuple[float, bool, str]] = {}
+#: How many keys' rows, and how many bearers that are no key, the caches hold. A bearer is whatever a caller sends, so
+#: each cache holds at most this many, the least recently used going first; the two are apart, so bearers that are no
+#: key never push a key's row out.
+KEY_CACHE_MAX_ENTRIES = 10_000
+UNKNOWN_BEARER_CACHE_MAX_ENTRIES = 10_000
+#: How long a bearer that is no key is remembered as one: a key minted after it busts the caches anyway.
+_UNKNOWN_BEARER_TTL_SECONDS = 30.0
+# key_hash -> (key_id, key_name, scope, user_id, revoked, expired, allowed_repos)
+_api_key_cache: TtlLruCache[tuple[str, str, str, str | None, bool, bool, tuple[str, ...] | None]] = TtlLruCache(
+    KEY_CACHE_MAX_ENTRIES
+)
+# key_hash of a bearer no key has -> True
+_unknown_bearer_cache: TtlLruCache[bool] = TtlLruCache(UNKNOWN_BEARER_CACHE_MAX_ENTRIES)
+# user_id -> (disabled, email) — owner gate for owned keys
+_key_owner_cache: TtlLruCache[tuple[bool, str]] = TtlLruCache(KEY_CACHE_MAX_ENTRIES)
 
 
 def bust_api_key_cache() -> None:
     _api_key_cache.clear()
+    _unknown_bearer_cache.clear()
     _key_owner_cache.clear()
 
 
@@ -173,13 +186,15 @@ async def resolve_bearer_principal(app: Any, token: str) -> Principal | None:
 
     key_hash = hash_token(token)
     now = time.monotonic()
-    cached = _api_key_cache.get(key_hash)
-    if cached and cached[0] > now:
-        _, key_id, key_name, scope, user_id, revoked, expired, allowed_repos = cached
+    if _unknown_bearer_cache.get(key_hash, now):
+        return None
+    cached = _api_key_cache.get(key_hash, now)
+    if cached is not None:
+        key_id, key_name, scope, user_id, revoked, expired, allowed_repos = cached
     else:
         row = await keys_repo.get_by_hash(key_hash)
         if row is None:
-            _api_key_cache[key_hash] = (now + _KEY_CACHE_TTL_SECONDS, "", "", "", None, True, True, None)
+            _unknown_bearer_cache.put(key_hash, True, now + _UNKNOWN_BEARER_TTL_SECONDS)
             return None
         expired = row.expires_at is not None and row.expires_at.timestamp() < time.time()
         key_id, key_name, scope, user_id, revoked, allowed_repos = (
@@ -190,15 +205,10 @@ async def resolve_bearer_principal(app: Any, token: str) -> Principal | None:
             row.revoked_at is not None,
             row.allowed_repos,
         )
-        _api_key_cache[key_hash] = (
+        _api_key_cache.put(
+            key_hash,
+            (key_id, key_name, scope, user_id, revoked, expired, allowed_repos),
             now + _KEY_CACHE_TTL_SECONDS,
-            key_id,
-            key_name,
-            scope,
-            user_id,
-            revoked,
-            expired,
-            allowed_repos,
         )
     if not key_id or revoked or expired:
         return None
@@ -207,14 +217,14 @@ async def resolve_bearer_principal(app: Any, token: str) -> Principal | None:
     if user_id is not None:
         users_repo = getattr(app.state, "users_repo", None)
         if users_repo is not None:
-            owner = _key_owner_cache.get(user_id)
-            if owner and owner[0] > now:
-                _, disabled, email = owner
+            owner = _key_owner_cache.get(user_id, now)
+            if owner is not None:
+                disabled, email = owner
             else:
                 user = await users_repo.get(user_id)
                 disabled = user is None or user.disabled
                 email = user.email if user else ""
-                _key_owner_cache[user_id] = (now + _KEY_CACHE_TTL_SECONDS, disabled, email or "")
+                _key_owner_cache.put(user_id, (disabled, email or ""), now + _KEY_CACHE_TTL_SECONDS)
             if disabled:
                 return None
 
