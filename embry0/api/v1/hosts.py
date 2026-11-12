@@ -14,6 +14,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
+from embry0.api.deployment_reads import deployment_hidden
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.repository_reads import covered
@@ -148,6 +149,13 @@ def _host_view(request: Request, host: Host) -> dict[str, Any]:
     return view
 
 
+def _host_hidden(request: Request, host: Host) -> bool:
+    """Whether ``host`` answers the caller as a host that does not exist: to a key with a repository allowlist, a host
+    linked to none of the repositories it covers, which is the deployment's own (embry0.api.deployment_reads). A
+    read: logs and audits nothing."""
+    return deployment_hidden(request) and not covered(request, host.to_dict()["repos"])
+
+
 async def _audit(request: Request, action: AuditAction, details: dict[str, Any]) -> None:
     config = getattr(request.app.state, "config", None)
     await emit_audit(
@@ -184,7 +192,7 @@ async def list_hosts(
 ) -> dict[str, Any]:
     hosts = await _repo(request).list_all(source=source, include_removed=include_removed)
     return {
-        "hosts": [_host_view(request, h) for h in hosts],
+        "hosts": [_host_view(request, h) for h in hosts if not _host_hidden(request, h)],
         "transports": list(TRANSPORTS),
         "sources": list(SOURCES),
         "statuses": list(STATUSES),
@@ -244,7 +252,10 @@ async def import_tailnet_hosts(body: TailnetImportBody, request: Request) -> dic
 
 @router.get("/hosts/{host_id}")
 async def get_host(host_id: str, request: Request) -> dict[str, Any]:
-    return _host_view(request, await _host_or_404(request, host_id))
+    host = await _host_or_404(request, host_id)
+    if _host_hidden(request, host):
+        raise HTTPException(status_code=404, detail=f"no host {host_id}")
+    return _host_view(request, host)
 
 
 @router.patch("/hosts/{host_id}", dependencies=[require_admin])

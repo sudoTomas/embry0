@@ -26,7 +26,10 @@ every kind that belongs to it rather than to a repository:
 - what every repository's jobs run on, each carrying :data:`SHARED_MARK`: a
   change of the settings document's deployment layer, a version of the
   content pack, an agent, a pipeline template, a sandbox profile, a skill, the
-  global agent context, the models, and a host.
+  global agent context, the models, and a host linked to the key's repository.
+
+A host linked to no repository is the deployment's own: its address is one of
+:data:`OWN`'s.
 
 It then forgets what the app caches, so a read after it reads the rows and
 the environment as they are.
@@ -61,7 +64,7 @@ from embry0.storage.repositories.api_keys import ApiKeysRepository
 from embry0.storage.repositories.job_log_retention import JobLogRetentionRepository
 from embry0.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
 from embry0.storage.seeds.sandbox_profiles_builtin import seed_builtin_sandbox_profiles
-from tests.fixtures.repository_writes import NOW, UNCOVERED, Keys, call, repository_writes_app
+from tests.fixtures.repository_writes import COVERED, NOW, UNCOVERED, Keys, call, repository_writes_app
 
 #: What everything planted that every repository's jobs run on carries.
 SHARED_MARK = "for-every-job"
@@ -88,6 +91,7 @@ OWN: dict[str, str] = {
     "where events are sent": "https://notify.own-records.example.test/events",
     "which tracker team files on which repository": f"TEAM={UNCOVERED}",
     "the old job's QA image": OLD_IMAGE,
+    "a host of none of the key's repositories": "build-farm.own-records.example.test",
 }
 #: The OpenAI-compatible providers enabled from the start: configuration, not one of the deployment's records.
 ENABLED_PROVIDERS = "openrouter,custom"
@@ -223,8 +227,14 @@ class Deployment:
         await _ok(app, "PUT", f"/api/v1/skills/inline/{SHARED_MARK}", ops, {"description": "A note.", "body": "Hi."})
         await _ok(app, "PUT", "/api/v1/config/context", ops, {"system_context": SHARED_MARK, "assistant_context": ""})
         await _ok(app, "PUT", "/api/v1/config/provider", ops, {"disabled_models": ["grok-4.7"]})
-        host = {"name": f"{SHARED_MARK}-host", "transport": "http", "address": "h.test"}
+        host = {"name": f"{SHARED_MARK}-host", "transport": "http", "address": "h.test", "repos": [{"repo": COVERED}]}
         await _ok(app, "POST", "/api/v1/hosts", ops, host)
+        other = {
+            "name": "own-records-host",
+            "transport": "http",
+            "address": OWN["a host of none of the key's repositories"],
+        }
+        await _ok(app, "POST", "/api/v1/hosts", ops, other)
 
     async def _retention_candidates(self) -> None:
         """An old finished job of the uncovered repository, with a code event, an agent's session and a QA image."""

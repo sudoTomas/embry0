@@ -91,7 +91,15 @@ SHARED: dict[str, dict[str, str]] = {
     "/api/v1/sandbox-profiles": {"*": f"the sandbox profiles: {_RUNS_ON}"},
     "/api/v1/skills/inline": {"*": f"the skills: {_RUNS_ON}"},
     "/api/v1/config/context": {"*": f"the global agent context: {_RUNS_ON}"},
-    "/api/v1/hosts": {"*": "the hosts, the deployment's, each linked only to the repositories the key covers"},
+    "/api/v1/hosts": {"*": "the hosts linked to a repository the key covers, each linked only to those"},
+    **{
+        path: {"body.hosts": "the hosts linked to the key's own repository"}
+        for path in (
+            "/api/v1/repos/{full_repo:repo}",
+            "/api/v1/repos/{full_repo:repo}/-",
+            "/api/v1/repos/{full_repo:repo}/-/",
+        )
+    },
     "/api/v1/config/models": {
         "body.providers[].available": f"whether a provider can run a model, as GET /agents says: {_RUNS_ON}",
         "body.providers[].models[].enabled": f"the models in force: {_RUNS_ON}",
@@ -659,3 +667,38 @@ async def test_the_walk_finds_a_new_route_that_reads_the_deployment_s_people(
     }
     assert shown == {"/api/v1/everyone-for-a-test": ["body.emails[]", "body.emails[]#"]}, f"the walk reports: {shown}"
     assert named_to == {"a person's email": ["/api/v1/everyone-for-a-test"]}, f"the search reports: {named_to}"
+
+
+async def test_a_host_of_none_of_the_key_s_repositories_reads_as_one_that_does_not_exist(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key with an allowlist lists and reads the hosts linked to a repository it covers; any other host answers it
+    as a host that does not exist, status, headers and body, and a key without a list reads every host."""
+    async with deployment_reads_app(db_with_migrations, monkeypatch) as deployment:
+        await deployment.add_deployment_wide()
+        app, keys = deployment.app, deployment.keys
+        listed = {k: (await call(app, "GET", "/api/v1/hosts", key)).json()["hosts"] for k, key in vars(keys).items()}
+        ids = {h["name"]: h["id"] for h in listed["open"]}
+        linked, other = ids["for-every-job-host"], ids["own-records-host"]
+        one = {
+            name: (await call(app, "GET", f"/api/v1/hosts/{host}", keys.limited))
+            for name, host in (("linked", linked), ("other", other), ("missing", "host-000000000000"))
+        }
+        opened = await call(app, "GET", f"/api/v1/hosts/{other}", keys.open)
+    names = {k: sorted(h["name"] for h in hosts) for k, hosts in listed.items()}
+    assert names["limited"] == ["for-every-job-host"], f"the limited key lists only its repository's host: {names}"
+    assert names["open"] == names["master"] == ["for-every-job-host", "own-records-host"], names
+    assert one["linked"].status_code == 200, one["linked"].text
+    shape = {
+        name: (
+            r.status_code,
+            dict(r.headers),
+            r.content.replace(other.encode(), b"<id>").replace(b"host-000000000000", b"<id>"),
+        )
+        for name, r in one.items()
+        if name != "linked"
+    }
+    assert shape["other"] == shape["missing"] and shape["other"][0] == 404, (
+        f"another host reads as a missing one: {shape}"
+    )
+    assert opened.status_code == 200, opened.text
