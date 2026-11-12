@@ -278,9 +278,11 @@ _ALLOWED_IMPORTS = frozenset({"__future__", "pydantic", "embry0.settings.registr
 #: named heading matches a ticket's heading by, which the done_when section checks its headings with,
 #: the lead-kind catalogue, whose kinds and severities the leads section's ask_severities names, the
 #: instruction-file rules, whose glob grammar the context_audit section checks its globs with, and the
-#: Slop-O-Meter's file names, whose glob grammar the slop_meter section checks its globs with.
+#: Slop-O-Meter's file names, whose glob grammar the slop_meter section checks its globs with, and the
+#: bounded pattern matcher both of those last two compile their globs to.
 LEAF_IMPORTS = frozenset(
     {
+        "embry0.bounded_patterns",
         "embry0.services.instruction_files",
         "embry0.services.lead_kinds",
         "embry0.services.progression_templates",
@@ -372,6 +374,8 @@ def test_the_leaves_a_section_may_import_import_nothing_of_embry0() -> None:
     for name in sorted(LEAF_IMPORTS):
         spec = importlib.util.find_spec(name)
         assert spec is not None and spec.origin is not None, f"{name} is not a module"
-        if imported := embry0_imports(Path(spec.origin).read_text(encoding="utf-8")):
+        # A leaf may import another leaf: each of those imports nothing of embry0 but leaves, so no cycle closes.
+        imported = [m for m in embry0_imports(Path(spec.origin).read_text(encoding="utf-8")) if m not in LEAF_IMPORTS]
+        if imported:
             found[name] = imported
     assert found == {}, f"a module a section may import must import nothing of embry0 (import cycles): {found}"
