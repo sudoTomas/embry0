@@ -20,16 +20,30 @@ lazy, and the alternatives.
 **One difference.** ``\\b`` and ``\\B`` count ASCII letters, digits and ``_``
 as word characters, as RE2 does; ``re`` also counts every other letter and
 digit. The two agree everywhere but beside a non-ASCII letter or digit, and
-everywhere under ``(?a)``.
+everywhere under ``(?a)``. :attr:`LinearPattern.ascii_word_boundary` says
+whether a pattern has one where they can differ.
 
 **What is refused** (:class:`UnsupportedPattern`), being what RE2 cannot run
 with ``re``'s meaning: look-ahead and look-behind, back-references,
-conditional groups, atomic groups and possessive quantifiers, a repetition
-count above 1000, a pattern that can match an empty string (it would mask
-between characters), ``(?a:...)`` or ``(?u:...)`` around part of a pattern,
-``$`` outside multi-line mode together with a multi-line ``^`` or ``$``, a
-class that tells a lone surrogate from U+FFFD, and a pattern larger than
-:data:`MAX_PROGRAM_SIZE`.
+conditional groups, atomic groups and possessive quantifiers, a pattern
+that can match an empty string (it would mask between characters),
+``(?a:...)`` or ``(?u:...)`` around part of a pattern, ``$`` outside
+multi-line mode together with a multi-line ``^`` or ``$``, a class that tells
+a lone surrogate from U+FFFD; and, because each bounds the work one pattern
+costs, repetition counts adding up to more than :data:`MAX_REPEAT_TOTAL` and
+a pattern larger than :data:`MAX_PROGRAM_SIZE`.
+
+**What a search costs.** RE2 reads each character of the text once per
+search, at a cost that grows with the program; Python then builds the
+replaced text, about a microsecond per match. Within both bounds, one mask
+on a 4,096-character line took at most about 15 ms (measured on generated
+patterns and texts; a pattern matching every character is the worst, and
+most masks take well under a millisecond). The caller bounds the text
+(``embry0.services.log_signatures``).
+
+The Unicode tables the translation reads take about a tenth of a second to
+build, once per process: :func:`warm` builds them, for a caller to run off
+its event loop at startup.
 
 A replacement is literal (:meth:`LinearPattern.sub`): a placeholder, never a
 template with group references.
@@ -52,11 +66,15 @@ C = _constants
 #: The largest program, in RE2 instructions, a pattern may compile to. A
 #: 500-character pattern of literals and ASCII classes compiles to a few
 #: hundred; a Unicode class such as ``\\w`` to about 1,300 each time it is
-#: repeated (``\\w{8}`` is about 11,000). It bounds the work and memory of one
-#: pattern: compiling one takes about a quarter of a millisecond per thousand.
-MAX_PROGRAM_SIZE: Final = 100_000
-#: The largest repetition count RE2 accepts.
-MAX_REPEAT_COUNT: Final = 1000
+#: repeated (``\\w{6}`` is about 9,400). The time RE2 takes on each character
+#: grows with it: measured on generated patterns, a program past about 20,000
+#: could take ten times as long on a line as one below this bound.
+MAX_PROGRAM_SIZE: Final = 10_000
+#: The most copies of their bodies a pattern's counted repetitions may make
+#: (:func:`_repeat_total`): RE2 writes a count out as that many copies, so the
+#: counts inside other counts multiply. ``[0-9a-f]{64}`` makes 64, a UUID's
+#: groups 32, ``(?:\\d{1,3}\\.){3}`` 12.
+MAX_REPEAT_TOTAL: Final = 100
 
 _MAX_CODE: Final = 0x10FFFF
 _SURROGATES: Final = (0xD800, 0xDFFF)
@@ -231,7 +249,29 @@ class _Shape:
 
     line_end: bool = False  # ``$`` outside multi-line mode
     line_anchors: bool = False  # ``^`` or ``$`` in multi-line mode
+    ascii_word_boundary: bool = False  # ``\\b`` or ``\\B`` outside ``(?a)``
     sets: list[Ranges] = field(default_factory=list)
+
+
+def _repeat_total(items: Iterable[tuple[Any, Any]], outer: int = 1) -> int:
+    """How many copies of their bodies the counted repetitions in ``items`` make: each count above 1 (the upper one,
+    or the lower one of an unbounded repetition), times the counts of the repetitions it is inside, added up.
+    ``?``, ``*`` and ``+`` make no copy."""
+    total = 0
+    for op, av in items:
+        if op in (C.MAX_REPEAT, C.MIN_REPEAT):
+            low, high, body = av
+            count = low if high == C.MAXREPEAT else high
+            if count > 1:
+                total += count * outer
+            total += _repeat_total(body, outer * max(count, 1))
+        elif op is C.SUBPATTERN:
+            total += _repeat_total(av[3], outer)
+        elif op is C.BRANCH:
+            total += sum(_repeat_total(alternative, outer) for alternative in av[1])
+        if total > MAX_REPEAT_TOTAL:
+            break  # past the bound: no need to count further, and a deep nesting costs nothing more
+    return total
 
 
 def _nullable(items: Iterable[tuple[Any, Any]]) -> bool:
@@ -320,8 +360,6 @@ def _write_item(op: Any, av: Any, flags: int, shape: _Shape, sentinel: int | Non
 def _write_repeat(op: Any, av: Any, flags: int, shape: _Shape, sentinel: int | None) -> str:
     low, high, body = av
     unbounded = high == C.MAXREPEAT
-    if low > MAX_REPEAT_COUNT or (not unbounded and high > MAX_REPEAT_COUNT):
-        raise UnsupportedPattern(f"a repetition count above {MAX_REPEAT_COUNT} is not supported")
     if unbounded:
         quantifier = "*" if low == 0 else "+" if low == 1 else f"{{{low},}}"
     elif (low, high) == (0, 1):
@@ -338,10 +376,9 @@ def _write_at(av: Any, flags: int, shape: _Shape) -> str:
         return r"\A"
     if av is C.AT_END_STRING:
         return r"\z"
-    if av is C.AT_BOUNDARY:
-        return r"\b"
-    if av is C.AT_NON_BOUNDARY:
-        return r"\B"
+    if av in (C.AT_BOUNDARY, C.AT_NON_BOUNDARY):
+        shape.ascii_word_boundary |= not flags & C.SRE_FLAG_ASCII
+        return r"\b" if av is C.AT_BOUNDARY else r"\B"
     if av is C.AT_BEGINNING:
         shape.line_anchors |= multiline
         return "(?m:^)" if multiline else r"\A"
@@ -381,6 +418,11 @@ class LinearPattern:
     def __init__(self, pattern: str) -> None:
         try:
             parsed = _parser.parse(pattern)
+            if _repeat_total(parsed) > MAX_REPEAT_TOTAL:
+                raise UnsupportedPattern(
+                    f"its repetition counts make more than {MAX_REPEAT_TOTAL} copies (a count inside another counts "
+                    "once for each repetition of the outer one); match a long id with + or a smaller count"
+                )
             program, shape = _translate(parsed, None)
         except RecursionError:
             raise UnsupportedPattern("it nests too deeply") from None
@@ -397,6 +439,9 @@ class LinearPattern:
         self._program = program
         self._line_end = shape.line_end
         self._variants: dict[int, Any] = {}
+        #: Whether its ``\\b`` or ``\\B`` can answer otherwise than ``re``'s: one outside ``(?a)`` (the module
+        #: docstring's one difference).
+        self.ascii_word_boundary = shape.ascii_word_boundary
 
     def __repr__(self) -> str:
         return f"LinearPattern({self.pattern!r})"
@@ -458,6 +503,13 @@ def _free_character(text: str) -> int:
             elif chr(code) not in present:
                 return code
     raise UnsupportedPattern("the text holds every private-use character")  # pragma: no cover - 137,000 of them
+
+
+def warm() -> None:
+    """Build the Unicode tables every translation reads (about a tenth of a second, once per process), so the first
+    pattern compiled after it does not: for a caller to run off its event loop at startup."""
+    _categories()
+    _case_related()
 
 
 @functools.lru_cache(maxsize=256)

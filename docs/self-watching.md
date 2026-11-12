@@ -153,7 +153,7 @@ in its `signature_masks` setting (#172):
 ```
 PUT /api/v1/watcher/stacks/{owner}/{name}
 {"logql": "...", "settings": {"signature_masks": [
-  {"pattern": "\\brec_[a-z0-9]{7}\\b", "replacement": "<record>"}
+  {"pattern": "(?a)\\brec_[a-z0-9]{7}\\b", "replacement": "<record>"}
 ]}}
 ```
 
@@ -181,28 +181,50 @@ failed for record <record>: upstream timeout`.
   422 naming the entry, such as `settings.signature_masks.0.pattern: Value
   error, 'rec_[' is not a Python regular expression: unterminated character
   set at position 4`, or `... 'rec_(?=\d)\w+' cannot be used as a mask:
-  look-ahead and look-behind ((?=, (?!, (?<=, (?<!) are not supported`. A
-  value stored before these checks that no longer passes is ignored with a
-  `watcher_stack_setting_invalid` warning, and the built-in masks alone apply.
-- **They run on every line of every tick, in time linear in the line,
-  whatever the pattern.** A mask is read with Python's own parser, so it
-  means what it means to `re`, and matched by RE2 (`google-re2`,
-  `embry0/services/linear_regex.py`), which never backtracks: a pattern such
-  as `(\w+\s?)+$`, which `re` would take exponential time on, costs what
-  any other does. `\d`, `\w`, `\s`, `.` and `(?i)` keep their Unicode
-  meaning, and `^`, `$`, `\A` and `\Z` theirs, in and out of multi-line
-  mode. One difference: `\b` and `\B` count ASCII letters, digits and `_` as
-  word characters, so beside a non-ASCII letter or digit (`é`, `中`, `٣`)
-  they differ from `re`'s; under `(?a)` they are the same. Refused at write,
-  being what RE2 cannot match with `re`'s meaning: look-ahead and
-  look-behind, back-references (`\1`), conditional groups, atomic groups
-  and possessive quantifiers (`(?>...)`, `a++`), a repetition count above
-  1000, `(?a:...)` around part of a pattern (start the pattern with `(?a)`
-  instead), `$` outside multi-line mode together with a multi-line `^` or
-  `$`, and a pattern that compiles to more than 100,000 RE2 instructions.
-  A Unicode class costs about 1,300 of them each time it is repeated
-  (`\w{8}` is about 11,000), an ASCII one a few: write `[A-Za-z0-9_]{64}`,
-  not `\w{64}`, for a long id.
+  look-ahead and look-behind ((?=, (?!, (?<=, (?<!) are not supported`.
+- **A stored mask that no longer checks is left out alone.** Masks stored
+  before they were matched by the engine below can hold one it refuses
+  (look-around and back-references were accepted before). The tick leaves
+  out that entry and applies the stack's others; the stack's view
+  (`GET /watcher/stacks`, `GET /watcher/stacks/{owner}/{name}`) lists each in
+  `refused_signature_masks` (`index` in the stored list, `pattern`,
+  `reason` as a write would refuse it); `watcher_signature_masks_refused` is
+  logged once per stack at error level, and at startup written once to the
+  audit log under the same name, by `embry0:watcher`. A PUT of the list as
+  read back is a 422 until those entries are fixed or removed.
+- **They run on every line of every tick, in time linear in the line.** A
+  mask is read with Python's own parser, so it means what it means to `re`,
+  and matched by RE2 (`google-re2`, `embry0/services/linear_regex.py`),
+  which never backtracks: a pattern such as `(\w+\s?)+$`, which `re` would
+  take exponential time on, takes time linear in the line like any other.
+  How long depends on the pattern and how often it matches, within bounds
+  checked at write: one mask on a 4,096-character line took at most about
+  15 ms (a pattern matching every character, measured on generated
+  patterns), most well under a millisecond. The masks read the first 4,096
+  characters of a line, and of what each leaves: a template keeps 320, so
+  only a line whose first 4 KiB its masks and the built-in ones shorten
+  below that reads otherwise than it would whole.
+- **The same meaning as `re`, but for `\b`.** `\d`, `\w`, `\s`, `.` and
+  `(?i)` keep their Unicode meaning, and `^`, `$`, `\A` and `\Z` theirs, in
+  and out of multi-line mode. `\b` and `\B` count ASCII letters, digits and
+  `_` as word characters, so beside a non-ASCII letter or digit (`é`, `中`,
+  `٣`) they differ from `re`'s; under `(?a)` they are the same. A stack with
+  such a mask logs `watcher_signature_masks_ascii_word_boundary` once, as a
+  warning naming the masks; start the pattern with `(?a)` to say that is
+  meant (it reads `\w`, `\d` and `\s` as ASCII too), or match the edge
+  itself (`[^A-Za-z0-9_]`).
+- **Refused at write**, being what RE2 cannot match with `re`'s meaning:
+  look-ahead and look-behind, back-references (`\1`), conditional groups,
+  atomic groups and possessive quantifiers (`(?>...)`, `a++`), `(?a:...)`
+  around part of a pattern (start the pattern with `(?a)` instead), `$`
+  outside multi-line mode together with a multi-line `^` or `$`. And, as
+  they bound what one mask costs: repetition counts that make more than 100
+  copies, a count inside another counting once for each repetition of the
+  outer one (`[0-9a-f]{64}` makes 64, a UUID's groups 32,
+  `(?:\d{1,3}\.){3}` 12, `(?:a{10}){10}` 110); and a pattern that compiles
+  to more than 10,000 RE2 instructions. A Unicode class costs about 1,300 of
+  them each time it is repeated (`\w{6}` is about 9,400), an ASCII one a
+  few: write `[A-Za-z0-9_]{64}`, not `\w{64}`, for a long id.
 - **A new or changed mask re-keys the lines it matches.** Their folded
   signature is new to the signature memory, so the next tick reads it as new
   and analyses it; the per-id signatures it replaces go quiet. A case

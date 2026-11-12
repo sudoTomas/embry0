@@ -144,6 +144,30 @@ def test_the_stack_table_is_wired_and_seeded_at_startup() -> None:
     assert seeded, "app.py never seeds the env stack (services/watcher_stacks.seed_stacks)"
 
 
+def _lifespan_calls(name: str) -> list[ast.Call]:
+    source = pathlib.Path(app_module.__file__).read_text()
+    return [
+        n
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.Call) and name in {ast.unparse(n.func), *(ast.unparse(a) for a in n.args)}
+    ]
+
+
+def test_the_mask_tables_are_built_in_a_thread_before_any_stack_is_read() -> None:
+    """The Unicode tables a mask is translated with take about a tenth of a second: built at startup, off the event
+    loop, before the stacks' watchers are built (each reads its stack's masks) and their refused masks audited."""
+    warmed = [c for c in _lifespan_calls("warm_mask_tables") if ast.unparse(c.func) == "asyncio.to_thread"]
+    assert warmed, "app.py never builds the mask engine's tables in a thread at startup (linear_regex.warm)"
+    audited = _lifespan_calls("_audit_refused_signature_masks")
+    assert audited, "app.py never says at startup which stacks' stored masks their ticks leave out"
+    built = [c for c in _lifespan_calls("StackConfig") if ast.unparse(c.func) == "StackConfig"]
+    assert built, "no StackConfig(...) found in app.py: this test would measure nothing"
+    first_read = min(c.lineno for c in [*built, *audited])
+    assert warmed[0].lineno < first_read, (
+        f"the tables are built at line {warmed[0].lineno}, after a stack's masks are first read at {first_read}"
+    )
+
+
 # ---- spec 2026-10-25: auto-accept ------------------------------------------
 
 
@@ -239,9 +263,12 @@ async def test_the_mask_reader_reads_the_stacks_row_now() -> None:
     assert await reader_for(app, "acme/widgets")() == [mask]
     assert await reader_for(app, "acme/gone")() is None, "no row is not the same as no masks"
 
+    from embry0.services import watcher_stacks
+
+    getattr(watcher_stacks, "_REPORTED", {}).pop("acme/legacy", None)
     with structlog.testing.capture_logs() as logs:
         assert await reader_for(app, "acme/legacy")() == [], "a stored value that no longer checks reads as none"
-    assert any(e["event"] == "watcher_stack_setting_invalid" and e.get("key") == "signature_masks" for e in logs)
+    assert any(e["event"] == "watcher_signature_masks_refused" and e["stack"] == "acme/legacy" for e in logs)
 
     rows["acme/widgets"] = WatcherStack(repo="acme/widgets", logql="{x=1}")
     assert await reader_for(app, "acme/widgets")() == [], "the reader read the row once, not every call"

@@ -135,6 +135,8 @@ AuditAction = Literal[
     # Watcher, healing cases and merges
     "watcher_stack_updated",
     "watcher_stack_deleted",
+    # A stack's stored signature masks its ticks leave out, said once at startup.
+    "watcher_signature_masks_refused",
     "case_accepted",
     # A watcher draft the stack's auto-accept bar accepted (spec 2026-10-25).
     "case_auto_accepted",
@@ -253,6 +255,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "qa_image_build": "QA image build",
     "watcher_stack_updated": "Watcher stack updated",
     "watcher_stack_deleted": "Watcher stack deleted",
+    "watcher_signature_masks_refused": "Watcher stack masks left out",
     "case_accepted": "Case accepted",
     "case_auto_accepted": "Case auto-accepted",
     "case_closed": "Case closed",

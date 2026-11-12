@@ -138,9 +138,10 @@ def _generated(rng: random.Random, depth: int = 0) -> str:
     return rng.choice(["(?i:", "(?-i:", "(?m:", "(?s:"]) + _generated(rng, depth + 1) + ")"
 
 
-def _beside_a_non_ascii_word_character(pattern: str, text: str) -> bool:
-    """The one documented difference: \\b and \\B beside a letter or digit outside ASCII."""
-    return ("\\b" in pattern or "\\B" in pattern) and any(not c.isascii() and c.isalnum() for c in text)
+def _beside_a_non_ascii_word_character(compiled: Any, text: str) -> bool:
+    """The one documented difference: \\b and \\B outside (?a) (which the engine says of a pattern), beside a
+    letter or digit outside ASCII."""
+    return compiled.ascii_word_boundary and any(not c.isascii() and c.isalnum() for c in text)
 
 
 def test_generated_patterns_mask_as_python_re_does() -> None:
@@ -165,7 +166,7 @@ def test_generated_patterns_mask_as_python_re_does() -> None:
             expected = python.sub(lambda _m: "<m>", text)
             got = compiled.sub("<m>", text)
             compared += 1
-            if got != expected and not _beside_a_non_ascii_word_character(pattern, text):
+            if got != expected and not _beside_a_non_ascii_word_character(compiled, text):
                 differences.append((pattern, text, expected, got))
     assert compared > 30_000, f"only {compared} comparisons: the generator is measuring nothing"
     assert refused < compared / 20, f"{refused} patterns refused: the comparison skips too much"
@@ -249,8 +250,14 @@ def test_a_pattern_python_re_backtracks_on_takes_linear_time(pattern: str) -> No
         (r"(a)?(?(1)b|c)", "conditional"),
         (r"(?>a+)b", "atomic"),
         (r"a++b", "possessive"),
-        (r"a{1001}", "above 1000"),
+        (r"a{1001}", "more than 100 copies"),
+        (r"a{101}", "more than 100 copies"),
+        (r"a{60}b{41}", "more than 100 copies"),
+        (r"(?:a{5}b){17}", "more than 100 copies"),
+        (r"(?:(?:ab){10}){10}", "more than 100 copies"),
+        (r"a{2,}b{2,}" * 26, "more than 100 copies"),
         (r"\w{80}", "too large"),
+        (r"\w{8}", "too large"),
         (r"x*\b", "empty string"),
         (r"(?a:\w+)x", "(?a:...)"),
         (r"(?m:^x)|y$", "multi-line"),
@@ -277,10 +284,67 @@ def test_a_pattern_re_does_not_read_raises_re_error() -> None:
 
 
 def _sizes(engine: Any) -> list[int]:
-    return [engine.compile_linear(p)._program.programsize for p in (r"\w{8}", r"[A-Za-z0-9_]{64}", REALISTIC[0])]
+    return [engine.compile_linear(p)._program.programsize for p in (r"\w{6}", r"[A-Za-z0-9_]{64}", REALISTIC[0])]
 
 
 def test_the_masks_a_person_writes_fit_the_program_bound() -> None:
     engine = _engine()
     sizes = _sizes(engine)
     assert max(sizes) < engine.MAX_PROGRAM_SIZE, sizes
+
+
+def test_a_pattern_says_whether_its_word_edges_can_read_otherwise_than_re() -> None:
+    engine = _engine()
+    for pattern in (r"\bx", r"x\B", r"(?i)\bx", r"(?:\bx|y)"):
+        assert engine.compile_linear(pattern).ascii_word_boundary, pattern
+    for pattern in (r"(?a)\bx\b", r"(?a)x\B", r"rec_\d+", r"\\b"):
+        assert not engine.compile_linear(pattern).ascii_word_boundary, pattern
+
+
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [r"[0-9a-f]{64}", UUID, r"(?:\d{1,3}\.){3}\d{1,3}", r"a{100}", r"(?:a{9}b){10}", r"a{2,}b" * 50, r"(?:ab)+c*d?"],
+)
+def test_repetitions_that_make_at_most_100_copies_are_kept(pattern: str) -> None:
+    """The counts a mask for an id needs: (?:a{9}b){10} makes 90 copies of a and 10 of the group, 100 in all."""
+    engine = _engine()
+    text = "a" * 120 + "b" + "1.2.3.4 " + "ab" * 50
+    assert engine.compile_linear(pattern).sub("<m>", text) == _python_sub(pattern, text)
+
+
+def test_warm_builds_the_unicode_tables_a_translation_reads() -> None:
+    engine = _engine()
+    engine._categories.cache_clear()
+    engine._case_related.cache_clear()
+    engine.warm()
+    assert engine._categories.cache_info().currsize == 1, "warm() left the class tables to the first pattern"
+    assert engine._case_related.cache_info().currsize == 1, "warm() left the case tables to the first pattern"
+
+
+#: Patterns at the bounds that took the longest on a 4,096-character line among generated ones: many matches
+#: (one per character), a large program, nested and lazy repetitions.
+_AT_THE_BOUNDS = [
+    r"[a-z\u00e9]",
+    r".",
+    r"\w{6}x",
+    r"(?:(?:.|\w|\s)\w\u00e9(?:(?i:a))+){4,}\w",
+    r"(?:(?:[^a]{12,}|[a-z\u00e9]\w.|(?i:a)){5,})*?\w",
+    r"(?:(?:a|[ab])(?:\W|a)|\d{30}(?i:a)\u00e9\W)*?\w",
+    r"(?:\w|\s)*a(?:\w|\s){5}c",
+]
+
+
+@pytest.mark.parametrize("pattern", _AT_THE_BOUNDS)
+def test_a_pattern_at_the_bounds_masks_a_line_of_4096_characters_quickly(pattern: str) -> None:
+    """Measured at most about 15 ms each; the bound leaves a slow machine thirty times that."""
+    compiled = _engine().compile_linear(pattern)
+    rng = random.Random(4096)
+    for alphabet in ("ab" * 10 + "c", "a\u00e9" * 5 + "b\u4e2d \n", "abcdefghij0123456789_ "):
+        line = "".join(rng.choice(alphabet) for _ in range(4096))
+        started = time.perf_counter()
+        compiled.sub("<m>", line)
+        took = time.perf_counter() - started
+        assert took < 0.5, f"{pattern!r} took {took:.2f}s on a line of 4,096 characters"

@@ -34,8 +34,9 @@ Design notes worth keeping:
   the number and hex rules cut it into pieces. Every place that turns one of
   that stack's lines into a signature must pass the same masks, or one line
   gets two signatures. A stack's pattern is matched in time linear in the
-  line, whatever the pattern (:mod:`embry0.services.linear_regex`); the
-  built-in rules are this module's own and run on ``re``.
+  line, whatever the pattern (:mod:`embry0.services.linear_regex`), and reads
+  at most :data:`MASKED_TEXT_MAX_CHARS` of it; the built-in rules are this
+  module's own and run on ``re``.
 """
 
 from __future__ import annotations
@@ -151,6 +152,16 @@ DEFAULT_SAMPLES_PER_CLUSTER = 2
 #: that replaces whatever it matches. Applied before :data:`_RULES`.
 SignatureMasks = tuple[tuple[LinearPattern, str], ...]
 
+#: How much of a line a stack's masks read, and of what each leaves: the
+#: rest is cut before the first and after each. A template keeps
+#: :data:`TEMPLATE_MAX_CHARS` (320) characters, so the masks see more than
+#: twelve times what reaches it: only a line whose masks and built-in rules
+#: shorten its first 4,096 characters below 320 would have shown more. Each
+#: mask's work is linear in what it reads (:mod:`embry0.services.linear_regex`),
+#: so this bounds a line's: 50 masks that each matched every character took
+#: about 0.4 s, masks of the usual kind a few milliseconds.
+MASKED_TEXT_MAX_CHARS = 4096
+
 
 def compile_masks(masks: Iterable[Mapping[str, str]] | None) -> SignatureMasks:
     """``[{pattern, replacement}]`` as a stack stores them, compiled in order.
@@ -171,12 +182,15 @@ def normalize_line(line: str, masks: SignatureMasks = ()) -> str:
     Deterministic and side-effect free: the same line always yields the same
     template, which is what makes the signature id stable across ticks.
     ``masks`` are the stack's own (:func:`compile_masks`), applied to the raw
-    line first. Each replacement is literal: a placeholder, never a template
-    with group references.
+    line first, its first :data:`MASKED_TEXT_MAX_CHARS` characters only. Each
+    replacement is literal: a placeholder, never a template with group
+    references.
     """
     out = line if isinstance(line, str) else ""
+    if masks:
+        out = out[:MASKED_TEXT_MAX_CHARS]
     for mask, placeholder in masks:
-        out = mask.sub(placeholder, out)
+        out = mask.sub(placeholder, out)[:MASKED_TEXT_MAX_CHARS]
     for pattern, replacement in _RULES:
         out = pattern.sub(replacement, out)
     out = out.strip()

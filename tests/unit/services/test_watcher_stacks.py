@@ -193,8 +193,9 @@ def test_a_bad_mask_is_refused_naming_the_key_and_the_entry(masks: Any, why: str
         (r"(rec)_\1", "back-reference"),
         (r"(?>rec_\d+)", "atomic groups and possessive quantifiers"),
         (r"rec_\d++", "atomic groups and possessive quantifiers"),
-        (r"rec_\d{2000}", "repetition count above 1000"),
-        (r"rec_\w{80}", "too large to match"),
+        (r"rec_\d{101}", "repetition counts make more than 100 copies"),
+        (r"(?:rec_\d{10}-){11}", "repetition counts make more than 100 copies"),
+        (r"rec_\w{8}", "too large to match"),
         (r"\d*\b", "matches an empty string"),
     ],
 )
