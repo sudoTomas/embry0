@@ -547,6 +547,17 @@ async def _write_tied(db: DatabasePool, order: str) -> None:
         await _trace(db, f"trc-{name}-elsewhere", f"j-{name}-elsewhere", "developer", TIED)
 
 
+async def _fresh_heap(db: DatabasePool) -> None:
+    """Empty the tables the tied rows are written to, with a new heap each.
+
+    Rows are stored in the order they are written only into an empty heap:
+    one the database emptied before (an earlier test's rows, the first write
+    of this one) has free space a new row can be put in, ahead of a row
+    written before it.
+    """
+    await db.execute("TRUNCATE traces, jobs CASCADE")
+
+
 async def _tied_setup(db: DatabasePool) -> None:
     for agent in ("developer", "review", "qa"):
         await db.execute(
@@ -621,8 +632,7 @@ async def test_rows_at_one_time_read_the_same_whatever_order_they_were_stored_in
     answers: dict[str, list[Any]] = {}
     stored: dict[str, list[str]] = {}
     for order in ("ab", "ba"):
-        await db.execute("DELETE FROM traces")
-        await db.execute("DELETE FROM jobs")
+        await _fresh_heap(db)
         await _write_tied(db, order)
         stored[order] = await _stored_first(db)
         answers[order] = await TIED_READS[read](repo)
@@ -645,6 +655,7 @@ async def test_the_rollup_and_a_full_read_keep_the_same_of_rows_at_one_time(db_w
     """#443: the same rows answer the same, through the rollup or not, however Postgres happens to store them."""
     db = db_with_migrations
     await _tied_setup(db)
+    await _fresh_heap(db)
     await _write_tied(db, "ab")
     clock = [TIED + timedelta(days=5)]
     packs = Packs(RULES)
