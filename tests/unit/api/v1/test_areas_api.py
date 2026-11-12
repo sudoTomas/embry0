@@ -497,3 +497,35 @@ async def test_a_map_refused_while_another_starts_never_names_a_finished_job(
     await db.execute("UPDATE repo_areas_proposals SET job_id = 'job-running-map' WHERE id = 'areas-widget'")
     named = await call(app, "POST", f"{AREAS}/map", MASTER, {})
     assert "job-running-map" in named.json()["detail"], named.json()
+
+
+@pytest.mark.parametrize(("bound_to", "carried"), [(COVERED, True), (UNCOVERED, False)])
+async def test_running_a_map_job_again_checks_the_account_it_ran_with_for_the_caller(
+    app: Any, db_with_migrations: DatabasePool, bound_to: str, carried: bool
+) -> None:
+    """A map run again with the model and key it ran with checks them again for whoever runs it: an account of the
+    caller's own repository is carried, one of a repository it does not cover is not."""
+    db = db_with_migrations
+    made = await call(
+        app,
+        "POST",
+        "/api/v1/credentials",
+        MASTER,
+        {"kind": "llm_api_key", "provider": "anthropic", "label": "map-account", "secret": "z" * 24},
+    )
+    credential = made.json()["id"]
+    bound = {"bindings": [{"credential_id": credential, "role": "llm"}]}
+    assert (await call(app, "PUT", f"/api/v1/repos/{bound_to}/-/credentials", MASTER, bound)).status_code == 200
+    _proposal, old_job = await _map_and_finish(app, db)
+    chosen = {"credential_id": credential, "provider": "anthropic", "credential_label": "map-account"}
+    await db.execute(
+        "UPDATE jobs SET pipeline_config = pipeline_config || jsonb_build_object('run_with', $2::jsonb) "
+        "WHERE job_id = $1",
+        old_job,
+        chosen,
+    )
+    again = await call(app, "POST", f"/api/v1/jobs/{old_job}/run-again", app.state.test_limited, {})
+    assert again.status_code == 202, again.text
+    config = await db.fetchval("SELECT pipeline_config FROM jobs WHERE job_id = $1", again.json()["followup_job_id"])
+    got = (config.get("run_with") or {}).get("credential_id")
+    assert got == (credential if carried else None), f"an account bound to {bound_to}: {config}"

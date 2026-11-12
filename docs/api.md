@@ -55,8 +55,20 @@ other keys of a review's frozen config). Each is a 422,
 and nothing is stored; set the request's own field instead (`run_with`,
 `agent_models`, `pipeline`, `branch`, `qa`, `skip_smoke`, `number`). A
 `max_budget_usd` there is held to the field's bound (above 0, at most 1000),
-and the field wins when both are sent. Running a job again
-(`POST /jobs/{id}/run-again`) copies its stored `pipeline_config` as it is.
+and the field wins when both are sent. A `max_budget_usd` there must be a
+JSON number: a string or a boolean is refused.
+
+Running a job again (`POST /jobs/{id}/run-again`) copies its stored
+`pipeline_config` key by key (`embry0/api/carried_config.py`): its `run_with`
+is checked again for the caller and dropped when the caller may not use it;
+its agents' models are checked again; its `max_budget_usd` is held to the
+bound; the keys its runner reads (a QA, onboarding or pull request review
+job's) and those of a job one of embry0's own flows started (a context
+audit's, the scout's, a watcher analysis', an area map's hard budget) are
+carried, and running an area map again starts a new map with the model and
+key it ran with, checked again for the caller; any other of embry0's own keys is dropped, since it
+could only have come from a request. The new job's first event says what was
+not carried.
 
 ```bash
 # Create a job

@@ -4,18 +4,9 @@ import ipaddress
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    TypeAdapter,
-    ValidationError,
-    ValidationInfo,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from embry0.agents.identity import DISPLAY_NAME_MAX, TAGLINE_MAX, validate_avatar, validate_color
 from embry0.agents.skills import checked_triage_may_add
@@ -252,7 +243,6 @@ INTERNAL_PIPELINE_KEYS: tuple[str, ...] = (
 CLIENT_PIPELINE_KEYS: tuple[str, ...] = ("max_budget_usd", "execution_mode_override", "auth_mode_override")
 #: The bound of ``max_budget_usd``, as a field and as a ``pipeline_config`` key.
 MAX_BUDGET_USD_LE = 1000
-_JOB_BUDGET: TypeAdapter[float] = TypeAdapter(Annotated[float, Field(gt=0, le=MAX_BUDGET_USD_LE)])
 
 
 class JobCreateRequest(ServableFields):
@@ -304,14 +294,14 @@ class JobCreateRequest(ServableFields):
         if named:
             raise ValueError(f"pipeline_config cannot set {', '.join(named)}: embry0 sets it for the work it starts")
         if v is not None and v.get("max_budget_usd") is not None:
-            try:
-                budget = _JOB_BUDGET.validate_python(v["max_budget_usd"])
-            except ValidationError:
+            budget = v["max_budget_usd"]
+            # A number as JSON writes one: a string or a boolean is not one, whatever it would read as.
+            if isinstance(budget, bool) or not isinstance(budget, int | float) or not 0 < budget <= MAX_BUDGET_USD_LE:
                 raise ValueError(
                     f"pipeline_config.max_budget_usd must be a number above 0 and at most {MAX_BUDGET_USD_LE}, "
                     "as max_budget_usd"
-                ) from None
-            v = {**v, "max_budget_usd": budget}
+                )
+            v = {**v, "max_budget_usd": float(budget)}
         return v
 
     @model_validator(mode="after")

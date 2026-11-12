@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
+from embry0.api.carried_config import carried_config
 from embry0.api.deps import ensure_admin, request_actor
 from embry0.api.issue_allowlist import hidden_issue_ids
 from embry0.api.job_allowlist import hide_job_unless_covered
@@ -269,11 +270,14 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
     repo = str(job.get("repo") or "")
     run_with = await checked_run_with(request, body.run_with if body else None, repo) if repo else None
     old_config = _json_field(job.get("pipeline_config"))
+    # What the old job's config carries for the caller (embry0.api.carried_config), before a new choice replaces it:
+    # the model and key it ran with are checked again for the caller.
+    carried, notes = await carried_config(request, old_config, job=job, runner=launch.get("runner"), repo=repo or None)
     if isinstance(old_config, dict) and old_config.get("areas_proposal_id"):
         # A map of a repository's areas delivers to a proposal of its own: run again, it is a new map, as Map
         # starts one (embry0.api.v1.areas.start_map), with the model and key chosen, else the ones it ran with.
-        return await _map_again(request, job_id, repo, run_with or run_with_of(old_config))
-    pipeline_config = apply_run_with(old_config, run_with)
+        return await _map_again(request, job_id, repo, run_with or run_with_of(carried))
+    pipeline_config = apply_run_with(carried, run_with)
     if run_with is not None and run_with.model and launch.get("runner") in ("qa", "onboard"):
         launch = {**launch, "agent_models": models_with(launch.get("agent_models"), run_with)}
     actor = request_actor(request)
@@ -296,7 +300,7 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
     if carried:
         await jobs.update(new_id, **carried)
     _state(request, "issue_executor").run_again(
-        new_id, launch, issue_id=issue_id, message=f"Started again from {job_id} by {actor}."
+        new_id, launch, issue_id=issue_id, message=" ".join([f"Started again from {job_id} by {actor}.", *notes])
     )
     evaluation = await _audit(request, "job.review.restarted", job_id, followup_job_id=new_id)
     _stats_changed(request)
