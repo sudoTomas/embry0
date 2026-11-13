@@ -864,6 +864,12 @@ def _unsupported(org: Organization) -> str:
     return f"the context audit reads GitHub repositories in this release, not {org.forge}"
 
 
+def _selected(rules: FileRules, blobs: Mapping[str, str]) -> tuple[list[str], str]:
+    """The instruction files among a tree's ``blobs`` (path to blob sha), and their fingerprint."""
+    files = rules.select(blobs)
+    return files, fingerprint({path: blobs[path] for path in files})
+
+
 class ContextAuditLoop:
     """Starts the scheduled context audits: :meth:`tick` is one pass, :meth:`start` the loop."""
 
@@ -946,14 +952,9 @@ class ContextAuditLoop:
         if cached is not None and cached.head_sha == head_sha and cached.rules == rules:
             return cached
         blobs = await read_blobs(client, repo, tree_sha)
-        files = rules.select(blobs)
-        context = RepoContext(
-            repo=repo,
-            head_sha=head_sha,
-            files=tuple(files),
-            fingerprint=fingerprint({path: blobs[path] for path in files}),
-            rules=rules,
-        )
+        # A tree may list a hundred thousand paths, each matched against every glob: off the event loop.
+        files, digest = await asyncio.to_thread(_selected, rules, blobs)
+        context = RepoContext(repo=repo, head_sha=head_sha, files=tuple(files), fingerprint=digest, rules=rules)
         self._contexts[repo] = context
         return context
 
