@@ -319,6 +319,10 @@ async def _apply_pr_labels(
         return redact_bounded(forge_said(exc), 300)
 
 
+#: Marks embry0's one comment on a PR that says its labels did not go on (#472).
+LABELS_NOTE_MARKER = "<!-- embry0:labels-missing -->"
+
+
 async def _labels_or_say_so(
     client: GitHubClient,
     *,
@@ -335,6 +339,10 @@ async def _labels_or_say_so(
     ``diagnostics`` gets ``labels_missing`` (the labels), ``labels_error``
     (what GitHub said) and ``labels_noted`` (whether the comment went on), for
     the job to record.
+
+    The comment is one per PR (:data:`LABELS_NOTE_MARKER`): a later outcome
+    that finds the same PR open with its labels still refused edits that
+    comment rather than posting another.
     """
     said = await _apply_pr_labels(client, repo=repo, pr_number=pr_number, labels=labels)
     if said is None or not labels:
@@ -348,13 +356,19 @@ async def _labels_or_say_so(
             f" It should carry `{HUMAN_MERGE_LABEL}`: only a person should merge it, after reviewing it. "
             "Please add the label by hand."
         )
+    body = f"{LABELS_NOTE_MARKER}\n\n{body}"
     noted = False
     try:
-        # Sent once: a comment the forge took but answered 5xx would be posted twice.
-        resp = await client.post(
-            f"/repos/{repo}/issues/{pr_number}/comments", repo=repo, json={"body": body}, retry_transient=False
-        )
-        resp.raise_for_status()
+        from embry0.notifications.qa_comment import edit_sticky_comment
+
+        if not await edit_sticky_comment(
+            client, repo=repo, issue_number=pr_number, body=body, marker=LABELS_NOTE_MARKER
+        ):
+            # Sent once: a comment the forge took but answered 5xx would be posted twice.
+            resp = await client.post(
+                f"/repos/{repo}/issues/{pr_number}/comments", repo=repo, json={"body": body}, retry_transient=False
+            )
+            resp.raise_for_status()
         noted = True
     except Exception as exc:
         logger.warning("pr_label_note_failed", repo=repo, pr_number=pr_number, error=str(exc))

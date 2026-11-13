@@ -509,8 +509,11 @@ async def test_ensure_pr_says_what_github_answered_when_it_opens_none():
 
 
 def _label_handler(*, label_answers: list[int], comment_status: int = 201, existing: bool = False):
-    """A GitHub that has or opens PR #5, answers each labels call in turn, and records what embry0 sent."""
-    seen: dict = {"labels": 0, "comments": []}
+    """A GitHub that has or opens PR #5, answers each labels call in turn, and records what embry0 sent.
+
+    ``comments`` is every comment embry0 posted, ``on_pr`` the comments the PR holds, ``edits`` every edit.
+    """
+    seen: dict = {"labels": 0, "comments": [], "on_pr": [], "edits": []}
     pr = {"html_url": "https://github.com/o/r/pull/5", "number": 5}
 
     def handler(request):
@@ -525,9 +528,21 @@ def _label_handler(*, label_answers: list[int], comment_status: int = 201, exist
             if status >= 400:
                 return httpx.Response(status, json={"message": "Resource not accessible by integration"})
             return httpx.Response(status, json=[])
+        if request.method == "GET" and path == "/repos/o/r/issues/5/comments":
+            return httpx.Response(200, json=list(seen["on_pr"]))
         if request.method == "POST" and path == "/repos/o/r/issues/5/comments":
-            seen["comments"].append(_json.loads(request.content)["body"])
-            return httpx.Response(comment_status, json={})
+            body = _json.loads(request.content)["body"]
+            seen["comments"].append(body)
+            if comment_status < 400:
+                seen["on_pr"].append({"id": 900 + len(seen["on_pr"]), "body": body})
+            return httpx.Response(comment_status, json={"id": 900})
+        if request.method == "PATCH" and path.startswith("/repos/o/r/issues/comments/"):
+            comment_id, body = int(path.rsplit("/", 1)[1]), _json.loads(request.content)["body"]
+            seen["edits"].append(comment_id)
+            for comment in seen["on_pr"]:
+                if comment["id"] == comment_id:
+                    comment["body"] = body
+            return httpx.Response(200, json={"id": comment_id})
         raise AssertionError(f"unexpected request {request.method} {request.url}")
 
     return handler, seen
@@ -602,3 +617,15 @@ async def test_a_note_about_other_labels_does_not_ask_for_human_merge_only(no_ba
     _url, diagnostics = await _open_labelled(handler, labels=("embry0",))
     assert diagnostics.get("labels_missing") == ["embry0"], diagnostics
     assert seen["comments"] and "human-merge-only" not in seen["comments"][0], seen["comments"]
+
+
+@pytest.mark.asyncio
+async def test_a_pr_whose_labels_stay_refused_carries_one_note_however_often_it_is_found(no_backoff):
+    """Each outcome that finds the same PR open with its labels refused edits embry0's one note on it."""
+    handler, seen = _label_handler(label_answers=[403], existing=True)
+    for _ in range(3):
+        _url, diagnostics = await _open_labelled(handler)
+        assert diagnostics.get("labels_noted") is True, diagnostics
+    assert len(seen["comments"]) == 1, f"the same note was posted {len(seen['comments'])} times on one PR"
+    assert len(seen["on_pr"]) == 1 and seen["edits"] == [900, 900], (seen["on_pr"], seen["edits"])
+    assert seen["on_pr"][0]["body"].startswith("<!-- embry0:labels-missing -->"), seen["on_pr"][0]["body"]
