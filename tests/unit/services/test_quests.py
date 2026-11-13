@@ -207,3 +207,46 @@ def test_finished_well_is_completed_and_every_status_merge_sync_moves_a_complete
     )
     condition = progression.finished_well("j")
     assert all(f"'{status}'" in condition for status in reachable), condition
+
+
+def test_a_tie_among_issues_names_the_same_one_under_every_hash_seed() -> None:
+    """#464: the review, QA and merge quest's issues come from a set, whose order follows the hash seed."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = """
+from datetime import UTC, datetime
+from embry0.services.quests import _review_qa_merge
+from embry0.storage.repositories.progression import JobRow, Journal, RunRow
+
+T = datetime(2026, 3, 1, 10, tzinfo=UTC)
+issues = [f"iss-{i}" for i in range(6)]
+runs = [RunRow(a, "acme/widgets", i, T) for i in issues for a in ("review", "qa")]
+jobs = [JobRow("acme/widgets", i, None, "pr_merged", T, T, delivery_state_at=T) for i in issues]
+print(_review_qa_merge(Journal(jobs=jobs, runs=runs), {"review_agents": ["review"], "qa_agents": ["qa"]})[0])
+"""
+    root = str(Path(__file__).resolve().parents[3])
+    named = {}
+    for seed in ("1", "2", "3", "5", "6"):
+        env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": root}
+        out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, check=True)
+        named[seed] = out.stdout.strip()
+    assert set(named.values()) == {"iss-0"}, f"one history names a different issue by hash seed: {named}"
+
+
+def test_a_tie_among_repositories_names_the_first_by_name_in_any_order() -> None:
+    def onboarded(repo: str) -> list[JobRow]:
+        return [job(1, template="onboard", repo=repo), job(2, repo=repo), job(3, "pr_merged", repo=repo)]
+
+    for order in (["o/b", "o/a", "o/c"], ["o/c", "o/a", "o/b"]):
+        journal = Journal([j for repo in order for j in onboarded(repo)], [])
+        quest = by_id(evaluate_quests(journal, [], lambda _total: None, rules=RULES))["first_steps"]
+        assert quest.where == "o/a", f"repositories equally far along, met as {order}, named {quest.where}"
+
+
+def test_of_issues_equally_far_along_the_first_to_get_there_comes_before_the_name() -> None:
+    journal = Journal([], [run(5, "review", issue="i-1"), run(1, "review", issue="i-2")])
+    quest = by_id(evaluate_quests(journal, [], lambda _total: None, rules=RULES))["gatekeeper"]
+    assert quest.where == "i-2", f"the issue reviewed first is the one furthest along, not {quest.where}"
