@@ -1,7 +1,9 @@
 """Answering a stored document too deep to serve (#431): its JSON text, never a 500.
 
 The serializer behind a route's response model (pydantic-core) stops at
-:data:`embry0.json_text.SERVABLE_DEPTH` levels of containers. The write paths
+:data:`embry0.json_text.SERVABLE_DEPTH` levels of containers, and the one
+behind a route with none (FastAPI's ``jsonable_encoder``) recurses once per
+level, to the interpreter's limit (about 1,000; #479). The write paths
 refuse a document past :data:`embry0.json_text.STORED_DEPTH` (``ServableFields``),
 but a row stored before they did, or written by something other than the API,
 can still hold one, and the read that shows it, or any list of rows it is in,
@@ -26,6 +28,8 @@ from typing import Any
 
 import structlog
 from fastapi import Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import TypeAdapter
 
@@ -33,8 +37,9 @@ from embry0.json_text import STORED_DEPTH, nested_deeper_than, served
 
 logger = structlog.get_logger(__name__)
 
-#: The value the request's endpoint returned, kept for :meth:`ServedRoute.get_route_handler` to answer again.
-_ANSWERED: ContextVar[list[Any] | None] = ContextVar("embry0_served_answer", default=None)
+#: What the request's endpoint returned, with the responses FastAPI gave it to set headers on (an ETag), kept for
+#: :meth:`ServedRoute.get_route_handler` to answer again.
+_ANSWERED: ContextVar[list[tuple[Any, list[Response]]] | None] = ContextVar("embry0_served_answer", default=None)
 
 _ANY = TypeAdapter(Any)
 
@@ -85,7 +90,7 @@ def _remembering(endpoint: Callable[..., Any]) -> Callable[..., Any]:
         answer = await endpoint(*args, **kwargs)
         kept = _ANSWERED.get()
         if kept is not None:
-            kept.append(answer)
+            kept.append((answer, [value for value in kwargs.values() if isinstance(value, Response)]))
         return answer
 
     _WRAPPED[endpoint] = remembered
@@ -105,12 +110,14 @@ class ServedAnswers(APIRoute):
             token = _ANSWERED.set(kept)
             try:
                 return await handler(request)
-            except ValueError as exc:  # pydantic-core's "depth exceeded" is a ValueError
-                # Only a failure serializing what the endpoint answered with the response model, with a value too
-                # deep to serve in it; a route with none is not serialized by pydantic.
-                if not kept or self.response_field is None:
+            except (ValueError, RecursionError) as exc:
+                # Only a failure serializing what the endpoint answered, with a value too deep to serve in it:
+                # pydantic-core's "depth exceeded" for a route with a response model (a ValueError), and for a
+                # route with none, FastAPI's jsonable_encoder, which recurses once per level (#479).
+                if not kept:
                     raise
-                plain = self._plain(kept[-1])
+                answer, set_on = kept[-1]
+                plain = answer if self.response_field is None else self._plain(answer)
                 if not nested_deeper_than(plain, STORED_DEPTH):
                     raise
                 logger.warning(
@@ -119,21 +126,39 @@ class ServedAnswers(APIRoute):
                     error=str(exc)[:200],
                     hint="a stored value nests deeper than the answer can serialize; rewrite it to repair the row",
                 )
-                return Response(
-                    _ANY.dump_json(served_answer(plain)),
-                    status_code=self.status_code or 200,
-                    media_type="application/json",
-                )
+                return self._answer_again(served_answer(plain), set_on)
             finally:
                 _ANSWERED.reset(token)
 
         return served_handler
 
+    def _answer_again(self, answer: Any, set_on: list[Response]) -> Response:
+        """``answer`` as the route would have sent it, now that nothing in it nests too deep to serialize.
+
+        A route with a response model has its answer in the model's Python
+        values (:meth:`_plain`), which pydantic writes as JSON as the model
+        would. One with none is encoded as FastAPI encodes it,
+        ``jsonable_encoder`` (a Decimal stays a number). What the endpoint set
+        on the response FastAPI gave it, a status or a header such as the
+        ``ETag``, goes on as FastAPI would have put it.
+        """
+        status_code = self.status_code or 200
+        response: Response
+        if self.response_field is None:
+            response = JSONResponse(jsonable_encoder(answer), status_code=status_code)
+        else:
+            response = Response(_ANY.dump_json(answer), status_code=status_code, media_type="application/json")
+        for given in set_on:
+            if given.status_code:
+                response.status_code = given.status_code
+            response.headers.raw.extend(given.headers.raw)
+        return response
+
     def _plain(self, answer: Any) -> Any:
         """The answer as the response model gives it, in Python values (that mode walks a deep value as it is). It
         validated before serializing it failed, so it validates now."""
         field = self.response_field
-        assert field is not None  # noqa: S101 - get_route_handler answers again only with a response model
+        assert field is not None  # noqa: S101 - get_route_handler calls this only for a route with a response model
         value, _errors = field.validate(answer, {}, loc=("response",))
         return field.serialize(
             value,
