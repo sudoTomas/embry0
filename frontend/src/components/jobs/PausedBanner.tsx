@@ -15,8 +15,9 @@ interface PausedBannerProps {
   /** A job over its budget: a continue lets it spend `continue_adds` more. */
   budget?: PauseBudget;
   prUrl?: string;
-  pausedAt?: string;
-  ttlHours?: number;
+  /** When the paused-job expiry ends this pause (`pause_expires_at` on the job, #471): the backend's own instant,
+   * counted from the pause itself, so a job that paused again shows its full time. */
+  expiresAt?: string;
   onResume: (choice: string, guidance?: string) => void;
   onDiscard: () => void;
 }
@@ -24,8 +25,7 @@ interface PausedBannerProps {
 export function PausedBanner({
   latestReview,
   budget,
-  pausedAt,
-  ttlHours = 48,
+  expiresAt,
   onResume,
   onDiscard,
 }: PausedBannerProps) {
@@ -34,11 +34,12 @@ export function PausedBanner({
   const [timeRemaining, setTimeRemaining] = useState("");
 
   useEffect(() => {
-    if (!pausedAt) return;
+    if (!expiresAt) {
+      setTimeRemaining("");
+      return;
+    }
     const update = () => {
-      const paused = new Date(pausedAt).getTime();
-      const expiry = paused + ttlHours * 3600 * 1000;
-      const remaining = expiry - Date.now();
+      const remaining = new Date(expiresAt).getTime() - Date.now();
       if (remaining <= 0) {
         setTimeRemaining("Expired");
         return;
@@ -50,7 +51,7 @@ export function PausedBanner({
     update();
     const interval = setInterval(update, 60000);
     return () => clearInterval(interval);
-  }, [pausedAt, ttlHours]);
+  }, [expiresAt]);
 
   return (
     <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] overflow-hidden">

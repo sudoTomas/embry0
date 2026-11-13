@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -277,6 +277,21 @@ class SandboxImageManager:
             logger.info("sandbox_image_removed", image=qualified)
         except RuntimeError:
             logger.warning("sandbox_image_remove_failed", image=qualified)
+
+
+def paused_job_expires_at(job: dict[str, Any], ttl_hours: int) -> datetime | None:
+    """When the paused-job expiry ends ``job``'s pause: its last write plus ``ttl_hours``; None unless it is paused.
+
+    The expiry picks a paused job whose ``updated_at`` is older than the TTL
+    (:meth:`ContainerReaper._expire_paused_jobs`), and every write to the job
+    refreshes ``updated_at`` (a trigger), so a job that pauses again has a full
+    TTL from that pause. The dashboard counts down to this instant (#471).
+    """
+    updated_at = job.get("updated_at")
+    if job.get("status") != "paused" or not isinstance(updated_at, datetime):
+        return None
+    when = updated_at if updated_at.tzinfo else updated_at.replace(tzinfo=UTC)
+    return when + timedelta(hours=ttl_hours)
 
 
 class ContainerReaper:

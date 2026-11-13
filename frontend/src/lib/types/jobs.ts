@@ -43,6 +43,9 @@ export interface JobResponse {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** When the paused-job expiry ends this pause, by its own rule (the job's last write plus the TTL); null unless
+   * paused (#471). The paused banner counts down to it. */
+  pause_expires_at?: string | null;
   issue_number: number | null;
   // Internal issues-table FK. NULL means the job did not originate from an
   // embry0 issue (operator/API dispatch) — the Console board's explicit
