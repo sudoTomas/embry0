@@ -353,14 +353,22 @@ def _narrowed(share: int, store: fakes.FakeStore | None = None) -> tuple[SlopMet
     return loop, store, section
 
 
+#: The calls one whole read of a repository takes on a FakeForge: the two comment listings, the pull requests,
+#: the reviews of its two pull requests and the two logins its events name.
+WHOLE_READ = 7
+
+
 @pytest.mark.parametrize("share", [1, 2, 3])
-async def test_a_share_too_small_for_a_whole_read_scores_nothing(share: int) -> None:
-    """A run starts reading at the first listing again, so a share that never reaches the reviews would score a
-    read that looks complete: the repository stays unscored, and never puts the meter on catch-up (#396 would
-    keep the reader's place)."""
+async def test_a_share_too_small_for_a_whole_read_finishes_it_over_several_runs(share: int) -> None:
+    """#396: each run goes on from where the last stopped, so a share smaller than one whole read still reads it
+    all, in ceil(7 / share) runs, and is scored then; it never puts the meter on catch-up."""
     loop, store, _ = _narrowed(share)
-    backlog = [await loop.tick() for _ in range(10)]
-    assert "acme/app" not in store.stored, f"{share} calls a run never read acme's reviews: no score is written"
+    runs = -(-WHOLE_READ // share)
+    backlog = [await loop.tick()]
+    assert "acme/app" not in store.stored, f"{share} calls cannot read acme's events whole in one run"
+    backlog += [await loop.tick() for _ in range(runs - 1)]
+    assert "acme/app" in store.stored, f"{share} calls a run read acme's at most {WHOLE_READ} calls in {runs} runs"
+    assert any(e["kind"] == "review" for e in store.event_rows["acme/app"].values()), "with its reviews"
     assert "globex/app" in store.stored and not any(backlog), "the others are scored, at the interval"
 
 
@@ -386,14 +394,23 @@ async def test_a_repository_whose_share_cuts_its_events_short_keeps_its_previous
     assert store.stored["acme/app"] is scored
 
 
-async def test_the_credential_s_own_budget_still_holds_the_meter_on_catch_up() -> None:
-    """The deployment's budget running out is a backlog, as before: the repository is scored once its events
-    are read (#396 is the separate matter of many repositories on one credential)."""
+async def test_the_credential_s_own_budget_holds_no_catch_up_and_the_next_run_goes_on() -> None:
+    """#396: the deployment's budget running out puts the meter on catch-up no more than an organization's share
+    does. The repository keeps no score until its events are read, and each run goes on from where the last
+    stopped, so three calls a run read its seven in three runs."""
     records, order = fakes._history(2)
-    forges = {REPO: fakes.FakeForge(comment_pages=50, repo=REPO)}
+    forges = {REPO: fakes.FakeForge(repo=REPO)}
     store = fakes.FakeStore()
     loop = _loop(Section({"api_calls_per_tick": 3}), store, fakes.FakeMirror(records, order), [NOW], forges=forges)
-    assert await loop.tick() is True and REPO not in store.stored, "a backlog: not scored until its events are read"
+    assert await loop.tick() is False and REPO not in store.stored, "not scored until its events are read"
+    assert await loop.tick() is False and REPO not in store.stored
+    assert await loop.tick() is False and REPO in store.stored, "the third run reads the last of them, and scores"
+    assert len(forges[REPO].calls) == WHOLE_READ, f"no call is made twice: {forges[REPO].calls}"
+    forges[REPO].calls.clear()
+    await loop.tick()
+    assert forges[REPO].calls[0][0] == f"/repos/{REPO}/issues/comments", (
+        f"a read that finished leaves no place: the next starts at the first listing, not {forges[REPO].calls[0]}"
+    )
 
 
 async def test_the_section_s_bots_and_ai_agents_are_bots_when_scored(monkeypatch: pytest.MonkeyPatch) -> None:

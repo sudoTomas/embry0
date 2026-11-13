@@ -4325,6 +4325,28 @@ deliverable under an "Assumptions" heading.$seed$
          WHERE type = 'area-mapper' AND is_builtin AND md5(system_prompt) = 'a7ba6db39d9fcc08bf0dc82309590559';
         """,
     ),
+    (
+        146,
+        "slop-o-meter: where each repository's forge event read stopped, and each credential's turn",
+        # A repository's forge events are read with a share of its credential's
+        # per-run budget (#396). A read the budget stops goes on, the next run,
+        # from where it stopped (embry0.services.slop_meter.events.ReaderPlace),
+        # and each credential deals its calls round-robin from a turn that moves
+        # on a repository a run. Both are stored, so a restart neither starts a
+        # read over nor deals the budget from the same repository again.
+        """
+        ALTER TABLE slop_meter_repos ADD COLUMN IF NOT EXISTS reader_place JSONB;
+        COMMENT ON COLUMN slop_meter_repos.reader_place IS
+            'where the repository''s forge event read stopped when the budget ran out (#396); NULL when its last read finished.';
+        CREATE TABLE IF NOT EXISTS slop_meter_turns (
+            credential  TEXT PRIMARY KEY,
+            turn        INTEGER NOT NULL DEFAULT 0,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        COMMENT ON TABLE slop_meter_turns IS
+            'the repository each credential''s forge budget is dealt from first, the next run (#396); keyed by a digest of the credential, never the token.';
+        """,
+    ),
 ]
 
 

@@ -246,9 +246,9 @@ class SlopMeterSettings(SectionModel):
             "Forge API calls one run may make with one credential, shared round-robin by the repositories read "
             "with it, to read comments, reviews and logins: the deployment's value is the credential's budget. "
             "An organization's value only narrows its own repositories' share of it, never widens it, and never "
-            "lowers another organization's on the same credential. A repository its share stops before its events "
-            "are all read keeps its previous score, or stays unscored, until a run reads them all: a run reads "
-            "from the first listing again. Git fetches are not API calls."
+            "lowers another organization's on the same credential. A repository the budget stops before its "
+            "events are all read keeps its previous score, or stays unscored, until they are: the next run goes on "
+            "from where it stopped, and the meter does not come back sooner for it. Git fetches are not API calls."
         ),
     )
     rate_reserve: int = Field(
@@ -257,8 +257,9 @@ class SlopMeterSettings(SectionModel):
         le=100_000,
         description=(
             "The rate limit a credential keeps for the jobs that use it: once its remaining calls "
-            "(X-RateLimit-Remaining) drop below this, the run makes no further call with it. An organization's "
-            "larger value stops only its own repositories' reads sooner; a smaller one changes nothing."
+            "(X-RateLimit-Remaining) drop below this, the run makes no further call with it, and a repository it "
+            "stops goes on from where it stopped at the next run, at the interval. An organization's larger value "
+            "stops only its own repositories' reads sooner; a smaller one changes nothing."
         ),
     )
     # ---- what a changed line weighs ----

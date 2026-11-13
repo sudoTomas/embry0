@@ -445,16 +445,19 @@ slop_meter:
   # by the repositories read with it, to read comments, reviews and logins:
   # the deployment's value is the credential's budget. An organization's value
   # only narrows its own repositories' share of it, never widens it, and never
-  # lowers another organization's on the same credential. A repository its
-  # share stops before its events are all read keeps its previous score, or
-  # stays unscored, until a run reads them all: a run reads from the first
-  # listing again. Git fetches are not API calls.
+  # lowers another organization's on the same credential. A repository the
+  # budget stops before its events are all read keeps its previous score, or
+  # stays unscored, until they are: the next run goes on from where it
+  # stopped, and the meter does not come back sooner for it. Git fetches are
+  # not API calls.
   # api_calls_per_tick: 200
 
   # The rate limit a credential keeps for the jobs that use it: once its
   # remaining calls (X-RateLimit-Remaining) drop below this, the run makes no
-  # further call with it. An organization's larger value stops only its own
-  # repositories' reads sooner; a smaller one changes nothing.
+  # further call with it, and a repository it stops goes on from where it
+  # stopped at the next run, at the interval. An organization's larger value
+  # stops only its own repositories' reads sooner; a smaller one changes
+  # nothing.
   # rate_reserve: 2000
 
   # What one changed line of a file weighs, by glob, from 0 to 10; a file no

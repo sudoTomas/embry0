@@ -157,6 +157,7 @@ ROWS: dict[str, dict[str, str]] = {
     "sandbox_profiles": {"name": "'deep-profile'"},
     "skill_sources": {"id": "'source-deep'", "kind": "'inline'"},
     "slop_meter_commits": {"repo": f"'{REPO}'", "sha": "'abc'", "seq": "0", "authored_at": "now()"},
+    "slop_meter_repos": {"repo": f"'{REPO}'", "reader_place": """'{"stage": 2}'"""},
     "standards": {
         "id": "'standard-deep'",
         "owner": f"'{OWNER}'",

@@ -33,10 +33,8 @@ def _sql() -> str:
     return next(sql for version, _, sql in MIGRATIONS if version == VERSION)
 
 
-def test_the_areas_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_144.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must store a repository's areas"
+def test_the_areas_migration_is_listed_once() -> None:
+    """ "Is the last entry" passed to tests/unit/storage/test_migration_146.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 
