@@ -582,7 +582,12 @@ class SlopMeterLoop:
             known_logins=known,
             stored_logins=[str(e["login"]) for e in await self._store.events(repo)],
             max_logins=s.logins_per_tick,
-            place=ReaderPlace.from_json(state.get("reader_place")),
+            place=ReaderPlace.from_json(
+                state.get("reader_place"),
+                max_pages=s.event_pages,
+                max_pulls=s.reviews_per_tick,
+                max_logins=s.logins_per_tick,
+            ),
         )
 
     async def _read_forge(self, order: list[str], work: dict[str, _Work]) -> None:

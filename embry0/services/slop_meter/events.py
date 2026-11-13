@@ -193,45 +193,58 @@ class ReaderPlace:
         }
 
     @classmethod
-    def from_json(cls, data: Any) -> ReaderPlace | None:
-        """The place a stored value names; None for nothing, or anything else, so the read starts over."""
+    def from_json(cls, data: Any, *, max_pages: int, max_pulls: int, max_logins: int) -> ReaderPlace | None:
+        """The place a stored value names, for a reader with these caps; None for nothing, or anything else, so the
+        read starts over.
+
+        Every number must be one a reader with these caps can have written: a
+        whole number in its range. A place out of range (a row edited by hand,
+        or caps lowered since it was stored) would lift a cap for the rest of
+        the pass, or hold back the skip of a call that keeps failing, so it
+        is no place.
+        """
         if not isinstance(data, dict):
             return None
+        found_cap = max_pages * PER_PAGE
         try:
             pulls = []
             for updated, number in data.get("pulls") or []:
                 at = _at(updated)
                 if at is None:
                     return None
-                pulls.append((at, int(number)))
+                pulls.append((at, _whole(number, 1)))
             logins = data.get("logins")
-            stage = int(data["stage"])
-            if not 0 <= stage <= 4:
-                return None
-            next_page = data.get("next_page")
-            if next_page is not None and (
-                isinstance(next_page, bool) or not isinstance(next_page, int) or next_page < 2
+            if logins is not None and (
+                not isinstance(logins, list)
+                or len(logins) > max_logins
+                or not all(isinstance(login, str) for login in logins)
             ):
                 return None
+            next_page = data.get("next_page")
+            seen = tuple(_whole(n, 1) for n in data.get("seen") or [])
+            pulls_left = _whole(data.get("pulls_left", 0), 0, max_pulls)
+            if len(pulls) > pulls_left or len(seen) > found_cap:
+                return None
             return cls(
-                stage=stage,
-                pages=int(data.get("pages") or 0),
-                next_page=next_page,
+                stage=_whole(data["stage"], 0, 4),
+                # The pull request listing reads at most twice its page cap (shifts), and its next page follows.
+                pages=_whole(data.get("pages", 0), 0, 2 * max_pages),
+                next_page=None if next_page is None else _whole(next_page, 2, 2 * max_pages + 1),
                 pulls=tuple(pulls),
-                found=int(data.get("found") or 0),
-                seen=tuple(_number(n) for n in data.get("seen") or []),
-                pulls_left=int(data.get("pulls_left") or 0),
-                logins=None if logins is None else tuple(str(login) for login in logins),
-                failures=int(data.get("failures") or 0),
+                found=_whole(data.get("found", 0), 0, found_cap),
+                seen=seen,
+                pulls_left=pulls_left,
+                logins=None if logins is None else tuple(logins),
+                failures=_whole(data.get("failures", 0), 0, MAX_FAILURES - 1),
             )
         except (KeyError, TypeError, ValueError):
             return None
 
 
-def _number(value: Any) -> int:
-    """A pull request's number from a stored place; anything but a whole number is no place (ValueError)."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"not a pull request number: {value!r}")
+def _whole(value: Any, low: int, high: int | None = None) -> int:
+    """A whole number from a stored place, from ``low`` to ``high``; anything else is no place (ValueError)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < low or (high is not None and value > high):
+        raise ValueError(f"not a whole number from {low} to {high}: {value!r}")
     return value
 
 
