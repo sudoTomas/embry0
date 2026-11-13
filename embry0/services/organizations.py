@@ -370,7 +370,7 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     if client is None:
         from embry0.execution.github_client import GitHubClient
 
-        client = GitHubClient(default_token=token, max_attempts=1)
+        client = GitHubClient(default_token=token, max_attempts=1, owner_env_tokens=False)
 
     me = await client.get("/user")
     identity = str((_json(me) or {}).get("login") or "") or None if me.status_code == 200 else None
@@ -430,7 +430,9 @@ async def probe_gitlab(
     if client is None:
         from embry0.execution.gitlab_client import GitLabClient
 
-        client = GitLabClient(default_token=token, gitlab_url=gitlab_url, ca_pem=ca_pem, max_attempts=1)
+        client = GitLabClient(
+            default_token=token, gitlab_url=gitlab_url, ca_pem=ca_pem, max_attempts=1, owner_env_tokens=False
+        )
 
     me = await client.get("/user")
     identity = str((_json(me) or {}).get("username") or "") or None if me.status_code == 200 else None
