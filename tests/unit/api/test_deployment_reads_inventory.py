@@ -155,9 +155,7 @@ SHARED: dict[str, dict[str, str]] = {
 
 #: GET routes, or the fields of one, that still read the deployment's records to such a key, and the work that
 #: narrows them. ``*`` is the whole answer.
-ELSEWHERE: dict[str, dict[str, str]] = {
-    "/api/v1/audit": {"*": "every audit row: the audit reads"},
-}
+ELSEWHERE: dict[str, dict[str, str]] = {}
 
 #: Fields that differ between two reads of the same rows, and why: the walk does not compare them.
 VOLATILE: dict[str, dict[str, str]] = {

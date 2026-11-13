@@ -609,6 +609,16 @@ gets a 403. The one read-scope key they admit is the context-proxy's own
 service key (`svc-context-proxy`, rotated at every boot), which forwards
 allowlisted queries for the sandboxes enrolled with it.
 
+The logs are the deployment's: a line cannot be told to belong to one
+repository. So both routes, and the MCP `logs_query` tool that reaches them
+with its key, refuse a key with a
+[repository allowlist](#repository-allowlist), whatever its tier: a 403
+`repo_not_allowed` naming `(the deployment)` before Loki is asked, logged
+and audited as a refused deployment-wide write is. These routes are the
+ones a key calls; a job's own log tool reads through the context proxy
+instead, scoped as the job is (see the context proxy in
+[architecture.md](architecture.md)).
+
 Every line returned goes through the log-text redactor
 (`embry0/safety/redaction.py`), whoever asks: secrets, e-mail addresses, long
 opaque runs and the values of the `LOG_REDACTION_FIELDS` fields
@@ -1203,14 +1213,11 @@ and data. These routes narrow to the key's repositories today, by one rule
 about repositories and owners by `embry0/api/repository_reads.py`, to jobs
 by `embry0/api/job_allowlist.py`, to issues by
 `embry0/api/issue_allowlist.py` and to healing cases by
-`embry0/api/case_allowlist.py`). These reads are not narrowed yet and
+`embry0/api/case_allowlist.py`, and to the audit log by
+`embry0/api/audit_allowlist.py`). These reads are not narrowed yet and
 follow in stages of their own, so a key with an allowlist still reads them
 for the whole deployment:
 
-- the audit log (`GET /audit`, which lists every audit row, a case's
-  acceptance and closing among them);
-- the container logs and the list of containers they come from
-  (`GET /logs/query`, `GET /logs/containers`);
 - the account's and the characters' experience, levels, skills and
   achievements (in `GET /progression`, `GET /progression/preview`,
   `GET /world` and `GET /world/characters/{agent}`), the levels reached,
@@ -1517,6 +1524,30 @@ Everything below narrows to the repositories the key covers:
   (`GET /environment/global/{key}/reveal`) is refused with the 403 of a
   deployment-wide write, logged and audited, before the variable is looked
   up, so a name that does not exist answers the same.
+- The audit log. A row is about the repositories its action names it by
+  (`embry0/audit/subjects.py`): the repository in its details, its issue's,
+  its job's (and its follow-up job's), its merge approval's, its
+  hand-off's, a repository's settings layer or credential binding.
+  `GET /audit` (with every filter, its pages and its `total`) lists to a key
+  with an allowlist only the rows about repositories its list covers, every
+  one the row names, whoever wrote them, narrowed in the query before the
+  page is cut. A row about no repository it does not read, whoever wrote
+  it: an owner's (an organization's change, its settings layer, an owner's
+  credential binding, a map moved between owners) and the deployment's (a
+  key, a person, a credential, a host, a model, an agent, a skill, the
+  deployment's or the global settings). Its own actor opens nothing more:
+  an actor is not one key's, since a key a person mints from a session is
+  recorded under the person's email, as the person's own changes are, and
+  keys of one name share `key:<name>`. A refusal's row it never reads
+  (below).
+  `GET /audit/actions`, the Audit filter's list, offers it only the actions
+  of the rows it reads (a current action whose rows, under its name or one
+  it replaced, it reads, and a retired name such a row carries); the actor
+  filter is matched within those rows.
+- The container log routes. `GET /logs/query` and `GET /logs/containers`
+  are refused to a key with an allowlist, whatever its tier
+  ([Container logs](#container-logs)): a line cannot be told to belong to
+  one repository.
 - A job's streams. `POST /jobs/{id}/events-token`,
   `POST /jobs/{id}/qa/log-stream-token` and `POST /qa/runs/{id}/events-token`
   mint, for another repository's job, a token like any other, as they do for
@@ -1628,11 +1659,13 @@ before and after.
 ## Audit log
 
 ```bash
-# Newest-first rows; admins see every row, other callers the rows they wrote
+# Newest-first rows; admins see every row, other callers the rows they wrote, and a key with a repository
+# allowlist only the rows about its repositories
 curl "http://localhost:8200/api/v1/audit?action=qa.job_created&limit=50" \
   -H "Authorization: Bearer $EMBRY0_API_KEY"
 
-# Every action a row can carry, with its label (the dashboard's filter list)
+# Every action a row can carry, with its label (the dashboard's filter list); to a key with a repository
+# allowlist, the actions of the rows it reads
 curl http://localhost:8200/api/v1/audit/actions \
   -H "Authorization: Bearer $EMBRY0_API_KEY"
 # -> {"actions": [{"action": "user.login", "label": "Signed in", "replaced_by": null}, ...]}

@@ -156,6 +156,7 @@ READ_ROUTES: dict[str, str] = {
     "/api/v1/maps/{slug}/marks": "reads any other map as one that does not exist (404)",
     "/api/v1/maps/{slug}/parts/{node_id:path}": "reads any other map as one that does not exist (404)",
     "/api/v1/maps/{slug}/work": "reads any other map as one that does not exist (404); sends narrowed since #318",
+    "/api/v1/audit": ("lists only the rows about the repositories the key covers, narrowed in the query"),
     # Earlier stages.
     "/api/v1/credentials": "lists the key's own credentials, since #308 and #309",
     "/api/v1/run-with/keys": "refuses another repository (403), since #309",
@@ -203,9 +204,7 @@ READ_ROUTES: dict[str, str] = {
 }
 
 #: GET routes that show another repository's data, each narrowed in a stage of its own, and which.
-ELSEWHERE: dict[str, str] = {
-    "/api/v1/audit": "the audit reads",
-}
+ELSEWHERE: dict[str, str] = {}
 
 #: Each route that names a repository or an owner in its query, and the queries that name them: ``{repo}`` and
 #: ``{owner}`` are filled as the path parameters are.
@@ -225,6 +224,8 @@ QUERIES: dict[str, tuple[str, ...]] = {
     "/api/v1/config/settings/effective": ("?repo={repo}", "?owner={owner}"),
     "/api/v1/config/settings/revisions": ("?repo={repo}", "?owner={owner}"),
     "/api/v1/run-with/keys": ("?repo={repo}",),
+    # Every row, page by page: a row about another repository on any page shows.
+    "/api/v1/audit": ("?limit=200", "?limit=200&offset=200", "?limit=200&offset=400"),
     "/api/v1/jobs": ("?repo={repo}",),
     "/api/v1/leads": ("?repo={repo}",),
     "/api/v1/decisions": ("?repo={repo}",),
@@ -297,6 +298,10 @@ DEPLOYMENT_READS: dict[str, str] = {
     "/api/v1/repos/{full_repo:repo}/credentials": _OLD_PATH,
     "/api/v1/repos/{full_repo:repo}/-/readiness": "a forge account of a scope the key does not read is the deployment's",
     "/api/v1/repos/{full_repo:repo}/readiness": _OLD_PATH,
+    "/api/v1/audit": (
+        "a credential's rows (made, bound to the host or the global pool) name no repository, so the limited key "
+        "reads none of them, whoever wrote them (audit_allowlist)"
+    ),
 }
 
 #: Reads of the key's own repository that answer the limited key otherwise than a key without a list where that
