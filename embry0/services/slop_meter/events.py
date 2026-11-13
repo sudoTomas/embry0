@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import structlog
 
+from embry0.execution.forge_client import RETRY_STATUSES
 from embry0.services.slop_meter.history import is_bot
 
 logger = structlog.get_logger(__name__)
@@ -111,6 +112,17 @@ class ShareBudget:
         return await self.shared.get(client, path, **kwargs)
 
 
+class ForgeStopped(Exception):
+    """The forge answered a call with a status a retry can change (429, 5xx), after its client's own retries (#465).
+
+    Raised before anything of the call is kept or passed: no cursor moves, no
+    pull request or login leaves its list. The loop treats it as a call that
+    failed: the read is held at that call, its place stored, and
+    :meth:`EventReader.failed` counts it, so a call that keeps failing is passed
+    after :data:`MAX_FAILURES` runs in a row.
+    """
+
+
 @dataclass
 class EventBatch:
     #: (id, kind, login, at)
@@ -121,8 +133,13 @@ class EventBatch:
     reviews_since: datetime | None = None
     #: login (lower-case) → its commit email ('' when none was found)
     logins: dict[str, str] = field(default_factory=dict)
-    #: More is waiting than this tick read.
+    #: A cap cut the read short: a listing's pages (or a next page it cannot ask for by number), or the
+    #: reviews or the logins one pass may read. The cursors moved past what was read, so the next pass reads
+    #: the rest, and the repository is scored once its events are all read, as its history is (#465).
     more: bool = False
+    #: The last call the forge answered with a status a retry can change, and that status (#465): the read
+    #: stopped there (:class:`ForgeStopped`).
+    stopped: str = ""
 
 
 def _rows(items: Iterable[Any], kind: str, prefix: str, stamp: str) -> list[tuple[str, str, str, datetime]]:
@@ -378,7 +395,6 @@ class EventReader:
         if self._failures < MAX_FAILURES:
             return False
         self._failures = 0
-        self.batch.more = True
         if self._stage == 3 and self._pulls and self._max_pulls > 0:
             updated, _number = self._pulls.pop(0)
             self._max_pulls -= 1
@@ -397,13 +413,31 @@ class EventReader:
         self._stage += 1
         self._next, self._pages = None, 0
 
+    def _answered(self, path: str, response: Any) -> bool:
+        """Whether ``path`` was answered 200.
+
+        A status a retry can change (429, 5xx; the forge client has already
+        retried it) raises :class:`ForgeStopped`, before the caller keeps or
+        passes anything. Any other is the forge refusing that call, which a
+        retry does not change: it is logged, and the read goes on past it.
+        """
+        status = response.status_code
+        if status == 200:
+            return True
+        if status in RETRY_STATUSES:
+            self.batch.stopped = f"{path} answered {status}"
+            raise ForgeStopped(self.batch.stopped)
+        logger.warning("slop_meter_events_refused", repo=self._repo, path=path, status=status)
+        return False
+
     async def _page(
         self, budget: ApiBudget | ShareBudget, path: str, params: dict[str, Any], *, capped: bool = True
     ) -> tuple[list[Any], bool, bool]:
         """One page of a listing: its items, whether to read the next one, and whether the listing ended.
 
-        A listing cut at the page cap (``capped``), or answered with an error,
-        has not ended (and more is waiting); only one with no next page has.
+        A listing cut at the page cap (``capped``) has not ended, and more is
+        waiting; nor has one answered with anything but 200 (:meth:`_answered`).
+        Only one with no next page has.
         Every page is asked for on ``path``, by its number: the reader never
         fetches a URL a response's ``Link`` header, or a stored place, names.
         """
@@ -411,10 +445,10 @@ class EventReader:
         response = await budget.get(
             self._client, path, repo=self._repo, params={**params, "per_page": PER_PAGE, **page}
         )
+        answered = self._answered(path, response)
         self._pages += 1
-        if response.status_code != 200:
+        if not answered:
             self._next = None
-            self.batch.more = True
             return [], False, False
         body = response.json()
         linked, self._next = _next_page(response)
@@ -496,12 +530,13 @@ class EventReader:
             self._advance()
             return
         updated, number = self._pulls[0]
-        response = await budget.get(
-            self._client, f"/repos/{self._repo}/pulls/{number}/reviews", repo=self._repo, params={"per_page": 100}
-        )
+        path = f"/repos/{self._repo}/pulls/{number}/reviews"
+        response = await budget.get(self._client, path, repo=self._repo, params={"per_page": 100})
+        # A stop raises here: this pull request stays first in line, and the cursor short of it.
+        answered = self._answered(path, response)
         self._pulls.pop(0)
         self._max_pulls -= 1
-        if response.status_code == 200 and isinstance(response.json(), list):
+        if answered and isinstance(response.json(), list):
             self.batch.events += _rows(response.json(), "review", "rv", "submitted_at")
         self.batch.reviews_since = updated
         if not self._pulls:
@@ -517,13 +552,14 @@ class EventReader:
             if not self._logins:
                 return
         login = self._logins[0]
-        response = await budget.get(
-            self._client, f"/repos/{self._repo}/commits", repo=self._repo, params={"author": login, "per_page": 1}
-        )
+        path = f"/repos/{self._repo}/commits"
+        response = await budget.get(self._client, path, repo=self._repo, params={"author": login, "per_page": 1})
+        # A stop raises here, and the login stays first on the list.
+        answered = self._answered(path, response)
         # Taken off the list once looked up: a budget spent before the call leaves it for the next tick.
         self._logins.pop(0)
         email = ""
-        if response.status_code == 200:
+        if answered:
             items = response.json()
             if isinstance(items, list) and items:
                 email = str((((items[0].get("commit") or {}).get("author")) or {}).get("email") or "")
