@@ -372,7 +372,7 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
         LEFT JOIN jobs j ON j.issue_id = i.id{_only(repos, job_repository_sql("j"))}{_only(repos, "i.repo", keyword="WHERE")}
         GROUP BY i.id, i.tracker, i.tracker_key, i.title, i.repo
         HAVING COALESCE(SUM(j.total_cost_usd), 0.0) > 0
-        ORDER BY cost_usd DESC
+        ORDER BY cost_usd DESC, i.id
         LIMIT 5
         """,
         *_bound(repos),
@@ -400,7 +400,7 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
         WHERE repo IS NOT NULL{_only(repos, _JOB_REPO)}
         GROUP BY repo
         HAVING COALESCE(SUM(total_cost_usd), 0.0) > 0
-        ORDER BY cost_usd DESC
+        ORDER BY cost_usd DESC, repo
         LIMIT 8
         """,
         *_bound(repos),
@@ -434,7 +434,7 @@ async def get_stats(request: Request, db: DatabasePool = Depends(get_db)) -> dic
             COALESCE(SUM(cost_usd), 0.0) AS cost_usd
         FROM traces{of_jobs}
         GROUP BY agent_type
-        ORDER BY cost_usd DESC
+        ORDER BY cost_usd DESC, agent_type
         """,
         *_bound(repos),
     )

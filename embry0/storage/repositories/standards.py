@@ -75,7 +75,7 @@ class StandardsRepository:
 
     async def list_active(self, owner: str) -> list[Standard]:
         rows = await self._db.fetch(
-            f"SELECT {_STANDARD_COLUMNS} FROM standards WHERE owner = $1 AND status = 'active' ORDER BY kind",
+            f"SELECT {_STANDARD_COLUMNS} FROM standards WHERE owner = $1 AND status = 'active' ORDER BY kind, id",
             normalize_owner(owner),
         )
         return [_standard(r) for r in rows]

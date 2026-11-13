@@ -64,7 +64,7 @@ class ContextConfigRepository:
         every one."""
         rows = await self._db.fetch(
             "SELECT repo, system_context, assistant_context FROM context_config WHERE scope = 'repo' "
-            "AND ($1::text[] IS NULL OR lower(repo) = ANY($1::text[])) ORDER BY repo",
+            "AND ($1::text[] IS NULL OR lower(repo) = ANY($1::text[])) ORDER BY repo, id",
             None if repos is None else list(repos),
         )
         return [dict(r) for r in rows]

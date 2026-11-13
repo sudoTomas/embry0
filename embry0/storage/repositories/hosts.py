@@ -60,7 +60,7 @@ class HostsRepository:
         if not host_ids:
             return {}
         rows = await self._db.fetch(
-            "SELECT host_id, repo, role FROM repo_hosts WHERE host_id = ANY($1::text[]) ORDER BY repo, role",
+            "SELECT host_id, repo, role FROM repo_hosts WHERE host_id = ANY($1::text[]) ORDER BY repo, role, host_id",
             host_ids,
         )
         links: dict[str, list[dict[str, str]]] = {}
