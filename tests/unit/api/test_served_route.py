@@ -89,6 +89,10 @@ def _client() -> TestClient:
     async def json_only() -> JsonOnly:
         return JsonOnly(id="r1")
 
+    @router.get("/no-model-deep", response_model=None)
+    async def no_model_deep() -> Any:
+        return {"id": "r1", "config": {"notes": _nested(2_000)}}  # jsonable_encoder recurses past this (#479)
+
     @router.get("/no-model", response_model=None)
     async def no_model() -> Any:
         return {"id": "r1", "x": math.nan}  # rendered without pydantic; the response refuses NaN
@@ -133,6 +137,13 @@ def test_every_other_failure_stands() -> None:
         assert client.get("/api/not-finite").status_code == 500, "a failure with nothing too deep is raised as before"
     assert client.get("/api/not-text").status_code == 500, "a value JSON cannot write is no value too deep"
     assert client.get("/api/json-only").status_code == 500, "a model's own JSON failure is raised as before"
+
+
+def test_a_route_with_no_response_model_serves_its_deep_field_as_text() -> None:
+    answer = _client().get("/api/no-model-deep")
+    assert answer.status_code == 200, answer.text[:200]
+    body = answer.json()
+    assert json.loads(body["config"]) == {"notes": _nested(2_000)} and body["id"] == "r1", str(body)[:200]
 
 
 def test_a_route_with_no_response_model_raises_its_own_error() -> None:

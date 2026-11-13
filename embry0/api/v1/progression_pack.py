@@ -36,6 +36,7 @@ from embry0.api.actor_visibility import deployment_actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
 from embry0.api.repo_allowlist import enforce_repo_allowlist
+from embry0.api.served import ServedRoute
 from embry0.api.v1.progression import covered_progression
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -65,7 +66,7 @@ from embry0.services.progression_pack_store import (
 )
 from embry0.storage.repositories.progression_packs import StoredPack
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 _WRITE_ACTION = "change the progression content pack"
 _REASON = Query(default="", max_length=500, description="why, for the version history")
