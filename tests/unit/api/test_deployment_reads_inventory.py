@@ -159,6 +159,10 @@ ELSEWHERE: dict[str, dict[str, str]] = {}
 
 #: Fields that differ between two reads of the same rows, and why: the walk does not compare them.
 VOLATILE: dict[str, dict[str, str]] = {
+    "/api/v1/apikeys": {
+        "body.keys[].last_used_at": "when the key was last used: the walk's own reads use the keys, and a use is "
+        "written at most once a minute (LAST_USED_THROTTLE_SECONDS), so a read a minute later shows a newer time",
+    },
     "/api/v1/config/providers/{provider_name}/usage": {"body.checked_at": "when it was read"},
     "/api/v1/progression": {
         "body.computed_at": "when it was computed",
