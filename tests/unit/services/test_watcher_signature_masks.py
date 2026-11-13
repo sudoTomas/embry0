@@ -12,7 +12,12 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
+import os
 import pathlib
+import subprocess
+import sys
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -26,6 +31,18 @@ from embry0.services.signature_attribution import AnchorMatch, anchor_signature,
 from embry0.services.signature_delta import Change, SignatureChange, WindowDelta
 from embry0.services.watcher_stacks import StackConfig, WatcherStack
 from tests.unit.services.test_watcher import _config, _service
+
+
+@pytest.fixture(autouse=True)
+def _nothing_reported_yet() -> Any:
+    """A stack's stored masks are said once per process: each test starts with none said."""
+    from embry0.services import watcher_stacks
+
+    reported = getattr(watcher_stacks, "_REPORTED", {})
+    reported.clear()
+    yield
+    reported.clear()
+
 
 #: A made-up record-id format the built-in masks leave alone: lower case,
 #: under 20 characters, digits inside a word.
@@ -116,15 +133,149 @@ async def test_a_bad_stored_value_is_skipped_with_a_warning_and_the_built_in_mas
     lines = [f"WARN sync failed for request {u}: upstream timeout" for u in uuids]
     bad = {"signature_masks": [{"pattern": "rec_[", "replacement": "<record>"}], "min_log_lines": 1}
     with structlog.testing.capture_logs() as logs:
-        svc = _watcher(bad, lines=lines)
+        svc = _watcher(bad, lines=lines, repo="acme/bad-pattern")
         clusters = await _tick_clusters(svc)
 
-    warned = [e for e in logs if e["event"] == "watcher_stack_setting_invalid" and e.get("key") == "signature_masks"]
+    warned = [e for e in logs if e["event"] == "watcher_signature_masks_refused"]
     assert warned, f"the unusable stored masks were dropped without a warning: {[e['event'] for e in logs]}"
+    assert warned[0]["log_level"] == "error", warned[0]
     assert [c.template for c in clusters] == ["WARN sync failed for request <uuid>: upstream timeout"], (
         f"the built-in masks must still apply when the stack's own are unusable: {[c.template for c in clusters]}"
     )
     assert svc._config.watcher_min_log_lines == 1, "a good neighbour of the bad value still applies"
+
+
+# ---- linear time -------------------------------------------------------------
+
+#: Patterns Python's re backtracks on without end, given a run of one
+#: character and a last character they do not expect: each further character
+#: doubles the time (or worse). A stack's masks are matched in time linear in
+#: the line instead (embry0/services/linear_regex.py), with the same answer.
+_BACKTRACKING = [r"(a+)+$", r"(a|aa)+$", r"^(([a-z])+.)+[A-Z]([a-z])+$", r"(\w+\s?)+$"]
+
+#: How long one line may take, child process start included. The patterns
+#: above take Python's re longer than this on 26 characters, and about four
+#: times as long for each two characters more.
+_DEADLINE_SECONDS = 15.0
+
+_NORMALIZE_IN_A_CHILD = """
+import json, sys
+from embry0.services.log_signatures import compile_masks, normalize_line
+masks = compile_masks([{"pattern": sys.argv[1], "replacement": "<id>"}])
+print(json.dumps(normalize_line(sys.argv[2], masks)))
+"""
+
+
+@pytest.mark.parametrize("pattern", _BACKTRACKING)
+def test_a_mask_python_re_backtracks_on_masks_a_long_line_in_linear_time(pattern: str) -> None:
+    """In a child process, so a line that never finishes is stopped at the deadline and named."""
+    line = "a" * 64 + "!"
+    started = time.monotonic()
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _NORMALIZE_IN_A_CHILD, pattern, line],
+            capture_output=True,
+            text=True,
+            timeout=_DEADLINE_SECONDS,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"the mask {pattern!r} did not mask one line of {len(line)} characters in {_DEADLINE_SECONDS:.0f}s "
+            f"(stopped after {time.monotonic() - started:.1f}s): every tick of its stack would stall on it"
+        )
+    assert done.returncode == 0, done.stderr
+    assert isinstance(json.loads(done.stdout), str), done.stdout
+
+
+@pytest.mark.asyncio
+async def test_a_tick_on_a_stack_whose_mask_python_re_backtracks_on_takes_no_longer() -> None:
+    """The stored mask is accepted, as before (the engine has no reason to refuse it), and the
+    tick that reads it clusters a window of such lines at once."""
+    mask = {"pattern": r"(a+)+$", "replacement": "<run>"}
+    lines = [f"WARN {'a' * 26}! retry {n}" for n in range(3)]
+    svc = _watcher({"signature_masks": [mask]}, lines=lines)
+    started = time.monotonic()
+    clusters = await _tick_clusters(svc)
+    took = time.monotonic() - started
+    assert took < 2.0, f"one tick over {len(lines)} lines took {took:.1f}s with the mask {mask['pattern']!r}"
+    assert len(clusters) == 1, [c.template for c in clusters]
+
+
+@pytest.mark.asyncio
+async def test_a_stored_mask_the_engine_cannot_run_is_skipped_with_a_warning() -> None:
+    """A look-behind stored before masks were matched in linear time no longer checks: the tick
+    leaves it out with the warning every unusable stored setting gets, and the built-in masks apply."""
+    look_behind = {"pattern": r"(?<=record )rec_\w+", "replacement": "<record>"}
+    with structlog.testing.capture_logs() as logs:
+        clusters = await _tick_clusters(_watcher({"signature_masks": [look_behind]}, repo="acme/look-behind"))
+    warned = [e for e in logs if e["event"] == "watcher_signature_masks_refused"]
+    assert warned, f"a stored mask no tick can match in linear time was applied: {[c.template for c in clusters]}"
+    assert "look-ahead and look-behind" in warned[0]["refused"][0]["reason"], warned[0]
+    assert len(clusters) == len(IDS), [c.template for c in clusters]
+
+
+# ---- how much of a line the masks read ---------------------------------------
+
+
+class _Reads:
+    """A mask that records how long each text it is given is, and leaves it twice as long."""
+
+    def __init__(self) -> None:
+        self.lengths: list[int] = []
+
+    def sub(self, _placeholder: str, text: str) -> str:
+        self.lengths.append(len(text))
+        return text + text
+
+
+def test_a_stacks_masks_read_the_first_4096_characters_of_a_line_and_of_what_each_leaves() -> None:
+    reads = _Reads()
+    normalize_line("ab " * 400_000, ((reads, "<id>"),) * 3)  # type: ignore[arg-type]
+    assert reads.lengths == [log_signatures.MASKED_TEXT_MAX_CHARS] * 3 == [4096] * 3, (
+        f"the masks read {reads.lengths} characters of a line of 1,200,000: one line's work must be bounded"
+    )
+
+
+def test_a_line_is_read_whole_by_the_built_in_masks_when_its_stack_has_none() -> None:
+    """Unchanged for a stack without masks: only a stack's own masks bound what they read."""
+    line = " " * 5000 + "ERROR upstream timeout"
+    assert normalize_line(line) == "ERROR upstream timeout"
+    plain = log_signatures.compile_masks([{"pattern": "tkt-[0-9]{4}", "replacement": "<ticket>"}])
+    assert normalize_line(line, plain) == "", "the documented cost of the bound: a line that collapses past 4 KiB"
+
+
+_MASK_A_LONG_LINE = """
+import json, sys, resource
+resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
+from embry0.services.log_signatures import compile_masks, normalize_line
+masks = compile_masks([{"pattern": sys.argv[1], "replacement": "<record>"}] * 50)
+print(json.dumps(normalize_line(sys.argv[2] * int(sys.argv[3]), masks)))
+"""
+
+
+@pytest.mark.parametrize("pattern", [r"[a-z\u00e9]", "."])
+def test_fifty_masks_matching_every_character_mask_a_long_line_in_bounded_time(pattern: str) -> None:
+    """The worst a stack's masks can cost one line: each matching every character, each placeholder matched again by
+    the next. In a child process with 2 GiB, so a line whose masked text grows without bound is stopped and named.
+    Measured: about 0.4 s."""
+    started = time.monotonic()
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _MASK_A_LONG_LINE, pattern, "\u00e9a", "100000"],
+            capture_output=True,
+            text=True,
+            timeout=_DEADLINE_SECONDS,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"50 masks {pattern!r} did not mask one line of 200,000 characters in {_DEADLINE_SECONDS:.0f}s")
+    took = time.monotonic() - started
+    assert done.returncode == 0, f"50 masks {pattern!r} on one line of 200,000 characters: {done.stderr[-300:]}"
+    assert took < 10.0, f"50 masks {pattern!r} took {took:.1f}s on one line"
+    assert len(json.loads(done.stdout)) <= log_signatures.TEMPLATE_MAX_CHARS + 1, done.stdout[:200]
 
 
 # ---- every signature of the stack's lines uses the same masks ----------------

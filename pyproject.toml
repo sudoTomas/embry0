@@ -49,6 +49,9 @@ dependencies = [
     "mcp>=2.3,<3",
     "joserfc>=1.7,<2",
     "itsdangerous>=2.1,<3",
+    # A stack's signature masks are matched in time linear in the line
+    # (embry0/services/linear_regex.py).
+    "google-re2>=1.1.20251105,<2",
 ]
 
 [project.urls]

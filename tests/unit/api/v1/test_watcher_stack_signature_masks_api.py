@@ -81,3 +81,35 @@ async def test_a_bad_mask_is_a_422_naming_the_key_and_the_entry(app: Any, masks:
     assert resp.status_code == 422, f"{resp.status_code}: {resp.text}"
     assert named in resp.json()["detail"], resp.json()["detail"]
     assert app.state.watcher_stacks_repo.stacks == {}, "a refused stack was stored"
+
+
+async def test_a_mask_no_tick_could_match_in_linear_time_is_a_422_naming_the_entry(app: Any) -> None:
+    resp = await _put(app, {"signature_masks": [MASK, {"pattern": r"rec_(?=\d)\w+", "replacement": "<record>"}]})
+    assert resp.status_code == 422, (
+        f"a mask no tick can match in linear time was stored: {resp.status_code} {resp.text}"
+    )
+    detail = resp.json()["detail"]
+    assert "settings.signature_masks.1.pattern" in detail and "look-ahead and look-behind" in detail, detail
+    assert app.state.watcher_stacks_repo.stacks == {}, "a refused stack was stored"
+
+
+async def test_a_stacks_view_lists_the_stored_masks_its_ticks_leave_out(app: Any) -> None:
+    """Masks stored before they were matched in linear time can hold one the engine refuses: the stack's view says
+    which and why, so the editor that sends them back knows what to fix; every other stack lists none."""
+    legacy = [MASK, {"pattern": r"(?<=record )rec_\w+", "replacement": "<record>"}]
+    stacks = app.state.watcher_stacks_repo.stacks
+    stacks["acme/legacy"] = WatcherStack(repo="acme/legacy", logql="{x=1}", settings={"signature_masks": legacy})
+    stacks["acme/clean"] = WatcherStack(repo="acme/clean", logql="{x=1}", settings={"signature_masks": [MASK]})
+    async with _client(app) as client:
+        one = (await client.get("/api/v1/watcher/stacks/acme/legacy")).json()
+        listed = {s["repo"]: s for s in (await client.get("/api/v1/watcher/stacks")).json()["stacks"]}
+    refused = one["refused_signature_masks"]
+    assert [(r["index"], r["pattern"]) for r in refused] == [(1, legacy[1]["pattern"])], one
+    assert refused[0]["reason"].startswith("settings.signature_masks.1.pattern: "), refused[0]
+    assert "look-ahead and look-behind" in refused[0]["reason"], refused[0]
+    assert one["settings"] == {"signature_masks": legacy}, "the view changed what is stored"
+    assert listed["acme/legacy"]["refused_signature_masks"] == refused
+    assert listed["acme/clean"]["refused_signature_masks"] == []
+
+    put = await _put(app, {"signature_masks": [MASK]})
+    assert put.status_code == 200 and put.json()["refused_signature_masks"] == [], put.text

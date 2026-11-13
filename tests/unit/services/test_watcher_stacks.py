@@ -185,6 +185,36 @@ def test_a_bad_mask_is_refused_naming_the_key_and_the_entry(masks: Any, why: str
     assert why in str(refused.value), str(refused.value)
 
 
+@pytest.mark.parametrize(
+    ("pattern", "why"),
+    [
+        (r"rec_(?=\d)\w+", "look-ahead and look-behind"),
+        (r"(?<=id=)\w+", "look-ahead and look-behind"),
+        (r"(rec)_\1", "back-reference"),
+        (r"(?>rec_\d+)", "atomic groups and possessive quantifiers"),
+        (r"rec_\d++", "atomic groups and possessive quantifiers"),
+        (r"rec_\d{101}", "repetition counts make more than 100 copies"),
+        (r"(?:rec_\d{10}-){11}", "repetition counts make more than 100 copies"),
+        (r"rec_\w{8}", "too large to match"),
+        (r"\d*\b", "matches an empty string"),
+    ],
+)
+def test_a_mask_no_tick_could_match_in_linear_time_is_refused_naming_the_entry(pattern: str, why: str) -> None:
+    """Python reads every one of these; the engine that matches a stack's masks cannot with Python's meaning."""
+    from embry0.services.watcher_stacks import check_settings
+
+    try:
+        kept = check_settings({"signature_masks": [MASK, {"pattern": pattern, "replacement": "<record>"}]})
+    except ValueError as exc:
+        refused = str(exc)
+    else:
+        pytest.fail(
+            f"{pattern!r} was kept as a mask, though the engine every tick matches masks with refuses it: {kept}"
+        )
+    assert "settings.signature_masks.1.pattern" in refused, refused
+    assert f"{pattern!r} cannot be used as a mask: " in refused and why in refused, refused
+
+
 def test_the_refusal_says_which_mask() -> None:
     from embry0.services.watcher_stacks import check_settings
 

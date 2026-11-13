@@ -653,6 +653,27 @@ def _watcher_local_first_model(app: FastAPI, repo: str) -> Any:
     return read
 
 
+async def _audit_refused_signature_masks(app: FastAPI, db: Any, config: Any) -> None:
+    """Say, at startup, which stacks' stored signature masks their ticks leave out: an error log line per stack and
+    an audit row per stack and set (``services/watcher_stacks.py``)."""
+    from embry0.audit.helpers import emit_audit
+    from embry0.services.watcher_stacks import audit_refused_signature_masks
+
+    async def write(details: dict[str, Any]) -> None:
+        await emit_audit(
+            db,
+            "watcher_signature_masks_refused",
+            actor="embry0:watcher",
+            details=details,
+            audit_log_path=getattr(config, "audit_log_path", None),
+        )
+
+    try:
+        await audit_refused_signature_masks(app.state.watcher_stacks_repo, app.state.audit_repo, write)
+    except Exception:
+        logger.warning("watcher_signature_masks_audit_failed", exc_info=True)
+
+
 def _watcher_signature_masks(app: FastAPI, repo: str) -> Any:
     """``() -> masks``: the stack's own signature masks as its row holds them now, None when it has no row (#172).
 
@@ -2237,6 +2258,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await seed_stacks(app.state.watcher_stacks_repo, config)
     except Exception:
         logger.warning("watcher_stack_seed_failed", exc_info=True)
+    # A stack's signature masks are translated with Unicode tables that take about a tenth of a second to build:
+    # built here, in a thread, before any stack's masks are read, and not on the event loop by the first request
+    # that checks a mask.
+    from embry0.services.linear_regex import warm as warm_mask_tables
+
+    await asyncio.to_thread(warm_mask_tables)
+    await _audit_refused_signature_masks(app, db, config)
     # #369: the ctor param is optional and nothing ever passed it, so #289's
     # clustering logged a shadow comparison on every tick while log_signatures
     # stayed empty — "is this new?" was unanswerable and #290/#291/#312 had

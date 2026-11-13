@@ -24,6 +24,7 @@ from typing import Annotated, Any, Literal
 import structlog
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
+from embry0.services.linear_regex import UnsupportedPattern, compile_linear
 from embry0.services.log_signatures import normalize_line
 
 logger = structlog.get_logger(__name__)
@@ -71,8 +72,8 @@ SETTING_KEYS: frozenset[str] = frozenset(OVERRIDABLE) | frozenset(STACK_ONLY)
 _OWN = {"repo": "watcher_repo", "logql": "watcher_logql"}
 
 #: A stack's signature masks run on every line of every tick, so their number
-#: and size are bounded. Python's ``re`` has no time limit: the pattern length
-#: is the guard against one that backtracks catastrophically.
+#: and size are bounded, and each is matched in time linear in the line
+#: whatever the pattern (``services/linear_regex.py``).
 MAX_SIGNATURE_MASKS = 50
 MAX_MASK_PATTERN_CHARS = 500
 #: A placeholder looks like the built-in ones (``<id>``, ``<uuid>``): lower case
@@ -95,12 +96,13 @@ class SignatureMask(BaseModel):
     @field_validator("pattern")
     @classmethod
     def _compiles(cls, value: str) -> str:
+        """A Python regular expression the linear-time engine runs with ``re``'s meaning, as every tick will."""
         try:
-            compiled = re.compile(value)
+            compile_linear(value)
         except re.error as exc:
             raise ValueError(f"{value[:80]!r} is not a Python regular expression: {exc}") from None
-        if compiled.search("") is not None:
-            raise ValueError(f"{value[:80]!r} matches an empty string, so it would mask between characters")
+        except UnsupportedPattern as exc:
+            raise ValueError(f"{value[:80]!r} cannot be used as a mask: {exc}") from None
         return value
 
     @field_validator("replacement")
@@ -155,6 +157,7 @@ _SETTING_TYPES: dict[str, Any] = {
     "signature_masks": Annotated[list[SignatureMask], Field(max_length=MAX_SIGNATURE_MASKS)],
 }
 _ADAPTERS: dict[str, TypeAdapter[Any]] = {key: TypeAdapter(kind) for key, kind in _SETTING_TYPES.items()}
+_MASK_ADAPTER: TypeAdapter[SignatureMask] = TypeAdapter(SignatureMask)
 
 
 def _problems(key: str, exc: ValidationError) -> list[str]:
@@ -204,11 +207,16 @@ def usable_settings(stack: WatcherStack) -> dict[str, Any]:
 
     A row written before its keys were checked (#172) can hold anything; the
     tick must not raise on it, and the deployment's default is the safe
-    reading of a value nobody can trust.
+    reading of a value nobody can trust. The signature masks are read entry by
+    entry (:func:`signature_masks_of`): one that no longer checks leaves out
+    itself alone.
     """
     usable: dict[str, Any] = {}
     for key, value in (stack.settings or {}).items():
         if key not in SETTING_KEYS:
+            continue
+        if key == "signature_masks":
+            usable[key] = signature_masks_of(stack)
             continue
         try:
             usable[key] = check_setting(key, value)
@@ -217,21 +225,132 @@ def usable_settings(stack: WatcherStack) -> dict[str, Any]:
     return usable
 
 
+@dataclass(frozen=True)
+class MaskReading:
+    """A stack's stored signature masks as a tick reads them (:func:`read_signature_masks`)."""
+
+    #: The masks that check, in their stored order, as :func:`check_setting` gives them.
+    usable: tuple[dict[str, str], ...] = ()
+    #: Each stored entry that does not, ``{index, pattern, reason}``: ``index`` its place in the stored list (None
+    #: when the value is not a list), ``pattern`` the stored one when it is a string, ``reason`` the problem as a
+    #: write would be refused with it.
+    refused: tuple[dict[str, Any], ...] = ()
+    #: The stored places of the usable masks whose ``\b`` or ``\B`` reads only ASCII letters, digits and ``_`` as
+    #: word characters where ``re`` reads every letter and digit (``services/linear_regex.py``).
+    ascii_word_boundary: tuple[int, ...] = ()
+
+
+def read_signature_masks(value: Any) -> MaskReading:
+    """A stack's stored ``signature_masks``, each entry checked on its own.
+
+    A write checks the whole list (:func:`check_setting`), so a stored list
+    fails only when it was written before a check it now meets: masks stored
+    before they were matched in linear time, by an engine that read
+    look-around and back-references. One such entry leaves out itself alone;
+    the stack's other masks still apply. An entry past the
+    :data:`MAX_SIGNATURE_MASKS` a stack may have is left out too.
+    """
+    if value is None:
+        return MaskReading()
+    if not isinstance(value, list):
+        reason = "settings.signature_masks: Input should be a valid list"
+        return MaskReading(refused=({"index": None, "pattern": None, "reason": reason},))
+    usable: list[dict[str, str]] = []
+    refused: list[dict[str, Any]] = []
+    boundary: list[int] = []
+    for index, entry in enumerate(value):
+        pattern = entry.get("pattern") if isinstance(entry, Mapping) else None
+        shown = pattern[:MAX_MASK_PATTERN_CHARS] if isinstance(pattern, str) else None
+        if index >= MAX_SIGNATURE_MASKS:
+            reason = f"settings.signature_masks.{index}: past the {MAX_SIGNATURE_MASKS} masks a stack may have"
+            refused.append({"index": index, "pattern": shown, "reason": reason})
+            continue
+        try:
+            mask = _MASK_ADAPTER.validate_python(entry, strict=True)
+        except ValidationError as exc:
+            reason = "; ".join(_problems(f"signature_masks.{index}", exc))
+            refused.append({"index": index, "pattern": shown, "reason": reason})
+            continue
+        usable.append(mask.model_dump())
+        if compile_linear(mask.pattern).ascii_word_boundary:
+            boundary.append(index)
+    return MaskReading(tuple(usable), tuple(refused), tuple(boundary))
+
+
+#: The readings :func:`report_signature_masks` has logged, per stack: each is logged once per process.
+_REPORTED: dict[str, tuple[Any, ...]] = {}
+
+
+def report_signature_masks(repo: str, reading: MaskReading) -> bool:
+    """Log, once per process for each stack and what it reads, the stored masks its ticks leave out and those whose
+    ``\\b`` reads otherwise than ``re``'s. True when this reading was not logged before.
+
+    Every tick reads the masks, so a reading that does not change is logged
+    the first time only; a stack whose masks change is logged again.
+    """
+    seen = (tuple((r["index"], r["reason"]) for r in reading.refused), reading.ascii_word_boundary)
+    if _REPORTED.get(repo) == seen:
+        return False
+    _REPORTED[repo] = seen
+    if reading.refused:
+        logger.error(
+            "watcher_signature_masks_refused",
+            stack=repo,
+            kept=len(reading.usable),
+            refused=[{"index": r["index"], "reason": r["reason"]} for r in reading.refused],
+            hint="the other masks still apply; fix or remove these with PUT /watcher/stacks/{owner}/{name}",
+        )
+    if reading.ascii_word_boundary:
+        logger.warning(
+            "watcher_signature_masks_ascii_word_boundary",
+            stack=repo,
+            masks=list(reading.ascii_word_boundary),
+            hint="\\b and \\B count ASCII letters, digits and _ as word characters: beside another letter or digit "
+            "they answer otherwise than Python's re; start the pattern with (?a) to say so, or match the edge itself",
+        )
+    return True
+
+
+#: The audit action of a stack whose stored masks its ticks leave out (:func:`audit_refused_signature_masks`).
+REFUSED_MASKS_ACTION = "watcher_signature_masks_refused"
+
+
+async def audit_refused_signature_masks(stacks: Any, audit_repo: Any, write: Any) -> list[str]:
+    """At startup, for each stack whose stored masks its ticks leave out, log them (:func:`report_signature_masks`)
+    and write a ``watcher_signature_masks_refused`` audit row naming each, unless the stack's newest such row
+    already names the same; the stacks written for.
+
+    ``stacks`` is the stacks' repository, ``audit_repo`` the audit log's,
+    ``write(details)`` writes a :data:`REFUSED_MASKS_ACTION` row. A stack is written since its masks
+    are checked, so only one stored before a check can hold such a mask: the
+    row says it once, across restarts.
+    """
+    written: list[str] = []
+    for stack in await stacks.list_all():
+        reading = read_signature_masks((stack.settings or {}).get("signature_masks"))
+        report_signature_masks(stack.repo, reading)
+        if not reading.refused:
+            continue
+        refused = [dict(entry) for entry in reading.refused]
+        latest = await audit_repo.latest_entry(REFUSED_MASKS_ACTION, detail_key="repo", detail_value=stack.repo)
+        if latest is not None and (latest.get("details") or {}).get("refused") == refused:
+            continue
+        await write({"repo": stack.repo, "kept": len(reading.usable), "refused": refused})
+        written.append(stack.repo)
+    return written
+
+
 def signature_masks_of(stack: WatcherStack) -> list[dict[str, str]]:
     """The stack's own signature masks as a tick uses them (#172): none when unset.
 
-    A stored value that no longer checks is left out with the same warning
-    as any other setting, and the built-in masks alone apply. Read on every
-    tick, so only this key is checked here.
+    A stored entry that no longer checks is left out, the others kept
+    (:func:`read_signature_masks`), and said once at error level
+    (:func:`report_signature_masks`). Read on every tick, so only this key is
+    checked here.
     """
-    value = (stack.settings or {}).get("signature_masks")
-    if value is None:
-        return []
-    try:
-        return list(check_setting("signature_masks", value))
-    except ValueError as exc:
-        logger.warning("watcher_stack_setting_invalid", stack=stack.repo, key="signature_masks", error=str(exc))
-        return []
+    reading = read_signature_masks((stack.settings or {}).get("signature_masks"))
+    report_signature_masks(stack.repo, reading)
+    return list(reading.usable)
 
 
 @dataclass(frozen=True)
@@ -253,6 +372,11 @@ class WatcherStack:
             "tracker_target": dict(self.tracker_target),
             "settings": dict(self.settings),
             "enabled": self.enabled,
+            # What of the stored masks its ticks leave out, and why (read_signature_masks): [] for a stack written
+            # since they were checked.
+            "refused_signature_masks": [
+                dict(entry) for entry in read_signature_masks((self.settings or {}).get("signature_masks")).refused
+            ],
         }
 
 

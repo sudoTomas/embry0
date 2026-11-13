@@ -33,7 +33,10 @@ Design notes worth keeping:
   written against the line as it reads in Loki and sees the whole id before
   the number and hex rules cut it into pieces. Every place that turns one of
   that stack's lines into a signature must pass the same masks, or one line
-  gets two signatures.
+  gets two signatures. A stack's pattern is matched in time linear in the
+  line, whatever the pattern (:mod:`embry0.services.linear_regex`), and reads
+  at most :data:`MASKED_TEXT_MAX_CHARS` of it; the built-in rules are this
+  module's own and run on ``re``.
 """
 
 from __future__ import annotations
@@ -43,6 +46,8 @@ import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from embry0.services.linear_regex import LinearPattern, compile_linear
 
 
 def _is_opaque_token(token: str) -> bool:
@@ -145,25 +150,30 @@ DEFAULT_SAMPLES_PER_CLUSTER = 2
 
 #: A stack's own masks (#172), compiled: each a pattern and the placeholder
 #: that replaces whatever it matches. Applied before :data:`_RULES`.
-SignatureMasks = tuple[tuple[re.Pattern[str], str], ...]
+SignatureMasks = tuple[tuple[LinearPattern, str], ...]
 
-
-def _literal(placeholder: str) -> Callable[[re.Match[str]], str]:
-    """A replacement that is ``placeholder`` as written: never read for ``\\1`` or ``\\g<name>``."""
-
-    def replace(_match: re.Match[str]) -> str:
-        return placeholder
-
-    return replace
+#: How much of a line a stack's masks read, and of what each leaves: the
+#: rest is cut before the first and after each. A template keeps
+#: :data:`TEMPLATE_MAX_CHARS` (320) characters, so the masks see more than
+#: twelve times what reaches it: only a line whose masks and built-in rules
+#: shorten its first 4,096 characters below 320 would have shown more. Each
+#: mask's work is linear in what it reads (:mod:`embry0.services.linear_regex`),
+#: so this bounds a line's: 50 masks that each matched every character took
+#: about 0.4 s, masks of the usual kind a few milliseconds.
+MASKED_TEXT_MAX_CHARS = 4096
 
 
 def compile_masks(masks: Iterable[Mapping[str, str]] | None) -> SignatureMasks:
     """``[{pattern, replacement}]`` as a stack stores them, compiled in order.
 
-    Raises :class:`re.error` for a pattern that does not compile. A stored
-    set was checked when it was written (``services/watcher_stacks.py``).
+    Each pattern is matched in time linear in the line
+    (:func:`~embry0.services.linear_regex.compile_linear`). Raises
+    :class:`re.error` for a pattern that does not compile, and
+    :class:`~embry0.services.linear_regex.UnsupportedPattern` for one that
+    cannot be matched that way. A stored set was checked when it was written
+    (``services/watcher_stacks.py``).
     """
-    return tuple((re.compile(str(mask["pattern"])), str(mask["replacement"])) for mask in masks or ())
+    return tuple((compile_linear(str(mask["pattern"])), str(mask["replacement"])) for mask in masks or ())
 
 
 def normalize_line(line: str, masks: SignatureMasks = ()) -> str:
@@ -172,12 +182,15 @@ def normalize_line(line: str, masks: SignatureMasks = ()) -> str:
     Deterministic and side-effect free: the same line always yields the same
     template, which is what makes the signature id stable across ticks.
     ``masks`` are the stack's own (:func:`compile_masks`), applied to the raw
-    line first. Each replacement is literal: a placeholder, never a template
-    with group references.
+    line first, its first :data:`MASKED_TEXT_MAX_CHARS` characters only. Each
+    replacement is literal: a placeholder, never a template with group
+    references.
     """
     out = line if isinstance(line, str) else ""
-    for pattern, placeholder in masks:
-        out = pattern.sub(_literal(placeholder), out)
+    if masks:
+        out = out[:MASKED_TEXT_MAX_CHARS]
+    for mask, placeholder in masks:
+        out = mask.sub(placeholder, out)[:MASKED_TEXT_MAX_CHARS]
     for pattern, replacement in _RULES:
         out = pattern.sub(replacement, out)
     out = out.strip()
