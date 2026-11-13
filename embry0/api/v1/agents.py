@@ -5,10 +5,13 @@ from typing import Any, Final
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.agents.skills import is_repository_skill, skill_source, triage_may_add, triage_skill_choices
+from embry0.api.actor_visibility import caller_scope
+from embry0.api.agent_server_values import MaskedValueWithoutStored, masked_servers, restore_unchanged
 from embry0.api.deps import get_agent_defs_repo, require_admin
-from embry0.api.repo_allowlist import deployment_writes
+from embry0.api.repo_allowlist import deployment_writes, restricted_key_name
 from embry0.api.schemas import AgentCreateRequest, AgentUpdateRequest
 from embry0.api.served import ServedRoute
+from embry0.api.session import TIER_ADMIN
 from embry0.api.v1._audit import audit
 from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services import job_briefs, proposal_briefs
@@ -71,6 +74,35 @@ async def catalog_skill_names(request: Request) -> set[str] | None:
     return {c["name"] for c in await repo.catalog()}
 
 
+async def _reads_server_values(request: Request) -> bool:
+    """Whether the caller reads an agent's MCP server values as stored: an admin session, the master key, an admin
+    key without a repository allowlist, or AUTH_DEV_MODE. Every other caller reads them masked
+    (``embry0.api.agent_server_values``): they may be credentials, and only those callers change an agent."""
+    tier, _own = await caller_scope(request)
+    return tier == TIER_ADMIN and restricted_key_name(request) is None
+
+
+async def _shown(request: Request, agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``agents`` as the caller reads them: each one's ``mcp_servers`` masked unless it reads them as stored."""
+    if await _reads_server_values(request):
+        return agents
+    return [{**agent, "mcp_servers": masked_servers(agent.get("mcp_servers"))} for agent in agents]
+
+
+def _servers_sent(sent: Any, stored: Any) -> Any:
+    """The ``mcp_servers`` a write sends, with each value it was shown masked and sends back unchanged read as the
+    stored one; 422 for a masked value nothing stored stands behind, and for one edited that still holds the mask."""
+    try:
+        return restore_unchanged(sent, stored or {})
+    except MaskedValueWithoutStored as exc:
+        why = (
+            "was edited from a masked value and still holds the mask"
+            if exc.edited
+            else "holds a masked value with no stored value behind it"
+        )
+        raise HTTPException(status_code=422, detail=f"{exc.path} {why}: send the value itself") from None
+
+
 @router.get("/agents")
 async def list_agents(
     request: Request,
@@ -81,7 +113,9 @@ async def list_agents(
     and the model and provider a job that names no model runs it on
     (``effective_model``, ``effective_model_source``, ``effective_provider``,
     ``effective_provider_ready``)."""
-    return [_with_coding(a) for a in await annotate_agents(await repo.list_all(), request.app.state)]
+    return await _shown(
+        request, [_with_coding(a) for a in await annotate_agents(await repo.list_all(), request.app.state)]
+    )
 
 
 @router.get("/agents/{agent_type}")
@@ -102,7 +136,8 @@ async def get_agent(
         if known is not None
         else []
     )
-    return annotated
+    [shown] = await _shown(request, [annotated])
+    return shown
 
 
 NO_TOOLS_WARNING = (
@@ -185,6 +220,7 @@ async def create_agent(
 ) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
     await _reject_unrunnable_task(request, req.type, req.quest_template)
+    servers = _servers_sent(req.mcp_servers, {})
     warnings = await check_added_skills(request, req.skills or [])
     try:
         created = await repo.create(
@@ -196,7 +232,7 @@ async def create_agent(
             system_prompt=req.system_prompt,
             execution_mode=req.execution_mode,
             auth_mode=req.auth_mode,
-            mcp_servers=req.mcp_servers,
+            mcp_servers=servers,
             display_name=req.display_name,
             avatar=req.avatar,
             color=req.color,
@@ -210,7 +246,8 @@ async def create_agent(
             raise HTTPException(status_code=409, detail=f"Agent type '{req.type}' already exists") from exc
         raise
     forget_rows(request.app.state, "agents")
-    return {**created, "warnings": [*warnings, *_agent_warnings(created)]}
+    [shown] = await _shown(request, [created])
+    return {**shown, "warnings": [*warnings, *_agent_warnings(created)]}
 
 
 def _voice_problem(voice: str) -> str | None:
@@ -257,6 +294,11 @@ async def update_agent(
         )
         if problem:
             raise HTTPException(status_code=422, detail=problem)
+    if updates.get("mcp_servers") is not None:
+        # A value the writer was shown masked and sends back as it was shown keeps what is stored.
+        updates["mcp_servers"] = _servers_sent(
+            updates["mcp_servers"], ((await repo.get(agent_type)) or {}).get("mcp_servers")
+        )
     if "tools" in updates or "mcp_servers" in updates:
         # The whole list is checked, names the row already has included: a
         # definition can only be saved with tools embry0 gates.
@@ -277,10 +319,12 @@ async def update_agent(
         agent = await repo.get(agent_type)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent type not found")
-        return {**agent, "warnings": [*warnings, *_agent_warnings(agent)]}
+        [shown] = await _shown(request, [agent])
+        return {**shown, "warnings": [*warnings, *_agent_warnings(agent)]}
     updated = await repo.update(agent_type, **updates)
     forget_rows(request.app.state, "agents")
-    return {**updated, "warnings": [*warnings, *_agent_warnings(updated)]}
+    [shown] = await _shown(request, [updated])
+    return {**shown, "warnings": [*warnings, *_agent_warnings(updated)]}
 
 
 @router.delete("/agents/{agent_type}", dependencies=[require_admin])
@@ -310,7 +354,8 @@ async def reset_agent(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     forget_rows(request.app.state, "agents")
-    return reset
+    [shown] = await _shown(request, [reset])
+    return shown
 
 
 @router.post("/agents/{agent_type}/skills/{skill_name}", dependencies=[require_admin])
@@ -329,11 +374,13 @@ async def add_agent_skill(
         raise HTTPException(status_code=404, detail="Agent type not found")
     skills = list(agent.get("skills") or [])
     if skill_name in skills:
-        return {**agent, "warnings": []}
+        [shown] = await _shown(request, [agent])
+        return {**shown, "warnings": []}
     warnings = await check_added_skills(request, [skill_name])
     updated = await repo.update(agent_type, skills=[*skills, skill_name])
     await audit(request, "agent.skill_added", agent_type=agent_type, skill=skill_name)
-    return {**updated, "warnings": warnings}
+    [shown] = await _shown(request, [updated])
+    return {**shown, "warnings": warnings}
 
 
 @router.delete("/agents/{agent_type}/skills/{skill_name}", dependencies=[require_admin])
@@ -349,7 +396,9 @@ async def remove_agent_skill(
         raise HTTPException(status_code=404, detail="Agent type not found")
     skills = list(agent.get("skills") or [])
     if skill_name not in skills:
-        return agent
+        [shown] = await _shown(request, [agent])
+        return shown
     updated = await repo.update(agent_type, skills=[s for s in skills if s != skill_name])
     await audit(request, "agent.skill_removed", agent_type=agent_type, skill=skill_name)
-    return updated
+    [shown] = await _shown(request, [updated])
+    return shown
