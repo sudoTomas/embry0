@@ -442,6 +442,29 @@ async def _open_change_request(
     )
 
 
+async def _record_missing_labels(self: IssueExecutor, job_id: str, url: str, diagnostics: dict[str, Any]) -> None:
+    """Record on the job that its change request opened without its labels (#472).
+
+    The job still completes with the URL, but a missing ``human-merge-only``
+    must be visible where a person reads the job, not only in the logs.
+    """
+    from embry0.execution import events
+    from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
+
+    missing = [str(label) for label in diagnostics.get("labels_missing") or []]
+    labels = ", ".join(missing)
+    said = str(diagnostics.get("labels_error") or "the forge did not take them").rstrip(". ")
+    message = f"The change request {url} opened without its labels ({labels}): {said}."
+    if HUMAN_MERGE_LABEL in missing:
+        message += " Only a person should merge it."
+    message += " A comment on it says so." if diagnostics.get("labels_noted") else " Add them on it by hand."
+    logger.warning("change_request_labels_missing", job_id=job_id, url=url, labels=labels)
+    try:
+        await self._broadcast_event(job_id, events.system(message=message))
+    except Exception:
+        logger.warning("change_request_labels_event_failed", job_id=job_id, exc_info=True)
+
+
 #: How much of the forge's answer a refused "merge as is" keeps (#459).
 MERGE_AS_IS_REASON_CHARS = 300
 
@@ -741,17 +764,20 @@ async def _open_fallback_pr(
     is published onto it afterwards.
 
     Returns the PR URL (None when there was nothing to open or the forge said
-    no) and the job row it read. Never raises: it also runs on failure paths
-    that still have to record the job's status.
+    no) and the job row it read. A PR that opened without its labels is still
+    the job's PR, and the job's events say which labels it is missing (#472).
+    Never raises: it also runs on failure paths that still have to record the
+    job's status.
     """
     from embry0.safety.error_codes import ErrorCode
     from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
 
     job_row: dict[str, Any] | None = None
+    # The opener's own record of what went wrong (#459), and of labels that did not go on (#472).
+    diagnostics = {} if diagnostics is None else diagnostics
     existing = state.get("pr_url")
     if not existing and not state.get("branch_name"):
-        if diagnostics is not None:
-            diagnostics["change_request_error"] = "the job has no branch to open a change request from"
+        diagnostics["change_request_error"] = "the job has no branch to open a change request from"
         return None, job_row
     try:
         if existing:
@@ -783,8 +809,7 @@ async def _open_fallback_pr(
             logger.warning("pr_fallback_job_fetch_failed", job_id=job_id, exc_info=True)
         repo_for_pr = str(state.get("repo") or (job_row or {}).get("repo") or "")
         if not repo_for_pr or "/" not in repo_for_pr:
-            if diagnostics is not None:
-                diagnostics["change_request_error"] = "the job's repository is not known"
+            diagnostics["change_request_error"] = "the job's repository is not known"
             return None, job_row
         task_text = str(state.get("task") or (job_row or {}).get("task") or "").strip()
         # A step other than the developer that pushed the branch (the context
@@ -855,6 +880,8 @@ async def _open_fallback_pr(
             target_branch=target_branch,
             diagnostics=diagnostics,
         )
+        if url and diagnostics.get("labels_missing"):
+            await _record_missing_labels(self, job_id, url, diagnostics)
         if url and area is not None:
             try:
                 await self._jobs.update(job_id, area=area.name)
@@ -875,8 +902,7 @@ async def _open_fallback_pr(
         return url, job_row
     except Exception as exc:
         logger.warning("pr_fallback_failed", job_id=job_id, exc_info=True)
-        if diagnostics is not None:
-            diagnostics["change_request_error"] = f"embry0 failed while opening it: {exc}"[:300]
+        diagnostics["change_request_error"] = f"embry0 failed while opening it: {exc}"[:300]
         return None, job_row
 
 
