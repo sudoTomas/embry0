@@ -611,8 +611,13 @@ class IssueExecutor:
         answers: Any,
         *,
         kind: str,
+        claimed: bool = False,
     ) -> asyncio.Task[Any]:
         """Dispatch ``resume(...)`` as a tracked background task.
+
+        ``claimed``: the caller already took the paused job for this resume
+        (``JobsRepository.claim_pause``, #470), so it reads ``running`` and was
+        ``paused`` before.
 
         Public wrapper so API routes never touch ``_track_task`` directly.
         ``issue_id`` is None for issue-less jobs (resume tolerates it).
@@ -623,7 +628,7 @@ class IssueExecutor:
         if self.draining:
             raise ExecutorDraining(f"embry0 is shutting down; resume job {job_id} once it is back")
         return self._track_task(
-            self.resume(issue_id, job_id, answers),
+            self.resume(issue_id, job_id, answers, claimed=claimed),
             kind=kind,
             job_id=job_id,
             issue_id=issue_id,
@@ -1202,6 +1207,7 @@ class IssueExecutor:
         *,
         after_restart: bool = False,
         account_wait: AccountWait | None = None,
+        claimed: bool = False,
     ) -> None:
         """Resume a paused pipeline with user answers using Command(resume=).
 
@@ -1218,6 +1224,10 @@ class IssueExecutor:
         last checkpoint, or with the answer the parked resume was given. A
         sandbox the proxies will not take back parks it again for a few
         minutes.
+
+        ``claimed`` (#470): the resume route already took the paused job
+        (``paused`` to ``running``, one winner), so it was ``paused`` before and
+        reads ``running`` now.
 
         RAV-1406: like ``_run_workflow``, the terminal Linear outcome comment
         posts in the ``finally`` — resumed jobs used to finish silently
@@ -1243,12 +1253,13 @@ class IssueExecutor:
                 # not take back puts the job and issue back exactly as they were (#476).
                 # Best-effort: only that rare path uses it, so it must not change any other.
                 try:
-                    prior_job_status = ((await self._jobs.get(job_id)) or {}).get("status")
+                    prior_job_status = "paused" if claimed else ((await self._jobs.get(job_id)) or {}).get("status")
                     if issue_id:
                         prior_issue_status = ((await self._issues.get(issue_id)) or {}).get("status")
                 except Exception:
                     logger.warning("resume_prior_status_read_failed", job_id=job_id, exc_info=True)
-                await self._jobs.update(job_id, status="running")
+                if not claimed:
+                    await self._jobs.update(job_id, status="running")
                 await self._issues.update(issue_id, status="triaging")
             # #583: a paused job held no slot. Its resume waits for one after
             # the job reads `running`, so a restart in between fails it as

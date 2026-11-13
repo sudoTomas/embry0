@@ -782,6 +782,25 @@ class JobsRepository:
         )
         return [dict(r) for r in rows]
 
+    async def claim_pause(self, job_id: str) -> bool:
+        """Take a paused job for its resume: ``paused`` to ``running`` in one statement (#470).
+
+        Only one caller wins: a second resume of the same pause, sent before
+        the first has run, finds the job ``running`` and is refused, instead of
+        running the same checkpoint a second time. A job parked for its account
+        (``account_wait``) is the account-wait loop's, which claims it with
+        :meth:`claim_account_wait`.
+        """
+        row = await self._db.fetchrow(
+            """
+            UPDATE jobs SET status = 'running'
+            WHERE job_id = $1 AND status = 'paused' AND account_wait IS NULL
+            RETURNING job_id
+            """,
+            job_id,
+        )
+        return row is not None
+
     async def claim_account_wait(self, job_id: str) -> bool:
         """Take a parked job back for its account wait to end: ``paused`` to
         ``running`` and the wait cleared, in one statement, so two takers

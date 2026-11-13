@@ -39,10 +39,13 @@ def app():
         )
     )
     mock_jobs.update = AsyncMock()
+    # #470: a resume takes the pause first; this one is free to take.
+    mock_jobs.claim_pause = AsyncMock(return_value=True)
     app.state.jobs_repo = mock_jobs
 
     # Mock issue_executor for cancel_job endpoint
     mock_executor = MagicMock()
+    mock_executor.draining = False
     mock_executor.cancel_job = AsyncMock()
     app.state.issue_executor = mock_executor
     return app
