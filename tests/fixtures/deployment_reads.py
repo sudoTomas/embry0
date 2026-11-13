@@ -144,7 +144,7 @@ def forget_caches(app: FastAPI) -> None:
     app.state.provider_usage = None
     progression = getattr(app.state, "progression", None)
     if progression is not None:
-        progression._cached = None  # noqa: SLF001 - the service's own cache, kept a minute
+        progression._cached.clear()  # noqa: SLF001 - the service's own caches, each kept a minute
 
 
 async def _ok(app: FastAPI, method: str, url: str, token: str, body: Any = None) -> Any:

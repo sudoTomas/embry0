@@ -279,10 +279,15 @@ async def mint(db: DatabasePool) -> Keys:
 
 @asynccontextmanager
 async def repository_writes_app(
-    db: DatabasePool, monkeypatch: pytest.MonkeyPatch, repos: Sequence[str] = (COVERED, UNCOVERED)
+    db: DatabasePool,
+    monkeypatch: pytest.MonkeyPatch,
+    repos: Sequence[str] = (COVERED, UNCOVERED),
+    *,
+    fold_workers: int = 0,
 ) -> AsyncIterator[tuple[FastAPI, Keys, Mapping[str, Mapping[str, str]]]]:
     """The app over ``db`` (migrated, empty), with ``repos`` seeded (both repositories), its keys and each seeded
-    repository's ids."""
+    repository's ids. ``fold_workers`` as the production lifespan passes it computes the progression in worker
+    processes, stopped when the app is."""
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _no_network)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", _no_network)
     url = db._url  # noqa: SLF001
@@ -292,7 +297,7 @@ async def repository_writes_app(
         pool = DatabasePool(url)
         await pool.connect()
         app.state.secrets_provider = FernetSecretsProvider(secret_key="tests-secret-key")
-        await _init_app_state(app, pool, database_url=url)
+        await _init_app_state(app, pool, database_url=url, fold_workers=fold_workers)
         # What the production lifespan adds beside _init_app_state, for the routes that read it.
         app.state.watcher_stacks_repo = WatcherStacksRepository(pool)
         app.state.context_audit = _NoDueAudits()
@@ -313,6 +318,7 @@ async def repository_writes_app(
         try:
             yield
         finally:
+            await app.state.progression.aclose()
             await pool.close()
 
     config = Embry0Config(

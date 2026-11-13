@@ -798,6 +798,7 @@ async def _init_app_state(
     github_comment_channel: object = None,
     linear_sync: object = None,
     webhook_notifier: object = None,
+    fold_workers: int = 0,
     **executor_kwargs: object,
 ) -> None:
     """Initialize app.state.* with repositories and services.
@@ -813,6 +814,11 @@ async def _init_app_state(
     when provided. It must be built by the caller (lifespan) before this
     function is called so the executor has it available from construction
     onward.
+
+    ``fold_workers`` processes at most compute the progression off the event
+    loop (``embry0/services/progression_workers.py``), fewer on fewer CPUs
+    (``fold_processes``); the production lifespan passes ``FOLD_WORKERS``. 0,
+    the default, computes it on the loop, as the test apps do.
     """
     from embry0.api.events.bus import EventBus
     from embry0.notifications.tracker_comment import TrackerCommentChannel
@@ -905,8 +911,17 @@ async def _init_app_state(
     from embry0.storage.repositories.progression_rollup import ProgressionRollupRepository
 
     app.state.progression_packs = PackStore(ProgressionPacksRepository(db))
+    from embry0.services.progression_workers import FoldWorkers, fold_processes
+
     app.state.progression = ProgressionService(
-        ProgressionRepository(db), packs=app.state.progression_packs, rollups=ProgressionRollupRepository(db)
+        ProgressionRepository(db),
+        packs=app.state.progression_packs,
+        rollups=ProgressionRollupRepository(db),
+        workers=(
+            FoldWorkers(database_url, processes=fold_processes(fold_workers), json_logs=not app_config.auth_dev_mode)
+            if fold_workers
+            else None
+        ),
     )
     from embry0.storage.repositories.organizations import OrganizationsRepository
 
@@ -1984,6 +1999,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         linear_sync = LinearSyncService(config.linear_api_key, parse_repo_map(config.linear_repo_map))
         logger.info("linear_sync_enabled", repo_map=parse_repo_map(config.linear_repo_map))
 
+    from embry0.services.progression_workers import FOLD_WORKERS
+
     await _init_app_state(
         app,
         db,
@@ -1999,6 +2016,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         sandbox_manager=sandbox_mgr,
         agent_runner=agent_runner,
         proxy_manager=proxy_mgr,
+        fold_workers=FOLD_WORKERS,
     )
     # spec 3.5: the reaper was built before the executor existed; it announces
     # each expired job's job_finished through the executor's event path.
@@ -3093,7 +3111,17 @@ def create_app(
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
+    from embry0.services.progression_workers import FoldTimeout
     from embry0.storage.repositories.jobs import StatusTransitionConflict
+
+    @app.exception_handler(FoldTimeout)
+    async def fold_timeout_handler(request: Request, exc: FoldTimeout) -> JSONResponse:
+        # The read's worker process was killed and replaced; the next read starts again on a new one.
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "The progression took too long to compute; try again."},
+            headers={"Retry-After": "30"},
+        )
 
     @app.exception_handler(StatusTransitionConflict)
     async def status_conflict_handler(request: Request, exc: StatusTransitionConflict) -> JSONResponse:

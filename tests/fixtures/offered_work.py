@@ -276,7 +276,7 @@ class GameProgression(FakeProgression):
     """The progression snapshot with a diary in each repository, each with a tier completed: a recent unlock; an
     achievement whose evidence is a pull request in each, and a quest done in each."""
 
-    async def read(self) -> Any:
+    async def read(self, repos: Any = None) -> Any:
         progression = await super().read()
         progression.diaries = [
             Diary(repo=repo, tiers=[DiaryTier(tier="easy", tasks=[Task(text="a first job", done_at=NOW)])])

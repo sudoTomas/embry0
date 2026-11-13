@@ -27,10 +27,8 @@ from embry0.storage.repositories.repos import ReposRepository
 VERSION = 148
 
 
-def test_the_owner_spelling_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_147.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must give owner bindings one owner each"
+def test_the_owner_spelling_migration_is_listed_once() -> None:
+    """Being the last entry passed on to tests/unit/storage/test_migration_150.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

@@ -549,7 +549,7 @@ async def _read_then_settle(client: AsyncClient) -> tuple[dict[str, Any], dict[s
     first = (await client.get("/api/v1/progression")).json()
     await client.app.state.progression.settle()  # type: ignore[attr-defined]
     second = (await client.get("/api/v1/progression")).json()
-    rows = await client.app.state.db.fetch("SELECT pack_hash FROM progression_rollups")  # type: ignore[attr-defined]
+    rows = await client.app.state.db.fetch("SELECT pack_hash FROM progression_scope_rollups")  # type: ignore[attr-defined]
     return first, second, [r["pack_hash"] for r in rows]
 
 
@@ -586,7 +586,7 @@ async def test_the_preview_never_reads_or_builds_a_rollup(client: AsyncClient) -
     """Both sides of a preview fold the raw rows: a day the rollup holds stale is no change the draft makes."""
     db = client.app.state.db  # type: ignore[attr-defined]
     await _read_then_settle(client)
-    before = [dict(r) for r in await db.fetch("SELECT pack_hash, built_at FROM progression_rollups")]
+    before = [dict(r) for r in await db.fetch("SELECT pack_hash, built_at FROM progression_scope_rollups")]
     assert len(before) == 1
     # Recorded after the rollup was built, for a day it holds: the rollup leaves it out until the nightly rebuild.
     at = datetime(2026, 3, 2, 10, tzinfo=UTC)
@@ -613,7 +613,7 @@ async def test_the_preview_never_reads_or_builds_a_rollup(client: AsyncClient) -
             50 * 140000,
         ), f"the preview's active side was read from a stale rollup: {agent}"
         await client.app.state.progression.settle()  # type: ignore[attr-defined]
-        after = [dict(r) for r in await db.fetch("SELECT pack_hash, built_at FROM progression_rollups")]
+        after = [dict(r) for r in await db.fetch("SELECT pack_hash, built_at FROM progression_scope_rollups")]
         assert after == before, f"the preview wrote a rollup: {after}"
     finally:
         await db.execute("DELETE FROM traces WHERE trace_id = 'pack-late-trace'")

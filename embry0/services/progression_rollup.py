@@ -26,6 +26,18 @@ missing or holds rewards that moved answers from the raw rows, as before the
 rollup, and schedules the build. Writers take one advisory lock, so two
 replicas build once; a reader's snapshot never sees a write half done.
 
+**Scopes** (migration 149). The deployment's fold reads every row. A key
+with a repository allowlist reads the experience of its repositories' work
+alone, as a deployment holding only them would: its scope (:class:`Scope`)
+folds the events, rewards and facts of that set of repositories, read through
+``ProgressionRepository``'s scoped queries, and its closed days are kept as a
+rollup of their own, built at its first read and kept current by its reads as
+the deployment's is. A set is folded whole, never added up from
+per-repository folds: the instant a level is reached, a rare such as the
+first run of a new year, and a quest that any of the repositories completes
+once, all depend on the set's events together. A set no read has advanced in
+``UNREAD_FOR`` is deleted at the next full build of any scope.
+
 What stays stale: an event recorded more than :data:`SETTLE` after its own
 time, for a day already folded, counts from the next full rebuild, so at
 most a day late. So does a change to a row of a folded day (a job's last
@@ -53,7 +65,14 @@ from embry0.services.progression import AgentLevelUp, Fold, LevelUp, Progression
 from embry0.services.progression_pack import Rules
 from embry0.services.quests import Reward, quest_rewards, run_agents
 from embry0.storage.repositories.progression import Journal, ProgressEvent
-from embry0.storage.repositories.progression_rollup import DailyXp, Milestone, RollupHead, StoredRollup
+from embry0.storage.repositories.progression_rollup import (
+    DEPLOYMENT,
+    DailyXp,
+    Milestone,
+    RollupHead,
+    StoredRollup,
+    scope_key,
+)
 
 #: A day is closed, and folded into the rollup, once it ended this long ago: a run keeps the time it
 #: started and can finish much later, and a merge arrives with the forge's time.
@@ -103,16 +122,45 @@ def fold_version(modules: Sequence[str] = FOLD_MODULES) -> str:
 FOLD_VERSION = fold_version()
 
 
-class EventSource(Protocol):
-    async def events(self, *, since: datetime | None = None, until: datetime | None = None) -> list[ProgressEvent]: ...
+@dataclass(frozen=True)
+class Scope:
+    """Whose work a fold reads: every repository's (``repos`` None, the deployment), or a set of repositories'
+    (lower-cased slugs, sorted), a key with an allowlist's."""
 
-    async def journal(self, agents: Collection[str] | None = None) -> Journal: ...
+    repos: tuple[str, ...] | None = None
+
+    @classmethod
+    def of(cls, repos: Collection[str] | None) -> Scope:
+        return cls(None if repos is None else tuple(sorted(set(repos))))
+
+    @property
+    def key(self) -> str:
+        """What its rollup is stored under (``progression_rollup.scope_key``)."""
+        return scope_key(self.repos)
+
+
+#: The deployment's scope: every row.
+EVERY = Scope()
+
+
+class EventSource(Protocol):
+    async def events(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        repos: Collection[str] | None = None,
+    ) -> list[ProgressEvent]: ...
+
+    async def journal(
+        self, agents: Collection[str] | None = None, *, repos: Collection[str] | None = None
+    ) -> Journal: ...
 
 
 class RollupWriting(Protocol):
     """Writes made under the rollup's lock, in one transaction (``ProgressionRollupRepository.writing``)."""
 
-    async def load(self, pack_hash: str) -> StoredRollup | None: ...
+    async def load(self, pack_hash: str, scope: str = DEPLOYMENT) -> StoredRollup | None: ...
 
     async def replace(self, head: RollupHead, daily: Sequence[DailyXp], milestones: Sequence[Milestone]) -> None: ...
 
@@ -122,7 +170,9 @@ class RollupWriting(Protocol):
 class RollupStore(Protocol):
     """Where the rollup is kept: ``ProgressionRollupRepository`` in production."""
 
-    async def load(self, pack_hash: str) -> StoredRollup | None: ...
+    async def load(self, pack_hash: str, scope: str = DEPLOYMENT) -> StoredRollup | None: ...
+
+    async def version(self, pack_hash: str, scope: str = DEPLOYMENT) -> str | None: ...
 
     def writing(self) -> AbstractAsyncContextManager[RollupWriting]: ...
 
@@ -263,47 +313,76 @@ class ProgressionRollup:
         self._nightly_at = nightly_at
         self._version = version
 
+    async def _events(
+        self, scope: Scope, *, since: datetime | None = None, until: datetime | None = None
+    ) -> list[ProgressEvent]:
+        """The scope's events between the bounds; the deployment's read is the call it always was."""
+        if scope.repos is None:
+            return await self._source.events(since=since, until=until)
+        return await self._source.events(since=since, until=until, repos=scope.repos)
+
+    async def _journal(self, rules: Rules, scope: Scope) -> Journal:
+        """The scope's journal of the runs the pack's quests read."""
+        if scope.repos is None:
+            return await self._source.journal(run_agents(rules))
+        return await self._source.journal(run_agents(rules), repos=scope.repos)
+
     def _nightly_due(self, head: RollupHead, now: datetime, rules: Rules) -> bool:
         return self._nightly_at is not None and head.rebuilt_at < last_nightly(now, rules, self._nightly_at)
 
+    async def unbuilt(self, rules: Rules, scope: Scope = EVERY) -> bool:
+        """Whether ``scope`` has no rollup this release folded for ``rules``: one row read, not the rollup."""
+        return await self._store.version(rules.hash, scope.key) != self._version
+
     async def levels(
-        self, rules: Rules, agent_types: Iterable[str], rewards: Sequence[tuple[datetime, Reward]]
+        self,
+        rules: Rules,
+        agent_types: Iterable[str],
+        rewards: Sequence[tuple[datetime, Reward]],
+        scope: Scope = EVERY,
     ) -> Levels:
-        """The levels from the stored fold plus the events after its boundary; no progression when it is unusable.
+        """The levels of ``scope`` from its stored fold plus the events after its boundary; no progression when it
+        is unusable.
 
         A missing rollup, one another release folded, or one whose folded
         quest rewards are no longer the ones due before its boundary, gives no
         progression and ``due``: the caller reads every raw row this time, and
-        the write fixes the rollup.
+        the write fixes the rollup. ``rewards`` are the scope's.
         """
-        stored = await self._store.load(rules.hash)
+        stored = await self._store.load(rules.hash, scope.key)
         if stored is None or stored.head.fold_version != self._version:
             return Levels(None, None, due=True)
         head = stored.head
         if stored_rewards(head) != before(rewards, head.boundary):
             return Levels(None, None, due=True)
         fold = resume(stored, rules=rules, agent_types=agent_types)
-        fold.feed(await self._source.events(since=head.boundary), [r for r in rewards if r[0] >= head.boundary])
+        fold.feed(
+            await self._events(scope, since=head.boundary),
+            [r for r in rewards if r[0] >= head.boundary],
+        )
         progression = fold.progression()
         progression.rollup = view(head)
         now = self.now()
         due = self._nightly_due(head, now, rules) or closed_through(now, rules)[1] > head.boundary
         return Levels(progression, head, due=due)
 
-    async def maintain(self, rules: Rules, *, force_since: datetime | None = None) -> Maintained:
-        """Build, advance or rebuild the stored fold for ``rules``, whichever is due, under the rollup's lock.
+    async def maintain(self, rules: Rules, *, force_since: datetime | None = None, scope: Scope = EVERY) -> Maintained:
+        """Build, advance or rebuild the stored fold of ``scope`` for ``rules``, whichever is due, under the
+        rollup's lock.
 
         A second caller waits for the first and finds nothing left to do.
         ``force_since`` asks for a full rebuild unless one finished after it.
         """
         async with self._store.writing() as writer:
-            return await self._maintain(writer, rules, force_since)
+            return await self._maintain(writer, rules, force_since, scope)
 
-    async def _maintain(self, writer: RollupWriting, rules: Rules, force_since: datetime | None) -> Maintained:
-        stored = await writer.load(rules.hash)
+    async def _maintain(
+        self, writer: RollupWriting, rules: Rules, force_since: datetime | None, scope: Scope
+    ) -> Maintained:
+        stored = await writer.load(rules.hash, scope.key)
         now = self.now()
         through, boundary = closed_through(now, rules)
-        rewards = quest_rewards(await self._source.journal(run_agents(rules)), rules=rules)
+        rewards = quest_rewards(await self._journal(rules, scope), rules=rules)
         full = (
             stored is None
             or stored.head.fold_version != self._version
@@ -315,7 +394,7 @@ class ProgressionRollup:
             fold = Fold(rules=rules)
             fold.daily = {}
             folded = before(rewards, boundary)
-            fold.feed(await self._source.events(until=boundary), folded)
+            fold.feed(await self._events(scope, until=boundary), folded)
             head = RollupHead(
                 pack_hash=rules.hash,
                 fold_version=self._version,
@@ -326,6 +405,8 @@ class ProgressionRollup:
                 rewards=rewards_json(folded),
                 built_at=now,
                 rebuilt_at=now,
+                scope=scope.key,
+                repos=scope.repos,
             )
             await writer.replace(head, _daily(fold), _milestones(fold))
             return Maintained("built" if stored is None else "rebuilt", head)
@@ -336,7 +417,7 @@ class ProgressionRollup:
         fold.daily = {}
         old = stored.head.boundary
         fold.feed(
-            await self._source.events(since=old, until=boundary),
+            await self._events(scope, since=old, until=boundary),
             [r for r in rewards if old <= r[0] < boundary],
         )
         head = replace(
