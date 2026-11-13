@@ -64,7 +64,8 @@ async def test_the_stats_count_the_credentials_a_key_reads_and_no_environment_ke
     assert everyone == {
         "count": len(registry),
         "quarantined": 1,
-        "disabled": 0,
+        # Each owner's model account, which tests.fixtures.repository_reads binds disabled.
+        "disabled": 2,
         "env_fallback_keys": ["GITHUB_TOKEN__GLOBEX"],
     }, f"a key without an allowlist counts the registry and the environment's keys: {everyone}"
 

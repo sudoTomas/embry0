@@ -223,7 +223,12 @@ async def test_probe_an_ssh_host(client: AsyncClient, monkeypatch: pytest.Monkey
 async def test_probe_a_tailnet_host_needs_a_bound_key(client: AsyncClient, tailnet: list[TailnetAccess]) -> None:
     host = await _create(client, transport="tailnet", address="")
     missing = await client.post(f"/api/v1/hosts/{host['id']}/probe")
-    assert missing.status_code == 422 and "tailnet_api_key" in missing.json()["detail"]
+    # The resolver's message carries no steps; the route, refused to a key with an allowlist, puts them back.
+    assert (missing.status_code, missing.json()["detail"]) == (
+        422,
+        "no tailnet credential: create a tailnet_api_key credential and bind it at global scope with role tailnet "
+        "(trace: global: -> none)",
+    ), missing.text
     assert tailnet == []
     cid = await _bind_tailnet_key(client)
     resp = await client.post(f"/api/v1/hosts/{host['id']}/probe")

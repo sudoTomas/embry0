@@ -28,6 +28,7 @@ from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
 from embry0.api.repository_reads import covered
+from embry0.api.resolution_view import scopes_read
 from embry0.api.schemas import RunWithRequest
 from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
@@ -81,9 +82,12 @@ async def _audit(request: Request, action: AuditAction, details: dict[str, Any])
 @router.get("/repos/{full_repo:repo}/-/setup/cost")
 async def get_setup_cost(full_repo: str, request: Request) -> dict[str, Any]:
     # A repository the caller's key does not cover has no account resolved for it (embry0.api.repository_reads), and
-    # the recorded runs are those of the repositories the key covers.
+    # the recorded runs are those of the repositories the key covers; for a repository it covers, an account of a scope
+    # the key does not read is the deployment's, unnamed (resolution_view).
+    covers = key_covers(request, full_repo)
+    read = await scopes_read(request, full_repo) if covers else None
     return await cost_facts(
-        request.app.state, full_repo, resolve_account=key_covers(request, full_repo), repos=covered_slugs(request)
+        request.app.state, full_repo, resolve_account=covers, repos=covered_slugs(request), read=read
     )
 
 
@@ -190,7 +194,12 @@ async def get_readiness(full_repo: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="repo not registered")
     labels = await resolve_trigger_labels(request)
     inputs = await readiness_inputs(
-        request.app.state, full_repo, registered, trigger_label=labels[0] if labels else "embry0"
+        request.app.state,
+        full_repo,
+        registered,
+        trigger_label=labels[0] if labels else "embry0",
+        # The forge account names no credential of a scope the caller's key does not read (resolution_view).
+        read=await scopes_read(request, full_repo),
     )
     return build_readiness(inputs)
 

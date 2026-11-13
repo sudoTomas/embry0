@@ -150,5 +150,31 @@ async def test_a_disabled_global_key_is_skipped(db_with_migrations: DatabasePool
     key = await _tailnet_key(repo)
     await repo.replace_bindings("global", "", [{"credential_id": key["id"], "role": "tailnet"}], created_by="t")
     await repo.set_status(key["id"], "disabled")
-    with pytest.raises(CredentialMissingError, match="skipped"):
+    with pytest.raises(CredentialMissingError) as exc:
         await resolver.resolve_tailnet()
+    assert exc.value.trace == ("global: -> tailnet skipped (disabled)",), exc.value.trace
+
+
+#: What a resolution that finds no tailnet key says, whoever reads it: the steps are on the error and in the log.
+TAILNET_MISSING = (
+    "no tailnet credential: create a tailnet_api_key credential and bind it at global scope with role tailnet"
+)
+
+
+async def test_a_missing_tailnet_key_keeps_its_steps_off_its_message(db_with_migrations: DatabasePool) -> None:
+    """As a missing forge credential or model account does: the message names no credential, the steps (a key
+    skipped, and why) are on ``trace`` and in the ``credential_missing`` log line."""
+    repo = CredentialsRepository(db_with_migrations)
+    resolver = CredentialResolver(repo, FakeSecrets(), config=None, environ={})
+    with pytest.raises(CredentialMissingError) as none:
+        await resolver.resolve_tailnet()
+    key = await _tailnet_key(repo, label="office-tailnet")
+    await repo.replace_bindings("global", "", [{"credential_id": key["id"], "role": "tailnet"}], created_by="t")
+    await repo.set_status(key["id"], "disabled")
+    with capture_logs() as logs, pytest.raises(CredentialMissingError) as skipped:
+        await resolver.resolve_tailnet()
+    assert (str(none.value), none.value.trace) == (TAILNET_MISSING, ("global: -> none",)), none.value
+    assert str(skipped.value) == TAILNET_MISSING, f"the message names the key it skipped: {skipped.value}"
+    assert skipped.value.trace == ("global: -> office-tailnet skipped (disabled)",), skipped.value.trace
+    missing = [entry for entry in logs if entry["event"] == "credential_missing"]
+    assert [entry.get("trace") for entry in missing] == [["global: -> office-tailnet skipped (disabled)"]], logs
