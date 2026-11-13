@@ -28,6 +28,12 @@ from embry0.notifications.dispatcher import notify_answer_cross_channel
 logger = structlog.get_logger(__name__)
 
 
+def answers_context(answered: list[dict[str, Any]]) -> str:
+    """The questions and their answers, as a resume hands them to the agent: a person's answer, else the
+    orchestrator's own."""
+    return "\n\n".join(f"Q: {a['question']}\nA: {a.get('answer') or a.get('auto_answer') or ''}" for a in answered)
+
+
 async def record_answer(
     *,
     inp: dict[str, Any],

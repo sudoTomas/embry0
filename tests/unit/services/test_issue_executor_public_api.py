@@ -19,6 +19,9 @@ def _bare_executor():
     ex._jobs = MagicMock()
     ex._issues = MagicMock()
     ex._issues.update = AsyncMock()
+    # #499: the issue is taken before anything goes on with it.
+    ex._issues.claim_answered = AsyncMock(return_value=True)
+    ex._issues.get = AsyncMock(return_value={"status": "triaging"})
     tracked = []
 
     def _fake_track(coro, **kwargs):
@@ -108,7 +111,7 @@ async def test_schedule_resume_delegates_to_tracked_resume():
     ex, tracked = _bare_executor()
     captured = {}
 
-    def _fake_resume(issue_id, job_id, answers, claimed=None):
+    def _fake_resume(issue_id, job_id, answers, claimed=None, claimed_issue=None):
         captured.update(issue_id=issue_id, job_id=job_id, answers=answers, claimed=claimed)
 
         async def _noop():
@@ -142,7 +145,7 @@ async def test_resume_or_execute_resumes_latest_awaiting_job():
     )
     captured = {}
 
-    def _fake_resume(issue_id, job_id, answers, claimed=None):
+    def _fake_resume(issue_id, job_id, answers, claimed=None, claimed_issue=None):
         captured.update(issue_id=issue_id, job_id=job_id, answers=answers, claimed=claimed)
 
         async def _noop():
@@ -172,7 +175,9 @@ async def test_resume_or_execute_starts_fresh_with_context_when_no_awaiting_job(
 
     await ex.resume_or_execute("iss-1", "Q: q\nA: a")
 
-    ex._issues.update.assert_awaited_once_with("iss-1", status="triaging")
+    # #499: taking the issue (awaiting_input to triaging) is what flips it, before the fresh run.
+    ex._issues.claim_answered.assert_awaited_once_with("iss-1")
+    ex._issues.update.assert_not_awaited()
     # The accumulated Q&A must ride the fresh run (execute's retriage contract).
     # #281: no named person on this channel — the service actor asked.
     ex.execute.assert_awaited_once_with("iss-1", additional_context="Q: q\nA: a", dispatched_by="embry0:answer-resume")
@@ -199,4 +204,5 @@ async def test_resume_or_execute_rolls_back_to_open_on_execute_failure():
     await ex.resume_or_execute("iss-1", "")
 
     statuses = [c.kwargs.get("status") for c in ex._issues.update.await_args_list]
-    assert statuses == ["triaging", "open"]
+    ex._issues.claim_answered.assert_awaited_once_with("iss-1")
+    assert statuses == ["open"]

@@ -284,3 +284,16 @@ async def test_a_resume_claimed_from_its_answer_wait_gives_the_wait_back():
     assert writes[-1:] == ["awaiting_input"], (
         f"a claimed answer wait the resume could not run must be given back: {writes}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_took_the_issue_too_gives_the_issue_back():
+    """#499: the answer took the issue (it reads ``triaging``); a failed re-enroll puts it back to ``awaiting_input``."""
+    ex = _resume_executor(SandboxReenrollError("enroll returned HTTP 503", error_code=ErrorCode.SANDBOX_INIT))
+    ex._jobs.get = AsyncMock(return_value={"job_id": "job-1", "status": "running"})
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "triaging"})
+
+    await ex.resume("iss-1", "job-1", "Q: q\nA: a", claimed="awaiting_input", claimed_issue="awaiting_input")
+
+    writes = [c.kwargs.get("status") for c in ex._issues.update.await_args_list if c.kwargs.get("status")]
+    assert writes[-1:] == ["awaiting_input"], f"an issue the answer took must be given back: {writes}"

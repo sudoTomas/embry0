@@ -17,6 +17,7 @@ def _wire(app, *, inp, pending_after=0):
     )
     app.state.inputs_repo = inputs_repo
     executor = MagicMock()
+    executor.draining = False
     executor.resume_answered = AsyncMock(return_value=True)
     app.state.issue_executor = executor
     return inputs_repo, executor

@@ -20,7 +20,7 @@ from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.safety.redaction import job_secret_values, redact_event
-from embry0.services.answer_recorder import record_answer
+from embry0.services.answer_recorder import answers_context, record_answer
 from embry0.services.run_with import RunWith, apply_run_with
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
@@ -602,6 +602,10 @@ async def answer_job_input_as(
     # Telegram question message, and posts the Q&A on the linked Linear issue.
     # answered_by carries the real principal (session email / key name), not
     # the historical hardcoded "user".
+    executor = request.app.state.issue_executor
+    if executor.draining:
+        # #499: an answer recorded now could not resume the job, and could not be sent again once recorded.
+        raise HTTPException(status_code=503, detail="embry0 is shutting down; answer again once it is back")
     recorded = await record_answer(
         inp=inp,
         answer=req.answer,
@@ -621,16 +625,12 @@ async def answer_job_input_as(
         fresh = await jobs.get(job_id)
         if fresh and fresh["status"] == "awaiting_input":
             answered = await inputs_repo.list_all_answered_for_job(job_id)
-            context_lines = [
-                f"Q: {a['question']}\nA: {a.get('answer') or a.get('auto_answer') or ''}" for a in answered
-            ]
-            executor = request.app.state.issue_executor
             # #499: the job is taken before its resume is scheduled, so two answers that each find no question
             # left resume it once; the second answer is recorded all the same.
             await executor.resume_answered(
                 inp.get("issue_id") or None,
                 job_id,
-                "\n\n".join(context_lines),
+                answers_context(answered),
                 kind="resume_via_job_answer",
             )
 

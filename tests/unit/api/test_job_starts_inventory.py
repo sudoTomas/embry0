@@ -85,6 +85,7 @@ CONTINUES = frozenset(
         "resume_for_issue",
         "resume_or_execute",
         "resume_answered",
+        "resume_answered_waits",
     }
 )
 EXECUTOR = "embry0.services.issue_executor"
@@ -162,6 +163,7 @@ SITES: dict[str, str] = {
     "embry0.api.app:lifespan.<locals>._scout_submit": f"{_NOT_A_KEY}: the scout's background loop",
     "embry0.services.scout:ScoutLoop._start": f"{_NOT_A_KEY}: the scout's background loop",
     "embry0.api.app:_start_recovered_jobs": f"{_NOT_A_KEY}: the jobs a restart left, at boot",
+    "embry0.api.app:_resume_answered_waits": f"{_NOT_A_KEY}: the jobs whose answers a drain left, at boot",
     "embry0.services.account_waits:AccountWaitLoop.tick": f"{_NOT_A_KEY}: the account-wait loop",
     "embry0.api.v1.telegram:telegram_callback": f"{_NOT_A_KEY}: a signed chat callback",
     "embry0.api.v1.webhooks:_handle_issue_comment.<locals>._resume": f"{_NOT_A_KEY}: a signed forge webhook",
