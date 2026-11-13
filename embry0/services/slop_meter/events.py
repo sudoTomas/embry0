@@ -464,8 +464,8 @@ class EventReader:
     async def _listing_page(self, budget: ApiBudget | ShareBudget) -> None:
         name, kind, prefix, cursor = _LISTINGS[self._stage]
         if self._next is None:
-            # Every page of a listing is asked for with the cursor its first page had: the cursor moves as pages
-            # are read, and a later page asked for from the moved one would leave out the comments in between.
+            # A first page is asked for from the cursor; a page asked for by number keeps the cursor its first page
+            # had, since a later page asked for from a moved cursor would leave out the comments in between.
             self._since = getattr(self.batch, cursor)
         params: dict[str, Any] = {"sort": "updated", "direction": "asc"}
         if self._since is not None:
@@ -478,6 +478,14 @@ class EventReader:
             setattr(self.batch, cursor, max([*stamps, *([current] if current else [])]))
         if not go_on:
             self._advance()
+        elif stamps and (self._since is None or max(stamps) > self._since):
+            # The next page is asked for as a first page from the newest update read, not by its number: a
+            # comment edited since this page was read has moved to the end of the listing, and the next page by
+            # number would start one later, leaving out the comment that moved up onto this one for good (#500).
+            # ``since`` takes the newest update read again, so a comment read twice is only stored once. A page
+            # whose comments all have the update it was asked from moves the cursor no further: the listing then
+            # goes on by page number.
+            self._next = None
 
     async def _pulls_page(self, budget: ApiBudget | ShareBudget) -> None:
         """One page of the pull requests updated since the reviews cursor, newest first.
