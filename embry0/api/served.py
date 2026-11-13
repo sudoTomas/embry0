@@ -1,7 +1,9 @@
 """Answering a stored document too deep to serve (#431): its JSON text, never a 500.
 
 The serializer behind a route's response model (pydantic-core) stops at
-:data:`embry0.json_text.SERVABLE_DEPTH` levels of containers. The write paths
+:data:`embry0.json_text.SERVABLE_DEPTH` levels of containers, and the one
+behind a route with none (FastAPI's ``jsonable_encoder``) recurses once per
+level, to the interpreter's limit (about 1,000; #479). The write paths
 refuse a document past :data:`embry0.json_text.STORED_DEPTH` (``ServableFields``),
 but a row stored before they did, or written by something other than the API,
 can still hold one, and the read that shows it, or any list of rows it is in,
@@ -105,12 +107,13 @@ class ServedAnswers(APIRoute):
             token = _ANSWERED.set(kept)
             try:
                 return await handler(request)
-            except ValueError as exc:  # pydantic-core's "depth exceeded" is a ValueError
-                # Only a failure serializing what the endpoint answered with the response model, with a value too
-                # deep to serve in it; a route with none is not serialized by pydantic.
-                if not kept or self.response_field is None:
+            except (ValueError, RecursionError) as exc:
+                # Only a failure serializing what the endpoint answered, with a value too deep to serve in it:
+                # pydantic-core's "depth exceeded" for a route with a response model (a ValueError), and for a
+                # route with none, FastAPI's jsonable_encoder, which recurses once per level (#479).
+                if not kept:
                     raise
-                plain = self._plain(kept[-1])
+                plain = kept[-1] if self.response_field is None else self._plain(kept[-1])
                 if not nested_deeper_than(plain, STORED_DEPTH):
                     raise
                 logger.warning(
@@ -133,7 +136,7 @@ class ServedAnswers(APIRoute):
         """The answer as the response model gives it, in Python values (that mode walks a deep value as it is). It
         validated before serializing it failed, so it validates now."""
         field = self.response_field
-        assert field is not None  # noqa: S101 - get_route_handler answers again only with a response model
+        assert field is not None  # noqa: S101 - get_route_handler calls this only for a route with a response model
         value, _errors = field.validate(answer, {}, loc=("response",))
         return field.serialize(
             value,
