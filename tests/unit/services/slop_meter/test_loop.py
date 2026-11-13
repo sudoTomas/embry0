@@ -415,12 +415,14 @@ class FakeForge:
         self.calls.append((path, dict(params or {})))
         r = self.repo
         if path == f"/repos/{r}/issues/comments":
-            page = int((params or {}).get("page", 1))
-            nxt = f"{FORGE}{path}?page={page + 1}" if page < self.comment_pages else None
-            items = [_comment(page, "ana", min(page, 28))]
-            if page == 1:
-                items.append(_comment(1000, "renovate[bot]", 2))
-            return FakeResponse(200, items, next_url=nxt, remaining=self.remaining)
+            # As GitHub lists them: updated since ``since`` (inclusive), oldest update first, two a page here.
+            page, since = int((params or {}).get("page", 1)), (params or {}).get("since", "")
+            every = [_comment(1000, "renovate[bot]", 2)] + [
+                _comment(i, "ana", min(i, 28)) for i in range(1, self.comment_pages + 1)
+            ]
+            later = sorted((c for c in every if c["updated_at"] >= since), key=lambda c: (c["updated_at"], c["id"]))
+            nxt = f"{FORGE}{path}?page={page + 1}" if page * 2 < len(later) else None
+            return FakeResponse(200, later[(page - 1) * 2 : page * 2], next_url=nxt, remaining=self.remaining)
         if path == f"/repos/{r}/pulls/comments":
             return FakeResponse(200, [], remaining=self.remaining)
         if path == f"/repos/{r}/pulls":
@@ -482,8 +484,68 @@ async def test_a_listing_cut_by_the_budget_resumes_after_its_last_page() -> None
         await _read_all(reader, budget)
     assert not reader.done and budget.made == 3
     assert {e[0] for e in reader.batch.events} >= {"ic:1", "ic:2", "ic:3"}
-    assert reader.batch.comments_since == datetime(2025, 2, 3, 10, tzinfo=UTC), "read oldest first, up to page 3"
+    # Two comments a page, each next page asked for from the newest update read (#500): three calls read up to day 4.
+    assert reader.batch.comments_since == datetime(2025, 2, 4, 10, tzinfo=UTC), "read oldest first, three pages"
     assert reader.batch.review_comments_since is None, "a listing not started keeps its cursor"
+
+
+class Comments:
+    """Issue comments, two a page, updated since ``since`` (inclusive), oldest update first; ``after_page_1``
+    edits comments once the first page has been answered, as a person might between two pages of one read."""
+
+    def __init__(self, updated: dict[int, int], edit: dict[int, int] | None = None) -> None:
+        self.updated = {i: START + timedelta(days=day) for i, day in updated.items()}
+        self.edit = {i: START + timedelta(days=day) for i, day in (edit or {}).items()}
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        params = params or {}
+        if not path.endswith("/issues/comments"):
+            return FakeResponse(200, [])
+        page, since = int(params.get("page", 1)), params.get("since", "")
+        stamp = {i: at.strftime("%Y-%m-%dT%H:%M:%SZ") for i, at in self.updated.items()}
+        later = sorted((stamp[i], i) for i in stamp if stamp[i] >= since)
+        chunk = later[(page - 1) * 2 : page * 2]
+        items = [{"id": i, "user": {"login": f"user{i}"}, "created_at": at, "updated_at": at} for at, i in chunk]
+        nxt = f"{FORGE}{path}?page={page + 1}" if page * 2 < len(later) else None
+        if self.edit:
+            self.updated.update(self.edit)
+            self.edit = {}
+        return FakeResponse(200, items, next_url=nxt)
+
+
+async def _comments_read(forge: Comments, passes: int) -> set[int]:
+    """The comments read over ``passes`` passes, the cursor carried from one to the next."""
+    read: set[int] = set()
+    cursor = START
+    for _ in range(passes):
+        reader = EventReader(
+            forge,
+            REPO,
+            comments_since=cursor,
+            review_comments_since=None,
+            reviews_since=None,
+            max_pages=10,
+            max_pulls=0,
+        )
+        await _read_all(reader, ApiBudget(1_000, 0))
+        read |= {int(e[0].split(":")[1]) for e in reader.batch.events}
+        cursor = reader.batch.comments_since or cursor
+    return read
+
+
+async def test_a_comment_edited_between_two_pages_hides_no_other() -> None:
+    """#500: comment 1, read on page 1, is edited before page 2 is read and moves to the end of the listing. Page 2
+    by its number now starts one comment later, and the comment that moved up onto page 1 was never read; the
+    cursor then passed it for good. Each next page is asked for from the newest update read instead."""
+    forge = Comments({i: i for i in range(1, 7)}, edit={1: 10})
+    assert await _comments_read(forge, passes=3) == set(range(1, 7)), "a comment was never read"
+
+
+async def test_comments_that_share_one_update_are_read_page_by_page() -> None:
+    """When every comment of a page has the update the page was asked from, asking from the newest again would
+    bring the same page: the listing goes on by page number, and every comment is read once the pass ends."""
+    forge = Comments({i: 1 for i in range(1, 6)})
+    assert await _comments_read(forge, passes=1) == set(range(1, 6))
 
 
 @pytest.mark.asyncio
@@ -543,11 +605,11 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
     assert len(forges[big].calls) == 9, "the big one had its turns and the rest of the budget"
     assert small in store.stored and big not in store.stored, "only a caught-up repository is scored"
     assert len(mirror.synced) == 2, "git fetches are not API calls and are not budgeted"
-    assert store.states[big]["comments_since"] == datetime(2025, 2, 9, 10, tzinfo=UTC), "it resumes after page 9"
+    assert store.states[big]["comments_since"] == datetime(2025, 2, 10, 10, tzinfo=UTC), "it resumes after 9 pages"
     # The next tick starts with the other repository, and the big one goes on from its cursor.
     forges[big].calls.clear()
     await loop.tick()
-    assert forges[big].calls[0][1]["since"] == "2025-02-09T10:00:00Z"
+    assert forges[big].calls[0][1]["since"] == "2025-02-10T10:00:00Z"
 
 
 @pytest.mark.asyncio
