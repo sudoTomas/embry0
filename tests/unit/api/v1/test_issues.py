@@ -43,6 +43,7 @@ def app():
     app.state.inputs_repo = mock_inputs
 
     mock_executor = MagicMock()
+    mock_executor.draining = False
     mock_executor.resume_or_execute = AsyncMock()
     app.state.issue_executor = mock_executor
 

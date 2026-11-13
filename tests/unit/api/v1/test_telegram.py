@@ -285,3 +285,19 @@ def test_callback_query_from_foreign_chat_is_rejected():
         headers={"X-Telegram-Bot-Api-Secret-Token": "real-secret"},
     )
     assert resp.status_code == 204
+
+
+def test_a_reply_another_answer_beat_to_the_question_is_already_answered(record_answer_spy):
+    """#499: the reply read the question pending, but another answer was written first: nothing of it goes on."""
+    app, inputs_repo = _answering_app()
+    inputs_repo.count_pending_blocking = AsyncMock(return_value=0)
+    record_answer_spy.return_value = False
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/telegram/callback",
+        json=_reply_update(),
+        headers={"X-Telegram-Bot-Api-Secret-Token": "real-secret"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "already_answered"}, f"a reply that lost the question was taken: {resp.json()}"
+    app.state.issue_executor.resume_for_issue.assert_not_awaited()

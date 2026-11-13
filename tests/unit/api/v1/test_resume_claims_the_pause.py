@@ -81,7 +81,7 @@ async def test_two_resumes_of_one_pause_at_once_run_it_once(db_with_migrations: 
     refused = first if first.status_code == 409 else second
     assert refused.json()["detail"] == "Job is running, not paused", refused.json()
     assert (await JobsRepository(db_with_migrations).get(job_id))["status"] == "running"
-    assert app.state.issue_executor.schedule_resume.call_args.kwargs.get("claimed") is True, (
+    assert app.state.issue_executor.schedule_resume.call_args.kwargs.get("claimed") == "paused", (
         "the resume is not told the route already took the pause"
     )
 

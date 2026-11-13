@@ -2709,6 +2709,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # #307: the jobs boot took back above, now that the executor, the proxies
     # and the volume manager exist. Each runs as an ordinary job task.
     _start_recovered_jobs(app.state.issue_executor, recovering)
+    # #499: a job whose last answer was recorded just before a drain refused its resume waits with no
+    # question left; it goes on now, as that answer would have resumed it.
+    await _resume_answered_waits(app.state.issue_executor)
 
     # Spent account waits (spec 2026-10-25): goes on with the jobs parked for
     # an LLM account once it is ready again. After recovery, which never takes
@@ -3038,6 +3041,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.warning("database_close_failed", exc_info=True)
     logger.info("embry0_stopped")
+
+
+async def _resume_answered_waits(executor: Any) -> None:
+    """Resume, at boot, the jobs waiting for answers that are all in (#499). Never stops the boot."""
+    try:
+        await executor.resume_answered_waits()
+    except Exception:
+        logger.exception("answered_waits_resume_failed")
 
 
 def _start_recovered_jobs(executor: Any, jobs: list[dict[str, Any]]) -> None:

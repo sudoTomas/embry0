@@ -17,7 +17,8 @@ def _wire(app, *, inp, pending_after=0):
     )
     app.state.inputs_repo = inputs_repo
     executor = MagicMock()
-    executor.schedule_resume = MagicMock()
+    executor.draining = False
+    executor.resume_answered = AsyncMock(return_value=True)
     app.state.issue_executor = executor
     return inputs_repo, executor
 
@@ -41,9 +42,9 @@ async def test_answer_resumes_issueless_job(api_client):
     r = await api_client.post(f"/api/v1/jobs/{job_id}/inputs/inp-1/answer", json={"answer": "A1"})
     assert r.status_code == 200
     inputs_repo.answer.assert_awaited_once()
-    executor.schedule_resume.assert_called_once()
+    executor.resume_answered.assert_awaited_once()
     # resume scheduled with issue_id=None for the issue-less job
-    args, kwargs = executor.schedule_resume.call_args
+    args, kwargs = executor.resume_answered.call_args
     assert args[0] is None
     assert args[1] == job_id
     assert "Q: Q1" in args[2]
@@ -60,7 +61,7 @@ async def test_answer_no_resume_while_blocking_pending(api_client):
 
     r = await api_client.post(f"/api/v1/jobs/{job_id}/inputs/inp-2/answer", json={"answer": "A"})
     assert r.status_code == 200
-    executor.schedule_resume.assert_not_called()
+    executor.resume_answered.assert_not_awaited()
 
 
 async def test_answer_404_on_wrong_job(api_client):
@@ -108,4 +109,4 @@ async def test_answer_overrides_auto_answered(api_client):
     assert inputs_repo.answer.await_args.kwargs["answer"] == "human override"
     # Job is not awaiting_input (auto-answers never pause the pipeline), so
     # the override records without scheduling a resume.
-    executor.schedule_resume.assert_not_called()
+    executor.resume_answered.assert_not_awaited()
