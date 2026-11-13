@@ -1,6 +1,6 @@
 # Specialist agents
 
-Nine built-in agents that each do one job on a cloned repository and return
+Ten built-in agents that each do one job on a cloned repository and return
 one Markdown report. All ten are read-only: their tools are Read, Glob, Grep
 and Bash, they edit nothing and open no pull request. Bash runs the
 repository's own checks in a copy of the clone under `/tmp`, and the small
