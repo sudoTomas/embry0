@@ -162,7 +162,7 @@ Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the workflo
 
 ## Roadmap
 
-Kubernetes deployment (Helm, DinD → pod launching) · user-defined LangGraph workflows via API · pipeline template marketplace · configurable per-agent Claude Code skills.
+Kubernetes deployment (Helm, DinD → pod launching) · user-defined LangGraph workflows via API · pipeline template marketplace.
 
 ## License
 
