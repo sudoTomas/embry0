@@ -144,8 +144,10 @@ on any stack, so the same fault firing every hour is analysed once.
 A finding is keyed on its log signature: the line with its variable parts
 masked (`embry0/services/log_signatures.py`). The built-in masks cover
 timestamps, pids, e-mail addresses, UUIDs, IP addresses, hex, long opaque
-tokens, upper-case record numbers such as `ORD00000000001`, and numbers. A
-record id in a format of the stack's own passes through them, so one
+tokens, upper-case record numbers such as `ORD00000000001`, and numbers.
+Each takes time linear in the line and reads its first 16,384 characters;
+a template keeps 320, so a longer line reads as its first 16,384 would.
+A record id in a format of the stack's own passes through them, so one
 recurring fault becomes a new signature on every line: always new, never
 deduplicated, counted once per id. A stack adds masks for its own formats
 in its `signature_masks` setting (#172):

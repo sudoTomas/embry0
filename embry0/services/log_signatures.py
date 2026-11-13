@@ -24,6 +24,13 @@ Design notes worth keeping:
   diagnostic value. Only digits inside quotes are normalized.
 * **Templates are capped.** A Java stack frame chain can run to kilobytes; the
   head carries the identity.
+* **Each rule takes time linear in the line, and reads at most
+  :data:`RULES_LINE_MAX_CHARS` of it.** A line is whatever a service logged,
+  so its length and content are not ours to choose. Two rules searched in
+  time quadratic in a long run of the characters they start with, the email
+  addresses and the bracketed thread names; each is now found by a search
+  that gives the same answer in linear time (:func:`_mask_emails`,
+  :func:`_mask_thread_fields`).
 * Clustering ranks by **count**, and `LogCluster.rate_per_hour` is derived from
   the cluster's own first/last timestamps rather than the tick window, so a
   burst that lasted 90 seconds does not read as a low hourly rate just because
@@ -83,20 +90,114 @@ def _record_id(match: re.Match[str]) -> str:
     return "<id>" if len(token) >= _MIN_RECORD_ID_LEN and digits >= _MIN_RECORD_ID_DIGITS else token
 
 
-# Ordered deliberately — see the module docstring. Each entry is (pattern,
-# replacement); they are applied in sequence to one line. A replacement may be
-# a callable for rules that need to inspect the match before deciding.
-_RULES: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...] = (
+#: An email address, as the rule below masks it.
+_EMAIL = r"[\w.+-]+@[\w-]+\.[\w.-]+"
+#: An email address starting where a run of the characters its local part is made of starts.
+_EMAIL_AT_A_RUN_START = re.compile(r"(?<![\w.+-])" + _EMAIL)
+_EMAIL_HERE = re.compile(_EMAIL)
+
+
+def _mask_emails(text: str) -> str:
+    """``text`` with each email address read as ``<email>``: ``re.sub(_EMAIL, "<email>", text)``, in time linear
+    in the text.
+
+    That search tries every position, and from each one in a run of the
+    characters a local part is made of (``[\\w.+-]``) reads the run to its
+    end before failing, so a long run with no address in it took time
+    quadratic in its length. A match only ever starts where such a run starts:
+    one starting later in the run would also match from the run's start,
+    which the search reaches first. Or where the previous match ended, before
+    a ``+`` the domain leaves (``a@b.c+d@e.f`` is two). So the search is
+    anchored to a run's start, and the place the previous match ended is tried
+    on its own.
+    """
+    if "@" not in text:
+        return text
+    pieces: list[str] = []
+    last = 0
+    while True:
+        found = _EMAIL_HERE.match(text, last) if pieces else None
+        if found is None:
+            found = _EMAIL_AT_A_RUN_START.search(text, last)
+        if found is None:
+            break
+        pieces.append(text[last : found.start()])
+        pieces.append("<email>")
+        last = found.end()
+    if not pieces:
+        return text
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
+def _is_ascii_letter(char: str) -> bool:
+    return "a" <= char <= "z" or "A" <= char <= "Z"
+
+
+def _mask_thread_fields(text: str) -> str:
+    """``text`` with each bracketed field that starts with a letter and holds ``<n>`` read as ``[<thread>]``:
+    ``re.sub(r"\\[[A-Za-z][^\\]]*<n>[^\\]]*\\]", "[<thread>]", text)``, in time linear in the text.
+
+    That search reads, from each ``[``, to the next ``]`` or the line's end,
+    and back again for each ``<n>`` it passed, so a line of many ``[`` and no
+    ``]`` took time quadratic in its length. A match from a ``[`` always ends
+    at the first ``]`` after it, and holds a ``<n>`` past its letter. So for
+    the ``[`` before one ``]``, the last ``<n>`` before it is found once: the
+    first of them followed by a letter matches when that ``<n>`` is past its
+    letter, and if it does not, no later one before the same ``]`` can.
+    """
+    if "<n>" not in text:
+        return text
+    pieces: list[str] = []
+    last = 0
+    close = marker = -1
+    start = text.find("[")
+    while start >= 0:
+        if start >= close:
+            close = text.find("]", start + 1)
+            if close < 0:
+                break  # no ``]`` after it: neither it nor any ``[`` after it closes
+            marker = text.rfind("<n>", start, close)
+        if start + 1 < close and _is_ascii_letter(text[start + 1]):
+            if marker >= start + 2:
+                pieces.append(text[last:start])
+                pieces.append("[<thread>]")
+                last = close + 1
+            start = text.find("[", close + 1)
+        else:
+            start = text.find("[", start + 1)
+    if not pieces:
+        return text
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
+def _sub(pattern: str, replacement: str | Callable[[re.Match[str]], str]) -> Callable[[str], str]:
+    """A rule that replaces each match of ``pattern``, a regular expression whose search takes time linear in the
+    text, with ``replacement``."""
+    compiled = re.compile(pattern)
+
+    def apply(text: str) -> str:
+        return compiled.sub(replacement, text)
+
+    return apply
+
+
+# Ordered deliberately — see the module docstring. Each rule rewrites one line
+# and they are applied in sequence. A replacement may be a callable for rules
+# that need to inspect the match before deciding. Each takes time linear in
+# the line (tests/unit/services/test_log_signatures_linear.py).
+_RULES: tuple[Callable[[str], str], ...] = (
     # Leading timestamps, in the formats this fleet actually emits.
     # Postgres:  2026-09-20 20:47:09.876 UTC
     # nginx:     2026/09/21 01:44:53
     # ISO/Java:  2026-09-20T20:47:09.876Z / +00:00
-    (re.compile(r"^\s*\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s*(?:UTC|Z|[+-]\d{2}:?\d{2})?\s*"), ""),
+    _sub(r"^\s*\d{4}[-/]\d{2}[-/]\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s*(?:UTC|Z|[+-]\d{2}:?\d{2})?\s*", ""),
     # Bracketed pid / thread / worker, e.g. Postgres "[1913152]".
-    (re.compile(r"\[\d+\]"), "[<n>]"),
+    _sub(r"\[\d+\]", "[<n>]"),
     # nginx worker#pid and connection counter: "30#30: *1"
-    (re.compile(r"\b\d+#\d+\b"), "<n>#<n>"),
-    (re.compile(r"\*\d+\b"), "*<n>"),
+    _sub(r"\b\d+#\d+\b", "<n>#<n>"),
+    _sub(r"\*\d+\b", "*<n>"),
     # Email addresses. Two reasons, both load-bearing. Clustering: the same
     # "MS Graph fetch failed" error split into 7 signatures, one per mailbox,
     # which is one fault, not seven. Exposure: #294 measured that redaction
@@ -104,16 +205,16 @@ _RULES: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...]
     # unredacted — masking them in the template means the ranked table a model
     # reads carries no addresses at all. Sample lines still do, so they remain
     # the redactor's job.
-    (re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"), "<email>"),
+    _mask_emails,
     # UUIDs — before hex, before numbers.
-    (
-        re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"),
+    _sub(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
         "<uuid>",
     ),
     # IPv4, optionally with a port.
-    (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"), "<ip>"),
+    _sub(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b", "<ip>"),
     # Long bare hex (object ids, sha, trace ids) — before the number rule.
-    (re.compile(r"\b[0-9a-fA-F]{8,}\b"), "<hex>"),
+    _sub(r"\b[0-9a-fA-F]{8,}\b", "<hex>"),
     # Opaque tokens the hex rule cannot see: base64url / Graph ids / JWT-ish
     # blobs, e.g. an MS Graph notification id
     # "AAMkADAwMDBhYWFhLTExMTEt…Ex4m-AAPl3Qa7AAA=". Mixed case + digits with no
@@ -121,14 +222,14 @@ _RULES: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...]
     # ("org.springframework.boot.security.oauth2…") and long single-case words
     # intact, which carry real diagnostic meaning. Must precede the number
     # rule, which would otherwise shred the token into fragments.
-    (re.compile(r"[A-Za-z0-9_+/=-]{20,}"), lambda m: "<id>" if _is_opaque_token(m.group(0)) else m.group(0)),
+    _sub(r"[A-Za-z0-9_+/=-]{20,}", lambda m: "<id>" if _is_opaque_token(m.group(0)) else m.group(0)),
     # Upper-case record ids the rule above cannot see (no lower case), e.g. an
     # order number "ORD7A000000042". Before the number rule for the same reason.
-    (re.compile(r"\b[A-Z][A-Z0-9]*\d[A-Z0-9]*\b"), _record_id),
+    _sub(r"\b[A-Z][A-Z0-9]*\d[A-Z0-9]*\b", _record_id),
     # Durations, sizes and other number-with-unit forms.
-    (re.compile(r"\b\d+(?:\.\d+)?(ms|s|m|h|ns|us|µs|KB|MB|GB|kB|B)\b"), r"<n>\1"),
+    _sub(r"\b\d+(?:\.\d+)?(ms|s|m|h|ns|us|µs|KB|MB|GB|kB|B)\b", r"<n>\1"),
     # Any remaining number, including decimals and negatives.
-    (re.compile(r"(?<![\w<])-?\d+(?:\.\d+)?(?![\w>])"), "<n>"),
+    _sub(r"(?<![\w<])-?\d+(?:\.\d+)?(?![\w>])", "<n>"),
     # Logback truncates thread names from the LEFT (`%.15t`), so
     # "[MessageBroker-11]" logs as "[essageBroker-11]" while
     # "[MessageBroker-5]" logs in full — the same logger split into two
@@ -136,13 +237,22 @@ _RULES: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...]
     # normalized number is a thread/worker slot, so mask the whole field.
     # "[backend]" (an app name, no number) is deliberately preserved,
     # and "[<n>]" (a bare pid) is left to the rule above.
-    (re.compile(r"\[[A-Za-z][^\]]*<n>[^\]]*\]"), "[<thread>]"),
+    _mask_thread_fields,
     # Collapse whitespace last so earlier patterns see the original spacing.
-    (re.compile(r"\s+"), " "),
+    _sub(r"\s+", " "),
 )
 
 #: Templates longer than this are truncated — the head carries the identity.
 TEMPLATE_MAX_CHARS = 320
+
+#: How much of a line the built-in rules read: its first 16,384 characters.
+#: Each rule takes time linear in what it reads, and this bounds that for a
+#: line of any length (Loki's run to 256 KiB, its default ``max_line_size``).
+#: A template keeps :data:`TEMPLATE_MAX_CHARS`, and the rules shorten a line
+#: only where they collapse whitespace or put a placeholder for a long token,
+#: so a line longer than this reads otherwise than it would whole only when
+#: its first 16,384 characters normalise to fewer than 320.
+RULES_LINE_MAX_CHARS = 16_384
 
 #: Sample lines kept per cluster for the model to read.
 DEFAULT_SAMPLES_PER_CLUSTER = 2
@@ -184,15 +294,18 @@ def normalize_line(line: str, masks: SignatureMasks = ()) -> str:
     ``masks`` are the stack's own (:func:`compile_masks`), applied to the raw
     line first, its first :data:`MASKED_TEXT_MAX_CHARS` characters only. Each
     replacement is literal: a placeholder, never a template with group
-    references.
+    references. The built-in rules then read the first
+    :data:`RULES_LINE_MAX_CHARS` characters of what the masks leave (of the
+    line, for a stack without masks).
     """
     out = line if isinstance(line, str) else ""
     if masks:
         out = out[:MASKED_TEXT_MAX_CHARS]
     for mask, placeholder in masks:
         out = mask.sub(placeholder, out)[:MASKED_TEXT_MAX_CHARS]
-    for pattern, replacement in _RULES:
-        out = pattern.sub(replacement, out)
+    out = out[:RULES_LINE_MAX_CHARS]
+    for rule in _RULES:
+        out = rule(out)
     out = out.strip()
     if len(out) > TEMPLATE_MAX_CHARS:
         out = out[:TEMPLATE_MAX_CHARS] + "…"
