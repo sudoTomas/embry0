@@ -24,6 +24,7 @@ from embry0.api.repo_allowlist import covered_slugs, enforce_owner_allowlist, en
 from embry0.api.repository_reads import owner_hidden
 from embry0.api.schemas import RunWithRequest, ServableFields
 from embry0.api.schemas.repo_path import REPO_PATH_ERROR, REPO_PATH_PATTERN
+from embry0.api.served import ServedRoute
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -43,7 +44,7 @@ from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES
 from embry0.storage.repositories.standards import RepoStandardStateRepository, StandardsRepository
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 Reference = Annotated[str, StringConstraints(min_length=1, max_length=MAX_REFERENCE_CHARS)]
 ExceptionPath = Annotated[str, StringConstraints(min_length=1, max_length=500)]

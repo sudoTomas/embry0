@@ -32,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.api.job_allowlist import hide_job_unless_covered
 from embry0.api.repo_allowlist import covered_slugs, key_covers
+from embry0.api.served import ServedRoute
 from embry0.api.v1.job_review import GITHUB_PR
 from embry0.api.v1.ui import require_game
 from embry0.services.slop import dungeons
@@ -56,7 +57,7 @@ from embry0.workflows.row_behaviour import pipelines_by_name
 
 logger = structlog.get_logger(__name__)
 # The game's reads: 404 while the settings document turns the game layer off (ui.game, #177).
-router = APIRouter(dependencies=[Depends(require_game)])
+router = APIRouter(dependencies=[Depends(require_game)], route_class=ServedRoute)
 
 #: How many unexplored repositories the map's edge names.
 FRONTIER = 60

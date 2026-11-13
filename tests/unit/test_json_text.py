@@ -346,3 +346,15 @@ def test_json_kind_names_a_value_in_json_words(text: str, kind: str) -> None:
     from embry0.json_text import json_kind
 
     assert json_kind(json.loads(text)) == kind
+
+
+def test_served_is_the_value_itself_or_its_json_text_past_the_stored_depth() -> None:
+    """What a read shows of a stored document (#431): the document, or past STORED_DEPTH its text, never a 500."""
+    from embry0.json_text import STORED_DEPTH, UNSERVABLE_TEXT, served
+
+    shallow = {"notes": _nested(STORED_DEPTH - 1)}
+    assert served(shallow) is shallow, "a document the serializer takes must be served as it is"
+    deep = {"notes": _nested(STORED_DEPTH)}
+    shown = served(deep)
+    assert isinstance(shown, str) and json.loads(shown) == deep, f"a deep document is served as its text: {shown!r}"
+    assert served(_nested(50_000)) == UNSERVABLE_TEXT, "a document too deep even to write as text is named"

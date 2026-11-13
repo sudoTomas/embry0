@@ -52,7 +52,8 @@ function behaviourOf(row: ApiTemplateSummary): TemplateBehaviour {
 }
 
 interface ApiTemplate extends ApiTemplateSummary {
-  graph_definition: PipelineGraph;
+  /** Its JSON text when it is too deeply nested to send as an object (#431). */
+  graph_definition: PipelineGraph | string;
   /** Create and update responses only. */
   warnings?: string[];
 }
@@ -75,7 +76,8 @@ function mapTemplate(row: ApiTemplate): PipelineTemplate {
     template_id: row.id,
     name: row.name,
     description: row.description,
-    graph: row.graph_definition,
+    graph: typeof row.graph_definition === "string" ? null : row.graph_definition,
+    graph_text: typeof row.graph_definition === "string" ? row.graph_definition : null,
     created_at: row.created_at,
     warnings: row.warnings,
     is_builtin: row.is_builtin === true,

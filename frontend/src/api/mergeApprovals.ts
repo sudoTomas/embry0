@@ -80,6 +80,8 @@ export interface MergeApproval {
   detail: string | null;
   merge_sha: string | null;
   ask: MergeAsk | null;
+  /** The ask's JSON text when it is stored too deeply nested to send as an object (#431); `ask` is then null. */
+  ask_text?: string;
   posted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -108,6 +110,12 @@ export interface MergeDecisionResult {
 
 const okOr503 = (status: number) => (status >= 200 && status < 300) || status === 503;
 
+/** An ask the API sent as its JSON text (#431) goes to `ask_text`, so nothing reads the text as an ask. */
+function withAskText(row: MergeApproval): MergeApproval {
+  const ask: unknown = row.ask;
+  return typeof ask === "string" ? { ...row, ask: null, ask_text: ask } : row;
+}
+
 /**
  * The asks, newest first, in one status or all of them; `null` when this
  * deployment has merge approvals off (the route answers 503). The 503 is read
@@ -120,7 +128,7 @@ export async function fetchMergeApprovals(status: MergeApprovalStatus | "all"): 
     validateStatus: okOr503,
   });
   if (response.status === 503) return null;
-  return response.data;
+  return { ...response.data, items: response.data.items.map(withAskText) };
 }
 
 /** The asks still waiting for an answer, or `null` when the feature is off (the brief bar's read). */
@@ -133,7 +141,7 @@ export async function fetchPendingMergeApprovals(): Promise<MergeApproval[] | nu
 export async function fetchMergeApproval(approvalId: string): Promise<MergeApproval | null> {
   const response = await api.get<MergeApproval>(`/merge-approvals/${encodeURIComponent(approvalId)}`, { validateStatus: okOr503 });
   if (response.status === 503) return null;
-  return response.data;
+  return withAskText(response.data);
 }
 
 /**

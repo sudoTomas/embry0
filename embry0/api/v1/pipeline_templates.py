@@ -10,6 +10,7 @@ from embry0.agents.skills import normalize_delta
 from embry0.api.deps import get_templates_repo
 from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import TemplateCreateRequest, TemplateDuplicateRequest, TemplateUpdateRequest
+from embry0.api.served import ServedRoute
 from embry0.api.v1._skill_writes import check_added_skills
 from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
 from embry0.services.slop_routing import TemplateInUse, slop_route_guard
@@ -22,7 +23,7 @@ from embry0.workflows.row_behaviour import leader_problem
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 # A template is the pipeline of every repository's jobs that use it: not a key with a repository allowlist's to
 # change. POST /pipelines/validate stores nothing, and stays open to it.
 _TEMPLATE_WRITE = deployment_writes("change the deployment's pipeline templates")

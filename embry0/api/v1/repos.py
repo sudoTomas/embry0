@@ -21,11 +21,12 @@ from embry0.api.deps import request_actor, require_admin
 from embry0.api.repo_allowlist import covered_slugs, enforce_deployment_allowlist, enforce_repo_allowlist, key_covers
 from embry0.api.repository_reads import covered
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.api.served import ServedRoute
 from embry0.api.v1.standards import standards_for_repo
 from embry0.audit.helpers import emit_audit
 from embry0.storage.repositories.repos import SUPPORTED_FORGES
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 #: What the repository's path without the separator answers while the old paths last (#257).
 _TWO_READINGS_RESPONSE: dict[int | str, dict[str, Any]] = {

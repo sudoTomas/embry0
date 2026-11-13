@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Skeleton } from "@/components/ui/PageSkeleton";
+import { StoredAsText } from "@/components/StoredAsText";
+import { storedAsText } from "@/lib/storedAsText";
 import { useMarkPart, usePart, useSendParts } from "@/hooks/useMaps";
 import { WORK_WORDS, workState } from "@/lib/mapView";
 import { formatDateTime } from "@/lib/utils";
@@ -72,7 +74,21 @@ export function PartPanel({ slug, owner, nodeId, by, canSend, onClose }: PartPan
       </div>
     );
   }
-  const { node, detail, marks, work, lead, repo } = part.data as PartView;
+  const { node: stored, detail: storedDetail, marks, work, lead, repo } = part.data as PartView;
+  if (storedAsText(stored)) {
+    // The part as stored is too deeply nested to send as an object (#431): shown as its text, read-only.
+    return (
+      <div className="space-y-3 text-sm" data-testid="part-panel">
+        <div className="flex items-start justify-between gap-2">
+          <h2 className="break-words text-base font-semibold text-fg">{nodeId}</h2>
+          <Button size="xs" variant="ghost" onClick={onClose} aria-label="Close the part">Close</Button>
+        </div>
+        <StoredAsText what="This part" text={stored} />
+      </div>
+    );
+  }
+  const node = stored;
+  const detail = storedAsText(storedDetail) ? null : storedDetail;
   const others = marks.filter((m) => m !== mine);
   const state = workState(work);
   const bloat = detail?.bloat ?? (node.bloat ? { score: node.bloat.score, band: node.bloat.band } : undefined);
@@ -133,6 +149,8 @@ export function PartPanel({ slug, owner, nodeId, by, canSend, onClose }: PartPan
           ))}
         </ul>
       )}
+
+      {storedAsText(storedDetail) && <StoredAsText what="What the map says of it" text={storedDetail} />}
 
       {bloat && (
         <Section title="Bloat score">

@@ -50,6 +50,7 @@ from embry0.api.repo_allowlist import (
 from embry0.api.repository_reads import owner_hidden
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.person_name import PersonName
+from embry0.api.served import ServedRoute
 from embry0.api.session import TIER_ADMIN
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
@@ -80,7 +81,7 @@ from embry0.services.run_with import apply_run_with
 from embry0.storage.repositories.knowledge_maps import OwnerTaken
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 _ACTION_SEND = "send a map part"
 _ACTION_OWNER = "give a map an owner"

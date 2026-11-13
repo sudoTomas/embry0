@@ -23,6 +23,7 @@ import { TemplateDrawer } from "./TemplateDrawer";
 import { useGraphState } from "./hooks/useGraphState";
 import { autoLayout } from "./autoLayout";
 import { DivineRipple } from "@/components/divine/DivineRipple";
+import { STORED_AS_TEXT_NOTE } from "@/lib/storedAsText";
 import { Button } from "@/components/ui/Button";
 import { Overlay } from "@/components/ui/Overlay";
 import { useRenameTemplate, useCreateTemplate } from "@/hooks/usePipelines";
@@ -191,6 +192,10 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
 
   const handleTemplateSelect = useCallback(
     (template: PipelineTemplate) => {
+      if (!template.graph) {
+        toast.error(`${template.name}: ${STORED_AS_TEXT_NOTE}`);
+        return;
+      }
       loadGraph(template.graph);
       if (mode === "page") {
         setPipelineName(template.name || template.graph.name || "Untitled pipeline");
@@ -431,7 +436,9 @@ export function PipelineEditor({ mode = "modal", initialGraph, initialTemplate, 
 
       {isModal && showTemplatePicker && (
         <TemplatePicker
-          onSelect={(template) => loadGraph(template.graph)}
+          onSelect={(template) =>
+            template.graph ? loadGraph(template.graph) : toast.error(`${template.name}: ${STORED_AS_TEXT_NOTE}`)
+          }
           onClose={() => setShowTemplatePicker(false)}
         />
       )}

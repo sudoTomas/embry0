@@ -20,7 +20,7 @@ export const QueuedCard = memo(function QueuedCard({ job, position, queueDepth }
   const { data: templates } = useTemplates();
   const templateId = templates?.find((t) => t.name === job.pipeline_template)?.template_id ?? null;
   const { data: template } = useTemplate(templateId);
-  const identity = useAgentIdentity(firstPartyMember(template?.graph));
+  const identity = useAgentIdentity(firstPartyMember(template?.graph ?? undefined));
   return (
     <ConsoleCardShell job={job}>
       <div className="mt-2 flex items-center gap-3 text-[11px] text-white/40">

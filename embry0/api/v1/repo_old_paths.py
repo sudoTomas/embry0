@@ -56,6 +56,7 @@ from embry0.api.repo_allowlist import key_covers
 from embry0.api.repo_route import REPO_ADDRESS, SUB_RESOURCES
 from embry0.api.route_table import route_template
 from embry0.api.schemas.repo_path import REPO_PATH_PATTERN
+from embry0.api.served import ServedAnswers
 from embry0.api.v1 import (
     areas,
     credentials,
@@ -259,7 +260,7 @@ def _deprecation(request: Request, route: APIRoute, *, link: bool) -> dict[str, 
     return headers
 
 
-class OldPathRoute(APIRoute):
+class OldPathRoute(ServedAnswers):
     """A sub-resource's old path: every answer it sends says it is deprecated and where it moved.
 
     The headers go on the response as it is sent, so they reach every answer the route's own exception

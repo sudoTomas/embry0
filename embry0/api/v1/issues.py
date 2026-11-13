@@ -31,6 +31,7 @@ from embry0.api.schemas.issues import (
     IssueResponse,
     UpdateIssueRequest,
 )
+from embry0.api.served import ServedRoute
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.safety.error_codes import ErrorCode
@@ -44,7 +45,7 @@ from embry0.storage.repositories.repos import UnregisteredRepoError
 from embry0.trackers import github_number_of
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 async def _dispatch(

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Plus, GitBranch, Calendar } from "lucide-react";
 import { PipelineEditor } from "@/components/pipeline-editor/PipelineEditor";
+import { StoredAsText } from "@/components/StoredAsText";
 import { TemplateActions } from "@/components/pipelines/TemplateActions";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -133,10 +134,14 @@ export function PipelinesPage() {
   // null = landing, a template = editor on that saved template (its name and
   // id travel with the graph so Save writes back to it), "new" = empty canvas
   const [editing, setEditing] = useState<PipelineTemplate | null | "new">(null);
+  // A template whose graph the API sent as its text (#431): shown read-only, never opened in the editor.
+  const [asText, setAsText] = useState<PipelineTemplate | null>(null);
 
   const handleOpenTemplate = useCallback((template: PipelineTemplate) => {
     if (template.graph) {
       setEditing(template);
+    } else if (template.graph_text != null) {
+      setAsText(template);
     }
   }, []);
 
@@ -148,12 +153,26 @@ export function PipelinesPage() {
     setEditing(null);
   }, []);
 
+  if (asText !== null) {
+    return (
+      <div className="space-y-4" data-testid="template-stored-as-text">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="title-page text-xl font-bold">{asText.name}</h1>
+          <Button variant="outline" size="sm" onClick={() => setAsText(null)}>
+            Back
+          </Button>
+        </div>
+        <StoredAsText what="Its graph" text={asText.graph_text ?? ""} />
+      </div>
+    );
+  }
+
   if (editing !== null) {
     return (
       <div className="h-full">
         <PipelineEditor
           mode="page"
-          initialGraph={editing === "new" ? undefined : editing.graph}
+          initialGraph={editing === "new" ? undefined : (editing.graph ?? undefined)}
           initialTemplate={editing === "new" ? undefined : editing}
           onClose={handleClose}
         />

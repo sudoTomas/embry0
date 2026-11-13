@@ -22,6 +22,8 @@ vi.mock("@/hooks/usePipelines", () => ({
 }));
 vi.mock("@/api/pipelines", () => ({ fetchTemplate: vi.fn() }));
 vi.mock("@/api/errorToast", () => ({ toastApiError: vi.fn() }));
+const toastError = vi.hoisted(() => vi.fn());
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: toastError, warning: vi.fn() } }));
 
 import { fetchTemplate } from "@/api/pipelines";
 import { toastApiError } from "@/api/errorToast";
@@ -109,5 +111,27 @@ describe("TemplateDrawer", () => {
     expect(confirm).toHaveBeenCalled();
     expect(remove).toHaveBeenCalledWith("t2", expect.anything());
     confirm.mockRestore();
+  });
+});
+
+describe("TemplateDrawer — a graph stored as text (#431)", () => {
+  it("refuses to copy a template whose graph arrived as its text, and says why", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchTemplate).mockResolvedValue({
+      template_id: "t1",
+      name: "quick-fix",
+      description: "",
+      created_at: "2026-10-01T00:00:00Z",
+      graph: null,
+      graph_text: '{"nodes": []}',
+    });
+    render(<TemplateDrawer onSelect={vi.fn()} onClose={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Actions for quick-fix" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(
+      "quick-fix: Too deeply nested to show; stored as text. It cannot be copied.",
+    ));
+    expect(create, "no copy is made from a graph the dashboard cannot read").not.toHaveBeenCalled();
   });
 });

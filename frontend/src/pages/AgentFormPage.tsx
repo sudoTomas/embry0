@@ -44,6 +44,8 @@ import { providerForModel } from "@/lib/providers";
 import { providerLabel } from "@/lib/status";
 import type { AgentCreateRequest, AgentDefinition, AgentUpdateRequest } from "@/lib/types/agents";
 import { toastApiError } from "@/api/errorToast";
+import { StoredAsText } from "@/components/StoredAsText";
+import { storedAsText } from "@/lib/storedAsText";
 import { cn } from "@/lib/utils";
 
 interface FormState {
@@ -63,6 +65,9 @@ interface FormState {
   auth_mode: "" | "api_key" | "oauth";
   /** JSON text of the mcp_servers object; validated on save. */
   mcpServersText: string;
+  /** The stored servers' text when they are too deeply nested to send as an object (#431): shown read-only, and a
+   * save leaves them as they are. */
+  mcpServersStoredText: string | null;
   /** The skills triage may add to this agent for a job (`triage_may_add_skills`). */
   triageMayAddSkills: string[];
   /** Where the guild hall draws it (`station`, #167). */
@@ -124,6 +129,7 @@ const EMPTY_FORM: FormState = {
   execution_mode: "",
   auth_mode: "",
   mcpServersText: "",
+  mcpServersStoredText: null,
   triageMayAddSkills: [],
   station: DEFAULT_STATION,
   quest: NO_TASK,
@@ -238,7 +244,9 @@ export function AgentFormPage() {
       system_prompt: existing.system_prompt ?? "",
       execution_mode: existing.execution_mode ?? "",
       auth_mode: existing.auth_mode ?? "",
-      mcpServersText: mcp && Object.keys(mcp).length > 0 ? JSON.stringify(mcp, null, 2) : "",
+      mcpServersText:
+        mcp && typeof mcp === "object" && Object.keys(mcp).length > 0 ? JSON.stringify(mcp, null, 2) : "",
+      mcpServersStoredText: storedAsText(mcp) ? mcp : null,
       triageMayAddSkills: existing.triage_may_add_skills ?? [],
       station: stationOf(existing.station),
       quest: questOf(existing.quest_template),
@@ -311,7 +319,7 @@ export function AgentFormPage() {
     // mcp_servers rides as JSON — validate before submitting. Empty text
     // means "no MCP servers": {} (a null is a 422, #417).
     let mcpServers: Record<string, unknown> = {};
-    if (form.mcpServersText.trim()) {
+    if (form.mcpServersStoredText === null && form.mcpServersText.trim()) {
       try {
         const parsed: unknown = JSON.parse(form.mcpServersText);
         if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -351,7 +359,8 @@ export function AgentFormPage() {
         system_prompt: form.system_prompt,
         execution_mode: form.execution_mode || null,
         auth_mode: form.auth_mode || null,
-        mcp_servers: mcpServers,
+        // Stored as text: left out, so the save keeps them as they are.
+        ...(form.mcpServersStoredText === null ? { mcp_servers: mcpServers } : {}),
         triage_may_add_skills: form.triageMayAddSkills,
         station: form.station,
         quest_template: questTemplateOf(form.quest),
@@ -731,11 +740,14 @@ export function AgentFormPage() {
       <ConfigSection
         id="mcp"
         title="MCP servers"
-        summary={mcpSummary(form.mcpServersText)}
+        summary={form.mcpServersStoredText === null ? mcpSummary(form.mcpServersText) : "Stored as text"}
         open={sections.mcp}
         onToggle={(open) => setSections((prev) => ({ ...prev, mcp: open }))}
       >
         
+        {form.mcpServersStoredText !== null ? (
+          <StoredAsText what="These MCP servers" text={form.mcpServersStoredText} />
+        ) : (
         <div>
           <Label htmlFor="agent-mcp-servers">MCP servers (JSON)</Label>
           <Textarea
@@ -751,6 +763,7 @@ export function AgentFormPage() {
             <span className="font-mono">browser_backend</span> field at dispatch — not edited here.
           </p>
         </div>
+        )}
       </ConfigSection>
 
       <ConfigSection

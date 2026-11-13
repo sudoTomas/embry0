@@ -30,6 +30,7 @@ from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key
 from embry0.api.repository_reads import covered
 from embry0.api.resolution_view import scopes_read
 from embry0.api.schemas import RunWithRequest
+from embry0.api.served import ServedRoute
 from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
 from embry0.api.v1.run_with import checked_run_with
@@ -50,7 +51,7 @@ from embry0.services.repo_setup import (
 )
 from embry0.storage.repositories.repo_setup_proposals import LiveProposalExists
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 class ProposeRequest(BaseModel):

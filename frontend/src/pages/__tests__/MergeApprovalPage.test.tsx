@@ -105,6 +105,17 @@ describe("MergeApprovalPage", () => {
     expect(screen.getByRole("link", { name: "job-1" })).toHaveAttribute("href", "/jobs/job-1");
   });
 
+  it("shows an ask stored as text (#431) read-only with the note, and still offers the decision", () => {
+    const text = '{"title": "Fix the widget", "notes": {"a": {"a": "leaf"}}}';
+    mockUseMergeApproval.mockReturnValue(ready({ ...ROW, ask: null, ask_text: text }));
+    renderPage();
+    const stored = screen.getByTestId("stored-as-text");
+    expect(within(stored).getByText(/Too deeply nested to show; stored as text\./)).toBeInTheDocument();
+    expect(within(stored).getByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("This ask was recorded without its details.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
   it("approves through a confirm dialog with the dashboard's form", async () => {
     renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));

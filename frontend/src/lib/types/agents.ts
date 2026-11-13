@@ -29,7 +29,8 @@ export interface AgentDefinition {
   system_prompt: string;
   execution_mode?: AgentExecutionMode | null;
   auth_mode?: AgentAuthMode | null;
-  mcp_servers?: Record<string, unknown> | null;
+  /** Its JSON text when the stored servers are too deeply nested to send as an object (#431). */
+  mcp_servers?: Record<string, unknown> | string | null;
   is_builtin: boolean;
   /** False for a definition no job runs: a brief writer's voice, listed under Background writers and
    * never a pipeline step, a job's per-agent model or a guild character. Absent on an older backend: true. */

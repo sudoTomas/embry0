@@ -15,6 +15,7 @@ from embry0.api.job_allowlist import hide_job_unless_covered, job_hidden, stream
 from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, refusal_detail
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import DoneWhenEditRequest, JobResumeRequest
+from embry0.api.served import ServedRoute
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.json_text import STORED_DEPTH, nested_deeper_than
@@ -26,7 +27,7 @@ from embry0.storage.repositories.repos import UnregisteredRepoError
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter()
+router = APIRouter(route_class=ServedRoute)
 
 
 class AnswerJobInputRequest(BaseModel):
