@@ -421,6 +421,7 @@ async def _open_change_request(
             title=title,
             body=body,
             client=make_gitlab_client(config, credential_resolver=resolver),
+            labels=labels,
             target_branch=target,
             diagnostics=diagnostics,
         )
