@@ -46,6 +46,8 @@ Thumbs.db
 # ...but the dashboard icons ship in the build: the browser tab and the
 # home screen request them from frontend/public/.
 !frontend/public/*.png
+# ...and so do the README's screenshots.
+!docs/assets/*.png
 # ...and so does the world view's art (frontend/public/world/README.md).
 !frontend/public/world/**/*.png
 snapshot.md
