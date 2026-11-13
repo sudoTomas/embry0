@@ -18,13 +18,14 @@ inside the sandbox.
 from __future__ import annotations
 
 import asyncio
-import re
 import shlex
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import structlog
+
+from embry0.services.linear_regex import compile_linear_search
 
 logger = structlog.get_logger(__name__)
 
@@ -150,6 +151,19 @@ async def run_boot_phase(
     ready_checks = startup.get("ready_checks") or []
     budget = float(startup.get("boot_timeout_seconds", 300))
 
+    unusable = _unusable_body_regexes(ready_checks)
+    if unusable:
+        # A setup stored before its body patterns were checked at write: no attempt could ever pass these checks,
+        # so the boot fails now, naming why, rather than polling out its budget.
+        logger.warning("boot_ready_check_regex_unusable", failed_checks=unusable)
+        return BootResult(
+            outcome="startup_failed",
+            attempts=0,
+            duration_ms=0,
+            failed_checks=unusable,
+            error_message="a ready check's expect_body_regex cannot be used: " + "; ".join(unusable),
+        )
+
     if not ready_checks:
         logger.warning(
             "boot_no_ready_checks",
@@ -217,6 +231,21 @@ async def run_boot_phase(
     )
 
 
+def _unusable_body_regexes(ready_checks: list[dict[str, Any]]) -> list[str]:
+    """For each ready check whose ``expect_body_regex`` the boot cannot search a body with, ``<url>: <why>``."""
+    from embry0.workflows.qa.qa_yaml_v2 import body_regex_unusable
+
+    out: list[str] = []
+    for check in ready_checks:
+        pattern = check.get("expect_body_regex")
+        if not pattern:
+            continue
+        reason = body_regex_unusable(str(pattern))
+        if reason is not None:
+            out.append(f"{check.get('http', '')}: {reason}")
+    return out
+
+
 async def _poll_ready_checks(
     *,
     ready_checks: list[dict[str, Any]],
@@ -264,7 +293,7 @@ async def _poll_ready_checks(
                 expected_repr = expected_codes[0] if len(expected_codes) == 1 else expected_codes
                 failed_checks.append(f"{url}: got {status_code} expected {expected_repr}")
                 continue
-            if expected_body_regex and not re.search(expected_body_regex, body or ""):
+            if expected_body_regex and not compile_linear_search(expected_body_regex).search(body or ""):
                 failed_checks.append(f"{url}: body did not match {expected_body_regex!r}")
                 continue
 

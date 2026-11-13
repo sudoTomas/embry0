@@ -299,3 +299,18 @@ async def test_a_negated_glob_is_a_problem_before_a_save_and_a_stored_setup_with
     )
     stored = await _check(text, writing=False)
     assert stored["ok"] is True, f"a stored setup with a negated glob no longer reads: {stored['problems']}"
+
+
+async def test_a_stored_setup_whose_body_pattern_no_boot_can_search_is_a_problem():
+    """A save refuses the pattern; a setup stored before reads, and the check says every run stops on it, as each
+    boot does (embry0.workflows.qa.boot): the repository's readiness reads the stored setup this way."""
+    text = _setup(extra_app="        expect_body_regex: '(?=.*ok)'\n")
+    stored = await _check(text, writing=False)
+    assert stored["ok"] is False, stored
+    assert [p["where"] for p in stored["problems"]] == ["ready check http://localhost:5173"], stored["problems"]
+    plain = stored["problems"][0]["plain"]
+    assert "'(?=.*ok)'" in plain and "look-ahead and look-behind" in plain and "Every test run" in plain, plain
+    written = await _check(text, writing=True)
+    assert written["ok"] is False and written["summary"] is None, "a save refuses it before any other check"
+    fine = await _check(_setup(extra_app='        expect_body_regex: \'"status":"UP"\'\n'), writing=False)
+    assert fine["ok"] is True, fine

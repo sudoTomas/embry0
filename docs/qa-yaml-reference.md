@@ -252,7 +252,7 @@ agent commits are self-reported as `anomalies[]` entries with
 |---|---|---|---|
 | `http` | str | required | Must be an `http(s)` URL. |
 | `expect_status` | int **or** list[int] | `200` | Each code in 100..599. **Use the list form for auth-gated apps** whose `/` returns a redirect/401/403 before login but whose server is up, e.g. `expect_status: [200, 302, 401, 403]`. |
-| `expect_body_regex` | str \| null | none | Optional body match. |
+| `expect_body_regex` | str \| null | none | Optional body match: a Python regular expression searched for in the first 8 KiB of the body, in time linear in it (`embry0/services/linear_regex.py`), with Python's meaning but for `\b` and `\B`, which count ASCII letters, digits and `_` as word characters. Refused at write, a 422 naming the check: look-ahead and look-behind, back-references, conditional and atomic groups, possessive quantifiers, `(?a:...)` around part of a pattern, `$` outside multi-line mode with a multi-line `^` or `$`, counted repetitions making more than 100 copies and a pattern over 10,000 RE2 instructions. One stored before this check that the engine refuses fails the boot at once, `startup_failed`, its `failed_checks` naming the check and why. A pattern that can match an empty string matches every body, and may not hold `\B`. |
 
 ### `e2e` block
 

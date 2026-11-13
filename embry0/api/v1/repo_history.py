@@ -194,7 +194,7 @@ async def _registered(request: Request, repo: str) -> bool:
 
 @router.post("/repos/{full_repo:repo}/-/history/{revision_id}/undo")
 async def undo_change(full_repo: str, revision_id: int, request: Request) -> dict[str, Any]:
-    from embry0.workflows.qa.qa_yaml_v2 import negation_warning, parse_qa_yaml_v2
+    from embry0.workflows.qa.qa_yaml_v2 import body_regex_warning, negation_warning, parse_qa_yaml_v2
 
     await enforce_repo_allowlist(request, full_repo, action="undo a change")
     revision = await request.app.state.repo_config_revisions_repo.get(revision_id)
@@ -218,6 +218,8 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
     before = revision["before"]
     new_revision_id: int | None
     warnings: list[str] = []
+    negation: str | None = None
+    body_regex: str | None = None
     if surface == "areas":
         # Spec 2026-11-10: the areas a change replaced, the empty ones when it created them, put back only while
         # the stored document is still the one it wrote.
@@ -241,9 +243,8 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
                 restored = parse_qa_yaml_v2(before["yaml_text"])
             except (ValueError, yaml.YAMLError) as exc:
                 raise _no_longer_valid(exc) from exc
-            warning = negation_warning(restored)
-            if warning:
-                warnings.append(warning)
+            negation, body_regex = negation_warning(restored), body_regex_warning(restored)
+            warnings += [w for w in (negation, body_regex) if w]
             try:
                 _, new_revision_id = await configs.upsert_recorded(
                     full_repo, before["yaml_text"], updated_by=actor, source="restore", reason=reason
@@ -277,6 +278,8 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
         details={"repo": full_repo, "revision_id": revision_id, "new_revision_id": new_revision_id},
         audit_log_path=getattr(config, "audit_log_path", None),
     )
-    if warnings:
+    if negation:
         logger.warning("undo_restored_negated_globs", repo=full_repo, revision_id=revision_id)
+    if body_regex:
+        logger.warning("undo_restored_unusable_body_regex", repo=full_repo, revision_id=revision_id)
     return {"revision_id": new_revision_id, **({"warnings": warnings} if warnings else {})}

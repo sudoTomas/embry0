@@ -25,8 +25,10 @@ whether a pattern has one where they can differ.
 
 **What is refused** (:class:`UnsupportedPattern`), being what RE2 cannot run
 with ``re``'s meaning: look-ahead and look-behind, back-references,
-conditional groups, atomic groups and possessive quantifiers, a pattern
-that can match an empty string (it would mask between characters),
+conditional groups, atomic groups and possessive quantifiers, a mask that
+can match an empty string (it would mask between characters; a pattern
+compiled to search a text, :func:`compile_linear_search`, may, but for one
+holding ``\\B``, which RE2 reads between the bytes of a character),
 ``(?a:...)`` or ``(?u:...)`` around part of a pattern, ``$`` outside
 multi-line mode together with a multi-line ``^`` or ``$``, a class that tells
 a lone surrogate from U+FFFD; and, because each bounds the work one pattern
@@ -250,6 +252,7 @@ class _Shape:
     line_end: bool = False  # ``$`` outside multi-line mode
     line_anchors: bool = False  # ``^`` or ``$`` in multi-line mode
     ascii_word_boundary: bool = False  # ``\\b`` or ``\\B`` outside ``(?a)``
+    non_boundary: bool = False  # ``\\B`` anywhere
     sets: list[Ranges] = field(default_factory=list)
 
 
@@ -378,6 +381,7 @@ def _write_at(av: Any, flags: int, shape: _Shape) -> str:
         return r"\z"
     if av in (C.AT_BOUNDARY, C.AT_NON_BOUNDARY):
         shape.ascii_word_boundary |= not flags & C.SRE_FLAG_ASCII
+        shape.non_boundary |= av is C.AT_NON_BOUNDARY
         return r"\b" if av is C.AT_BOUNDARY else r"\B"
     if av is C.AT_BEGINNING:
         shape.line_anchors |= multiline
@@ -413,9 +417,14 @@ def _translate(parsed: Any, sentinel: int | None) -> tuple[Any, _Shape]:
 
 
 class LinearPattern:
-    """A pattern ``re`` reads, matched by RE2 in time linear in the text (:func:`compile_linear`)."""
+    """A pattern ``re`` reads, matched by RE2 in time linear in the text (:func:`compile_linear`,
+    :func:`compile_linear_search`).
 
-    def __init__(self, pattern: str) -> None:
+    ``empty_match`` admits a pattern that can match an empty string: one asked only whether it matches a text
+    (:meth:`search`), never used to replace what it matches.
+    """
+
+    def __init__(self, pattern: str, *, empty_match: bool = False) -> None:
         try:
             parsed = _parser.parse(pattern)
             if _repeat_total(parsed) > MAX_REPEAT_TOTAL:
@@ -426,8 +435,13 @@ class LinearPattern:
             program, shape = _translate(parsed, None)
         except RecursionError:
             raise UnsupportedPattern("it nests too deeply") from None
-        if _nullable(parsed):
+        nullable = _nullable(parsed)
+        if not empty_match and nullable:
             raise UnsupportedPattern("it matches an empty string, so it would mask between characters")
+        if nullable and shape.non_boundary:
+            # RE2 reads \B between the bytes of a character written in several (é is two), so a match of nothing
+            # but assertions can land inside one, where re finds none.
+            raise UnsupportedPattern("\\B in a pattern that can match an empty string is not supported")
         if shape.line_end and shape.line_anchors:
             raise UnsupportedPattern("$ outside multi-line mode cannot be combined with a multi-line ^ or $")
         for ranges in shape.sets:
@@ -470,6 +484,11 @@ class LinearPattern:
                 self._variants.clear()
             self._variants[sentinel] = program
         return subject[:-1].replace("\n", chr(sentinel)) + subject[-1], program
+
+    def search(self, text: str) -> bool:
+        """Whether the pattern matches anywhere in ``text``, as ``re.search`` answers."""
+        subject, program = self._subject(text)
+        return program.search(subject) is not None
 
     def spans(self, text: str) -> list[tuple[int, int]]:
         """Where the pattern matches in ``text``, as ``re.finditer`` finds it: leftmost first, never overlapping,
@@ -522,3 +541,14 @@ def compile_linear(pattern: str) -> LinearPattern:
     pattern: a stack's masks are read on every tick.
     """
     return LinearPattern(pattern)
+
+
+@functools.lru_cache(maxsize=256)
+def compile_linear_search(pattern: str) -> LinearPattern:
+    """``pattern`` read as ``re`` reads it, to ask whether it matches a text (:meth:`LinearPattern.search`) in time
+    linear in the text.
+
+    The same refusals as :func:`compile_linear` but one: such a pattern may
+    match an empty string, and then matches every text, as with ``re.search``.
+    """
+    return LinearPattern(pattern, empty_match=True)

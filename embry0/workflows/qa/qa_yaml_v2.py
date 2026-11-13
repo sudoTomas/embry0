@@ -16,6 +16,7 @@ import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from embry0.services.linear_regex import UnsupportedPattern, compile_linear_search
 from embry0.workflows.qa._glob_match import GlobPatternError, check_glob
 from embry0.workflows.qa.browser_backends import backend_for
 
@@ -99,6 +100,30 @@ class QAReadyCheck(BaseModel):
         if not (v.startswith("http://") or v.startswith("https://")):
             raise ValueError(f"http must be an http(s) URL, got {v!r}")
         return v
+
+    @field_validator("expect_body_regex")
+    @classmethod
+    def _body_regex_linear(cls, v: str | None, info: ValidationInfo) -> str | None:
+        """A Python regular expression the boot phase can search a ready check's body with in time linear in it
+        (:func:`~embry0.services.linear_regex.compile_linear_search`). A stored one is read as it is: a boot whose
+        check holds one the engine refuses fails that check, saying why (``embry0.workflows.qa.boot``)."""
+        if v is None or (info.context or {}).get("stored"):
+            return v
+        reason = body_regex_unusable(v)
+        if reason is not None:
+            raise ValueError(reason)
+        return v
+
+
+def body_regex_unusable(pattern: str) -> str | None:
+    """Why ``pattern`` cannot be a ready check's ``expect_body_regex``, or None when it can."""
+    try:
+        compile_linear_search(pattern)
+    except re.error as exc:
+        return f"expect_body_regex {pattern[:80]!r} is not a Python regular expression: {exc}"
+    except UnsupportedPattern as exc:
+        return f"expect_body_regex {pattern[:80]!r} cannot be searched in time linear in the body: {exc}"
+    return None
 
 
 class QAE2E(BaseModel):
@@ -624,6 +649,45 @@ def negated_globs(cfg: BaseModel) -> list[str]:
 
     walk(cfg)
     return found
+
+
+def unusable_body_regexes(cfg: BaseModel) -> list[tuple[str, str]]:
+    """Each ready check of ``cfg`` whose ``expect_body_regex`` a boot cannot search, as ``(http, why)``, in
+    document order, once each: one a setup stored before the pattern was checked can hold
+    (:func:`body_regex_unusable`)."""
+    found: dict[tuple[str, str], str] = {}
+
+    def walk(value: Any) -> None:
+        if isinstance(value, QAReadyCheck) and value.expect_body_regex:
+            why = body_regex_unusable(value.expect_body_regex)
+            if why is not None:
+                found.setdefault((value.http, value.expect_body_regex), why)
+        if isinstance(value, BaseModel):
+            for name in type(value).model_fields:
+                walk(getattr(value, name))
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list | tuple):
+            for item in value:
+                walk(item)
+
+    walk(cfg)
+    return [(http, why) for (http, _pattern), why in found.items()]
+
+
+def body_regex_warning(cfg: BaseModel) -> str | None:
+    """What a person is told of a setup whose ready checks hold a body pattern a boot cannot search: it is kept, and
+    every boot with it fails at once. None when it holds none."""
+    unusable = unusable_body_regexes(cfg)
+    if not unusable:
+        return None
+    listed = "; ".join(f"{http}: {why}" for http, why in unusable[:5])
+    more = f" and {len(unusable) - 5} more" if len(unusable) > 5 else ""
+    return (
+        f"This test setup holds ready checks whose body pattern a boot cannot search ({listed}{more}). It is kept as "
+        "it was, but every boot with it fails at once; a new save refuses them."
+    )
 
 
 def negation_warning(cfg: BaseModel) -> str | None:
