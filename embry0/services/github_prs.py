@@ -167,7 +167,11 @@ def forge_said(exc: BaseException) -> str:
             message = f"{message} ({'; '.join(details)})" if message else "; ".join(details)
     if not message:
         message = (getattr(response, "text", "") or "")[:200]
-    return f"{response.status_code} {message}".strip()[:300]
+    status = str(response.status_code)
+    # GitLab's message is often the status line itself ("403 Forbidden"): say the number once.
+    if message.split(" ", 1)[0] == status:
+        return message.strip()[:300]
+    return f"{status} {message}".strip()[:300]
 
 
 async def ensure_pr_for_branch(
