@@ -14,8 +14,10 @@ cursors and map a few logins (forge calls dealt round-robin from a per-tick
 budget for each credential, stopping at its rate-limit reserve), judge a few
 outlier commits, and, once it is caught up, recompute its weekly series and
 its scores (repository and areas) off the event loop. Every step is bounded
-and resumes where the last tick stopped; while a repository has a backlog the
-loop comes back sooner (``SLOP_METER_CATCHUP_SECONDS``).
+and resumes where the last tick stopped, the forge events too (#396); while a
+repository's history is still being read the loop comes back sooner
+(``SLOP_METER_CATCHUP_SECONDS``). A repository whose events the forge budget
+cut short waits for the next run and goes on from where it stopped.
 
 A tick reads its enrollment, its judge's model and the ``slop_meter``
 section from one snapshot of the settings documents (:func:`meter_reader`),
@@ -45,7 +47,14 @@ import structlog
 from embry0.services.areas import Area, area_of_path, digest
 from embry0.services.background_models import BackgroundCallRefused, BackgroundCalls, ModelLookup, model_lookup
 from embry0.services.background_scope import Enrollment, Registered, enrollment
-from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader, ShareBudget
+from embry0.services.slop_meter.events import (
+    MAX_FAILURES,
+    ApiBudget,
+    BudgetSpent,
+    EventReader,
+    ReaderPlace,
+    ShareBudget,
+)
 from embry0.services.slop_meter.history import (
     HISTORY_VERSION,
     Commit,
@@ -303,8 +312,8 @@ class _Work:
     #: Which credential reads it: a digest of its token, never the token. Each
     #: credential has its own rate limit, so each gets its own budget (#185).
     credential: str = ""
-    #: Its events were cut short by its organization's narrower share alone: not scored this run, and no
-    #: reason to come back sooner.
+    #: Its events were cut short by the forge budget, its credential's or its organization's share: not scored
+    #: this run, and no reason to come back sooner; the next run goes on from where its reader stopped.
     held: bool = False
 
 
@@ -469,9 +478,9 @@ class SlopMeterLoop:
                 logger.info(
                     "slop_meter_score_held",
                     repo=repo,
-                    reason="its organization's forge share ran out before its events were read",
-                    hint="its previous score stays; a larger api_calls_per_tick for the organization lets a run "
-                    "read them all",
+                    reason="the forge budget ran out before its events were read",
+                    hint="its previous score stays, and the next run goes on reading from where it stopped; a "
+                    "larger api_calls_per_tick reads more of them a run",
                 )
                 continue
             self._held.discard(repo)
@@ -554,6 +563,7 @@ class SlopMeterLoop:
         return _Work(forge=forge, more=done < len(history), credential=credential)
 
     async def _reader(self, repo: str) -> EventReader | None:
+        """The repository's event reader for this run, at the place the last one stopped, if any (stored)."""
         client = await self._client_for(repo)
         if client is None:
             return None
@@ -572,6 +582,7 @@ class SlopMeterLoop:
             known_logins=known,
             stored_logins=[str(e["login"]) for e in await self._store.events(repo)],
             max_logins=s.logins_per_tick,
+            place=ReaderPlace.from_json(state.get("reader_place")),
         )
 
     async def _read_forge(self, order: list[str], work: dict[str, _Work]) -> None:
@@ -586,17 +597,24 @@ class SlopMeterLoop:
         credential. One credential running low never stops a repository read
         with another (#185).
 
-        A repository stopped by its credential's own budget or reserve waits:
-        it is scored once its events are read, and the loop comes back after
-        ``catchup_seconds``, as before. One stopped only by its organization's
-        narrower share keeps its previous score, or stays unscored, since a
-        read cut short would look complete: its events are stored and its
-        listings' cursors move, but a run starts its reading over at the first
-        listing, so a share too small for one whole read never reaches the
-        reviews (#396 would keep the reader's place). It waits for the next
-        run, at the interval: an organization that reads less never holds the
-        meter, or every other organization's repositories, on its catch-up
-        cadence.
+        A repository the budget stops, its credential's or its organization's
+        share, keeps its previous score, or stays unscored, since a read cut
+        short would look complete. Its events are stored, its listings'
+        cursors move, and its reader's place is stored with it
+        (:class:`ReaderPlace`): the next run goes on from there, after a
+        restart too, so a share smaller than one whole read still finishes it,
+        over as many runs as it takes (#396). It waits for that run at the
+        interval: a repository waiting for forge budget never holds the meter,
+        and every other repository with it, on the catch-up cadence, which is
+        a history's.
+
+        Each credential deals its calls round-robin over the repositories read
+        with it, from a turn that moves on one repository a run and is stored
+        too, so the bound on how many runs a read takes holds per credential
+        whatever else the meter reads. A read whose call raises is held as one
+        the budget stopped, and goes on from there the next run; the
+        ``MAX_FAILURES``-th failure in a row at one call moves it past that call
+        (:meth:`EventReader.failed`).
         """
         deployment = self._meter.deployment()
         readers: dict[str, EventReader] = {}
@@ -625,9 +643,10 @@ class SlopMeterLoop:
                             reserve=max(own.rate_reserve, deployment.rate_reserve),
                         )
                     share_of[repo] = shares[(credential, owner)]
-        active = list(readers)
+        active = await self._dealing_order(readers, work)
         waiting: list[str] = []
         narrowed: list[str] = []
+        failing: list[str] = []
         while active:
             for repo in list(active):
                 try:
@@ -638,9 +657,22 @@ class SlopMeterLoop:
                     active.remove(repo)
                     (waiting if share_of[repo].shared.spent else narrowed).append(repo)
                     continue
-                except Exception as exc:  # noqa: BLE001 - this repository's events stop for the tick
-                    logger.warning("slop_meter_events_failed", repo=repo, error=str(exc)[:300])
+                except Exception as exc:  # noqa: BLE001 - this repository's events stop for the run
+                    stage = readers[repo].stage
+                    if readers[repo].failed():
+                        # It moved past the call, and reads on.
+                        logger.warning(
+                            "slop_meter_events_skipped",
+                            repo=repo,
+                            stage=stage,
+                            failures=MAX_FAILURES,
+                            error=str(exc)[:300],
+                            hint="the same call failed in that many runs in a row; the read moves past it",
+                        )
+                        continue
+                    logger.warning("slop_meter_events_failed", repo=repo, stage=stage, error=str(exc)[:300])
                     active.remove(repo)
+                    failing.append(repo)
                     continue
                 if not going:
                     active.remove(repo)
@@ -655,20 +687,45 @@ class SlopMeterLoop:
                 narrowed=sorted(narrowed),
             )
         for repo, reader in readers.items():
-            batch = reader.batch
+            batch, place = reader.batch, reader.place
             await self._store.add_events(repo, batch.events)
             await self._store.set_state(
                 repo,
                 comments_since=batch.comments_since,
                 review_comments_since=batch.review_comments_since,
                 reviews_since=batch.reviews_since,
+                # None once the read is done: the next pass starts at the first listing.
+                reader_place=None if place is None else place.to_json(),
             )
             for login, email in batch.logins.items():
                 await self._store.set_login(login, email)
-            if repo in waiting:
-                work[repo].more = True
-            elif repo in narrowed:
+            if repo in waiting or repo in narrowed or repo in failing:
                 work[repo].held = True
+
+    async def _dealing_order(self, readers: Mapping[str, EventReader], work: Mapping[str, _Work]) -> list[str]:
+        """The repositories in the order the round-robin deals them calls: each credential's in turn from its
+        stored turn, which then moves on one repository for the next run.
+
+        Credentials do not share a budget, so only the order within one
+        credential matters: of R repositories read with it, the first gets a
+        call first in every round, and when its B calls a run are fewer than
+        R, the turn brings each repository to the front of the round once in
+        R runs, whatever the meter reads with other credentials.
+        """
+        if not readers:
+            return []
+        turns = await self._store.turns()
+        by_credential: dict[str, list[str]] = {}
+        for repo in readers:
+            by_credential.setdefault(work[repo].credential, []).append(repo)
+        rank: dict[str, int] = {}
+        for credential, repos in by_credential.items():
+            repos.sort()
+            turn = turns.get(credential, 0) % len(repos)
+            for place, repo in enumerate(repos[turn:] + repos[:turn]):
+                rank[repo] = place
+        await self._store.set_turns({c: (turns.get(c, 0) + 1) % len(r) for c, r in by_credential.items()})
+        return sorted(readers, key=lambda repo: rank[repo])
 
     async def _inputs(self, repo: str, settings: SlopMeterSettings) -> Inputs:
         bots = own_identities([*await self._bots(repo), *settings.bots])

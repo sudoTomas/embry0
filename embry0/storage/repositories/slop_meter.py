@@ -1,4 +1,4 @@
-"""The Slop-O-Meter's rows (migrations 121, 122 and 144, spec 2026-10-26, slop-o-meter).
+"""The Slop-O-Meter's rows (migrations 121, 122, 144 and 146, spec 2026-10-26, slop-o-meter).
 
 A repository's history as read (commits, forge events, login emails, outlier
 commit judgments), where reading it stands, and what is computed from it: the
@@ -26,8 +26,12 @@ _STATE_FIELDS = frozenset(
         "error",
         "error_at",
         "history_version",
+        "reader_place",
     }
 )
+
+#: How long a credential's turn is kept after the last run that read with it: a rotated token is a new credential.
+_TURN_DAYS = 30
 
 
 #: Every table that holds rows of one repository, by what the rows hold; ``slop_meter_repos`` last.
@@ -72,6 +76,27 @@ class SlopMeterRepository:
             repo,
             *fields.values(),
         )
+
+    # ---- each credential's turn (#396) ----
+
+    async def turns(self) -> dict[str, int]:
+        """Each credential's turn: where its round-robin of forge calls starts the next run. Keyed by its digest."""
+        rows = await self._db.fetch("SELECT credential, turn FROM slop_meter_turns")
+        return {str(r["credential"]): int(r["turn"]) for r in rows}
+
+    async def set_turns(self, turns: Mapping[str, int]) -> None:
+        """Store each credential's turn, and forget a credential no run has read with for a month."""
+        async with self._db.transaction() as conn:
+            for credential, turn in turns.items():
+                await conn.execute(
+                    "INSERT INTO slop_meter_turns (credential, turn, updated_at) VALUES ($1, $2, NOW()) "
+                    "ON CONFLICT (credential) DO UPDATE SET turn = EXCLUDED.turn, updated_at = EXCLUDED.updated_at",
+                    credential,
+                    turn,
+                )
+            await conn.execute(
+                "DELETE FROM slop_meter_turns WHERE updated_at < NOW() - make_interval(days => $1)", _TURN_DAYS
+            )
 
     # ---- what it keeps, and forgetting it ----
 

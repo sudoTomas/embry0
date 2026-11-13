@@ -26,6 +26,7 @@ from tests.fixtures.areas import areas_of, no_areas_of
 
 START = datetime(2025, 1, 6, 9, 0, tzinfo=UTC)
 REPO = "acme/web"
+FORGE = "https://forge.example"  # the base the next-page links of the fakes name
 
 
 def _record(sha: str, at: datetime, files: list[tuple[str, int, int]], email: str = "dev@example.com") -> str:
@@ -65,6 +66,8 @@ class FakeStore:
         self.stored: dict[str, Any] = {}
         #: Each repository's configuration version, as its last scoring recorded it.
         self.versions_of: dict[str, str] = {}
+        #: Each credential's turn (#396).
+        self.turn_of: dict[str, int] = {}
 
     async def state(self, repo: str) -> dict[str, Any]:
         return dict(self.states.get(repo, {"repo": repo, "commits_read": 0}))
@@ -113,6 +116,12 @@ class FakeStore:
 
     async def versions(self) -> dict[str, str]:
         return dict(self.versions_of)
+
+    async def turns(self) -> dict[str, int]:
+        return dict(self.turn_of)
+
+    async def set_turns(self, turns: dict[str, int]) -> None:
+        self.turn_of.update(turns)
 
 
 async def _no_bots() -> tuple[str, ...]:
@@ -405,9 +414,9 @@ class FakeForge:
     async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
         self.calls.append((path, dict(params or {})))
         r = self.repo
-        if path == f"/repos/{r}/issues/comments" or path.startswith("page:"):
-            page = int(path.split(":")[1]) if path.startswith("page:") else 1
-            nxt = f"page:{page + 1}" if page < self.comment_pages else None
+        if path == f"/repos/{r}/issues/comments":
+            page = int((params or {}).get("page", 1))
+            nxt = f"{FORGE}{path}?page={page + 1}" if page < self.comment_pages else None
             items = [_comment(page, "ana", min(page, 28))]
             if page == 1:
                 items.append(_comment(1000, "renovate[bot]", 2))
@@ -527,7 +536,7 @@ async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
         areas_of=no_areas_of,
         clock=lambda: START + timedelta(days=60),
     )
-    assert await loop.tick() is True, "the big repository still has comments to read"
+    assert await loop.tick() is False, "the big repository waits for the next run, at the interval (#396)"
     # The small one needs 7 calls (2 listings, the pulls, 2 reviews, 2 logins); turns alternate,
     # so it finishes on the 14th call and the big one has the last 2 to itself.
     assert len(forges[small].calls) == 7, "the small repository read everything it had"
@@ -711,8 +720,507 @@ async def test_each_credential_keeps_its_own_budget() -> None:
         areas_of=no_areas_of,
         clock=lambda: START + timedelta(days=60),
     )
-    assert await loop.tick() is True
+    assert await loop.tick() is False, "a repository waiting for forge budget holds no catch-up (#396)"
     assert len(forges[low].calls) == 1, "the low token stops at its reserve after one call"
     assert len(forges[high].calls) == 8, (
         f"the other token reads its whole budget, not what the low one left: {len(forges[high].calls)} calls"
     )
+
+
+# ---- a reader the budget stops goes on where it stopped (#396) ----
+
+
+class PassForge:
+    """One repository's listings as GitHub pages them: comments by update time from a cursor, a page a comment, and
+    pull requests newest first, two a page, each with one review. ``repeat`` puts the last pull request of the first
+    page first on the second as well, as one updated between the two reads pushes it there."""
+
+    COMMENTS = (("ana", 1), ("bo", 2), ("carl", 3))
+    PULLS = (9, 8, 7, 6)
+
+    def __init__(self, *, repeat: bool = False) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.repeat = repeat
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        params = dict(params or {})
+        self.calls.append((path, params))
+        if path == f"/repos/{REPO}/issues/comments":
+            since, page = params.get("since", ""), int(params.get("page", 1))
+            later = [(i, login, day) for i, (login, day) in enumerate(self.COMMENTS, 1) if _stamp(day) > since]
+            if len(later) < page:
+                return FakeResponse(200, [])
+            i, login, day = later[page - 1]
+            nxt = f"{FORGE}{path}?page={page + 1}" if len(later) > page else None
+            return FakeResponse(200, [_comment(i, login, day)], next_url=nxt)
+        if path == f"/repos/{REPO}/pulls/comments":
+            return FakeResponse(200, [])
+        if path == f"/repos/{REPO}/pulls":
+            first = int(params.get("page", 1)) == 1
+            numbers = self.PULLS[:2] if first else (self.PULLS[1:] if self.repeat else self.PULLS[2:])
+            pulls = [{"number": n, "updated_at": f"2025-03-{n:02d}T00:00:00Z"} for n in numbers]
+            return FakeResponse(200, pulls, next_url=f"{FORGE}{path}?page=2" if first else None)
+        if path.endswith("/reviews"):
+            n = int(path.split("/")[-2])
+            return FakeResponse(
+                200, [{"id": 100 + n, "user": {"login": "dee"}, "submitted_at": "2025-03-10T00:00:00Z"}]
+            )
+        if path == f"/repos/{REPO}/commits":
+            return FakeResponse(200, [{"commit": {"author": {"email": f"{params['author']}@example.com"}}}])
+        return FakeResponse(404, {})
+
+
+def _stamp(day: int) -> str:
+    return f"2025-02-{day:02d}T10:00:00Z"
+
+
+def _asked(call: tuple[str, dict[str, Any]]) -> tuple[Any, ...]:
+    """What a call asks for, whatever its form: the next page of a comment listing and the listing from the cursor
+    that page starts after ask for the same comments, and a resumed listing asks the second way."""
+    path, params = call
+    if path.endswith("/issues/comments"):
+        since, page = str(params.get("since", "")), int(params.get("page", 1))
+        if page > 1:  # page N starts after the last comment of page N - 1, one comment a page
+            later = [day for _login, day in PassForge.COMMENTS if _stamp(day) > since]
+            since = _stamp(later[page - 2])
+        return ("comments updated after", since)
+    return (path, str(sorted({k: v for k, v in params.items() if k != "page"}.items())), params.get("page", 1))
+
+
+async def _read_a_call_a_tick(forge: PassForge, **caps: int) -> dict[str, Any]:
+    """Read the repository's events a call a tick, as a credential shared by many repositories deals them: each tick
+    a new reader, from the cursors and logins the last stored and the place it stopped at."""
+    cursors: dict[str, Any] = {"comments_since": None, "review_comments_since": None, "reviews_since": None}
+    events: dict[str, tuple[str, str, str, datetime]] = {}
+    logins: dict[str, str] = {}
+    place = None
+    for _ in range(100):
+        reader = EventReader(
+            forge,
+            REPO,
+            **cursors,
+            known_logins=logins,
+            stored_logins=[e[2] for e in events.values()],
+            place=place,
+            **caps,
+        )
+        try:
+            await _read_all(reader, ApiBudget(1, 0))
+        except BudgetSpent:
+            pass
+        batch = reader.batch
+        events.update({e[0]: e for e in batch.events})
+        logins.update(batch.logins)
+        cursors = {k: getattr(batch, k) for k in cursors}
+        place = reader.place
+        if place is None:
+            return {"events": sorted(events), "logins": logins, **cursors}
+    raise AssertionError("a call a tick never finished the read")
+
+
+async def _read_in_one_tick(forge: PassForge, **caps: int) -> dict[str, Any]:
+    reader = EventReader(forge, REPO, comments_since=None, review_comments_since=None, reviews_since=None, **caps)
+    await _read_all(reader, ApiBudget(100, 0))
+    batch = reader.batch
+    return {
+        "events": sorted(e[0] for e in batch.events),
+        "logins": dict(batch.logins),
+        "comments_since": batch.comments_since,
+        "review_comments_since": batch.review_comments_since,
+        "reviews_since": batch.reviews_since,
+    }
+
+
+async def test_a_read_a_call_a_tick_makes_the_calls_one_tick_with_budget_enough_makes() -> None:
+    """A reader stopped by the budget mid-listing, mid-pull-requests, mid-reviews and mid-logins goes on at the next
+    tick where it stopped: every call it makes is one a single tick with budget enough makes, in the same order, and
+    it reads what that tick reads. The caps hold for the pass, not for each tick: two pages of comments, three
+    reviews, two logins."""
+    caps = {"max_pages": 2, "max_pulls": 3, "max_logins": 2}
+    whole, a_call_a_tick = PassForge(), PassForge()
+
+    expected = await _read_in_one_tick(whole, **caps)
+    got = await _read_a_call_a_tick(a_call_a_tick, **caps)
+
+    asked, expected_asked = [_asked(c) for c in a_call_a_tick.calls], [_asked(c) for c in whole.calls]
+    assert asked == expected_asked, f"the calls differ:\n  a call a tick: {asked}\n  one tick:      {expected_asked}"
+    assert got == expected, f"a call a tick read {got}, one tick {expected}"
+
+
+async def test_a_pull_request_found_again_on_the_next_page_is_reviewed_once() -> None:
+    """A pull request updated between two pages of the listing, which a read spread over runs makes likely, pushes
+    one already found onto the next page: it is reviewed once."""
+    forge = PassForge(repeat=True)
+    await _read_a_call_a_tick(forge, max_pages=2, max_pulls=10, max_logins=0)
+    reviewed = [path for path, _ in forge.calls if path.endswith("/reviews")]
+    assert sorted(reviewed) == sorted(set(reviewed)), f"a pull request was reviewed twice: {reviewed}"
+
+
+@pytest.mark.parametrize(("repos", "budget"), [(70, 200), (12, 5)], ids=["70 repositories, 200 calls", "12, 5"])
+async def test_many_repositories_on_one_credential_are_each_scored_within_a_bound(repos: int, budget: int) -> None:
+    """#396: more repositories on one credential than one run's budget reads whole. Each run goes on where the
+    last stopped, so every repository is scored within a bound, and none puts the meter on catch-up.
+
+    A whole read is at most 7 calls here (the two listings, the pull requests, two reviews, two logins). With B
+    calls a run for R repositories, B >= R gives each at least B // R calls a run, so ceil(7 / (B // R)) runs; with
+    B < R the turn moves on one repository a run, so each gets B calls in any R runs: R * ceil(7 / B) runs.
+    """
+    names = [f"acme/app-{i:02d}" for i in range(repos)]
+    forges = {name: FakeForge(repo=name) for name in names}
+    records, order = _history(2)
+    store = FakeStore()
+
+    async def registered() -> Registered:
+        return Registered(active=tuple(names))
+
+    async def token_for(repo: str) -> tuple[str, str, str]:
+        return ("github", "one-token", "")
+
+    async def client_for(repo: str) -> Any:
+        return forges[repo]
+
+    loop = SlopMeterLoop(
+        repos=registered,
+        exits=NoExits(),
+        audit=no_audit,
+        read=_read(api_calls_per_tick=budget, rate_reserve=0),
+        store=store,
+        mirror=FakeMirror(records, order),
+        token_for=token_for,
+        client_for=client_for,
+        bots=lambda repo: _no_bots(),
+        calls=FakeCalls(),
+        limits=SlopMeterLimits(commits_per_tick=10),
+        areas_of=no_areas_of,
+        clock=lambda: START + timedelta(days=60),
+    )
+    whole = 7
+    bound = -(-whole // (budget // repos)) if budget >= repos else repos * -(-whole // budget)
+
+    backlog, made = [], 0
+    for _ in range(bound):
+        backlog.append(await loop.tick())
+        calls = sum(len(f.calls) for f in forges.values())
+        assert calls - made <= budget, f"a run made {calls - made} calls on a budget of {budget}"
+        made = calls
+
+    unscored = [name for name in names if name not in store.stored]
+    assert not unscored, f"{len(unscored)} of {repos} repositories were not scored within {bound} runs: {unscored[:5]}"
+    assert not any(backlog), "a repository waiting for forge budget never puts the meter on catch-up"
+
+
+def _crowd_loop(
+    store: Any, forges: dict[str, Any], names: list[str], *, budget: int, gitlab: frozenset[str] = frozenset()
+) -> SlopMeterLoop:
+    """A meter over ``names``, every GitHub one read with one credential on ``budget`` calls a run; the ones in
+    ``gitlab`` are read with another forge, which makes no event calls."""
+    records, order = _history(2)
+
+    async def registered() -> Registered:
+        return Registered(active=tuple(names))
+
+    async def token_for(repo: str) -> tuple[str, str, str]:
+        return (
+            ("gitlab", "other-token", "https://gitlab.example.com") if repo in gitlab else ("github", "one-token", "")
+        )
+
+    async def client_for(repo: str) -> Any:
+        return None if repo in gitlab else forges[repo]
+
+    return SlopMeterLoop(
+        repos=registered,
+        exits=NoExits(),
+        audit=no_audit,
+        read=_read(api_calls_per_tick=budget, rate_reserve=0),
+        store=store,
+        mirror=FakeMirror(records, order),
+        token_for=token_for,
+        client_for=client_for,
+        bots=lambda repo: _no_bots(),
+        calls=FakeCalls(),
+        limits=SlopMeterLimits(commits_per_tick=10),
+        areas_of=no_areas_of,
+        clock=lambda: START + timedelta(days=60),
+    )
+
+
+async def test_the_bound_holds_per_credential_beside_a_crowd_read_otherwise() -> None:
+    """#396: the turn is each credential's, so 12 repositories on one credential's 5 calls are scored within
+    12 * ceil(7 / 5) = 24 runs however many other repositories the meter reads (here 60, on another forge)."""
+    github = [f"acme/app-{i:02d}" for i in range(12)]
+    crowd = [f"acme/crowd-{i:02d}" for i in range(60)]
+    forges = {name: FakeForge(repo=name) for name in github}
+    store = FakeStore()
+    loop = _crowd_loop(store, forges, github + crowd, budget=5, gitlab=frozenset(crowd))
+    for _ in range(24):
+        await loop.tick()
+    unscored = [name for name in github if name not in store.stored]
+    assert not unscored, f"{len(unscored)} of 12 were not scored within 24 runs beside 60 others: {unscored}"
+
+
+class FailingReviews(FakeForge):
+    """A forge whose reviews listing raises every time."""
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        if path.endswith("/reviews"):
+            self.calls.append((path, dict(params or {})))
+            raise RuntimeError("this listing fails every time")
+        return await super().get(path, repo=repo, params=params)
+
+
+async def test_a_call_that_keeps_failing_is_passed_after_max_failures_and_the_read_finishes() -> None:
+    """#396: a read whose next call raises is held, keeping its previous score, and goes on from that call the
+    next run; the MAX_FAILURES-th failure in a row there moves it past the call, says so, and it reads on. Both pull
+    requests' reviews fail: the first is passed in run 3, where the second fails a first time, and the second in run
+    5, where the logins are read and the repository is scored."""
+    from structlog.testing import capture_logs
+
+    from embry0.services.slop_meter.events import MAX_FAILURES
+
+    forge, store = FailingReviews(), FakeStore()
+    loop = _crowd_loop(store, {REPO: forge}, [REPO], budget=200)
+    scored_in = None
+    reviews_per_run = []
+    with capture_logs() as logs:
+        for run in range(1, 2 * MAX_FAILURES + 1):
+            before = len(forge.calls)
+            await loop.tick()
+            reviews_per_run.append(sum(1 for path, _ in forge.calls[before:] if path.endswith("/reviews")))
+            if REPO in store.stored:
+                scored_in = run
+                break
+    assert scored_in == 2 * MAX_FAILURES - 1, f"scored in run {scored_in}, reviews tried per run {reviews_per_run}"
+    skipped = [entry for entry in logs if entry["event"] == "slop_meter_events_skipped"]
+    assert [entry["stage"] for entry in skipped] == ["reviews", "reviews"], f"each pass is said once: {skipped}"
+    assert reviews_per_run == [1, 1, 2, 1, 1], (
+        f"each run tries the failing call once, more after a pass: {reviews_per_run}"
+    )
+    before = len(forge.calls)
+    await loop.tick()
+    again = [path for path, _ in forge.calls[before:] if path.endswith("/reviews")]
+    assert again == [], f"the reviews cursor moved past the pull requests passed, so none is tried again: {again}"
+
+
+class FailingLogin(FakeForge):
+    """A forge whose commit search for one login raises every time, and for another raises once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.once = True
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        author = (params or {}).get("author")
+        if path.endswith("/commits") and (author == "bo" or (author == "ana" and self.once)):
+            self.calls.append((path, dict(params or {})))
+            self.once = self.once and author != "ana"
+            raise RuntimeError("the commit search fails")
+        return await super().get(path, repo=repo, params=params)
+
+
+async def test_failures_count_in_a_row_and_a_login_passed_is_kept_with_no_email() -> None:
+    """One failure, then a call that works, starts the count again; a login passed after MAX_FAILURES failures is
+    kept with no email, so no later pass looks it up again."""
+    from embry0.services.slop_meter.events import MAX_FAILURES
+
+    forge, store = FailingLogin(), FakeStore()
+    loop = _crowd_loop(store, {REPO: forge}, [REPO], budget=200)
+    for _ in range(1 + MAX_FAILURES):  # ana fails once, then works; bo fails MAX_FAILURES times in a row
+        await loop.tick()
+    assert REPO in store.stored, f"the read finished: {store.states[REPO]}"
+    assert store.login_map == {"ana": "", "bo": ""}, f"ana was looked up, bo passed with no email: {store.login_map}"
+    lookups = [params["author"] for path, params in forge.calls if path.endswith("/commits")]
+    assert lookups == ["ana", "ana", "bo", "bo", "bo"], f"ana's failure was not counted against bo: {lookups}"
+    before = len(forge.calls)
+    await loop.tick()
+    assert not [c for c in forge.calls[before:] if c[0].endswith("/commits")], "no login is looked up again"
+
+
+class ShiftingPulls:
+    """Pull requests ``1..n``, newest updated first, a hundred a page; ``open`` adds a newer one between reads."""
+
+    def __init__(self, n: int) -> None:
+        self.updated = {number: START + timedelta(hours=number) for number in range(1, n + 1)}
+        self.reviewed: list[int] = []
+        self.pages = 0
+
+    def open(self, number: int) -> None:
+        self.updated[number] = START + timedelta(hours=number)
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        if path == f"/repos/{REPO}/pulls":
+            self.pages += 1
+            page = int((params or {}).get("page", 1))
+            newest = sorted(self.updated, key=lambda n: self.updated[n], reverse=True)
+            chunk = newest[(page - 1) * 100 : page * 100]
+            items = [{"number": n, "updated_at": self.updated[n].strftime("%Y-%m-%dT%H:%M:%SZ")} for n in chunk]
+            more = page * 100 < len(newest)
+            return FakeResponse(200, items, next_url=f"{FORGE}{path}?page={page + 1}" if more else None)
+        if path.endswith("/reviews"):
+            self.reviewed.append(int(path.split("/")[-2]))
+            return FakeResponse(200, [])
+        return FakeResponse(200, [])
+
+
+async def _one_run(forge: ShiftingPulls, calls: int, place: Any, *, max_pulls: int = 1_000) -> Any:
+    reader = EventReader(
+        forge,
+        REPO,
+        comments_since=START,
+        review_comments_since=START,
+        reviews_since=START,
+        max_pages=2,
+        max_pulls=max_pulls,
+        place=place,
+    )
+    try:
+        await _read_all(reader, ApiBudget(calls, 0))
+    except BudgetSpent:
+        pass
+    return reader.place
+
+
+@pytest.mark.parametrize(
+    ("max_pulls", "opened", "reviewed"),
+    [(1_000, 1, range(51, 251)), (50, 60, range(51, 101))],
+    ids=["one opened", "more opened than the pass reviews"],
+)
+async def test_pull_requests_opened_between_two_runs_of_a_pass_push_no_older_one_past_the_cap(
+    max_pulls: int, opened: int, reviewed: range
+) -> None:
+    """#396: the cap is two pages' worth of pull requests found, not two pages read. Pull requests opened between
+    the runs of a pass move to the first page and bring ones already found onto the next: a pass spread over two runs
+    reviews the very pull requests a pass in one run reviews (of 250, the oldest it may review of the 200 newest).
+    The place keeps the numbers of all it found, not only the ones it will review, so one found on the first page
+    and brought again on the next is not counted twice, however many were opened."""
+    in_one_run = ShiftingPulls(250)
+    assert await _one_run(in_one_run, 1_000, None, max_pulls=max_pulls) is None
+    spread = ShiftingPulls(250)
+    place = await _one_run(spread, 3, None, max_pulls=max_pulls)  # the two comment listings, one page of pulls
+    assert place is not None and place.stage == 2 and place.found == 100, place
+    for number in range(251, 251 + opened):
+        spread.open(number)
+    assert await _one_run(spread, 1_000, place, max_pulls=max_pulls) is None
+    assert sorted(spread.reviewed) == sorted(in_one_run.reviewed) == list(reviewed), (
+        f"spread over two runs, a pass reviewed {len(spread.reviewed)} pull requests from "
+        f"{min(spread.reviewed)}; in one run {len(in_one_run.reviewed)} from {min(in_one_run.reviewed)}"
+    )
+
+
+async def test_a_stored_place_keeps_only_the_pull_requests_it_will_review_and_reads_back_whole() -> None:
+    from embry0.services.slop_meter.events import ReaderPlace
+
+    forge = ShiftingPulls(250)
+    reader = EventReader(
+        forge, REPO, comments_since=START, review_comments_since=START, reviews_since=START, max_pages=2, max_pulls=3
+    )
+    with pytest.raises(BudgetSpent):
+        await _read_all(reader, ApiBudget(5, 0))  # two listings, two pages of pull requests, one review
+    place = reader.place
+    assert place is not None and place.stage == 3 and place.pulls_left == 2, place
+    assert [number for _at, number in place.pulls] == [52, 53], (
+        f"of 200 pull requests found it keeps the 2 it will still review, the oldest: {place.pulls}"
+    )
+    assert ReaderPlace.from_json(place.to_json()) == place, "a place reads back as it was stored"
+    for stored in (None, "x", {}, {"stage": 9}, {"stage": 3, "pulls": [["not a time", 1]]}, {"stage": "x"}):
+        assert ReaderPlace.from_json(stored) is None, f"{stored!r} names no place: the read starts over"
+
+
+class ElsewhereLinks(ShiftingPulls):
+    """A pull request listing whose next-page links name another host; every call is recorded."""
+
+    def __init__(self, n: int) -> None:
+        super().__init__(n)
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        self.calls.append((path, dict(params or {})))
+        response = await super().get(path, repo=repo, params=params)
+        if response.links:
+            response.links = {"next": {"url": response.links["next"]["url"].replace(FORGE, ELSEWHERE)}}
+        return response
+
+
+ELSEWHERE = "https://elsewhere.example"
+
+
+async def test_the_reader_keeps_its_page_not_the_url() -> None:
+    """The next page is kept as its number and asked for on the listing's own path, through the client's base: a
+    link to another host is followed there by its page number alone, and a stored place that names a URL, in a
+    field of its own or where the page goes, sends no call anywhere else."""
+    from embry0.services.slop_meter.events import ReaderPlace
+
+    forge = ElsewhereLinks(250)
+    assert await _one_run(forge, 1_000, None) is None
+    pulls = [params.get("page", 1) for path, params in forge.calls if path == f"/repos/{REPO}/pulls"]
+    assert pulls == [1, 2], f"the listing's pages, asked for by number on its path: {pulls}"
+
+    url = f"{ELSEWHERE}/repos/{REPO}/pulls?page=2"
+    assert ReaderPlace.from_json({"stage": 2, "pages": 1, "next_page": url}) is None, "a URL is no page"
+    assert ReaderPlace.from_json({"stage": 2, "pages": 1, "next_page": True}) is None
+    place = ReaderPlace.from_json({"stage": 2, "pages": 1, "next_url": url, "next_page": 2})
+    assert place is not None and place.next_page == 2 and "next_url" not in place.to_json(), place
+    forge = ElsewhereLinks(250)
+    assert await _one_run(forge, 1_000, place) is None
+    assert forge.calls and all(path.startswith(f"/repos/{REPO}/") for path, _params in forge.calls), forge.calls
+    assert ELSEWHERE not in repr(forge.calls), f"a call named the stored URL: {forge.calls}"
+    assert forge.calls[0] == (
+        f"/repos/{REPO}/pulls",
+        {"state": "all", "sort": "updated", "direction": "desc", "per_page": 100, "page": 2},
+    ), forge.calls[0]
+
+
+async def test_a_next_link_that_names_no_page_cuts_the_listing_there() -> None:
+    """A next page this reader cannot ask for by number (a link with a cursor, say) is not followed: the listing
+    stops there, as at the page cap, and the read says more was waiting."""
+
+    class CursorLinks(FakeForge):
+        async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+            response = await super().get(path, repo=repo, params=params)
+            if path == f"/repos/{REPO}/issues/comments":
+                response.links = {"next": {"url": f"{FORGE}{path}?after=cursor-1"}}
+            return response
+
+    for links, more in ((CursorLinks, True), (FakeForge, False)):
+        forge = links()
+        reader = EventReader(
+            forge,
+            REPO,
+            comments_since=None,
+            review_comments_since=None,
+            reviews_since=None,
+            max_pages=10,
+            max_pulls=10,
+            max_logins=10,
+        )
+        await _read_all(reader, ApiBudget(100, 0))
+        assert reader.batch.more is more, f"{links.__name__}: more is {reader.batch.more}"
+    forge = CursorLinks()
+    await _read_all(
+        EventReader(
+            forge, REPO, comments_since=None, review_comments_since=None, reviews_since=None, max_pages=10, max_pulls=10
+        ),
+        ApiBudget(100, 0),
+    )
+    comments = [params for path, params in forge.calls if path == f"/repos/{REPO}/issues/comments"]
+    assert comments == [{"sort": "updated", "direction": "asc", "per_page": 100}], comments
+    assert all(path.startswith(f"/repos/{REPO}/") for path, _params in forge.calls), (
+        f"a link was fetched: {forge.calls}"
+    )
+
+
+class SamePage(ShiftingPulls):
+    """A pull request listing whose every page brings the first page again, all found already: shifts without end."""
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        if path == f"/repos/{REPO}/pulls" and int((params or {}).get("page", 1)) > 1:
+            first = await super().get(path, repo=repo, params={**(params or {}), "page": 1})
+            return FakeResponse(200, first.json(), next_url=f"{FORGE}{path}?page={int(params['page']) + 1}")
+        return await super().get(path, repo=repo, params=params)
+
+
+async def test_a_listing_that_brings_only_pull_requests_already_found_ends_after_twice_the_page_cap() -> None:
+    """However many pages the shifts bring again, a pass reads at most twice its page cap of the listing."""
+    forge = SamePage(250)
+    assert await _one_run(forge, 1_000, None) is None, "the pass ends"
+    assert forge.pages == 4, f"a page cap of 2 reads at most 4 pages: {forge.pages}"
+    assert sorted(forge.reviewed) == list(range(151, 251)), "the one page found is reviewed, each once"
