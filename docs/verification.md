@@ -60,6 +60,8 @@ Code: `embry0/workflows/verification/` (pure logic + the sandbox runner),
 | `total_timeout_seconds` | `3600` | Budget for the gate's runs, each with its own checkout; it starts after the prepare step and the branch-tip read, which sit outside it. Runs that do not fit are recorded as not run → verdict `error`. |
 | `tiers.*_paths` | built-in | Each list REPLACES the built-in list of that class; omit to keep it; `[]` = "no such paths". |
 
+There is no negation in these globs: one that starts with `!` only ever matched a path starting with `!`, so a `PUT` refuses it (422). A config stored with one keeps reading as it did, and the gate logs `verification_config_negated_globs` once per repository and config.
+
 A preferences `PUT` is a partial update (#350): only the fields in the body
 are written, so setting `verification` leaves `dev_checks`, `base_branch` and
 the rest alone. Omit it to keep the stored value; send `{}` or `null` to clear

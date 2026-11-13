@@ -35,6 +35,7 @@ from embry0.storage.repositories.repo_areas import AreasChanged
 from embry0.storage.repositories.repo_config_revisions import RevisionSurface
 from embry0.storage.repositories.repo_preferences import preferences_snapshot
 from embry0.workflows.verification.config import STORED as VERIFICATION_STORED
+from embry0.workflows.verification.config import negation_warning as verification_negation_warning
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -240,7 +241,7 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
             try:
                 # Read as stored: a setup with a glob only the release before wrote, or one that starts with '!',
                 # goes back as it was, and the answer says what it holds.
-                restored = parse_qa_yaml_v2(before["yaml_text"])
+                restored = parse_qa_yaml_v2(before["yaml_text"], repo=full_repo)
             except (ValueError, yaml.YAMLError) as exc:
                 raise _no_longer_valid(exc) from exc
             negation, body_regex = negation_warning(restored), body_regex_warning(restored)
@@ -260,10 +261,14 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
         else:
             fields = {k: before[k] for k in RepoPreferencesUpdateRequest.model_fields if k in before}
             try:
-                # Read as stored values are: a glob only the release before wrote still goes back.
-                RepoPreferencesUpdateRequest.model_validate(fields, context=VERIFICATION_STORED)
+                # Read as stored values are: a glob only the release before wrote, or one that starts with '!',
+                # still goes back, and the answer says what the verification config holds.
+                checked = RepoPreferencesUpdateRequest.model_validate(fields, context=VERIFICATION_STORED)
             except ValidationError as exc:
                 raise _no_longer_valid(exc) from exc
+            warning = verification_negation_warning(checked.verification)
+            if warning:
+                warnings.append(warning)
             # The stored values go back as they were; the model only checks
             # they would still be read today.
             _, new_revision_id = await prefs.upsert_recorded(

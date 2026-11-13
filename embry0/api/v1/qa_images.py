@@ -117,7 +117,7 @@ async def build_qa_cache_image(req: QAImageBuildRequest, request: Request) -> di
             if stored and stored.get("yaml_text"):
                 from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
-                install_command = parse_qa_yaml_v2(stored["yaml_text"]).cache.install_command
+                install_command = parse_qa_yaml_v2(stored["yaml_text"], repo=req.repo).cache.install_command
         except Exception:  # noqa: BLE001 — a bad stored config must not block a bake
             install_command = None
 

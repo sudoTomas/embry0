@@ -101,7 +101,7 @@ async def _qa_app_targets(configurable: dict[str, Any], repo: str) -> tuple[list
             return [], []
         from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
-        cfg = parse_qa_yaml_v2(row["yaml_text"])
+        cfg = parse_qa_yaml_v2(row["yaml_text"], repo=repo)
         return cfg.managed_app_names(), cfg.deployed_app_names()
     except Exception:
         logger.warning("verify_qa_config_unreadable", repo=repo, exc_info=True)
@@ -117,7 +117,7 @@ async def _stored_config(configurable: dict[str, Any], repo: str) -> tuple[Verif
     except Exception:
         logger.warning("verify_preferences_fetch_failed", repo=repo, exc_info=True)
         return None, "the repository's verification settings could not be read"
-    config, problem = load_verification_config((row or {}).get("verification"))
+    config, problem = load_verification_config((row or {}).get("verification"), repo=repo)
     if problem:
         logger.error("verify_config_invalid", repo=repo, problem=problem)
     return config, problem

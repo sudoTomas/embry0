@@ -17,7 +17,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from embry0.services.linear_regex import UnsupportedPattern, compile_linear_search
-from embry0.workflows.qa._glob_match import GlobPatternError, check_glob
+from embry0.workflows.qa._glob_match import NEGATION, GlobPatternError, check_glob, warn_once
 from embry0.workflows.qa.browser_backends import backend_for
 
 #: The validation context a stored document is read with (:func:`parse_qa_yaml_v2`): a glob this grammar no
@@ -25,10 +25,6 @@ from embry0.workflows.qa.browser_backends import backend_for
 STORED: dict[str, bool] = {"stored": True}
 
 logger = structlog.get_logger(__name__)
-
-#: Why a glob starting with ``!`` is refused when a setup is written. The grammar has no negation: such a glob only
-#: ever matched a path that starts with ``!``. A setup stored with one keeps reading, as before, and says so.
-NEGATION = "a glob cannot start with '!': negation is not supported, so list only the paths it should match"
 
 
 def _check_glob(pattern: str, info: ValidationInfo) -> None:
@@ -613,12 +609,13 @@ QAYamlConfigV2.model_rebuild()
 # -------- Parsers --------
 
 
-def parse_qa_yaml_v2(raw: str, *, writing: bool = False) -> QAYamlConfigV2:
+def parse_qa_yaml_v2(raw: str, *, writing: bool = False, repo: str = "") -> QAYamlConfigV2:
     """``raw`` as a test setup. A stored one by default; ``writing`` for a text about to be stored, which may hold
     only globs this release writes (a stored one also reads a glob the release before wrote, as it read it).
 
-    A stored setup holding a glob that starts with ``!`` reads, and each read logs one warning naming them
-    (:func:`negated_globs`); a written one is refused (:data:`NEGATION`).
+    A stored setup holding a glob that starts with ``!`` reads, and logs one warning naming them
+    (:func:`negated_globs`) once per ``repo`` (the repository it is read for) and text; a written one is refused
+    (:data:`NEGATION`).
     """
     data = yaml.safe_load(raw)
     if not isinstance(data, dict):
@@ -626,7 +623,9 @@ def parse_qa_yaml_v2(raw: str, *, writing: bool = False) -> QAYamlConfigV2:
     cfg = QAYamlConfigV2.model_validate(data, context=None if writing else STORED)
     negated = negated_globs(cfg)
     if negated:
-        logger.warning("qa_config_negated_globs", globs=[g[:100] for g in negated[:10]], count=len(negated))
+        warn_once(
+            "qa_config_negated_globs", repo=repo, text=raw, globs=[g[:100] for g in negated[:10]], count=len(negated)
+        )
     return cfg
 
 

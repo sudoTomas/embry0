@@ -35,16 +35,43 @@ stored setup keeps working after the upgrade.
 from __future__ import annotations
 
 import functools
+import hashlib
 import re
+import threading
 import warnings
+from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Final
 
 import structlog
 
-__all__ = ["Glob", "GlobPatternError", "check_glob", "compile_glob", "match_any", "read_glob"]
+__all__ = ["NEGATION", "Glob", "GlobPatternError", "check_glob", "compile_glob", "match_any", "read_glob", "warn_once"]
 
 logger = structlog.get_logger(__name__)
+
+#: Why a glob starting with ``!`` is refused when a document holding it is written (a test setup, a verification
+#: config). The grammar has no negation: such a glob only ever matched a path that starts with ``!``. A document
+#: stored with one keeps reading, as before, and says so (:func:`warn_once`).
+NEGATION: Final = "a glob cannot start with '!': negation is not supported, so list only the paths it should match"
+
+#: The (event, repository, text) a warning was logged for, newest last, so each is logged once (at most this many).
+_WARNED: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+_WARNED_MOST: Final = 4096
+_warned_lock = threading.Lock()
+
+
+def warn_once(event: str, *, repo: str, text: str, **fields: object) -> None:
+    """Log ``event`` once per repository and text: a stored document is read at every run, and its warning is
+    worth a line when it is first read, or changed, not at each read."""
+    key = (event, repo, hashlib.sha256(text.encode()).hexdigest())
+    with _warned_lock:
+        if key in _WARNED:
+            _WARNED.move_to_end(key)
+            return
+        _WARNED[key] = None
+        if len(_WARNED) > _WARNED_MOST:
+            _WARNED.popitem(last=False)
+    logger.warning(event, repo=repo or None, **fields)
 
 
 class GlobPatternError(ValueError):
