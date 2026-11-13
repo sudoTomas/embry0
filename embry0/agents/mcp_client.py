@@ -29,6 +29,8 @@ from typing import Any
 
 import structlog
 
+from embry0.agents.stream_lines import read_line
+
 logger = structlog.get_logger(__name__)
 
 MCP_TOOL_PREFIX = "mcp__"
@@ -274,7 +276,13 @@ class McpStdioClient:
         if proc is None or proc.stdout is None:
             raise McpClientError(f"mcp server {self.server_name!r} is not running")
         while True:
-            line = await proc.stdout.readline()
+            line = await read_line(proc.stdout)
+            if line is None:
+                # Dropped through its newline, so the next request reads from the line after it (#466).
+                raise McpClientError(
+                    f"mcp server {self.server_name!r}: a line it sent while answering {method} is longer than "
+                    f"the client's limit of {_STREAM_LIMIT:,} bytes"
+                )
             if not line:
                 raise McpClientError(
                     f"mcp server {self.server_name!r} exited (code {proc.returncode}) before responding to {method}"
