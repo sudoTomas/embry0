@@ -1,8 +1,10 @@
 <div align="center">
 
+<img src="frontend/public/apple-touch-icon.png" width="72" alt="embry0 logo" />
+
 # embry0
 
-**Autonomous agent orchestration engine — GitHub issue in, reviewed pull request out.**
+**Software that is alive.** An issue goes in. A reviewed, browser-tested pull request comes out.
 
 [![CI](https://github.com/sudoTomas/embry0/actions/workflows/ci.yml/badge.svg)](https://github.com/sudoTomas/embry0/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)](https://python.org)
@@ -10,58 +12,78 @@
 [![LangGraph](https://img.shields.io/badge/langgraph-orchestration-06b6d4)](https://github.com/langchain-ai/langgraph)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Features](#features) · [Security model](#security-model) · [Docs](#documentation)
+
+<img src="docs/assets/demo.gif" width="100%" alt="embry0 in use: the guild hall, the map, a job running live, a finished job with its checked finish line, and the pipeline it ran" />
+
 </div>
 
----
+embry0 is a self-hosted engine that resolves issues from GitHub, GitLab or Linear by sending AI agents through a pipeline. A **triage agent** plans the work. A **developer agent** writes the code and opens the pull request. A **reviewer agent** sends it back until it is right. An optional **QA agent** boots your app and checks the acceptance criteria in a real browser. Every agent runs inside its own locked-down Docker sandbox, and you stay in charge: agents ask when they are unsure, and nothing merges without you.
 
-embry0 autonomously resolves GitHub issues by dispatching AI agents through a configurable pipeline: an LLM **triage agent** plans the work, a **developer agent** writes the code and opens the PR, a **reviewer agent** gates it, and an optional **QA agent** boots your full-stack app and validates acceptance criteria in a real browser. Built on **LangGraph** for orchestration and the **Claude Agent SDK** for execution, with every agent locked inside an isolated Docker sandbox.
+You run it from a dashboard that can look like a pixel-art guild or a plain operations console. It is the same data either way.
 
-**Where your code lives.** Agents work on a repository only inside its job's sandbox container, which is deleted when the job ends. Copies outlive it on the host: the job's event log and saved agent session in PostgreSQL (files the agent read and wrote, its shell commands) and pre-built QA images and per-repo cache volumes (a checkout). By default they are kept forever; `JOB_LOG_RETENTION_DAYS`, `AGENT_SESSION_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` bound them, though not the registry's copies of QA images or database backups. [Data retention](SECURITY.md#data-retention) lists every copy and how long it stays.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/guild-hall.png" alt="The guild hall: agents at their desks, quests on offer and finished work waiting for review" /><br /><sub><b>The guild hall.</b> Your agents at their desks, the work embry0 found, and what is waiting for your review.</sub></td>
+    <td width="50%"><img src="docs/assets/guild-map.png" alt="The map: each repository drawn as a village with open work around it" /><br /><sub><b>The map.</b> Each repository is a village. Open work appears around it as quests.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/job-brief.png" alt="A finished job with its brief, a checked finish line and the pull request" /><br /><sub><b>A finished job.</b> The brief, a finish line checked off with evidence, and the pull request.</sub></td>
+    <td><img src="docs/assets/job-live.png" alt="A running job: the pipeline graph beside the agent's live tool calls" /><br /><sub><b>A job, live.</b> Reasoning, tool calls, turns and cost as they happen.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/ask-human.png" alt="A job paused while the developer agent asks a question" /><br /><sub><b>It asks first.</b> An unsure agent pauses the job and sends you the question.</sub></td>
+    <td><img src="docs/assets/pipelines.png" alt="The pipeline editor showing triage, developer, reviewer and QA as a graph" /><br /><sub><b>Pipelines.</b> Each workflow is the graph it runs, and you can edit it.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/agents.png" alt="The agent roster with levels, models and providers" /><br /><sub><b>The roster.</b> Core agents plus read-only specialists, each with its own model and limits.</sub></td>
+    <td><img src="docs/assets/achievements.png" alt="The achievements diary with tiered badges" /><br /><sub><b>Achievements.</b> Badges agents earn from what actually happened: merges that landed, errors that stayed dead.</sub></td>
+  </tr>
+</table>
+
+<sub>The screenshots come from a running instance. Repository names, issue text and people are demo data.</sub>
+
+## How it works
 
 ```mermaid
-graph TB
-    subgraph Input
-        GH["GitHub Webhook"]
-        LN["Linear Webhook<br/><small>embry0 label</small>"]
-        API["REST API"]
+graph LR
+    subgraph In["Work comes in"]
+        GH["GitHub / GitLab<br/>webhook"]
+        LN["Linear<br/>webhook"]
+        FOUND["Work embry0 finds<br/><small>leads, log watcher</small>"]
     end
 
-    subgraph embry0["embry0 Orchestrator"]
-        TR["Triage Agent<br/><small>LLM-based pipeline config</small>"]
-        LG["LangGraph Engine<br/><small>StateGraph + Checkpointing</small>"]
+    subgraph Orch["Orchestrator"]
+        TR["Triage agent<br/><small>plans and routes</small>"]
+        LG["LangGraph engine<br/><small>checkpointed in PostgreSQL</small>"]
     end
 
-    subgraph Sandbox["Docker Sandbox (per job)"]
-        DEV["Developer Agent<br/><small>Code + Git + PR</small>"]
-        REV["Reviewer Agent<br/><small>Code review</small>"]
-        QA["QA Agent (optional gate)<br/><small>Boots app + Playwright validation</small>"]
+    subgraph Sandbox["One sandbox per job"]
+        DEV["Developer"]
+        REV["Reviewer"]
+        QA["QA<br/><small>real browser</small>"]
     end
 
-    subgraph Output
-        PR["Pull Request"]
-        WS["WebSocket<br/><small>Live events</small>"]
-        DB[("PostgreSQL<br/><small>Jobs + Checkpoints</small>")]
-        MIN[("MinIO<br/><small>QA artifacts</small>")]
-    end
+    PX["Credential proxies<br/><small>forge tokens stay here</small>"]
+    YOU(["You<br/><small>dashboard, Telegram,<br/>GitHub comment</small>"])
+    PR["Pull request"]
 
-    GH -->|webhook| TR
-    LN -->|webhook| TR
-    API -->|job request| TR
-    TR --> LG
-    LG -->|docker exec| DEV
+    GH --> TR
+    LN --> TR
+    FOUND --> TR
+    TR --> LG --> DEV
     DEV --> REV
-    REV -->|rejected| DEV
-    REV -->|"approved + needs_qa=false"| PR
-    REV -->|"approved + needs_qa=true"| QA
-    QA -->|"passed"| PR
-    QA -->|"failed → triage"| TR
-    QA --> MIN
-    LG --> WS
-    LG --> DB
-
-    style embry0 fill:#0f1419,stroke:#06b6d4,color:#e4e4e7
-    style Sandbox fill:#1a1a2e,stroke:#f59e0b,color:#e4e4e7
+    REV -->|changes requested| DEV
+    REV -->|approved| QA
+    QA -->|failed| TR
+    QA -->|passed| PR
+    DEV -.->|git push| PX -.-> PR
+    DEV -.->|questions| YOU
+    YOU -.->|answers| DEV
+    YOU -.->|merge approval| PR
 ```
+
+**Where your code lives.** Agents work on a repository only inside its job's sandbox container, which is deleted when the job ends. Copies outlive it on the host: the job's event log and saved agent session in PostgreSQL (files the agent read and wrote, its shell commands) and pre-built QA images and per-repo cache volumes (a checkout). By default they are kept forever; `JOB_LOG_RETENTION_DAYS`, `AGENT_SESSION_RETENTION_DAYS` and `QA_IMAGE_RETENTION_DAYS` bound them, though not the registry's copies of QA images or database backups. [Data retention](SECURITY.md#data-retention) lists every copy and how long it stays.
 
 ## Features
 
@@ -73,6 +95,11 @@ graph TB
 - **Issue tracker with GitHub two-way sync** — board and list views, webhook-triggered or manual dispatch.
 - **Live dashboard** — React SPA streaming agent thinking, tool calls, costs, and QA evidence over WebSocket.
 - **Budget controls** — per-job, daily, and monthly caps with soft/hard overrun modes.
+- **Your choice of model** — Claude by subscription token or API key, xAI Grok, any OpenAI-compatible provider (OpenAI, OpenRouter, Gemini, Groq, DeepSeek or your own endpoint), or a local model behind vLLM, Ollama or LM Studio, chosen per agent. See [docs/providers.md](docs/providers.md).
+- **Work it finds by itself** — leads from Linear and GitHub, and a log watcher that drafts issues from production logs and can watch embry0 itself. See [docs/leads.md](docs/leads.md) and [docs/self-watching.md](docs/self-watching.md).
+- **Pull request review** — advisory reviews posted on pull and merge requests. See [docs/pr-review.md](docs/pr-review.md).
+- **Organizations, areas and maps** — per-organization standards, monorepo areas and a map of each repository. See [docs/standards.md](docs/standards.md), [docs/areas.md](docs/areas.md) and [docs/maps.md](docs/maps.md).
+- **Built for a team** — Auth0 single sign-on, API keys with scopes, an audit log, Prometheus metrics and an MCP server. See [docs/sso.md](docs/sso.md).
 
 ## Security model
 
