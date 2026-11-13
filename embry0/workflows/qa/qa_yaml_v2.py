@@ -651,6 +651,45 @@ def negated_globs(cfg: BaseModel) -> list[str]:
     return found
 
 
+def unusable_body_regexes(cfg: BaseModel) -> list[tuple[str, str]]:
+    """Each ready check of ``cfg`` whose ``expect_body_regex`` a boot cannot search, as ``(http, why)``, in
+    document order, once each: one a setup stored before the pattern was checked can hold
+    (:func:`body_regex_unusable`)."""
+    found: dict[tuple[str, str], str] = {}
+
+    def walk(value: Any) -> None:
+        if isinstance(value, QAReadyCheck) and value.expect_body_regex:
+            why = body_regex_unusable(value.expect_body_regex)
+            if why is not None:
+                found.setdefault((value.http, value.expect_body_regex), why)
+        if isinstance(value, BaseModel):
+            for name in type(value).model_fields:
+                walk(getattr(value, name))
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list | tuple):
+            for item in value:
+                walk(item)
+
+    walk(cfg)
+    return [(http, why) for (http, _pattern), why in found.items()]
+
+
+def body_regex_warning(cfg: BaseModel) -> str | None:
+    """What a person is told of a setup whose ready checks hold a body pattern a boot cannot search: it is kept, and
+    every boot with it fails at once. None when it holds none."""
+    unusable = unusable_body_regexes(cfg)
+    if not unusable:
+        return None
+    listed = "; ".join(f"{http}: {why}" for http, why in unusable[:5])
+    more = f" and {len(unusable) - 5} more" if len(unusable) > 5 else ""
+    return (
+        f"This test setup holds ready checks whose body pattern a boot cannot search ({listed}{more}). It is kept as "
+        "it was, but every boot with it fails at once; a new save refuses them."
+    )
+
+
 def negation_warning(cfg: BaseModel) -> str | None:
     """What a person is told of a setup holding a glob that starts with ``!``: it reads, and matches only paths
     that start with ``!``. None when it holds none."""

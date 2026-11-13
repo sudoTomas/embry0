@@ -386,3 +386,29 @@ async def test_an_undo_puts_back_a_setup_with_a_negated_glob_as_it_was_and_says_
     )
     plain = await client.post(f"{HISTORY}/{resp.json()['revision_id']}/undo")
     assert plain.status_code == 200 and "warnings" not in plain.json(), "an undo to a setup without one says nothing"
+
+
+UNSEARCHABLE = V1 + (
+    "defaults:\n  ready_checks:\n    - http: http://localhost:3000/\n      expect_body_regex: '(?=.*ok)'\n"
+)
+
+
+@pytest.mark.requires_postgres
+async def test_an_undo_puts_back_a_setup_with_a_body_pattern_no_boot_can_search_as_it_was_and_says_so(
+    client, db_with_migrations
+) -> None:
+    """A body pattern the boot cannot search is refused when a setup is written, but an undo puts back a past state
+    exactly, with a warning in its answer, as it does for a negated glob."""
+    await client.put(QA, content=V1)
+    changed = (await client.put(QA, content=V2)).json()["revision_id"]
+    await db_with_migrations.execute(
+        "UPDATE repo_config_revisions SET before = $1::jsonb WHERE id = $2", {"yaml_text": UNSEARCHABLE}, changed
+    )
+    resp = await client.post(f"{HISTORY}/{changed}/undo")
+    assert resp.status_code == 200, f"an undo of a setup with such a pattern was refused: {resp.text}"
+    assert (await client.get(QA)).text == UNSEARCHABLE, "the earlier text, byte for byte"
+    warnings = resp.json().get("warnings") or []
+    assert len(warnings) == 1, (
+        f"the undo's answer does not say the setup it put back holds such a pattern: {resp.json()}"
+    )
+    assert "'(?=.*ok)'" in warnings[0] and "every boot with it fails at once" in warnings[0], warnings

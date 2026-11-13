@@ -16,7 +16,12 @@ from typing import Any, Protocol
 from embry0.workflows.qa.capabilities import profile_has_browser
 from embry0.workflows.qa.qa_yaml_errors import located_plain_errors
 from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig, resolve_app_config
-from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2, _is_sandbox_loopback, parse_qa_yaml_v2
+from embry0.workflows.qa.qa_yaml_v2 import (
+    QAYamlConfigV2,
+    _is_sandbox_loopback,
+    parse_qa_yaml_v2,
+    unusable_body_regexes,
+)
 from embry0.workspace_providers.registry import available_provider_names
 
 # The builtin browser machine every "use this instead" points at.
@@ -71,6 +76,7 @@ async def check_qa_config(
     profiles = {rc.sandbox_profile: await profiles_repo.get(rc.sandbox_profile) for rc in resolved}
     problems += _machine_problems(resolved, profiles)
     problems += _provider_problems(cfg)
+    problems += _body_regex_problems(cfg)
     return {
         "ok": not problems,
         "problems": problems,
@@ -127,6 +133,19 @@ def _machine_problems(
 
 def _use_browser() -> str:
     return f"Use '{BROWSER_MACHINE}'."
+
+
+def _body_regex_problems(cfg: QAYamlConfigV2) -> list[dict[str, str]]:
+    """A ready check whose body pattern a boot cannot search: a stored setup can hold one written before the check
+    (a save refuses it), and every boot with it fails at once (``embry0.workflows.qa.boot``)."""
+    return [
+        _problem(
+            f"ready check {http}",
+            f"Every test run would stop before it starts: its {why}.",
+            "Write the pattern without look-around or back-references, or remove it.",
+        )
+        for http, why in unusable_body_regexes(cfg)
+    ]
 
 
 def _provider_problems(cfg: QAYamlConfigV2) -> list[dict[str, str]]:
