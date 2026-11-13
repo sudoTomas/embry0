@@ -195,8 +195,54 @@ class RunWithRequest(BaseModel):
 
 #: ``pipeline_config`` keys embry0 writes itself, for work it started and checked: a request never sets them. A
 #: map's ``areas_proposal_id`` names the proposal its job finishes; ``proposal_id`` the test setup an onboarding
-#: job proposes; ``run_with`` the model and key a person chose, checked when the job started.
-INTERNAL_PIPELINE_KEYS: tuple[str, ...] = ("areas_proposal_id", "proposal_id", "run_with")
+#: job proposes; ``run_with`` the model and key a person chose, checked when the job started. The others steer a job
+#: embry0 starts: the models its agents run (``agent_models_override``, from the checked ``agent_models``, and
+#: ``local_first_model``), how a budget stops it (``budget_overrun_mode``), whether a context audit opens a pull
+#: request (``open_pr``) and what the audit schedule compares its next reading with (``context_fingerprint``,
+#: ``head_sha``), who started it (``actor``), and what a QA, onboarding or pull request review job runs on
+#: (:data:`STARTED_JOB_KEYS`). ``tests/unit/api/test_pipeline_config_keys.py`` finds every key embry0 writes into a
+#: job's ``pipeline_config`` and fails until it is listed here or is one of :data:`CLIENT_PIPELINE_KEYS`.
+STARTED_JOB_KEYS: tuple[str, ...] = (
+    # A QA or onboarding job (IssueExecutor.start_job, start_onboard_job).
+    "pipeline",
+    "branch",
+    "skip_smoke",
+    "qa",
+    # A pull request review, frozen when it was triggered (embry0.services.pr_review.dispatcher).
+    "review_id",
+    "trigger_key",
+    "repo",
+    "forge",
+    "number",
+    "url",
+    "title",
+    "body",
+    "author",
+    "head_ref",
+    "base_ref",
+    "from_fork",
+    "trigger",
+    "depth",
+    "model",
+)
+INTERNAL_PIPELINE_KEYS: tuple[str, ...] = (
+    "areas_proposal_id",
+    "proposal_id",
+    "run_with",
+    "agent_models_override",
+    "local_first_model",
+    "budget_overrun_mode",
+    "open_pr",
+    "context_fingerprint",
+    "head_sha",
+    "actor",
+    *STARTED_JOB_KEYS,
+)
+#: ``pipeline_config`` keys ``POST /jobs`` writes from its own fields, which a request may also set there: the same
+#: value, held to the same bound (``max_budget_usd``, at most 1000). The field wins over the key when both are sent.
+CLIENT_PIPELINE_KEYS: tuple[str, ...] = ("max_budget_usd", "execution_mode_override", "auth_mode_override")
+#: The bound of ``max_budget_usd``, as a field and as a ``pipeline_config`` key.
+MAX_BUDGET_USD_LE = 1000
 
 
 class JobCreateRequest(ServableFields):
@@ -213,7 +259,7 @@ class JobCreateRequest(ServableFields):
     pipeline_template: str | None = None
     pipeline_config: dict[str, Any] | None = None
     sandbox_profile: str | None = None
-    max_budget_usd: float | None = Field(None, gt=0, le=1000)
+    max_budget_usd: float | None = Field(None, gt=0, le=MAX_BUDGET_USD_LE)
     additional_context: str | None = None
     agent_models: dict[str, str] | None = Field(
         default=None,
@@ -242,10 +288,20 @@ class JobCreateRequest(ServableFields):
     @field_validator("pipeline_config")
     @classmethod
     def _refuse_internal_keys(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Refused rather than dropped, so a caller never believes it took effect (RAV-1058)."""
+        """Refused rather than dropped, so a caller never believes it took effect (RAV-1058). A ``max_budget_usd``
+        there is held to the field's bound."""
         named = [key for key in INTERNAL_PIPELINE_KEYS if key in (v or {})]
         if named:
             raise ValueError(f"pipeline_config cannot set {', '.join(named)}: embry0 sets it for the work it starts")
+        if v is not None and v.get("max_budget_usd") is not None:
+            budget = v["max_budget_usd"]
+            # A number as JSON writes one: a string or a boolean is not one, whatever it would read as.
+            if isinstance(budget, bool) or not isinstance(budget, int | float) or not 0 < budget <= MAX_BUDGET_USD_LE:
+                raise ValueError(
+                    f"pipeline_config.max_budget_usd must be a number above 0 and at most {MAX_BUDGET_USD_LE}, "
+                    "as max_budget_usd"
+                )
+            v = {**v, "max_budget_usd": float(budget)}
         return v
 
     @model_validator(mode="after")

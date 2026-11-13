@@ -320,6 +320,8 @@ async def job_create(
     - QA pipeline: pipeline="qa" + repo + branch (optional qa overrides object).
     - Onboard: pipeline="onboard" + repo.
     task is required for every pipeline except qa/onboard.
+    pipeline_config cannot set the keys embry0 writes itself (run_with, open_pr, actor,
+    pipeline, branch, ...): use the matching argument instead.
     """
     return await _get_client().job_create(
         task=task,
