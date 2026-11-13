@@ -147,8 +147,15 @@ class ForgeClient:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         verify: ssl.SSLContext | bool | str = True,
         credential_resolver: CredentialResolver | None = None,
+        owner_env_tokens: bool = True,
     ) -> None:
+        """``owner_env_tokens`` False is for a client built with a token its caller chose (a credential to probe, the
+        account an organization's discovery or actions use, one listing's own token): that token is sent on every
+        call, and a call naming a repository never reads its owner's environment token (``GITHUB_TOKEN__<OWNER>``,
+        ``GITLAB_TOKEN__<GROUP>``) in its place. Such a variable is not one owner's alone: ``my-org`` and
+        ``my_org`` read the same one."""
         self._default_token = default_token or ""
+        self._owner_env_tokens = owner_env_tokens
         self._http = http_client
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
