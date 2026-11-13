@@ -279,7 +279,8 @@ class QAAppResultsRepository:
     ) -> list[RunSummary]:
         """Recent runs for a repo, newest first. Each row aggregates per-app
         results into an overall status. ``repos`` (lower-cased slugs) keeps
-        only the runs of jobs working on those repositories; None keeps every run."""
+        only the runs of jobs working on those repositories; None keeps every run.
+        A job with no ``started_at`` is no run, as in :meth:`list_repos_with_runs` (#481)."""
         sql = f"""
         SELECT
             j.job_id,
@@ -293,7 +294,7 @@ class QAAppResultsRepository:
             END AS overall_status
         FROM jobs j
         JOIN qa_app_results q ON q.job_id = j.job_id
-        WHERE j.repo = $1 AND {_narrowed(4)}
+        WHERE j.repo = $1 AND j.started_at IS NOT NULL AND {_narrowed(4)}
         GROUP BY j.job_id, j.repo, j.started_at
         ORDER BY j.started_at DESC NULLS LAST, j.job_id DESC
         LIMIT $2 OFFSET $3
@@ -349,7 +350,8 @@ class QAAppResultsRepository:
         repos: Sequence[str] | None = None,
     ) -> list[AppHistoryRow]:
         """Last-N qa_app_results rows for one (repo, app_name) pair, newest first. ``repos`` (lower-cased
-        slugs) keeps only the runs of jobs working on those repositories; None keeps every run."""
+        slugs) keeps only the runs of jobs working on those repositories; None keeps every run. A job with no
+        ``started_at`` is no run, as in :meth:`list_repos_with_runs` (#481)."""
         sql = f"""
         SELECT
             q.job_id,
@@ -360,7 +362,7 @@ class QAAppResultsRepository:
             q.failure_summary
         FROM qa_app_results q
         JOIN jobs j ON j.job_id = q.job_id
-        WHERE j.repo = $1 AND q.app_name = $2 AND {_narrowed(4)}
+        WHERE j.repo = $1 AND q.app_name = $2 AND j.started_at IS NOT NULL AND {_narrowed(4)}
         ORDER BY j.started_at DESC NULLS LAST, q.id DESC
         LIMIT $3
         """

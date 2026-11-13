@@ -155,13 +155,16 @@ async def list_app_history(
 
 @router.get("/qa/runs/{run_id}", response_model=RunDetail)
 async def get_run(run_id: str, request: Request) -> RunDetail:
-    """Full run detail with per-app results inlined."""
+    """Full run detail with per-app results inlined. A job that never recorded a start is no run, as the lists
+    leave it out (#481)."""
     qa_repo = request.app.state.qa_app_results_repo
     jobs_repo = request.app.state.jobs_repo
 
     job = None if await job_hidden(request, run_id) else await jobs_repo.get(run_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"run {run_id!r} not found")
+    if job.get("started_at") is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id!r} never started")
 
     rows = await qa_repo.list_for_job(run_id)
     if not rows:
