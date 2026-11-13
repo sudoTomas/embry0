@@ -26,6 +26,8 @@ session lock when the backend exits.
 
 import asyncio
 import time
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 
@@ -4568,7 +4570,115 @@ deliverable under an "Assumptions" heading.$seed$
         # pattern.
         _credential_text_rewrite_sql(),
     ),
+    (
+        148,
+        "credential bindings: an owner binding names one owner exactly, on the forge it is read on",
+        # Until this release an owner binding was stored with '-' and '.' read
+        # as '_' (github:my-org as github:my_org), so it served every owner
+        # whose name reads the same, and a model account bound to an owner
+        # served the owner's name on either forge. Owners are now compared
+        # exactly (normalize_scope_value, CredentialResolver.owner_of), and a
+        # model account is read on the repository's own forge alone. Each
+        # stored owner binding whose owner part holds no '-' or '.' (one with
+        # either was written exactly) gets its owner's spelling here, by the
+        # forge its prefix names, whatever its role:
+        #
+        # - github: a login holds letters, digits and '-', so each '_' was a
+        #   '-' (github:my_org becomes github:my-org), unless exactly one
+        #   known GitHub owner (a registered repository's or an
+        #   organization's) reads as it, whose spelling it takes: a managed
+        #   user's login (handle_shortcode) holds '_'. None is removed.
+        # - gitlab, whose paths hold '_', '-' and '.': a part with no '_' was
+        #   never rewritten and is kept; any other takes the spelling of the
+        #   one known GitLab owner that reads as it, and is removed when
+        #   several or none do, rather than given to a group it may not be
+        #   for.
+        #
+        # One whose new scope already holds a binding of the same role and
+        # provider is removed too. Each removal raises a WARNING (the runner
+        # logs it as migration_message) and writes a credential.bound audit
+        # row naming the binding, its old value and why.
+        """
+        CREATE TEMP TABLE owner_binding_known ON COMMIT DROP AS
+            SELECT forge, lower(split_part(repo, '/', 1)) AS owner FROM repos
+            UNION SELECT forge, lower(owner) FROM organizations;
+
+        CREATE TEMP TABLE owner_binding_fix ON COMMIT DROP AS
+        SELECT b.id, b.role, b.provider, b.credential_id, b.scope_value AS old_value,
+               split_part(b.scope_value, ':', 1) AS prefix,
+               split_part(b.scope_value, ':', 2) AS part,
+               COALESCE((
+                   SELECT array_agg(k.forge || ':' || k.owner ORDER BY k.forge, k.owner)
+                     FROM owner_binding_known k
+                    WHERE translate(k.owner, '-.', '__') = split_part(b.scope_value, ':', 2)
+                      AND k.forge = split_part(b.scope_value, ':', 1)
+               ), '{}') AS read_by,
+               NULL::text AS new_value,
+               NULL::text AS why
+          FROM credential_bindings b
+         WHERE b.scope_kind = 'owner'
+           AND translate(split_part(b.scope_value, ':', 2), '-.', '') = split_part(b.scope_value, ':', 2);
+
+        UPDATE owner_binding_fix SET new_value = CASE
+            WHEN prefix = 'github' AND cardinality(read_by) = 1 THEN read_by[1]
+            WHEN prefix = 'github' THEN 'github:' || replace(part, '_', '-')
+            WHEN strpos(part, '_') = 0 THEN old_value
+            WHEN cardinality(read_by) = 1 THEN read_by[1]
+        END;
+        UPDATE owner_binding_fix
+           SET why = CASE WHEN cardinality(read_by) > 1 THEN 'several known owners read as it'
+                          ELSE 'no known owner reads as it' END
+         WHERE new_value IS NULL;
+
+        UPDATE owner_binding_fix f
+           SET new_value = NULL, why = 'its new scope already holds a binding of this role and provider'
+         WHERE f.new_value IS NOT NULL AND f.new_value <> f.old_value
+           AND EXISTS (
+                SELECT 1 FROM credential_bindings b
+                  LEFT JOIN owner_binding_fix o ON o.id = b.id
+                 WHERE b.scope_kind = 'owner' AND b.id <> f.id AND b.role = f.role AND b.provider = f.provider
+                   AND CASE WHEN o.id IS NULL THEN b.scope_value ELSE o.new_value END = f.new_value
+           );
+
+        DO $$
+        DECLARE r record;
+        BEGIN
+            FOR r IN SELECT * FROM owner_binding_fix WHERE new_value IS NULL ORDER BY id LOOP
+                RAISE WARNING 'owner binding % (%, % %) removed: %', r.id, r.old_value, r.role, r.provider, r.why;
+            END LOOP;
+            FOR r IN SELECT * FROM owner_binding_fix WHERE new_value <> old_value ORDER BY id LOOP
+                RAISE NOTICE 'owner binding % (% %) moved from % to %', r.id, r.role, r.provider, r.old_value,
+                    r.new_value;
+            END LOOP;
+        END $$;
+
+        INSERT INTO audit_log (action, actor, details)
+        SELECT 'credential.bound', 'embry0:migration',
+               jsonb_build_object(
+                   'scope_kind', 'owner', 'scope_value', old_value, 'credential_ids', '[]'::jsonb,
+                   'removed_binding_id', id, 'credential_id', credential_id, 'role', role, 'provider', provider,
+                   'read_by', to_jsonb(read_by), 'reason', why
+               )
+          FROM owner_binding_fix WHERE new_value IS NULL ORDER BY id;
+
+        DELETE FROM credential_bindings b USING owner_binding_fix f WHERE b.id = f.id AND f.new_value IS NULL;
+        UPDATE credential_bindings b SET scope_value = f.new_value
+          FROM owner_binding_fix f WHERE b.id = f.id AND f.new_value <> f.old_value;
+        """,
+    ),
 ]
+
+
+def _messages_of(version: int) -> Callable[[Any, Any], None]:
+    """A log listener that logs each message a migration raises (``RAISE WARNING`` or ``NOTICE``) as
+    ``migration_message``: a WARNING at warning level, anything else at info, naming the migration."""
+
+    def log(_connection: Any, message: Any) -> None:
+        severity = str(getattr(message, "severity", "") or "")
+        emit = logger.warning if severity == "WARNING" else logger.info
+        emit("migration_message", version=version, severity=severity, message=str(getattr(message, "message", "")))
+
+    return log
 
 
 async def run_migrations(db: DatabasePool) -> None:
@@ -4627,13 +4737,18 @@ async def run_migrations(db: DatabasePool) -> None:
                 if version in applied:
                     continue
                 logger.info("migration_applying", version=version, description=description)
-                async with conn.transaction():
-                    await conn.execute(sql)
-                    await conn.execute(
-                        "INSERT INTO embry0_migrations (version, description) VALUES ($1, $2)",
-                        version,
-                        description,
-                    )
+                listener = _messages_of(version)
+                conn.add_log_listener(listener)
+                try:
+                    async with conn.transaction():
+                        await conn.execute(sql)
+                        await conn.execute(
+                            "INSERT INTO embry0_migrations (version, description) VALUES ($1, $2)",
+                            version,
+                            description,
+                        )
+                finally:
+                    conn.remove_log_listener(listener)
                 logger.info("migration_applied", version=version)
         finally:
             await conn.execute("SELECT pg_advisory_unlock($1)", MIGRATIONS_ADVISORY_LOCK_KEY)

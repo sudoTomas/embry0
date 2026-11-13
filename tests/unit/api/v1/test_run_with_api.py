@@ -61,6 +61,7 @@ class Creds:
 def app() -> Any:
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
     app.state.credentials_repo = Creds()
+    app.state.repos_repo = MagicMock(forge_or_none=AsyncMock(return_value="github"))
     jobs = MagicMock()
     jobs.create = AsyncMock(return_value="job-1")
     jobs.get = AsyncMock(

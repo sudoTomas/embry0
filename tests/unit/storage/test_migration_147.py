@@ -41,6 +41,7 @@ from embry0.storage.encryption import FernetSecretsProvider
 from embry0.storage.migrations.runner import MIGRATIONS, run_migrations
 from embry0.storage.repositories.credentials import CredentialsRepository
 from embry0.storage.repositories.jobs import JobsRepository
+from embry0.storage.repositories.repos import ReposRepository
 
 #: This migration's number.
 VERSION = 147
@@ -51,10 +52,8 @@ CONFIG = SimpleNamespace(
 )
 
 
-def test_the_credential_text_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_146.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must rewrite the resolver's old failure text"
+def test_the_credential_text_migration_is_listed_once() -> None:
+    """The "last entry" assertion passed to tests/unit/storage/test_migration_148.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 
@@ -154,7 +153,9 @@ async def _cases(db: DatabasePool) -> dict[str, tuple[str, str]]:
         host="api.anthropic.com",
         status="disabled",
     )
-    await _bind(db, pinned_owner, "owner", "github:init_tech", "llm", "anthropic", pinned=True)
+    await _bind(db, pinned_owner, "owner", "github:init-tech", "llm", "anthropic", pinned=True)
+    # A model account is looked up at the owner on the repository's own forge (#478): Init-Tech/app is on GitHub.
+    await db.execute("INSERT INTO repos (repo, forge) VALUES ('init-tech/app', 'github')")
     # One the repository itself pins, quarantined: written as before.
     pinned_repo = await _credential(
         db,
@@ -186,7 +187,7 @@ async def _cases(db: DatabasePool) -> dict[str, tuple[str, str]]:
     pinned_owner_forge = await _credential(
         db, secrets, label="org-bot", provider="github", kind="forge_token", host="github.com", status="disabled"
     )
-    await _bind(db, pinned_owner_forge, "owner", "github:umbrella_corp", "forge", "github", pinned=True)
+    await _bind(db, pinned_owner_forge, "owner", "github:umbrella-corp", "forge", "github", pinned=True)
     # A forge account found nowhere past 500 characters, as a pool of long-named accounts all skipped leaves it: its
     # owner's quarantined, the host's disabled (above), the deployment's quarantined.
     for scope_kind, scope_value in (("owner", "gitlab:longco"), ("global", "")):
@@ -202,7 +203,9 @@ async def _cases(db: DatabasePool) -> dict[str, tuple[str, str]]:
         )
         await _bind(db, account, scope_kind, scope_value, "forge", "gitlab")
 
-    resolver = CredentialResolver(CredentialsRepository(db), secrets, CONFIG, environ={})
+    resolver = CredentialResolver(
+        CredentialsRepository(db), secrets, CONFIG, environ={}, repo_forge=ReposRepository(db).forge_or_none
+    )
     out: dict[str, tuple[str, str]] = {}
 
     async def missing(name: str, call: Any) -> None:
@@ -390,6 +393,11 @@ def _expected(text: str) -> dict[str, Any]:
 
 
 async def _migrate_again(db: DatabasePool) -> None:
+    # Migration 147 runs before 148, on the owner bindings as the release before stored them: '-' and '.' read as
+    # '_' (github:init_tech for Init-Tech). 148 then gives each binding its one owner, as the resolver reads it now.
+    await db.execute(
+        "UPDATE credential_bindings SET scope_value = translate(scope_value, '-.', '__') WHERE scope_kind = 'owner'"
+    )
     await db.execute("DELETE FROM embry0_migrations WHERE version = $1", VERSION)
     await run_migrations(db)
 

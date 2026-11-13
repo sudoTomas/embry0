@@ -11,11 +11,19 @@ from __future__ import annotations
 import os
 
 
+def env_key(owner: str) -> str:
+    """The env variable that holds ``owner``'s token: ``GITHUB_TOKEN__`` and the owner uppercased, '-' as '_'.
+
+    An env variable cannot spell '-', so the name is not one owner's alone: ``my-org`` and ``my_org`` both read
+    ``GITHUB_TOKEN__MY_ORG``. A binding in the credential registry names one owner exactly (docs/credentials.md).
+    """
+    return "GITHUB_TOKEN__" + owner.upper().replace("-", "_")
+
+
 def resolve_github_token(owner: str | None, default: str) -> str:
     if not owner:
         return default
-    key = "GITHUB_TOKEN__" + owner.upper().replace("-", "_")
-    return os.environ.get(key) or default
+    return os.environ.get(env_key(owner)) or default
 
 
 def resolve_for_repo(repo: str | None, default: str) -> str:

@@ -98,14 +98,15 @@ def new_credential_id() -> str:
 def normalize_scope_value(scope_kind: str, scope_value: str) -> str:
     """The form ``CredentialResolver.resolve_forge`` looks each scope up in.
 
-    repo: the lowercase path. owner: ``<provider>:`` kept, the owner lowercased with
-    '-' and '.' as '_' (``CredentialResolver.owner_of``). host: lowercase. global: as given.
+    repo: the lowercase path. owner: ``<provider>:`` kept, the owner lowercased and
+    otherwise exact (``CredentialResolver.owner_of``), so two owners whose names differ
+    only in '-', '.' or '_' never share a binding. host: lowercase. global: as given.
     """
     if scope_kind in ("repo", "host"):
         return scope_value.lower()
     if scope_kind == "owner":
         prefix, sep, owner = scope_value.rpartition(":")
-        return prefix + sep + owner.lower().replace("-", "_").replace(".", "_")
+        return prefix + sep + owner.lower()
     return scope_value
 
 
@@ -311,6 +312,18 @@ class CredentialsRepository:
             "SELECT 1 AS one FROM credentials WHERE provider = $1 AND status <> 'disabled' LIMIT 1", provider
         )
         return row is not None
+
+    async def known_owners(self) -> dict[str, set[str]]:
+        """The owners this deployment knows, lowercased, by forge: those of its registered repositories and its
+        organizations. What the importer names an env key's owner from, when the key could name several."""
+        rows = await self._db.fetch(
+            "SELECT forge, lower(split_part(repo, '/', 1)) AS owner FROM repos"
+            " UNION SELECT forge, lower(owner) FROM organizations"
+        )
+        out: dict[str, set[str]] = {}
+        for r in rows:
+            out.setdefault(str(r["forge"]), set()).add(str(r["owner"]))
+        return out
 
     # -- bindings ------------------------------------------------------------
 

@@ -138,10 +138,15 @@ async def _token_for(
         token = str(getattr(config, "gitlab_token", "") or "")
         key = "GITLAB_TOKEN"
     else:
-        from embry0.execution.github_tokens import resolve_github_token
+        from embry0.execution.github_tokens import env_key, resolve_github_token
 
-        token = resolve_github_token(owner, str(getattr(config, "github_token", "") or ""))
-        key = "GITHUB_TOKEN__" + owner.upper().replace("-", "_")
+        resolver = getattr(st, "credential_resolver", None)
+        if resolver is not None:
+            # An owner's variable another registered owner reads too serves neither of them.
+            token, _served = await resolver.owner_env_token(owner, "github")
+        else:
+            token = resolve_github_token(owner, str(getattr(config, "github_token", "") or ""))
+        key = env_key(owner)
     if not token:
         raise HTTPException(
             status_code=422,

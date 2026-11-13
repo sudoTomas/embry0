@@ -106,11 +106,9 @@ def job_pins_reader(jobs: Any) -> JobPins:
     return read
 
 
-def key_scopes(repo: str | None) -> list[tuple[str, str]]:
-    """The binding scopes whose LLM keys a job on ``repo`` may use: the repo, its owner, and the global pool."""
-    scopes: list[tuple[str, str]] = []
-    if repo and "/" in repo:
-        owner = repo.split("/", 1)[0].lower()
-        scopes += [("repo", repo.lower()), ("owner", f"github:{owner}"), ("owner", f"gitlab:{owner}")]
-    scopes.append(("global", ""))
-    return scopes
+def key_scopes(repo: str | None, forge: str | None) -> list[tuple[str, str]]:
+    """The binding scopes whose LLM keys a job on ``repo`` may use: the repo, its owner on ``forge`` (the forge the
+    repository's work is on; none when unknown), and the global pool, as the resolver reads them."""
+    from embry0.services.credentials.resolver import llm_scopes
+
+    return llm_scopes(repo if repo and "/" in repo else None, forge)

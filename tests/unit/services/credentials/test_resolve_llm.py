@@ -74,13 +74,17 @@ class LlmRepo(FakeRepo):
         return list(self.job_uses.get(job_id, []))
 
 
-def _llm(table=None, *, env=None, credentials_file=None):
+def _llm(table=None, *, env=None, credentials_file=None, forge="github"):
+    async def repo_forge(_repo):
+        return forge
+
     return CredentialResolver(
         LlmRepo(table),
         FakeSecrets(),
         _cfg(),
         environ=env or {},
         credentials_file=credentials_file or "/no/such/credentials.json",
+        repo_forge=repo_forge,
     )
 
 
@@ -142,14 +146,23 @@ async def test_repo_unpinned_unavailable_falls_to_pool():
     assert got.label == "pool" and got.secret == "tok-pool"
 
 
-async def test_owner_binding_prefers_github_scope_then_gitlab():
-    r = _llm(
-        {
-            ("owner", "gitlab:acme", "llm", "anthropic"): [_row("from-gitlab", "tok-gl")],
-            ("owner", "github:acme", "llm", "anthropic"): [_row("from-github", "tok-gh")],
-        }
+async def test_an_owner_binding_serves_the_owners_repositories_on_its_own_forge():
+    """github:acme and gitlab:acme are two owners: a repository reads the one on the forge it is on, and a
+    repository whose forge is unknown reads neither."""
+    table = {
+        ("owner", "gitlab:acme", "llm", "anthropic"): [_row("from-gitlab", "tok-gl")],
+        ("owner", "github:acme", "llm", "anthropic"): [_row("from-github", "tok-gh")],
+        ("global", "", "llm", "anthropic"): [_row("pool", "tok-pool")],
+    }
+    got = {}
+    for forge in ("github", "gitlab", None):
+        r = _llm(table, forge=forge)
+        got[forge] = (await r.resolve_llm("Acme/Widgets", "anthropic")).label
+    assert got == {"github": "from-github", "gitlab": "from-gitlab", None: "pool"}, (
+        f"each forge's repository reads its own owner's account, an unknown one neither: {got}"
     )
-    assert (await r.resolve_llm("Acme/Widgets", "anthropic")).label == "from-github"
+    trace = (await _llm(table, forge=None).resolve_llm("Acme/Widgets", "anthropic")).trace
+    assert "owner:acme -> skipped (the repository's forge is unknown)" in trace, trace
 
 
 async def test_env_fallback_anthropic_token_then_file(tmp_path):

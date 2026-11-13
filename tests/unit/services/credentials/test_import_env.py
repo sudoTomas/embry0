@@ -15,9 +15,13 @@ class FakeSecrets:
 
 
 class FakeRepo:
-    def __init__(self):
+    def __init__(self, known=None):
         self.rows = {}  # (provider,label) -> row
         self.bindings = {}  # (scope_kind, scope_value) -> list
+        self.known = known or {}  # forge -> the owners registered there
+
+    async def known_owners(self):
+        return {forge: set(owners) for forge, owners in self.known.items()}
 
     async def find_by_label(self, provider, label):
         return self.rows.get((provider, label))
@@ -73,20 +77,68 @@ def _cfg(github_token="", gitlab_token=""):
 
 
 async def test_imports_default_and_owner_tokens_with_bindings() -> None:
-    repo = FakeRepo()
+    repo = FakeRepo(known={"gitlab": {"group-x"}})
     env = {"GITHUB_TOKEN__ACME": "tok-acme", "GITLAB_TOKEN__GROUP_X": "tok-gl"}
     report = await import_from_env(repo, FakeSecrets(), _cfg(github_token="tok-default"), environ=env)
     assert sorted(report.created) == ["github/acme", "github/default", "gitlab/group_x"]
     assert sorted(report.bound) == [
         "global:forge -> github/default",
         "owner:github:acme:forge -> github/acme",
-        "owner:gitlab:group_x:forge -> gitlab/group_x",
-    ]
+        "owner:gitlab:group-x:forge -> gitlab/group_x",
+    ], f"GITLAB_TOKEN__GROUP_X is bound to group-x, the known group whose key it is: {report.bound}"
     assert repo.rows[("gitlab", "group_x")]["host"] == "gitlab.example.com"
     assert [b["credential_id"] for b in repo.bindings[("global", "")]] == ["cred-default"]
     assert repo.bindings[("owner", "github:acme")][0]["credential_id"] == "cred-acme"
-    assert repo.bindings[("owner", "gitlab:group_x")][0]["credential_id"] == "cred-group_x"
+    assert repo.bindings[("owner", "gitlab:group-x")][0]["credential_id"] == "cred-group_x"
     assert repo.rows[("github", "acme")]["secret_ciphertext"] == "enc:tok-acme"
+
+
+def _owner_bindings(repo: FakeRepo) -> dict[str, str]:
+    return {v: rows[0]["credential_id"] for (k, v), rows in repo.bindings.items() if k == "owner" and rows}
+
+
+async def test_an_owner_key_binds_the_one_known_owner_whose_key_it_is() -> None:
+    """An env variable cannot spell '-' or '.': GITLAB_TOKEN__OTHER_GRP is the key of other-grp, other.grp and
+    other_grp. The binding names the one of them the deployment knows."""
+    repo = FakeRepo(known={"gitlab": {"other-grp", "acme"}, "github": {"other_grp"}})
+    report = await import_from_env(repo, FakeSecrets(), _cfg(), environ={"GITLAB_TOKEN__OTHER_GRP": "tok-gl"})
+    assert report.bound == ["owner:gitlab:other-grp:forge -> gitlab/other_grp"], (
+        f"GITLAB_TOKEN__OTHER_GRP is bound to other-grp, the one known GitLab owner whose key it is: {report.as_dict()}"
+    )
+    assert _owner_bindings(repo) == {"gitlab:other-grp": "cred-other_grp"}, (
+        f"the token is bound to other-grp, the one known GitLab owner whose key it is: {_owner_bindings(repo)}"
+    )
+
+
+async def test_a_github_owner_key_reads_a_dash_and_not_a_dot() -> None:
+    """GitHub's key spells '-' as '_' and keeps '.': GITHUB_TOKEN__MY_ORG is my-org's or my_org's, never my.org's."""
+    repo = FakeRepo(known={"github": {"my-org", "my.org"}})
+    report = await import_from_env(repo, FakeSecrets(), _cfg(), environ={"GITHUB_TOKEN__MY_ORG": "tok-gh"})
+    assert report.skipped == [] and _owner_bindings(repo) == {"github:my-org": "cred-my_org"}, (
+        f"GITHUB_TOKEN__MY_ORG is bound to my-org, the known owner whose key it is: {report.as_dict()}"
+    )
+
+
+async def test_an_owner_key_several_known_owners_read_is_bound_to_none() -> None:
+    repo = FakeRepo(known={"gitlab": {"other-grp", "other_grp", "other.grp"}})
+    report = await import_from_env(repo, FakeSecrets(), _cfg(), environ={"GITLAB_TOKEN__OTHER_GRP": "tok-gl"})
+    assert report.created == ["gitlab/other_grp"], "the token is still imported"
+    assert report.bound == [] and _owner_bindings(repo) == {}, (
+        f"a key three known owners read is bound to none of them: {report.as_dict()}"
+    )
+    assert report.skipped == [
+        "gitlab/other_grp: bound to no owner: GITLAB_TOKEN__OTHER_GRP is read by other-grp, other.grp, other_grp; "
+        "bind it to the owner it is for"
+    ], report.skipped
+
+
+async def test_an_owner_key_no_known_owner_reads_is_bound_to_none() -> None:
+    repo = FakeRepo(known={"gitlab": {"acme"}})
+    report = await import_from_env(repo, FakeSecrets(), _cfg(), environ={"GITLAB_TOKEN__OTHER_GRP": "tok-gl"})
+    assert report.bound == [] and _owner_bindings(repo) == {}, (
+        f"a key that could name several owners, none known, is bound to none: {report.as_dict()}"
+    )
+    assert [s.split(": ", 2)[1] for s in report.skipped] == ["bound to no owner"], report.skipped
 
 
 async def test_same_value_under_two_keys_is_one_credential_two_bindings() -> None:
