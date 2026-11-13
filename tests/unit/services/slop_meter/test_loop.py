@@ -14,7 +14,7 @@ from embry0.services.areas import Area
 from embry0.services.background_scope import Enrollment, Registered
 from embry0.services.slop_meter import loop as loop_mod
 from embry0.services.slop_meter.context import job_meter, meter_sentence
-from embry0.services.slop_meter.events import ApiBudget, BudgetSpent, EventReader
+from embry0.services.slop_meter.events import MAX_FAILURES, ApiBudget, BudgetSpent, EventReader
 from embry0.services.slop_meter.history import HISTORY_VERSION, Commit
 from embry0.services.slop_meter.judge import parse_judgment, user_prompt
 from embry0.services.slop_meter.loop import MeterRead, SlopMeterLimits, SlopMeterLoop
@@ -1188,6 +1188,74 @@ async def test_the_meter_reads_a_stored_place_against_its_own_caps(stored: dict[
     assert forge.calls and forge.calls[0][0] == f"/repos/{REPO}/issues/comments", (
         f"the read went on from a place out of range: {forge.calls[:2]}"
     )
+
+
+class FailingPage(ShiftingPulls):
+    """The pull request listing, whose page 2 answers 502 the first ``failures`` times it is asked for."""
+
+    def __init__(self, n: int, failures: int) -> None:
+        super().__init__(n)
+        self.failures = failures
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        if path == f"/repos/{REPO}/pulls" and int((params or {}).get("page", 1)) == 2 and self.failures:
+            self.failures -= 1
+            return FakeResponse(502, {"message": "Server Error"})
+        return await super().get(path, repo=repo, params=params)
+
+
+async def _pass_over_runs(forge: ShiftingPulls) -> int:
+    """One pass, over as many runs as it takes, as the loop runs them: a call that raises ends the run's reading
+    (counted with ``failed()``, which may move the read past it, and it reads on); the place and the reviews cursor
+    carry over to the next run. The number of runs."""
+    place, cursor = None, START
+    for run in range(1, 10):
+        reader = EventReader(
+            forge,
+            REPO,
+            comments_since=START,
+            review_comments_since=START,
+            reviews_since=cursor,
+            max_pages=2,
+            max_pulls=1_000,
+            place=place,
+        )
+        while True:
+            try:
+                await _read_all(reader, ApiBudget(1_000, 0))
+                break
+            except BudgetSpent:
+                break
+            except Exception:  # noqa: BLE001 - as the loop does
+                if not reader.failed():
+                    break
+        place, cursor = reader.place, reader.batch.reviews_since or cursor
+        if place is None:
+            return run
+    raise AssertionError("the pass never finished")
+
+
+async def test_a_pull_request_page_that_fails_is_read_again_and_no_older_one_is_lost() -> None:
+    """#483: a page of the pull request listing that answered an error ended the listing there, and the reviews
+    cursor moved past every older pull request on that page and after it, unread for good. Since #490 a status a
+    retry can change stops the read at that page (ForgeStopped), and the next run reads on from it: the pass
+    reviews what one with no error reviews."""
+    whole = ShiftingPulls(250)
+    assert await _pass_over_runs(whole) == 1
+    failing = FailingPage(250, failures=1)
+    runs = await _pass_over_runs(failing)
+    assert sorted(failing.reviewed) == sorted(whole.reviewed) == list(range(51, 251)), (
+        f"a page that failed once lost {len(set(whole.reviewed) - set(failing.reviewed))} pull requests' reviews"
+    )
+    assert runs == 2, f"the run whose page failed, then the run that asks it again: {runs}"
+
+
+async def test_a_pull_request_page_that_keeps_failing_is_passed_after_max_failures() -> None:
+    """The same page failing in MAX_FAILURES runs in a row is passed, as any call is: the pass ends, with what it
+    found before that page reviewed."""
+    failing = FailingPage(250, failures=MAX_FAILURES)
+    assert await _pass_over_runs(failing) == MAX_FAILURES
+    assert sorted(failing.reviewed) == list(range(151, 251)), "the first page's pull requests are reviewed"
 
 
 class ElsewhereLinks(ShiftingPulls):
