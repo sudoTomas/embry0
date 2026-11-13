@@ -62,6 +62,9 @@ characters' quest totals, the quests and repo diaries, the setup cost) counts
 the work of the repositories the key covers alone, narrowed in its query to
 :func:`covered_slugs`, as a deployment holding only them would count it
 (:mod:`embry0.api.v1.stats`).
+What belongs to the deployment as a whole is held to it by
+:mod:`embry0.api.deployment_reads`: such a key reads the deployment's own
+records as a deployment that has none would answer them.
 """
 
 from __future__ import annotations

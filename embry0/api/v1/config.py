@@ -1,12 +1,14 @@
 """Configuration API — model, provider and integration settings, context injection, and the deprecated budget route."""
 
 import os
+from datetime import UTC, datetime
 from typing import Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from embry0.agents.model_policy import usable_default_model
 from embry0.api.budget import budget_settings
+from embry0.api.deployment_reads import deployment_hidden, nothing_like
 from embry0.api.deps import (
     get_config,
     get_context_repo,
@@ -57,6 +59,11 @@ async def get_model_config(
     model id, a custom one included.
     Used by the frontend model selectors (AgentFormPage, JobAdvancedFields
     via useModels) and the LLM Providers page.
+
+    A key with a repository allowlist reads the catalog, the models in force
+    and whether each provider can run its jobs, but not where a provider's
+    credential comes from, an address the environment sets, or the last
+    connection test: the deployment's own (embry0.api.deployment_reads).
     """
     # RAV-1238: tiers from the DB row. Reading env-config here let stale
     # MODEL_* values show the pre-5-family models in every dashboard
@@ -74,21 +81,22 @@ async def get_model_config(
     default_serving = catalog_provider_for_model(usable_default_model(provider_cfg.get("default_model")))
     default_provider = default_serving.name if default_serving is not None else "anthropic"
 
+    hidden = deployment_hidden(request)
     providers = []
     for p in catalog_providers():
         state = readiness[p.name]
-        probe = state.last_probe
+        probe = None if hidden else state.last_probe
         providers.append(
             {
                 "name": p.name,
                 # The custom provider's root is the operator's; the env one is shown when set.
-                "base_url": p.base_url or (os.environ.get(p.base_url_env, "") if p.base_url_env else ""),
+                "base_url": p.base_url or (os.environ.get(p.base_url_env, "") if p.base_url_env and not hidden else ""),
                 # docs/providers.md: the OpenAI-compatible family, xAI included.
                 "family": "openai_compatible"
                 if (p.openai_base_url or p.runtime == "chat_completions")
                 else "anthropic",
                 "available": state.ready,
-                "credential_source": state.credential_source,
+                "credential_source": None if hidden else state.credential_source,
                 "default": p.name == default_provider,
                 "model_prefixes": list(p.model_prefixes),
                 "last_probe": (
@@ -266,11 +274,22 @@ async def set_repo_context(
 # --- Integration Config ---
 
 
+#: What a key with a repository allowlist reads of the integrations: the labels that start its repositories' jobs.
+_INTEGRATIONS_READ: Final = frozenset({"trigger_labels"})
+
+
 @router.get("/config/integrations")
 async def get_integrations(
+    request: Request,
     repo: IntegrationConfigRepository = Depends(get_integration_repo),
 ) -> dict[str, Any]:
-    return await repo.get()
+    """The integrations. A key with a repository allowlist reads the trigger labels, and every other field as a
+    deployment that set none: where notifications go, the chat, the tracker's keys and which of its teams files work
+    on which repository are the deployment's own (embry0.api.deployment_reads)."""
+    found = await repo.get()
+    if deployment_hidden(request):
+        return {key: value if key in _INTEGRATIONS_READ else nothing_like(value) for key, value in found.items()}
+    return found
 
 
 @router.put(
@@ -307,9 +326,15 @@ async def update_integrations(
 
 @router.get("/config/provider")
 async def get_provider(
+    request: Request,
     repo: ProviderConfigRepository = Depends(get_provider_repo),
 ) -> dict[str, Any]:
-    return await repo.get()
+    """The models in force. To a key with a repository allowlist, ``api_key_set`` and ``oauth_token_set`` read as for
+    a deployment with neither credential (embry0.api.deployment_reads)."""
+    found = await repo.get()
+    if deployment_hidden(request):
+        found.update(api_key_set=False, oauth_token_set=False)
+    return found
 
 
 def _check_fallback_order(order: list[str], disabled: set[str], *, changed: bool) -> None:
@@ -540,7 +565,8 @@ async def catalog_provider_usage(provider_name: str, request: Request, fresh: bo
     Read with the key a job with no repository binding would run with (the
     one the connection test probes) and kept five minutes; ``fresh`` asks
     again now. Only OpenRouter answers this with an ordinary key; another
-    provider is 404. Never returns the key.
+    provider is 404. Never returns the key. A key with a repository allowlist
+    reads ``not_configured``, as a deployment with no key does.
     """
     from embry0.agents.providers import catalog_providers
     from embry0.services.provider_usage import SUPPORTED, ProviderUsage
@@ -548,6 +574,10 @@ async def catalog_provider_usage(provider_name: str, request: Request, fresh: bo
     provider = next((p for p in catalog_providers() if p.name == provider_name), None)
     if provider is None or provider_name not in SUPPORTED:
         raise HTTPException(status_code=404, detail=f"no spend to read for provider {provider_name!r}")
+    if deployment_hidden(request):
+        # The deployment's spend: to a key with a repository allowlist, as with no key to read it with, asked of
+        # nobody and kept nowhere (embry0.api.deployment_reads).
+        return {"provider": provider_name, "status": "not_configured", "checked_at": datetime.now(UTC).isoformat()}
     usage = getattr(request.app.state, "provider_usage", None)
     if usage is None:
         usage = request.app.state.provider_usage = ProviderUsage(_job_key_resolver(request))

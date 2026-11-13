@@ -16,6 +16,13 @@ everyone: it names one of embry0's own service actors (the master key among
 them), never a person, and the request-body rule
 (:mod:`embry0.api.schemas.person_name`) refuses it as a person's name.
 
+What belongs to the deployment as a whole, rather than to a repository or
+an owner (its settings document, a revision of it, the content pack and its
+versions), is shown to a key with a repository allowlist as to a caller that
+is not an admin, whatever its tier (:func:`deployment_actor_shown`): who
+changes the deployment is one of the deployment's own records
+(:mod:`embry0.api.deployment_reads`).
+
 Collaboration fields stay visible to every signed-in key by design, outside
 this rule: who started a job, who answered a question, who handed a decision
 over, a map's marks. ``docs/api.md`` lists both sides.
@@ -30,6 +37,7 @@ from typing import Any
 from fastapi import Request
 
 from embry0.api.deps import own_actor, unidentified_caller_tier
+from embry0.api.repo_allowlist import restricted_key_name
 from embry0.api.session import TIER_ADMIN
 from embry0.orchestration.dispatch_actors import is_reserved
 
@@ -84,3 +92,12 @@ async def actor_shown(request: Request) -> ActorView:
     """This caller's :class:`ActorView`: an admin sees every actor, anyone else its own and embry0's."""
     tier, own = await caller_scope(request)
     return ActorView(sees_all=tier == TIER_ADMIN, own=frozenset(own))
+
+
+async def deployment_actor_shown(request: Request) -> ActorView:
+    """This caller's :class:`ActorView` of what belongs to the deployment as a whole: :func:`actor_shown`'s, except
+    that a key with a repository allowlist sees, whatever its tier, its own actors and embry0's only."""
+    view = await actor_shown(request)
+    if view.sees_all and restricted_key_name(request) is not None:
+        return ActorView(sees_all=False, own=view.own)
+    return view

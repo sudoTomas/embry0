@@ -9,8 +9,14 @@ import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 
+from embry0.api.deployment_reads import deployment_hidden
 from embry0.api.deps import request_actor, require_admin
-from embry0.api.repo_allowlist import deployment_writes, enforce_repo_allowlist, key_covers
+from embry0.api.repo_allowlist import (
+    deployment_writes,
+    enforce_deployment_allowlist,
+    enforce_repo_allowlist,
+    key_covers,
+)
 from embry0.api.schemas.environment import (
     DetectedEnvVar,
     DetectResponse,
@@ -112,6 +118,29 @@ async def _mask_vars(rows: list[dict[str, Any]], provider: Any) -> list[EnvVarRe
     return out
 
 
+def _name_only(var: dict[str, Any]) -> EnvVarResponse:
+    """A global variable as a key with a repository allowlist reads it (embry0.api.deployment_reads): its name, kind,
+    scope and whether it is required, which say what its sandboxes are given; its value masked as a secret's is,
+    with no preview and no description."""
+    return EnvVarResponse(
+        key=var["key"],
+        value=_SECRET_MASK,
+        var_type=var.get("var_type", "config"),
+        description="",
+        required=bool(var.get("required", False)),
+        scope=var.get("scope", "app"),
+        masked_preview=None,
+    )
+
+
+async def _global_vars_shown(request: Request, rows: list[dict[str, Any]]) -> list[EnvVarResponse]:
+    """The global variables ``rows`` as the caller reads them: masked as every list masks them, names only for a key
+    with a repository allowlist."""
+    if deployment_hidden(request):
+        return [_name_only(var) for var in rows]
+    return await _mask_vars(rows, getattr(request.app.state, "secrets_provider", None))
+
+
 # ----- Global endpoints -----
 
 
@@ -119,8 +148,7 @@ async def _mask_vars(rows: list[dict[str, Any]], provider: Any) -> list[EnvVarRe
 async def get_global_environment(request: Request) -> EnvironmentResponse:
     env_repo = request.app.state.env_repo
     rows = await env_repo.get_global()
-    provider = getattr(request.app.state, "secrets_provider", None)
-    return EnvironmentResponse(variables=await _mask_vars(rows, provider))
+    return EnvironmentResponse(variables=await _global_vars_shown(request, rows))
 
 
 @router.put(
@@ -142,6 +170,9 @@ async def set_global_environment(req: EnvironmentSetRequest, request: Request) -
 
 @router.get("/environment/global/{key}/reveal", response_model=RevealResponse, dependencies=[require_admin])
 async def reveal_global_secret(key: str, request: Request) -> RevealResponse:
+    # A value of the deployment's, refused to a key with a repository allowlist before the variable is looked up, so
+    # the answer is the same whether it exists (embry0.api.deployment_reads).
+    await enforce_deployment_allowlist(request, action="read the deployment's global variables")
     env_repo = request.app.state.env_repo
     rows = await env_repo.get_global()
     var = next((r for r in rows if r["key"] == key), None)
@@ -189,14 +220,20 @@ async def get_repo_environment(full_repo: str, request: Request) -> EnvironmentR
 
 @router.get("/repos/{full_repo:repo}/-/environment/resolve", response_model=EnvironmentResponse)
 async def resolve_repo_environment(full_repo: str, request: Request) -> EnvironmentResponse:
+    """The global variables with the repository's own over them, by name; a global one reads as
+    ``GET /environment/global`` reads it to the caller."""
     env_repo = request.app.state.env_repo
-    merged: dict[str, dict[str, object]] = {}
+    # Each name's variable, and whether it is a global one, in the order the global ones and then the repository's
+    # own come: a repository's variable takes the place of the global one it replaces.
+    merged: dict[str, tuple[bool, dict[str, Any]]] = {}
     for v in await env_repo.get_global():
-        merged[v["key"]] = dict(v)
+        merged[v["key"]] = (True, dict(v))
     for v in await _repo_vars(request, full_repo):
-        merged[v["key"]] = dict(v)
+        merged[v["key"]] = (False, dict(v))
     provider = getattr(request.app.state, "secrets_provider", None)
-    return EnvironmentResponse(variables=await _mask_vars(list(merged.values()), provider))
+    inherited = iter(await _global_vars_shown(request, [var for is_global, var in merged.values() if is_global]))
+    own = iter(await _mask_vars([var for is_global, var in merged.values() if not is_global], provider))
+    return EnvironmentResponse(variables=[next(inherited if is_global else own) for is_global, _var in merged.values()])
 
 
 @router.put("/repos/{full_repo:repo}/-/environment", response_model=EnvironmentResponse)

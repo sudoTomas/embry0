@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from embry0.api.deployment_reads import deployment_hidden
 from embry0.api.deps import bust_user_gate_cache, request_actor
 from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.v1.handoffs import LoginBody, set_login
@@ -36,6 +37,10 @@ class DisabledBody(BaseModel):
 
 @router.get("/users")
 async def list_users(request: Request, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    """The people who sign in. To a key with a repository allowlist, as a deployment with none
+    (embry0.api.deployment_reads)."""
+    if deployment_hidden(request):
+        return {"users": [], "total": 0}
     repo = request.app.state.users_repo
     users = await repo.list_users(limit=min(limit, 500), offset=max(offset, 0))
     total = await repo.count()

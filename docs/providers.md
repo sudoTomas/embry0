@@ -695,7 +695,10 @@ that, from the same sources (`embry0/services/provider_readiness.py`):
   it. It is read back from the audit log entry the test writes
   (`provider_connection_tested`), so it survives a restart. A credential whose
   last test failed still counts as available: the two facts are reported side
-  by side, not merged. The LLM Providers page shows all of them.
+  by side, not merged. The LLM Providers page shows all of them. A key with a
+  repository allowlist reads `available` and the models, and no
+  `credential_source`, `last_probe` or `base_url` the environment sets:
+  they are the deployment's own ([api.md](api.md#repository-allowlist)).
 - `GET /agents` and `GET /agents/{type}` carry `provider` (the catalogue
   provider the agent's `model` routes to, `null` when no prefix matches) and
   `provider_ready` for every agent.
@@ -844,6 +847,7 @@ says the key a job with no repository binding runs with has spent:
 and `/credits` and kept five minutes (`?fresh=true` asks again). `account` is
 `null` when the key may not read the account's credit; `status` is
 `not_configured`, `unauthorized`, `unreachable` or `error` when there is no
-reading. The OpenRouter card shows it. These are the provider's own figures,
+reading. A key with a repository allowlist reads `not_configured`, and
+nothing is asked of OpenRouter for it. The OpenRouter card shows it. These are the provider's own figures,
 unlike the list prices above; no other provider answers this with an ordinary
 key, so the route is 404 for them.

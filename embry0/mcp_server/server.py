@@ -1053,7 +1053,8 @@ async def env_list(repo: str | None = None) -> dict[str, Any]:
     ("group/name", or a GitLab subgroup path like "group/subgroup/project") is given.
     Secret values are always masked as "****"; there is no tool to read secret values.
     A secret's masked_preview shows at most its last 2 characters, and only for a
-    secret of 12 characters or more."""
+    secret of 12 characters or more. Through a key with a repository allowlist the
+    global set lists names only: every value "****", no preview, no description."""
     return await _get_client().env_list(repo=repo)
 
 

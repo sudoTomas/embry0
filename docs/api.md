@@ -434,7 +434,7 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
 
 Send a decision to the teammate better placed to make it; it is then theirs to decide ([the design](superpowers/specs/2026-10-27-decisions-design.md)).
 
-- `GET /api/v1/people`: who a decision can go to, everyone who signs in (`operator` or `admin`) or is named by a GitHub login (a chat assistant can ask them), as `{"people": [{"id", "email", "name", "github_login", "tier"}]}`.
+- `GET /api/v1/people`: who a decision can go to, everyone who signs in (`operator` or `admin`) or is named by a GitHub login (a chat assistant can ask them), as `{"people": [{"id", "email", "name", "github_login", "tier"}]}`. A key with a [repository allowlist](#repository-allowlist) reads an empty list.
 - `PUT /api/v1/me/github-login` (`{"login": "octocat"}`, empty to clear): the GitHub login you are, which owners are named by. A login belongs to one person (409 otherwise). `PUT /api/v1/users/{id}/github-login` does the same for someone else (admin).
 - `POST /api/v1/decisions/{id}/send-to` (`{"to": "<email>", "note": "..."}`, 201): opens a hand-off to someone else on that list. A hand-off already open for that decision closes as `passed`. It writes a `handoff.created` audit row and emits the `handoff.created` event. Anyone else, a person nobody knows, a disabled one or one with no role and no GitHub login, is the same 422, `send it to someone who signs in to embry0 or has a GitHub login`, and nothing is written.
 - **What the recipient may do.** The recipient may take every action the decision lists, including merge (merge approvals admit them for that quest's approval only).
@@ -536,7 +536,8 @@ curl -X PUT http://localhost:8200/api/v1/environment/global \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"variables": [{"key": "DATABASE_URL", "value": "postgres://...", "var_type": "secret"}]}'
 
-# Reveal a masked secret (audit-logged)
+# Reveal a masked secret (audit-logged; refused to a key with a repository allowlist,
+# which lists the global variables' names only)
 curl http://localhost:8200/api/v1/environment/global/DATABASE_URL/reveal \
   -H "X-Requested-With: XMLHttpRequest"
 
@@ -1020,7 +1021,9 @@ What the three retention sweeps (`JOB_LOG_RETENTION_DAYS`,
 code, so it removes nothing.
 Each sweep runs at its configured number of days, or at the value in the
 query, to see the effect of a setting before turning it on. A sweep with
-neither reports zeros and `"retention_days": null`.
+neither reports zeros and `"retention_days": null`. A key with a
+[repository allowlist](#repository-allowlist) reads zeros from every sweep:
+what they would remove is every repository's.
 
 | Endpoint | Tier |
 |---|---|
@@ -1187,12 +1190,7 @@ for the whole deployment:
   rares dropped and achievements unlocked among their `recent` entries,
   which therefore also decide which of the key's own quest and diary
   entries are among the newest 20, a character that exists only because
-  another repository's work made it, and the preview's `changes`;
-- what the retention sweeps would remove (`GET /admin/retention/preview`,
-  admin tier): every repository's old job events, agent sessions and
-  pre-built QA images;
-- what a model provider says the deployment's own key spent
-  (`GET /config/providers/{provider}/usage`).
+  another repository's work made it, and the preview's `changes`.
 
 Everything below narrows to the repositories the key covers:
 
@@ -1463,6 +1461,35 @@ Everything below narrows to the repositories the key covers:
   caller shares. With no credential of its own it is answered as a
   deployment with none: `400 No GitHub token configured`, or GitLab's
   `configured: false`.
+- The deployment's own records. What belongs to the deployment as a whole,
+  rather than to a repository or an owner, reads to a key with an allowlist
+  in two ways (`embry0/api/deployment_reads.py`). What every repository's
+  jobs run on reads as to any key: the agents and whether a provider can run
+  each one's model, the skills, the pipeline templates, the sandbox profiles,
+  the global agent context, the models in force, the settings document's
+  values and revisions, the content pack, the hosts (linked only to its
+  repositories, above) and the names of the global variables. The
+  deployment's own records read as a deployment that has none would answer
+  them: `GET /users` and `GET /people` list nobody;
+  `GET /config/providers/{name}/usage` answers `not_configured`, asking the
+  provider nothing; `GET /config/models` has no provider's
+  `credential_source`, no `base_url` the environment sets and no
+  `last_probe`, and `GET /config/provider` reads `api_key_set` and
+  `oauth_token_set` false; `GET /config/integrations` reads its
+  `trigger_labels`, and every other field as unset; `GET /admin/retention/preview`
+  reads nothing to remove, each sweep at the days it would run at, and reads
+  nothing to say so; `GET /environment/global`, and the global variables in
+  `GET /repos/{repo}/-/environment/resolve`, give each variable's `key`,
+  `var_type`, `scope` and `required`, its `value` as `****`, no
+  `masked_preview` and an empty `description`. Who changed the
+  deployment's settings document (`updated_by`, a revision's `actor`, an
+  effective value's `set_by` from the deployment's document) and the content
+  pack (`created_by`) reads as to a caller that is not an admin: `null` for a
+  person, whatever the key's tier; who changed a layer of its repository or of
+  an owner it covers as a whole reads as before. Revealing a global variable
+  (`GET /environment/global/{key}/reveal`) is refused with the 403 of a
+  deployment-wide write, logged and audited, before the variable is looked
+  up, so a name that does not exist answers the same.
 - A job's streams. `POST /jobs/{id}/events-token`,
   `POST /jobs/{id}/qa/log-stream-token` and `POST /qa/runs/{id}/events-token`
   mint, for another repository's job, a token like any other, as they do for
