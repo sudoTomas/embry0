@@ -48,7 +48,9 @@ async def test_a_repository_read_before_has_no_place_and_a_place_and_a_turn_are_
     )
     place = ReaderPlace(stage=3, pulls=((AT, 7),), found=2, pulls_left=49, logins=("ana",), failures=1)
     await store.set_state(REPO, reader_place=place.to_json())
-    assert ReaderPlace.from_json((await store.state(REPO))["reader_place"]) == place, "a place reads back as stored"
+    stored = (await store.state(REPO))["reader_place"]
+    caps = {"max_pages": 10, "max_pulls": 50, "max_logins": 20}
+    assert ReaderPlace.from_json(stored, **caps) == place, "a place reads back as stored"
     assert await store.turns() == {}
     await store.set_turns({"cred-0001": 3})
     await store.set_turns({"cred-0001": 4, "cred-0002": 0})

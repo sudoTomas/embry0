@@ -1120,9 +1120,74 @@ async def test_a_stored_place_keeps_only_the_pull_requests_it_will_review_and_re
     assert [number for _at, number in place.pulls] == [52, 53], (
         f"of 200 pull requests found it keeps the 2 it will still review, the oldest: {place.pulls}"
     )
-    assert ReaderPlace.from_json(place.to_json()) == place, "a place reads back as it was stored"
+    caps = {"max_pages": 2, "max_pulls": 3, "max_logins": 0}
+    assert ReaderPlace.from_json(place.to_json(), **caps) == place, "a place reads back as it was stored"
     for stored in (None, "x", {}, {"stage": 9}, {"stage": 3, "pulls": [["not a time", 1]]}, {"stage": "x"}):
-        assert ReaderPlace.from_json(stored) is None, f"{stored!r} names no place: the read starts over"
+        assert ReaderPlace.from_json(stored, **caps) is None, f"{stored!r} names no place: the read starts over"
+
+
+#: The caps of :data:`OUT_OF_RANGE`'s reader: 2 pages, 3 reviews, 2 logins (so at most 200 pull requests found).
+CAPS = {"max_pages": 2, "max_pulls": 3, "max_logins": 2}
+#: A place each field of which is at the end of its range for :data:`CAPS`, and one past it for each.
+EDGE = {
+    "stage": 2,
+    "pages": 4,
+    "next_page": 5,
+    "pulls": [["2025-01-01T00:00:00Z", 7]] * 3,
+    "found": 200,
+    "seen": list(range(1, 201)),
+    "pulls_left": 3,
+    "logins": ["ana", "bo"],
+    "failures": 2,
+}
+OUT_OF_RANGE = {
+    "a negative page count, which lifts the page cap": {"pages": -1_000_000},
+    "more pages than a pass reads": {"pages": 5},
+    "a next page past the pages a pass reads": {"next_page": 6},
+    "a next page of 10**30": {"next_page": 10**30},
+    "a page that is text": {"pages": "3"},
+    "more reviews left than the cap, which lifts it": {"pulls_left": 10**9},
+    "negative reviews left": {"pulls_left": -1},
+    "more pull requests kept than reviews left": {"pulls_left": 2},
+    "more found than the page cap allows": {"found": 201},
+    "more seen than the page cap allows": {"seen": list(range(1, 202))},
+    "a pull request numbered 0": {"seen": [0]},
+    "a negative failure count, which holds the skip back": {"failures": -7},
+    "as many failures as move the read on": {"failures": 3},
+    "more logins than the cap": {"logins": ["ana", "bo", "cy"]},
+    "a login that is not text": {"logins": [{"login": "ana"}]},
+    "a stage that is text": {"stage": "2"},
+    "a stage that is a float": {"stage": 2.0},
+}
+
+
+@pytest.mark.parametrize("change", list(OUT_OF_RANGE), ids=list(OUT_OF_RANGE))
+def test_a_stored_place_out_of_range_is_no_place(change: str) -> None:
+    """Every number of a stored place must be one a reader with these caps can write: a row edited by hand, or caps
+    lowered since it was stored, starts the read over rather than lifting a cap for the rest of the pass."""
+    from embry0.services.slop_meter.events import ReaderPlace
+
+    assert ReaderPlace.from_json(EDGE, **CAPS) is not None, "the place at the end of every range is a place"
+    stored = {**EDGE, **OUT_OF_RANGE[change]}
+    assert ReaderPlace.from_json(stored, **CAPS) is None, f"{change}: {OUT_OF_RANGE[change]} names no place"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored",
+    [{"stage": 4, "logins": ["ana"], "pages": -1}, {"stage": 4, "logins": [f"user{i}" for i in range(21)]}],
+    ids=["a negative page count", "more logins than the meter's cap"],
+)
+async def test_the_meter_reads_a_stored_place_against_its_own_caps(stored: dict[str, Any]) -> None:
+    """The loop checks a stored place against the caps it reads with (20 logins a tick): one out of range starts
+    the read over at the first listing, instead of going on from it."""
+    records, order = _history(3)
+    store, forge = FakeStore(), FakeForge()
+    await store.set_state(REPO, reader_place=stored)
+    await _loop(FakeMirror(records, order), store, client=forge, per_tick=10).tick()
+    assert forge.calls and forge.calls[0][0] == f"/repos/{REPO}/issues/comments", (
+        f"the read went on from a place out of range: {forge.calls[:2]}"
+    )
 
 
 class ElsewhereLinks(ShiftingPulls):
@@ -1155,9 +1220,10 @@ async def test_the_reader_keeps_its_page_not_the_url() -> None:
     assert pulls == [1, 2], f"the listing's pages, asked for by number on its path: {pulls}"
 
     url = f"{ELSEWHERE}/repos/{REPO}/pulls?page=2"
-    assert ReaderPlace.from_json({"stage": 2, "pages": 1, "next_page": url}) is None, "a URL is no page"
-    assert ReaderPlace.from_json({"stage": 2, "pages": 1, "next_page": True}) is None
-    place = ReaderPlace.from_json({"stage": 2, "pages": 1, "next_url": url, "next_page": 2})
+    caps = {"max_pages": 2, "max_pulls": 1_000, "max_logins": 0}
+    assert ReaderPlace.from_json({"stage": 2, "pages": 1, "next_page": url}, **caps) is None, "a URL is no page"
+    assert ReaderPlace.from_json({"stage": 2, "pages": 1, "next_page": True}, **caps) is None
+    place = ReaderPlace.from_json({"stage": 2, "pages": 1, "next_url": url, "next_page": 2}, **caps)
     assert place is not None and place.next_page == 2 and "next_url" not in place.to_json(), place
     forge = ElsewhereLinks(250)
     assert await _one_run(forge, 1_000, place) is None
