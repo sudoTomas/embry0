@@ -614,7 +614,15 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
         if answers_text:
             additional += f"\n\n{answers_text}"
 
-        updated = {**state, "additional_context": additional}
+        # The re-run starts from the first pass's total, which LangGraph replayed on resume and which ran (and
+        # cost) again, so its budget check and the job's total count both runs; its output is kept beside the
+        # re-run's (#482), as the turn-cap retry and the repair run keep theirs.
+        first_outputs = list(result.get("agent_outputs") or [])
+        updated = {
+            **state,
+            "additional_context": additional,
+            "total_cost_usd": result.get("total_cost_usd", state.get("total_cost_usd", 0.0)),
+        }
         writer(events.progress(message="Re-running triage with answers", node="triage"))
 
         # Plan C Task 7: reload the session before the resume re-run — it may
@@ -668,6 +676,7 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             config=config,
             resume_session=resume_session,
         )
+        result = {**result, "agent_outputs": first_outputs + list(result.get("agent_outputs") or [])}
 
         if agent_sessions_repo is not None:
             last_output = (result.get("agent_outputs") or [None])[-1]
