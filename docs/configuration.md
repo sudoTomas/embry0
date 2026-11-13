@@ -661,7 +661,7 @@ embry0 stop               # Stop the stack
 embry0 build              # Build images (clean, no cache)
 embry0 build --cached     # Build with Docker cache
 embry0 build-sandbox      # Rebuild the sandbox and proxy images (prints the push step)
-embry0 health             # Check stack health
+embry0 health             # Check stack health (with API_KEY set, or --api-key, it lists each watched stack)
 embry0 config             # Validate and display config (secrets masked)
 embry0 purge              # Remove all Docker artifacts
 embry0 purge --volumes    # Remove only volumes

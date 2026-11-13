@@ -30,10 +30,13 @@ case "$*" in
 esac
 """,
     # The running-jobs query answers with STUB_JOBS_BODY and the status in
-    # STUB_JOBS_HTTP (000: nothing listening); every other URL is healthy.
+    # STUB_JOBS_HTTP (000: nothing listening); the readiness check fails with
+    # STUB_READY_FAIL; every other URL is healthy.
     "curl": """#!/bin/sh
 echo "curl $*" >> "$STUB_LOG"
+case "$*" in *"--config -"*) echo "curl config $(cat)" >> "$STUB_LOG" ;; esac
 case "$*" in
+  *"health/ready"*) [ -z "${STUB_READY_FAIL-}" ] || exit 22 ;;
   *"jobs?status=running"*)
     code="${STUB_JOBS_HTTP:-200}"
     case "$*" in *"%{http_code}"*) printf '%s\\n%s' "${STUB_JOBS_BODY-}" "$code" ;; esac
@@ -165,3 +168,53 @@ def test_a_failed_reload_fails_the_deploy_and_says_what_to_run(deploy) -> None:
     result, _ = deploy("orchestrator", STUB_DOCKER_FAIL="nginx -s reload")
     assert result.returncode == 1, f"a failed reload passed: {result.stdout}{result.stderr}"
     assert "infra/deploy.sh frontend" in result.stderr, result.stderr
+
+
+def _ready(calls: list[str]) -> list[str]:
+    return [call for call in calls if "/api/v1/health/ready" in call]
+
+
+def _keyed(calls: list[str], url_part: str) -> list[str]:
+    """The header config each curl call reading ``url_part`` was given on its stdin: the stub logs it on the line
+    after the call's arguments, which a ``-w`` format with a newline spreads over two lines."""
+    out = []
+    for n, call in enumerate(calls):
+        if url_part in call and not call.startswith("curl config "):
+            following = next((c for c in calls[n + 1 :] if c.startswith(("curl ", "docker ", "git "))), "")
+            if following.startswith("curl config "):
+                out.append(following)
+    return out
+
+
+def test_the_readiness_check_is_read_with_the_key(deploy) -> None:
+    """With the key, the printed check lists each watched stack's state; without one it is the overall state."""
+    result, calls = deploy()
+    assert result.returncode == 0, result.stderr
+    assert _ready(calls) and _keyed(calls, "/api/v1/health/ready") == [
+        'curl config header = "Authorization: Bearer test-key"'
+    ], f"the readiness check is read with the deploy's API_KEY: {calls}"
+
+
+def test_the_key_is_never_on_a_curl_command_line(deploy) -> None:
+    """Each call that sends the key reads its header from stdin, so the process table never shows the key."""
+    result, calls = deploy()
+    assert result.returncode == 0, result.stderr
+    lines = [call for call in calls if call.startswith("curl ") and not call.startswith("curl config ")]
+    assert not [call for call in lines if "test-key" in call], f"the key on a command line: {lines}"
+    assert _keyed(calls, "jobs?status=running") == ['curl config header = "Authorization: Bearer test-key"'], calls
+
+
+def test_without_a_key_the_readiness_check_is_read_without_one(deploy, tmp_path: Path) -> None:
+    (tmp_path / "checkout" / ".env").write_text("API_KEY=\n")
+    result, calls = deploy()
+    assert result.returncode == 0, result.stderr
+    assert _ready(calls) and not any("Authorization" in call for call in _ready(calls)), _ready(calls)
+
+
+@pytest.mark.parametrize("api_key", ["test-key", ""])
+def test_a_failing_readiness_read_does_not_fail_the_deploy(deploy, tmp_path: Path, api_key: str) -> None:
+    (tmp_path / "checkout" / ".env").write_text(f"API_KEY={api_key}\n")
+    result, _calls = deploy(STUB_READY_FAIL="1")
+    assert result.returncode == 0 and ">> deployed" in result.stdout, (
+        f"the deploy rolled, so a readiness read that fails only goes unprinted: {result.returncode} {result.stderr}"
+    )

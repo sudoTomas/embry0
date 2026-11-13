@@ -377,9 +377,13 @@ def cmd_health(args: argparse.Namespace) -> None:
     port = os.environ.get("PROD_PORT", "8200")
     url = args.url or os.environ.get("EMBRY0_URL", f"http://localhost:{port}")
     endpoint = f"{url.rstrip('/')}/api/v1/health/ready"
+    # The check answers its overall state to anyone, and each watched stack's
+    # state only to a caller with a key: send the configured one, if any.
+    key = _resolve_api_key(getattr(args, "api_key", None))
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
 
     try:
-        resp = httpx.get(endpoint, timeout=5.0)
+        resp = httpx.get(endpoint, headers=headers, timeout=5.0)
         try:
             data = resp.json()
         except ValueError:
@@ -392,13 +396,16 @@ def cmd_health(args: argparse.Namespace) -> None:
         checks = data.get("checks", {})
         for check_name, check_value in checks.items():
             print(f"  {check_name}: {check_value}")
+        if "watcher" in checks and "watcher_stacks" not in checks:
+            print("  (each watched stack's state is shown with a key: --api-key or EMBRY0_API_KEY)")
 
         sys.exit(0 if status == "ok" else 1)
     except httpx.ConnectError:
         _err(f"Could not connect to {endpoint}")
         sys.exit(1)
     except Exception as exc:
-        _err(f"Error: {exc}")
+        # The type alone: a request error's text can quote the headers it was sent, the key among them.
+        _err(f"Error reading {endpoint}: {type(exc).__name__}")
         sys.exit(1)
 
 
@@ -656,10 +663,12 @@ def cmd_build_qa_image(args: argparse.Namespace) -> None:
 def _resolve_api_key(explicit: str | None) -> str | None:
     """CLI API-key resolution: --api-key > EMBRY0_API_KEY > API_KEY env >
     the project root .env (the operator runs this next to the stack)."""
-    if explicit:
-        return explicit
+    # A key holds no whitespace: one read with a trailing newline or '\r' (a file saved on Windows) is stripped, so
+    # it is sent as the key and not refused as a header value.
+    if explicit and explicit.strip():
+        return explicit.strip()
     for var in ("EMBRY0_API_KEY", "API_KEY"):
-        val = os.environ.get(var)
+        val = (os.environ.get(var) or "").strip()
         if val:
             return val
     env_file = Path.cwd() / ".env"
@@ -966,6 +975,9 @@ def main() -> None:
         type=str,
         default=None,
         help="Base URL (default: EMBRY0_URL env or http://localhost:$PROD_PORT)",
+    )
+    health_parser.add_argument(
+        "--api-key", default=None, help="Bearer key (default: EMBRY0_API_KEY / API_KEY env, then ./.env)"
     )
 
     # config

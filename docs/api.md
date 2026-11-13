@@ -1378,7 +1378,11 @@ Everything below narrows to the repositories the key covers:
   key that covers none as a deployment watching none (503
   `watcher not initialized`); `GET /hosts` and
   `GET /hosts/{id}` link each host only to them; `GET /credentials/bindings`
-  has no bindings for another repository.
+  has no bindings for another repository. The readiness check
+  (`GET /health/ready`) lists in `checks.watcher_stacks` only the stacks of
+  the repositories the key covers; its overall `status` and
+  `checks.watcher` are the deployment's, which any caller reads, a caller
+  without a key included (it reads no `watcher_stacks`).
 - Owners. What belongs to an owner as a whole is read only by a key that
   covers the owner as a whole, the rule that lets it change them: one of its
   repositories is under the owner and it covers every repository registered

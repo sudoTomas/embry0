@@ -1,8 +1,23 @@
-"""Health check endpoints."""
+"""Health check endpoints.
+
+``GET /health/ready`` is mounted without authentication, so a monitor or the
+deploy script reads it without a key. Its overall state answers every
+caller: ``status``, and the checks that name nothing, ``database`` and
+``watcher`` (the worst state across the watched stacks). ``watcher_stacks``,
+each watched stack's own state under its repository, answers only a caller
+the authenticated routes would let read
+(:func:`~embry0.api.deps.authenticated_reader`), and a key with a repository
+allowlist only for the repositories its list covers, as ``GET
+/watcher/stacks`` lists them. A header that is not a live key reads as no
+key, never as a 401: the answer is then the overall state alone.
+"""
 
 from typing import Any
 
 from fastapi import APIRouter, Request
+
+from embry0.api.deps import authenticated_reader
+from embry0.api.repo_allowlist import key_covers
 
 router = APIRouter()
 
@@ -37,7 +52,9 @@ async def health_ready(request: Request) -> dict[str, object]:
     if services and getattr(config, "watcher_enabled", False):
         per_stack = {repo: service.health for repo, service in services.items()}
         checks["watcher"] = _worst(per_stack.values())
-        checks["watcher_stacks"] = per_stack
+        # Names repositories: a caller with a key or a session only, and of a key's list only what it covers.
+        if await authenticated_reader(request):
+            checks["watcher_stacks"] = {repo: state for repo, state in per_stack.items() if key_covers(request, repo)}
     flat = [v for v in checks.values() if isinstance(v, str)]
     status = "ok" if all(v in _HEALTHY for v in flat) else "degraded"
     return {"status": status, "checks": checks}

@@ -113,12 +113,17 @@ done
 port="$(sed -n 's/^PROD_PORT=//p' "$here/.env" | tail -n 1)"
 port="${port:-8200}"
 api_key="$(env_value API_KEY)"
+# curl with the key's Authorization header read from a config on its stdin (printf is a builtin), so the key is
+# never on a command line, where ps and the process table show it.
+curl_with_key() {
+  printf 'header = "Authorization: Bearer %s"\n' "$api_key" | curl --config - "$@"
+}
 if [ "${EMBRY0_DEPLOY_FORCE-}" != "1" ] && [ -n "$api_key" ]; then
   # Only a 200 answers the question: a 401 or no answer at all says nothing
   # about what is running, so it refuses instead of passing. The scout's jobs
   # do not count: one is always out, read-only, and resumes after the recreate.
   jobs_url="http://localhost:$port/api/v1/jobs?status=running&limit=1&exclude_dispatched_by=embry0:scout"
-  reply="$(curl -sS -m 5 -w '\n%{http_code}' -H "Authorization: Bearer $api_key" "$jobs_url" 2>/dev/null)" || true
+  reply="$(curl_with_key -sS -m 5 -w '\n%{http_code}' "$jobs_url" 2>/dev/null)" || true
   code="${reply##*$'\n'}"
   if [ "$code" != "200" ]; then
     echo "deploy: the running-jobs check got HTTP ${code:-000} from $jobs_url, so it cannot tell whether a job is running — fix API_KEY or the stack, or EMBRY0_DEPLOY_FORCE=1" >&2
@@ -163,7 +168,14 @@ echo ">> waiting for http://localhost:$port/health"
 for _ in $(seq 1 60); do
   if curl -fsS -m 3 "http://localhost:$port/health" >/dev/null 2>&1; then
     echo ">> healthy"
-    curl -fsS -m 5 "http://localhost:$port/api/v1/health/ready" 2>/dev/null && echo
+    # With the key, the readiness check also lists each watched stack's state;
+    # without one it answers its overall state alone.
+    ready_url="http://localhost:$port/api/v1/health/ready"
+    if [ -n "$api_key" ]; then
+      curl_with_key -fsS -m 5 "$ready_url" 2>/dev/null && echo
+    else
+      curl -fsS -m 5 "$ready_url" 2>/dev/null && echo
+    fi
     echo ">> deployed $sha: ${services[*]}"
     push_deploy_marker "$sha" "${services[@]}"
     exit 0
