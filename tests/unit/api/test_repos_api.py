@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 _V2_MIN = "version: 2\nqa_required: never\nworkspace_provider:\n  type: npm-workspaces-turbo\n"
@@ -522,3 +524,21 @@ async def test_a_dot_or_dot_dot_segment_is_not_registered(api_client, repo: str)
     r = await api_client.post("/api/v1/repos", json={"repo": repo})
     listed = [row["repo"] for row in (await api_client.get("/api/v1/repos")).json()]
     assert r.status_code == 422 and listed == [], f"POST /repos must refuse {repo!r}: {r.status_code}, {listed!r}"
+
+
+def _body_regex_setup(pattern: str) -> str:
+    return (
+        _V2_MIN + "defaults:\n  ready_checks:\n    - http: http://localhost:3000/\n      expect_status: 200\n"
+        f"      expect_body_regex: {json.dumps(pattern)}\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_put_qa_config_refuses_a_body_pattern_the_boot_cannot_search_naming_the_check(api_client) -> None:
+    r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=_body_regex_setup(r"(?<=status: )UP"))
+    assert r.status_code == 422, f"a body pattern the boot cannot search was stored: {r.status_code} {r.text[:200]}"
+    detail = r.json()["detail"]
+    assert "expect_body_regex" in detail and "look-ahead and look-behind" in detail, detail
+    assert (
+        await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=_body_regex_setup(r"(a+)+$"))
+    ).status_code == 200

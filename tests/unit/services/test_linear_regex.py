@@ -348,3 +348,60 @@ def test_a_pattern_at_the_bounds_masks_a_line_of_4096_characters_quickly(pattern
         compiled.sub("<m>", line)
         took = time.perf_counter() - started
         assert took < 0.5, f"{pattern!r} took {took:.2f}s on a line of 4,096 characters"
+
+
+# ---- searching a text ------------------------------------------------------------
+
+
+def test_a_pattern_compiled_to_search_answers_as_re_search_does() -> None:
+    """A ready check's body pattern (``embry0.workflows.qa.boot``): one that can match an empty string matches every
+    text, as with ``re.search``; the generated patterns are compared on the texts of the mask comparison."""
+    engine = _engine()
+    rng = random.Random(255)
+    compared = 0
+    for pattern in [*REALISTIC, r"x*", "", r"\d*\b", r"(?m)^$", r"a?", r"(?i)ready|"]:
+        compiled = engine.compile_linear_search(pattern)
+        for _ in range(30):
+            text = "".join(rng.choice(_TEXT) for _ in range(rng.randint(0, 12)))
+            if compiled.ascii_word_boundary and any(not c.isascii() and c.isalnum() for c in text):
+                continue
+            assert compiled.search(text) == (re.search(pattern, text) is not None), (pattern, text)
+            compared += 1
+    for _ in range(2000):
+        pattern = rng.choice(_FLAGS) + _generated(rng)
+        try:
+            re.compile(pattern)
+            compiled = engine.compile_linear_search(pattern)
+        except (re.error, engine.UnsupportedPattern):
+            continue
+        for _ in range(10):
+            text = "".join(rng.choice(_TEXT) for _ in range(rng.randint(0, 10)))
+            if compiled.ascii_word_boundary and any(not c.isascii() and c.isalnum() for c in text):
+                continue
+            assert compiled.search(text) == (re.search(pattern, text) is not None), (pattern, text)
+            compared += 1
+    assert compared > 10_000, f"only {compared} comparisons: the generator is measuring nothing"
+
+
+def test_only_a_search_may_match_an_empty_string() -> None:
+    engine = _engine()
+    assert engine.compile_linear_search(r"\d*").search("no digits")
+    with pytest.raises(engine.UnsupportedPattern, match="empty string"):
+        engine.compile_linear(r"\d*")
+    with pytest.raises(engine.UnsupportedPattern, match="look-ahead"):
+        engine.compile_linear_search(r"(?=a)a")
+
+
+@pytest.mark.parametrize("pattern", [r"\B", r"(?a)\B", r"x*\B", r"(?:\B|a)"])
+def test_a_search_pattern_that_can_match_an_empty_string_may_not_hold_a_non_boundary(pattern: str) -> None:
+    """RE2 reads ``\\B`` between the two bytes of ``é``: an empty match there is one ``re`` never finds."""
+    engine = _engine()
+    with pytest.raises(engine.UnsupportedPattern, match=r"\\B in a pattern that can match an empty string"):
+        engine.compile_linear_search(pattern)
+
+
+def test_a_search_of_a_text_a_backtracking_pattern_almost_matches_takes_linear_time() -> None:
+    compiled = _engine().compile_linear_search(r"(a+)+$")
+    started = time.perf_counter()
+    assert compiled.search("a" * 100_000 + "!") is False
+    assert time.perf_counter() - started < 0.5
