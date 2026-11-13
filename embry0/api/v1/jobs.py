@@ -602,7 +602,7 @@ async def answer_job_input_as(
     # Telegram question message, and posts the Q&A on the linked Linear issue.
     # answered_by carries the real principal (session email / key name), not
     # the historical hardcoded "user".
-    await record_answer(
+    recorded = await record_answer(
         inp=inp,
         answer=req.answer,
         answered_by=actor,
@@ -612,6 +612,9 @@ async def answer_job_input_as(
         tracker_channels=getattr(request.app.state, "tracker_channels", None),
         config=getattr(request.app.state, "config", None),
     )
+    if recorded is False:
+        # #499: another answer to this question was taken first, between the read above and this write.
+        raise HTTPException(status_code=409, detail="Input has already been answered")
 
     pending = await inputs_repo.count_pending_blocking_for_job(job_id)
     if pending == 0:
@@ -622,7 +625,9 @@ async def answer_job_input_as(
                 f"Q: {a['question']}\nA: {a.get('answer') or a.get('auto_answer') or ''}" for a in answered
             ]
             executor = request.app.state.issue_executor
-            executor.schedule_resume(
+            # #499: the job is taken before its resume is scheduled, so two answers that each find no question
+            # left resume it once; the second answer is recorded all the same.
+            await executor.resume_answered(
                 inp.get("issue_id") or None,
                 job_id,
                 "\n\n".join(context_lines),
@@ -723,7 +728,7 @@ async def resume_job_as(
                 "actor": actor,
             },
             kind="resume_via_api",
-            claimed=True,
+            claimed="paused",
         )
     except ExecutorDraining:
         # A drain began between the check and the schedule: nothing runs, so the pause is given back.

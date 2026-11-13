@@ -140,22 +140,32 @@ class IssueInputsRepository:
         input_id: str,
         answer: str,
         answered_by: str,
-    ) -> None:
-        """Record an answer and mark the input as answered."""
-        await self._db.execute(
+    ) -> bool:
+        """Record an answer and mark the input as answered; False when it was answered already.
+
+        One statement, so of two answers to one input given at once only the
+        first is taken (#499). An input the orchestrator answered itself
+        (``auto_answered``) still takes a person's answer (RAV-1059).
+        """
+        row = await self._db.fetchrow(
             """
             UPDATE issue_inputs
             SET answer = $1,
                 answered_by = $2,
                 status = 'answered',
                 answered_at = NOW()
-            WHERE id = $3
+            WHERE id = $3 AND status IS DISTINCT FROM 'answered'
+            RETURNING id
             """,
             answer,
             answered_by,
             input_id,
         )
+        if row is None:
+            logger.info("issue_input_already_answered", input_id=input_id, answered_by=answered_by)
+            return False
         logger.info("issue_input_answered", input_id=input_id, answered_by=answered_by)
+        return True
 
     async def skip(
         self,

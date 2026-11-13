@@ -633,7 +633,7 @@ async def answer_issue_input_as(
 
     # RAV-1076: shared record path (persist + Telegram mirror + Linear Q&A
     # comment); answered_by carries the real principal.
-    await record_answer(
+    recorded = await record_answer(
         inp=inp,
         answer=req.answer,
         answered_by=actor,
@@ -643,6 +643,9 @@ async def answer_issue_input_as(
         tracker_channels=getattr(request.app.state, "tracker_channels", None),
         config=getattr(request.app.state, "config", None),
     )
+    if recorded is False:
+        # #499: another answer to this question was taken first, between the read above and this write.
+        raise HTTPException(status_code=409, detail="Input has already been answered")
 
     pending_blocking = await inputs.count_pending_blocking(issue_id)
     if pending_blocking == 0:

@@ -611,13 +611,14 @@ class IssueExecutor:
         answers: Any,
         *,
         kind: str,
-        claimed: bool = False,
+        claimed: str | None = None,
     ) -> asyncio.Task[Any]:
         """Dispatch ``resume(...)`` as a tracked background task.
 
-        ``claimed``: the caller already took the paused job for this resume
-        (``JobsRepository.claim_pause``, #470), so it reads ``running`` and was
-        ``paused`` before.
+        ``claimed``: the caller already took the job for this resume, so it
+        reads ``running``; the status it took it from (``paused``,
+        ``JobsRepository.claim_pause``, #470; ``awaiting_input``,
+        :meth:`resume_answered`, #499).
 
         Public wrapper so API routes never touch ``_track_task`` directly.
         ``issue_id`` is None for issue-less jobs (resume tolerates it).
@@ -635,6 +636,27 @@ class IssueExecutor:
             # resume() takes its slot itself, once the job reads `running`.
             run_slot=False,
         )
+
+    async def resume_answered(self, issue_id: str | None, job_id: str, answers: Any, *, kind: str) -> bool:
+        """Resume a job whose questions are all answered, once: False when another answer already took it (#499).
+
+        The job is taken first, ``awaiting_input`` to ``running`` in one
+        statement (``JobsRepository.claim_answer_wait``), so of two answers,
+        or an answer and an inbound reply, that each find no blocking question
+        left, only one schedules the resume. Raises ExecutorDraining while the
+        orchestrator shuts down, with the job given back to its wait.
+        """
+        if self.draining:
+            raise ExecutorDraining(f"embry0 is shutting down; resume job {job_id} once it is back")
+        if not await self._jobs.claim_answer_wait(job_id):
+            logger.info("resume_answered_taken", job_id=job_id, kind=kind)
+            return False
+        try:
+            self.schedule_resume(issue_id, job_id, answers, kind=kind, claimed="awaiting_input")
+        except ExecutorDraining:
+            await self._jobs.update(job_id, status="awaiting_input")
+            raise
+        return True
 
     async def waiting_job(self, issue_id: str) -> dict[str, Any] | None:
         """The job :meth:`resume_or_execute` resumes for ``issue_id``: its newest job awaiting input, None when none
@@ -657,8 +679,9 @@ class IssueExecutor:
         waiting = await self.waiting_job(issue_id)
         if waiting is not None:
             job_id = waiting["job_id"]
-            self.schedule_resume(issue_id, job_id, additional_context, kind="resume_via_answer")
-            logger.info("pipeline_resumed", issue_id=issue_id, job_id=job_id)
+            # Another answer that took the job first resumes it; this one starts nothing (#499).
+            if await self.resume_answered(issue_id, job_id, additional_context, kind="resume_via_answer"):
+                logger.info("pipeline_resumed", issue_id=issue_id, job_id=job_id)
             return
 
         await self._issues.update(issue_id, status="triaging")
@@ -1207,7 +1230,7 @@ class IssueExecutor:
         *,
         after_restart: bool = False,
         account_wait: AccountWait | None = None,
-        claimed: bool = False,
+        claimed: str | None = None,
     ) -> None:
         """Resume a paused pipeline with user answers using Command(resume=).
 
@@ -1225,9 +1248,10 @@ class IssueExecutor:
         sandbox the proxies will not take back parks it again for a few
         minutes.
 
-        ``claimed`` (#470): the resume route already took the paused job
-        (``paused`` to ``running``, one winner), so it was ``paused`` before and
-        reads ``running`` now.
+        ``claimed`` (#470, #499): the caller already took the job (to
+        ``running``, one winner) from the status it names, ``paused`` or
+        ``awaiting_input``, so that is what it was before and it reads
+        ``running`` now.
 
         RAV-1406: like ``_run_workflow``, the terminal Linear outcome comment
         posts in the ``finally`` — resumed jobs used to finish silently
@@ -1253,7 +1277,7 @@ class IssueExecutor:
                 # not take back puts the job and issue back exactly as they were (#476).
                 # Best-effort: only that rare path uses it, so it must not change any other.
                 try:
-                    prior_job_status = "paused" if claimed else ((await self._jobs.get(job_id)) or {}).get("status")
+                    prior_job_status = claimed or ((await self._jobs.get(job_id)) or {}).get("status")
                     if issue_id:
                         prior_issue_status = ((await self._issues.get(issue_id)) or {}).get("status")
                 except Exception:
@@ -1533,8 +1557,8 @@ class IssueExecutor:
 
         # `list_all` orders by created_at DESC, so awaiting_jobs[0] is the latest.
         job_id = awaiting_jobs[0]["job_id"]
-        self.schedule_resume(issue_id, job_id, None, kind="resume_via_inbound")
-        logger.info("resume_for_issue_dispatched", issue_id=issue_id, job_id=job_id)
+        if await self.resume_answered(issue_id, job_id, None, kind="resume_via_inbound"):
+            logger.info("resume_for_issue_dispatched", issue_id=issue_id, job_id=job_id)
 
     # ------------------------------------------------------------------
     # RAV-1235: the workflow-run and outcome internals live in sibling

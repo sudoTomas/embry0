@@ -108,7 +108,7 @@ async def test_schedule_resume_delegates_to_tracked_resume():
     ex, tracked = _bare_executor()
     captured = {}
 
-    def _fake_resume(issue_id, job_id, answers, claimed=False):
+    def _fake_resume(issue_id, job_id, answers, claimed=None):
         captured.update(issue_id=issue_id, job_id=job_id, answers=answers, claimed=claimed)
 
         async def _noop():
@@ -120,11 +120,11 @@ async def test_schedule_resume_delegates_to_tracked_resume():
 
     ex.schedule_resume("iss-1", "job-1", {"choice": "retry"}, kind="resume_via_api")
 
-    assert captured == {"issue_id": "iss-1", "job_id": "job-1", "answers": {"choice": "retry"}, "claimed": False}
+    assert captured == {"issue_id": "iss-1", "job_id": "job-1", "answers": {"choice": "retry"}, "claimed": None}
     assert tracked == [{"kind": "resume_via_api", "job_id": "job-1", "issue_id": "iss-1", "run_slot": False}]
     # A route that took the pause itself says so (#470).
-    ex.schedule_resume("iss-1", "job-1", {"choice": "retry"}, kind="resume_via_api", claimed=True)
-    assert captured["claimed"] is True
+    ex.schedule_resume("iss-1", "job-1", {"choice": "retry"}, kind="resume_via_api", claimed="paused")
+    assert captured["claimed"] == "paused"
 
 
 @pytest.mark.asyncio
@@ -142,7 +142,7 @@ async def test_resume_or_execute_resumes_latest_awaiting_job():
     )
     captured = {}
 
-    def _fake_resume(issue_id, job_id, answers, claimed=False):
+    def _fake_resume(issue_id, job_id, answers, claimed=None):
         captured.update(issue_id=issue_id, job_id=job_id, answers=answers, claimed=claimed)
 
         async def _noop():
@@ -152,11 +152,13 @@ async def test_resume_or_execute_resumes_latest_awaiting_job():
 
     ex.resume = _fake_resume  # type: ignore[method-assign]
     ex.execute = AsyncMock()  # type: ignore[method-assign]
+    ex._jobs.claim_answer_wait = AsyncMock(return_value=True)
 
     await ex.resume_or_execute("iss-1", "Q: q\nA: a")
 
     # list_all orders created_at DESC — the first awaiting job is the latest.
-    assert captured == {"issue_id": "iss-1", "job_id": "job-new", "answers": "Q: q\nA: a", "claimed": False}
+    assert captured == {"issue_id": "iss-1", "job_id": "job-new", "answers": "Q: q\nA: a", "claimed": "awaiting_input"}
+    ex._jobs.claim_answer_wait.assert_awaited_once_with("job-new")
     assert tracked[0]["kind"] == "resume_via_answer"
     ex.execute.assert_not_awaited()
     ex._issues.update.assert_not_awaited()

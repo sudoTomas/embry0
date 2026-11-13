@@ -84,6 +84,7 @@ CONTINUES = frozenset(
         "resume_after_restart",
         "resume_for_issue",
         "resume_or_execute",
+        "resume_answered",
     }
 )
 EXECUTOR = "embry0.services.issue_executor"

@@ -801,6 +801,23 @@ class JobsRepository:
         )
         return row is not None
 
+    async def claim_answer_wait(self, job_id: str) -> bool:
+        """Take a job waiting for its answers for its resume: ``awaiting_input`` to ``running`` in one statement (#499).
+
+        Only one caller wins, as with :meth:`claim_pause`: two answers given at
+        once (or an answer and an inbound reply) each find no blocking question
+        left, and only the first to claim resumes the job.
+        """
+        row = await self._db.fetchrow(
+            """
+            UPDATE jobs SET status = 'running'
+            WHERE job_id = $1 AND status = 'awaiting_input'
+            RETURNING job_id
+            """,
+            job_id,
+        )
+        return row is not None
+
     async def claim_account_wait(self, job_id: str) -> bool:
         """Take a parked job back for its account wait to end: ``paused`` to
         ``running`` and the wait cleared, in one statement, so two takers
