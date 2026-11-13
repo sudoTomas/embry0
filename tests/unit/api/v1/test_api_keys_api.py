@@ -233,14 +233,16 @@ def test_owner_changes_the_allowlist_and_the_cache_is_busted():
     app.state.api_keys_repo.set_allowed_repos = AsyncMock(return_value=_key_row(allowed_repos=("acme/widgets",)))
     client = TestClient(app)
     client.cookies.set(SESSION_COOKIE, _cookie(["embry0-operator"], "operator"))
-    deps._api_key_cache["stale"] = (1e18, "key-abc123def456", "mine", "operate", "usr-op", False, False, None)
+    deps._api_key_cache.put("stale", ("key-abc123def456", "mine", "operate", "usr-op", False, False, None), 1e18)
     resp = client.put(
         "/api/v1/apikeys/key-abc123def456/allowed-repos", json={"allowed_repos": ["acme/widgets"]}, headers=XRW
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["allowed_repos"] == ["acme/widgets"]
     app.state.api_keys_repo.set_allowed_repos.assert_awaited_once_with("key-abc123def456", ["acme/widgets"])
-    assert "stale" not in deps._api_key_cache, "a changed allowlist must apply at once, not after the cache TTL"
+    assert deps._api_key_cache.get("stale", 0.0) is None, (
+        "a changed allowlist must apply at once, not after the cache TTL"
+    )
 
 
 def test_an_empty_list_lifts_the_restriction():
