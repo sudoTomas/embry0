@@ -6,6 +6,12 @@ one-draft rules are the database's.
 
 from __future__ import annotations
 
+import struct
+import zoneinfo
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -373,10 +379,68 @@ def test_a_body_that_is_not_a_pack_is_refused_by_kind(body: bytes, content_type:
 
 # ---- what Python accepts and the database does not ----
 
+#: A zone name no tz database ships, so Postgres never knows it; ``python_only_zone`` makes ``zoneinfo`` read it.
+#: No digit in it: Postgres reads a name such as ``Abc0Def`` as a POSIX zone spec (``Abc``, offset 0) and accepts it.
+PYTHON_ONLY_ZONE = "PythonOnly/Zone"
 
-async def test_a_timezone_only_python_knows_is_refused_on_every_write(store: PackStore) -> None:
-    """``localtime`` is a zone ``zoneinfo`` reads and Postgres does not: the facts query would fail on every read."""
-    local = read_text(COPPER.replace("timezone: UTC", "timezone: localtime"))
+#: A TZif version 1 file for UTC: no transitions, one local time type (offset 0, not DST), designation "UTC".
+UTC_TZIF = b"TZif" + b"\x00" * 16 + struct.pack(">6l", 0, 0, 0, 0, 1, 4) + struct.pack(">lBB", 0, 0, 0) + b"UTC\x00"
+
+
+@contextmanager
+def _python_only_zone(directory: Path) -> Iterator[str]:
+    """A zone ``zoneinfo`` reads and Postgres does not, on any host, until the block ends.
+
+    The case these tests measure used ``localtime``, which ``zoneinfo`` reads only where tzdata ships a file of
+    that name (Debian and Ubuntu do; Arch does not), so on other hosts the Python check refused it first and the
+    database check was never reached. A zone written to a directory put first on ``zoneinfo``'s search path is
+    read everywhere, and no database has its name. Only this zone leaves the ``ZoneInfo`` cache after: clearing
+    the whole cache would give later code new objects for zones it already holds, and ``ZoneInfo`` compares by
+    identity.
+    """
+    zone_file = directory / PYTHON_ONLY_ZONE
+    zone_file.parent.mkdir(parents=True)
+    zone_file.write_bytes(UTC_TZIF)
+    saved = zoneinfo.TZPATH
+    zoneinfo.reset_tzpath(to=[str(directory), *saved])
+    try:
+        yield PYTHON_ONLY_ZONE
+    finally:
+        zoneinfo.reset_tzpath(to=list(saved))
+        zoneinfo.ZoneInfo.clear_cache(only_keys=[PYTHON_ONLY_ZONE])
+
+
+@pytest.fixture
+def python_only_zone(tmp_path: Path) -> Iterator[str]:
+    with _python_only_zone(tmp_path) as zone:
+        yield zone
+
+
+def test_the_python_only_zone_is_gone_after_its_block(tmp_path: Path) -> None:
+    utc = zoneinfo.ZoneInfo("UTC")
+    saved = zoneinfo.TZPATH
+    with _python_only_zone(tmp_path) as zone:
+        assert zoneinfo.ZoneInfo(zone).utcoffset(None) == timedelta(0)
+    assert zoneinfo.TZPATH == saved, "the search path is restored"
+    with pytest.raises(zoneinfo.ZoneInfoNotFoundError):
+        zoneinfo.ZoneInfo(zone)
+    assert zoneinfo.ZoneInfo("UTC") is utc, "zones cached before the block are the same objects after it"
+
+
+async def _assert_only_python_knows(zone: str, repo: ProgressionPacksRepository) -> None:
+    try:
+        zoneinfo.ZoneInfo(zone)
+    except zoneinfo.ZoneInfoNotFoundError:
+        pytest.fail(f"zoneinfo cannot read {zone}, so the Python check would refuse it before the database is asked")
+    assert not await repo.timezone_known(zone), f"the database knows {zone}, so this test measures nothing"
+
+
+async def test_a_timezone_only_python_knows_is_refused_on_every_write(
+    store: PackStore, repo: ProgressionPacksRepository, python_only_zone: str
+) -> None:
+    """A zone ``zoneinfo`` reads and Postgres does not: the facts query would fail on every read."""
+    await _assert_only_python_knows(python_only_zone, repo)
+    local = read_text(COPPER.replace("timezone: UTC", f"timezone: {python_only_zone}"))
     berlin = read_text(COPPER.replace("timezone: UTC", "timezone: Europe/Berlin"))
     for write in (
         store.put(local, actor="ann"),
@@ -386,23 +450,26 @@ async def test_a_timezone_only_python_knows_is_refused_on_every_write(store: Pac
         with pytest.raises(PackInvalid) as refused:
             await write
         assert [(p.loc, p.type) for p in refused.value.problems] == [(("timezone",), "timezone")]
-        assert "localtime" not in refused.value.problems[0].msg, "a refusal never echoes the value"
+        assert "database does not know" in refused.value.problems[0].msg, "refused by the database check"
+        assert python_only_zone not in refused.value.problems[0].msg, "a refusal never echoes the value"
     assert (await store.put(berlin, actor="ann")).changed, "a zone both know is stored"
     assert (await store.active()).timezone == "Europe/Berlin"
 
 
 async def test_a_draft_whose_timezone_the_database_no_longer_knows_is_not_activated(
-    store: PackStore, db_with_migrations: DatabasePool
+    store: PackStore, repo: ProgressionPacksRepository, db_with_migrations: DatabasePool, python_only_zone: str
 ) -> None:
+    await _assert_only_python_knows(python_only_zone, repo)
     draft, _ = await store.save_draft(read_text(COPPER), actor="ann")
     document = dict(draft.document or {})
-    document["timezone"] = "localtime"
+    document["timezone"] = python_only_zone
     await db_with_migrations.execute(
         "UPDATE progression_packs SET document = $1::jsonb WHERE version = $2", document, draft.version
     )
     with pytest.raises(PackInvalid) as refused:
         await store.activate_draft(actor="ann")
     assert refused.value.problems[0].loc == ("timezone",)
+    assert "database does not know" in refused.value.problems[0].msg, "refused by the database check"
     assert (await store.effective()).version == 0, "nothing was activated"
 
 
