@@ -343,13 +343,15 @@ async def test_a_refusal_s_row_is_never_read_and_the_actor_filter_stays_within_t
         assert refused.status_code == 403, refused.text
         await _row(db, "repo.preferences_set", OPEN, {"repo": COVERED, "fields": ["notes"]})
         await _row(db, "repo.preferences_set", OPEN, {"repo": UNCOVERED, "fields": ["notes"], "m": HIDDEN_MARK})
+        await _row(db, "repo.preferences_set", LIMITED, {"repo": COVERED, "fields": ["notes"]})
+        await _row(db, "repo.preferences_set", LIMITED, {"repo": UNCOVERED, "fields": ["notes"], "m": HIDDEN_MARK})
         rows, _total = await _read_all(app, keys.limited)
-        by_open, _ = await _read_all(app, keys.limited, f"&actor={OPEN}")
+        by_own, _ = await _read_all(app, keys.limited, f"&actor={LIMITED}")
         refusals, _ = await _read_all(app, keys.limited, "&action=apikey.repo_refused")
     assert all(r["actor"] != REPO_ALLOWLIST for r in rows), "the limited key reads a refusal's row"
     assert refusals == [], f"the action filter finds a refusal's row: {refusals}"
-    assert by_open and all(r["actor"] == OPEN for r in by_open), by_open
-    assert HIDDEN_MARK not in json.dumps(by_open), "the actor filter finds a row about another repository"
+    assert by_own and all(r["actor"] == LIMITED for r in by_own), by_own
+    assert HIDDEN_MARK not in json.dumps(by_own), "the actor filter finds a row about another repository"
 
 
 async def test_an_operate_key_with_an_allowlist_reads_only_its_own_rows_about_its_repositories(
@@ -397,3 +399,141 @@ async def test_the_actions_offered_are_those_of_the_rows_the_key_reads(
         *AUDIT_ACTION_LABELS,
         *RETIRED_AUDIT_ACTIONS,
     ], "a key without a list is not offered the whole registry"
+
+
+# ---- who wrote a row, and what it names, to a key with an allowlist ---------------------------------------------
+
+PERSON, OTHER = "person@example.com", "other@example.com"
+SCOUT = "embry0:scout"
+#: Details naming people beside the row's actor, and the deployment's own configuration.
+NAMING = {
+    "repo": COVERED,
+    "fields": ["notes"],
+    "decided_by": PERSON,
+    "to": OTHER,
+    "nested": {"closed_by": PERSON, "kept": "a note"},
+    "telegram_chat_id": "-1000000000001",
+    "webhook_notify_url": "https://hooks.example.test/notify",
+    "linear_repo_map": f"{COVERED}=TEAM",
+    "tracker_target": {"team_id": "team-000000000001", "project_id": "proj-000000000001"},
+}
+
+
+async def test_a_limited_admin_reads_who_wrote_its_repository_s_rows_as_a_caller_below_admin(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An admin key with an allowlist reads the rows about its repositories (#447); who wrote each, and each person
+    their details name, read to it as to a caller that is not an admin: its own actors and embry0's, null for anyone
+    else's. A key without a list reads them as stored."""
+    db = db_with_migrations
+    async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
+        written = {
+            await _row(db, "repo.preferences_set", actor, {"repo": COVERED, "fields": ["notes"]}): actor
+            for actor in (OPEN, PERSON, SCOUT, LIMITED)
+        }
+        limited = {int(r["id"]): r for r in (await _read_all(app, keys.limited))[0]}
+        unlimited = {int(r["id"]): r for r in (await _read_all(app, keys.open))[0]}
+    assert {written[i]: limited[i]["actor"] for i in written} == {
+        OPEN: None,
+        PERSON: None,
+        SCOUT: SCOUT,
+        LIMITED: LIMITED,
+    }, f"who wrote a row about its repository, to a key with an allowlist: {[limited[i]['actor'] for i in written]}"
+    assert {written[i]: unlimited[i]["actor"] for i in written} == {a: a for a in written.values()}, (
+        "a key without a list"
+    )
+
+
+async def test_a_limited_key_reads_no_person_and_no_deployment_configuration_in_a_row_s_details(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = db_with_migrations
+    async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
+        row = await _row(db, "repo.preferences_set", OPEN, NAMING)
+        limited = next(r for r in (await _read_all(app, keys.limited))[0] if int(r["id"]) == row)
+        unlimited = next(r for r in (await _read_all(app, keys.open))[0] if int(r["id"]) == row)
+    assert limited["details"] == {
+        "repo": COVERED,
+        "fields": ["notes"],
+        "decided_by": None,
+        "to": None,
+        "nested": {"closed_by": None, "kept": "a note"},
+        "telegram_chat_id": None,
+        "webhook_notify_url": None,
+        "linear_repo_map": None,
+        "tracker_target": None,
+    }, f"what a key with an allowlist reads of a row's details: {limited['details']}"
+    assert unlimited["details"] == NAMING, f"a key without a list reads the details as stored: {unlimited['details']}"
+
+
+async def test_a_limited_key_s_actor_filter_naming_someone_else_finds_nothing(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Below admin a filter names the caller's own actors alone; so does a key with an allowlist's, whatever its tier,
+    so the filter cannot tell it who wrote a row it reads unnamed. embry0's own actors it reads, and filters by."""
+    db = db_with_migrations
+    async with repository_writes_app(db, monkeypatch) as (app, keys, _values):
+        for actor in (OPEN, PERSON, SCOUT, LIMITED):
+            await _row(db, "repo.preferences_set", actor, {"repo": COVERED, "fields": ["notes"]})
+        found = {
+            actor: await _read_all(app, keys.limited, f"&actor={actor}") for actor in (OPEN, PERSON, SCOUT, LIMITED)
+        }
+        unlimited, _ = await _read_all(app, keys.open, f"&actor={PERSON}")
+    assert {a: (len(rows), total) for a, (rows, total) in found.items()} == {
+        OPEN: (0, 0),
+        PERSON: (0, 0),
+        SCOUT: (1, 1),
+        LIMITED: (1, 1),
+    }, f"what a key with an allowlist finds by actor: {found}"
+    assert [r["actor"] for r in unlimited] == [PERSON], "a key without a list filters by anyone"
+
+
+def _detail_keys_written() -> set[str]:
+    """Every key an audit writer in embry0 puts in a row's details by name."""
+    import ast
+    import pathlib
+
+    import embry0
+
+    writers = {"emit_audit", "emit_audit_event", "emit_audit_event_db", "_emit_audit", "_audit", "audit"}
+    found: set[str] = set()
+    for path in pathlib.Path(embry0.__file__).parent.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+            if name not in writers:
+                continue
+            for part in ast.walk(node):
+                if isinstance(part, ast.Dict):
+                    found |= {k.value for k in part.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            found |= {kw.arg for kw in node.keywords if kw.arg}
+    return found
+
+
+def test_every_detail_naming_a_person_is_answered_as_the_actor_is() -> None:
+    """A detail key that names who did something (``…_by``, ``by``, ``to``, ``actor``) reads to a key with an
+    allowlist as the row's actor does: each is listed, so a new one is not read in clear."""
+    from embry0.api.v1.audit import PERSON_DETAIL_KEYS
+
+    written = _detail_keys_written()
+    assert len(written) > 100, f"only {len(written)} detail keys found: the walk measures nothing"
+    # ``matched_by`` says how a duplicate pull request was matched (``ticket ABC-1``), not who matched it.
+    naming = {k for k in written if k.endswith("_by") or k in {"by", "to", "actor"}} - {"matched_by"}
+    assert naming, "no detail names a person: the walk measures nothing"
+    assert naming <= PERSON_DETAIL_KEYS, (
+        f"details naming a person a key with an allowlist reads: {naming - PERSON_DETAIL_KEYS}"
+    )
+
+
+def test_every_integration_destination_is_a_detail_a_limited_key_reads_as_null() -> None:
+    """The integrations a key with an allowlist reads as unset (GET /config/integrations, #457) read as null in an audit
+    row's details too, but the trigger labels it reads there; secret-named ones are redacted for everyone."""
+    from embry0.api.schemas import IntegrationConfigUpdate
+    from embry0.api.v1.audit import DEPLOYMENT_CONFIG_DETAIL_KEYS, _secret_named
+
+    fields = {f for f in IntegrationConfigUpdate.model_fields if f != "trigger_labels" and not _secret_named(f)}
+    assert fields, "no integration field: the check measures nothing"
+    assert fields <= DEPLOYMENT_CONFIG_DETAIL_KEYS, (
+        f"integration fields read in an audit row: {fields - DEPLOYMENT_CONFIG_DETAIL_KEYS}"
+    )

@@ -164,7 +164,7 @@ export function AuditPage() {
                               )}
                             </div>
                           </td>
-                          <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">{entry.actor}</td>
+                          <td className="hidden whitespace-nowrap text-xs text-muted-foreground sm:table-cell">{entry.actor ?? "—"}</td>
                           <td className="hidden font-mono text-xs sm:table-cell">
                             {entry.issue_id ? (
                               <Link to={`/issues/${entry.issue_id}`} className="text-fg hover:text-primary hover:underline">

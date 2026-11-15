@@ -9,11 +9,17 @@ email, or ``key:<name>`` for service keys).
 A key with a repository allowlist reads, within that, only the rows about
 the repositories it covers (:mod:`embry0.api.audit_allowlist`), narrowed in
 the query; the actions the filter offers it are those of the rows it reads.
+Whatever its tier, it reads who wrote each row, and each person a row's
+details name, as a caller that is not an admin does: its own actors and
+embry0's, and null for anyone else's (``deployment_actor_shown``), and an
+actor filter naming anyone else finds nothing. A detail naming the
+deployment's own configuration (where notifications go, the chat, which
+tracker team files which repository's work) reads null to it.
 
 An issue's activity (``GET /issues/{id}/activity``) is its rows read the same
 way (:func:`issue_activity`): narrowed for such a key and details redacted.
 It stays a collaboration view: every reader who can see the issue sees who
-acted.
+acted, a key with an allowlist too.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from embry0.api.actor_visibility import caller_scope
+from embry0.api.actor_visibility import ActorView, caller_scope, deployment_actor_shown
 from embry0.api.audit_allowlist import audit_narrowing
 from embry0.api.deps import get_audit_repo
 from embry0.api.served import ServedRoute
@@ -41,7 +47,8 @@ _SENSITIVE_KEY_PARTS = ("key", "token", "secret", "password")
 class AuditEntry(BaseModel):
     id: int
     action: str
-    actor: str
+    #: Null for an actor a key with a repository allowlist does not read (the module docstring).
+    actor: str | None
     details: dict[str, Any]
     issue_id: str | None = None
     created_at: datetime
@@ -111,6 +118,57 @@ def _redact(details: dict[str, Any]) -> dict[str, Any]:
 
 #: The caller's tier and its own actor strings; shared with every route that names an actor.
 _caller_scope = caller_scope
+
+#: Detail keys whose value names a person, one who acted on the row's subject: answered as the row's actor is.
+PERSON_DETAIL_KEYS: frozenset[str] = frozenset(
+    {
+        "actor",
+        "accepted_by",
+        "answered_by",
+        "by",
+        "closed_by",
+        "created_by",
+        "decided_by",
+        "requested_by",
+        "to",
+        "updated_by",
+    }
+)
+#: Detail keys naming the deployment's own configuration, never one repository's: the integrations' destinations
+#: (a chat, a notification or event URL), the tracker's team map, a tracker target. A key with an allowlist reads
+#: each as null.
+DEPLOYMENT_CONFIG_DETAIL_KEYS: frozenset[str] = frozenset(
+    {
+        "slack_webhook_url",
+        "telegram_chat_id",
+        "webhook_notify_url",
+        "linear_repo_map",
+        "tracker_target",
+        "team_id",
+        "project_id",
+    }
+)
+
+
+def _as_limited(details: dict[str, Any], shown: ActorView) -> dict[str, Any]:
+    """``details`` as a key with a repository allowlist reads them: each person :data:`PERSON_DETAIL_KEYS` names as
+    ``shown`` answers them, each of :data:`DEPLOYMENT_CONFIG_DETAIL_KEYS` null, at any depth."""
+    out: dict[str, Any] = {}
+    stack: list[tuple[Any, Any]] = [(details, out)]
+    while stack:
+        source, copy = stack.pop()
+        if isinstance(source, dict):
+            for key, value in source.items():
+                if key in DEPLOYMENT_CONFIG_DETAIL_KEYS:
+                    copy[key] = None
+                elif key in PERSON_DETAIL_KEYS and isinstance(value, str):
+                    copy[key] = shown(value)
+                else:
+                    copy[key] = _copied(value, stack)
+        else:
+            for index, value in enumerate(source):
+                copy[index] = _copied(value, stack)
+    return out
 
 
 async def issue_activity(request: Request, issue_id: str, *, limit: int, offset: int) -> list[AuditEntry]:
@@ -199,6 +257,11 @@ async def list_audit(
     # row (dispatch_actors.REPO_ALLOWLIST).
     narrowing = audit_narrowing(request)
     hidden = [REPO_ALLOWLIST] if narrowing is not None else []
+    # Who wrote a row reads to a key with an allowlist as to a caller that is not an admin: an actor filter naming
+    # someone else finds nothing, as it does below admin.
+    shown = await deployment_actor_shown(request) if narrowing is not None else None
+    if shown is not None and actor and shown(actor) is None:
+        return AuditListResponse(entries=[], total=0)
     rows = await repo.list_entries(
         actors=actors,
         action=action,
@@ -216,8 +279,8 @@ async def list_audit(
         AuditEntry(
             id=r["id"],
             action=r["action"],
-            actor=r["actor"],
-            details=_redact(r["details"] or {}),
+            actor=r["actor"] if shown is None else shown(r["actor"]),
+            details=_redact(r["details"] or {}) if shown is None else _as_limited(_redact(r["details"] or {}), shown),
             issue_id=r["issue_id"],
             created_at=r["created_at"],
         )

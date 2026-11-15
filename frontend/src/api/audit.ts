@@ -9,8 +9,13 @@ export interface AuditFilters {
   offset?: number;
 }
 
+/** One audit row. ``actor`` is null for someone a key with a repository allowlist does not read (`GET /audit`). */
+export interface AuditEntry extends Omit<ActivityEntry, "actor"> {
+  actor: string | null;
+}
+
 export interface AuditResponse {
-  entries: ActivityEntry[];
+  entries: AuditEntry[];
   total: number;
 }
 
