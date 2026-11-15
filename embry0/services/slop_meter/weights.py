@@ -13,16 +13,20 @@ algorithm's.
 
 from __future__ import annotations
 
-import re
 import tomllib
 from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from statistics import quantiles
-from typing import Any
+from typing import Any, Final
 
+import structlog
+
+from embry0.bounded_patterns import ANY, NOT_SLASH, Memory, Node, Pattern, any_re2_fullmatch, lit, opt, seq, star
 from embry0.json_text import json_object
 from embry0.services.slop_meter.globs import GlobIndex, marked
 from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings
+
+logger = structlog.get_logger(__name__)
 
 #: The most path weights one :class:`FileRules` keeps.
 _KEPT_MAX = 200_000
@@ -110,6 +114,11 @@ def type_weight(path: str, rules: FileRules = DEFAULT_RULES) -> float:
 
 #: The ignore files a linter or formatter reads (gitignore-style globs), at the repository root.
 IGNORE_FILES = (".prettierignore", ".eslintignore", ".stylelintignore")
+#: The longest pattern read from a repository's ignore or configuration files, and how many are read: a longer
+#: one is left out, and the files' patterns past the count too. They are the repository's own text, and matching
+#: one costs time in its length for every file the meter scores.
+MAX_IGNORE_PATTERN_LENGTH = 200  # as a settings glob (slop_meter.globs.MAX_GLOB_LENGTH)
+MAX_IGNORE_PATTERNS = 256
 CONFIG_FILES = (*IGNORE_FILES, ".gitattributes", "biome.json", "pyproject.toml", "ruff.toml", ".ruff.toml")
 
 
@@ -139,7 +148,10 @@ def _strings(value: Any) -> list[str]:
 
 
 def ignore_patterns(files: Mapping[str, str | None]) -> list[str]:
-    """Every pattern the repository's linters and formatters ignore, merged; a missing or malformed file adds none."""
+    """Every pattern the repository's linters and formatters ignore, merged; a missing or malformed file adds none.
+
+    At most :data:`MAX_IGNORE_PATTERNS`, each at most :data:`MAX_IGNORE_PATTERN_LENGTH` characters.
+    """
     patterns: list[str] = []
     for name in IGNORE_FILES:
         if files.get(name):
@@ -161,12 +173,13 @@ def ignore_patterns(files: Mapping[str, str | None]) -> list[str]:
             data = data.get(key) if isinstance(data, dict) else None
         if isinstance(data, dict):
             patterns += _strings(data.get("exclude")) + _strings(data.get("extend-exclude"))
-    return patterns
+    return [p for p in patterns if len(p) <= MAX_IGNORE_PATTERN_LENGTH][:MAX_IGNORE_PATTERNS]
 
 
 @lru_cache(maxsize=4096)
-def _compiled(pattern: str) -> re.Pattern[str]:
-    """A gitignore-style pattern as a regex over file paths.
+def _compiled(pattern: str) -> Pattern:
+    """A gitignore-style pattern over file paths, matched in bounded time (:mod:`embry0.bounded_patterns`): the
+    patterns are a repository's own, from its ignore and configuration files.
 
     Anchored at the root when it holds a slash (other than a trailing one),
     else matched at any depth; ``*`` and ``?`` stay within a directory, ``**``
@@ -176,26 +189,142 @@ def _compiled(pattern: str) -> re.Pattern[str]:
     directory = pattern.endswith("/")
     body = pattern.strip("/")
     anchored = pattern.startswith("/") or "/" in body
-    out, i = "", 0
+    parts: list[Node] = [] if anchored else [opt(star(ANY), lit("/"))]
+    i = 0
     while i < len(body):
         if body.startswith("**/", i):
-            out, i = out + "(?:.*/)?", i + 3
+            parts.append(opt(star(ANY), lit("/")))
+            i += 3
         elif body.startswith("**", i):
-            out, i = out + ".*", i + 2
+            parts.append(star(ANY))
+            i += 2
         elif body[i] == "*":
-            out, i = out + "[^/]*", i + 1
+            parts.append(star(NOT_SLASH))
+            i += 1
         elif body[i] == "?":
-            out, i = out + "[^/]", i + 1
+            parts.append(NOT_SLASH)
+            i += 1
         else:
-            out, i = out + re.escape(body[i]), i + 1
-    prefix = "" if anchored else "(?:.*/)?"
-    return re.compile(prefix + out + (r"/.*\Z" if directory else r"(?:/.*)?\Z"))
+            parts.append(lit(body[i]))
+            i += 1
+    parts.append(seq(lit("/"), star(ANY)) if directory else opt(lit("/"), star(ANY)))
+    return Pattern(*parts)
+
+
+#: The work a scoring pass's ignore lines may do, as their automata count it
+#: (:meth:`embry0.bounded_patterns.Pattern.fullmatch_counted`: for each character read by working out where the
+#: states move, the number of states; a step read from memory, and a line Python's regex takes, count none).
+#: Once the pass's lines have done more than :data:`IGNORE_PASS_WORK` between them, every line that has done more
+#: than :data:`IGNORE_LINE_WORK` is dropped for the rest of the pass, and so is a line that passes it later. A
+#: common line works out a few hundred to a few thousand steps, a number its pattern sets whatever the repository
+#: holds, and then reads from memory; a line built to outgrow its memory walks on, at about 100 ns a state for
+#: each character. So a pass's lines do at most about :data:`IGNORE_PASS_WORK` plus :data:`IGNORE_LINE_WORK` for
+#: each line, and a path's worth more each: well under a second.
+IGNORE_PASS_WORK: Final = 1_000_000
+IGNORE_LINE_WORK: Final = 20_000
+#: What the pass's automata may remember together (:class:`embry0.bounded_patterns.Memory`; about 40 bytes each).
+IGNORE_MEMORY: Final = 500_000
+
+
+class IgnoreLines:
+    """A repository's ignore lines for one scoring pass, matched within a budget of work
+    (:data:`IGNORE_PASS_WORK`).
+
+    A path is matched against the lines Python's regex takes, then those RE2
+    takes (the path encoded once for them all), then the rest, which the
+    automaton walks: the order of their cost. A line the automaton walks, and
+    any line for a path only it can read, is matched by a copy of its
+    automaton the pass keeps (:meth:`embry0.bounded_patterns.Pattern.run_copy`),
+    so its work depends only on the paths of the pass, in their order: the
+    same pass drops the same lines at the same paths, whatever else was
+    matched before. A line dropped is logged once, naming the repository and
+    the line's position among its ignore lines (never its text: it is the
+    repository's own), and the score uses the lines still kept.
+    """
+
+    def __init__(self, patterns: Iterable[str], *, repo: str = "") -> None:
+        self.patterns = tuple(patterns)
+        self.repo = repo
+        self._compiled = [_compiled(pattern) for pattern in self.patterns]
+        self._memory = Memory(IGNORE_MEMORY)
+        self._copies: list[Pattern | None] = [None] * len(self.patterns)
+        self._kept = [True] * len(self.patterns)
+        self._work = [0] * len(self.patterns)  # each line's
+        self._pass_work = 0  # every line's, dropped ones too
+        #: The positions dropped (from 0), in the order they were.
+        self.dropped: list[int] = []
+        self._sort()
+
+    def _sort(self) -> None:
+        """The lines still kept, by what matches them."""
+        kept = [(index, pattern) for index, pattern in enumerate(self._compiled) if self._kept[index]]
+        self._by_regex = tuple(
+            (index, pattern.regex, pattern.regex_reads_newlines) for index, pattern in kept if pattern.regex
+        )
+        self._by_re2 = tuple((index, pattern.re2) for index, pattern in kept if pattern.re2 is not None)
+        self._re2_programs = tuple(program for _, program in self._by_re2)
+        self._by_automaton = tuple(index for index, pattern in kept if pattern.engine == "automaton")
+
+    def __bool__(self) -> bool:
+        return bool(self.patterns)
+
+    def ignored(self, path: str) -> bool:
+        """Whether ``path`` (or a directory above it) matches one of the lines still kept."""
+        path = path.lstrip("/")
+        newline = "\n" in path
+        for index, regex, reads_newlines in self._by_regex:
+            if newline and not reads_newlines:
+                if self._counted(index, path):
+                    return True
+            elif regex.fullmatch(path) is not None:
+                return True
+        if self._by_re2:
+            try:
+                utf8 = path.encode()
+            except UnicodeEncodeError:  # a lone surrogate: the automaton reads the path
+                if any(self._counted(index, path) for index, _ in self._by_re2):
+                    return True
+            else:
+                if any_re2_fullmatch(self._re2_programs, utf8):
+                    return True
+        return any(self._counted(index, path) for index in self._by_automaton)
+
+    def _counted(self, index: int, path: str) -> bool:
+        """Whether line ``index``'s copy matches ``path``, its work counted against the pass's budget."""
+        if not self._kept[index]:
+            return False
+        copy = self._copies[index]
+        if copy is None:
+            copy = self._copies[index] = self._compiled[index].run_copy(self._memory)
+        found, work = copy.fullmatch_counted(path)
+        if work:
+            self._work[index] += work
+            self._pass_work += work
+            if self._pass_work > IGNORE_PASS_WORK:
+                over = [line for line, kept in enumerate(self._kept) if kept and self._work[line] > IGNORE_LINE_WORK]
+                for line in over:
+                    self._drop(line)  # it answers for this path, the last it reads
+                if over:
+                    self._sort()
+        return found
+
+    def _drop(self, index: int) -> None:
+        self._kept[index] = False
+        self._copies[index] = None  # what it remembered goes back to the pass's memory
+        self.dropped.append(index)
+        logger.warning(
+            "slop_meter_ignore_line_dropped",
+            repo=self.repo or None,
+            position=index + 1,
+            lines=len(self.patterns),
+            work=self._work[index],
+        )
 
 
 def ignored(path: str, patterns: Iterable[str]) -> bool:
     """Whether ``path`` (or a directory above it) matches one of ``patterns``."""
     path = path.lstrip("/")
-    return any(_compiled(pattern).match(path) for pattern in patterns)
+    return any(_compiled(pattern).fullmatch(path) for pattern in patterns)
 
 
 # ---- outlier files ----
@@ -221,9 +350,13 @@ class Weigher:
     """A repository's line weights: by ``rules`` (its ``slop_meter`` section), ignore lists, and outlier files."""
 
     def __init__(
-        self, patterns: Iterable[str] = (), excluded: Iterable[str] = (), rules: FileRules = DEFAULT_RULES
+        self,
+        patterns: Iterable[str] | IgnoreLines = (),
+        excluded: Iterable[str] = (),
+        rules: FileRules = DEFAULT_RULES,
     ) -> None:
-        self._patterns = tuple(patterns)
+        # One pass's ignore lines, shared by the weighers of that pass so a line dropped in one stays dropped.
+        self._ignore = patterns if isinstance(patterns, IgnoreLines) else IgnoreLines(patterns)
         self._excluded = frozenset(excluded)
         self._rules = rules
         self._cache: dict[str, float] = {}
@@ -235,7 +368,7 @@ class Weigher:
     def __call__(self, path: str) -> float:
         cached = self._cache.get(path)
         if cached is None:
-            if path in self._excluded or (self._patterns and ignored(path, self._patterns)):
+            if path in self._excluded or (self._ignore and self._ignore.ignored(path)):
                 cached = 0.0
             else:
                 cached = self._rules.weight(path)

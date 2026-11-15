@@ -1503,3 +1503,23 @@ async def test_a_run_reports_the_gate_refusal_and_every_repository_after_it_as_g
     assert {s.context.repo: s.reason for s in survey.repos}["acme/r1"] == OFF
     rerun = await world.loop.run(org("acme", days=None), repo="acme/r1")
     assert [s.reason for s in rerun.skipped] == [GATED], "still within the hour: gated again, not current"
+
+
+async def test_a_tree_s_instruction_files_are_chosen_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tree may list a hundred thousand paths, each matched against every glob: never on the loop."""
+    import threading
+
+    from embry0.services import instruction_files
+
+    world = World(org("acme"), repos=(reg("acme/web"),))
+    world.forge.put("acme/web", HEAD, {"CLAUDE.md": "a" * 40})
+    threads: list[int] = []
+    choose = instruction_files.FileRules.select
+
+    def select(self: Any, paths: Any) -> list[str]:
+        threads.append(threading.get_ident())
+        return choose(self, paths)
+
+    monkeypatch.setattr(instruction_files.FileRules, "select", select)
+    assert await world.loop.tick() == ["acme/web"]
+    assert threads and threading.get_ident() not in threads, "the instruction files were chosen on the event loop"

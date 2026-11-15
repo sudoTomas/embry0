@@ -68,7 +68,14 @@ from embry0.services.slop_meter.history import (
 from embry0.services.slop_meter.judge import FEATURE
 from embry0.services.slop_meter.prune import Audit, PruneOutcome, Pruner
 from embry0.services.slop_meter.score import DEFAULTS, Event, Meter, Outlier, meters, outliers
-from embry0.services.slop_meter.weights import CONFIG_FILES, FileRules, Weigher, ignore_patterns, outlier_files
+from embry0.services.slop_meter.weights import (
+    CONFIG_FILES,
+    FileRules,
+    IgnoreLines,
+    Weigher,
+    ignore_patterns,
+    outlier_files,
+)
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings, config_version
 
@@ -216,6 +223,8 @@ class Inputs:
     rules: FileRules | None = None
     #: Its areas as embry0 keeps them (spec 2026-11-10), each scored as a meter of its own.
     areas: tuple[Area, ...] = ()
+    #: The repository, for what a pass logs of it.
+    repo: str = ""
 
 
 def weigher_for(
@@ -223,17 +232,19 @@ def weigher_for(
     files: Mapping[str, str | None],
     settings: SlopMeterSettings = DEFAULTS,
     rules: FileRules | None = None,
+    repo: str = "",
 ) -> Weigher:
     """The repository's line weights: its ``slop_meter`` file rules, its linters' ignore lists, and its
-    outlier files."""
+    outlier files. The pass's ignore lines are matched within a budget of work (:class:`IgnoreLines`)."""
     rules = rules if rules is not None else FileRules.of(settings)
-    base = Weigher(ignore_patterns(files), rules=rules)
+    ignore = IgnoreLines(ignore_patterns(files), repo=repo)
+    base = Weigher(ignore, rules=rules)
     sizes: dict[str, int] = {}
     for c in commits:
         for path, a, d in c.files:
             if base(path):
                 sizes[path] = sizes.get(path, 0) + a - d
-    return Weigher(ignore_patterns(files), outlier_files({p: s for p, s in sizes.items() if s > 0}), rules=rules)
+    return Weigher(ignore, outlier_files({p: s for p, s in sizes.items() if s > 0}), rules=rules)
 
 
 def logins_from(commits: Iterable[Commit], looked_up: Mapping[str, str]) -> dict[str, str]:
@@ -262,7 +273,7 @@ def score_version(settings: SlopMeterSettings, areas: Iterable[Area]) -> str:
 def compute(inputs: Inputs) -> dict[str, Meter]:
     """The repository's meter (``""``) and its areas', from the history as read, scored with ``inputs.settings``.
     Pure: runs in a thread."""
-    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules)
+    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules, repo=inputs.repo)
     areas = inputs.areas
 
     def area_of(path: str) -> str | None:
@@ -295,7 +306,7 @@ def history_of(
 
 def unjudged(inputs: Inputs) -> list[Outlier]:
     """The repository's outlier commits no model has judged yet. Pure: runs in a thread."""
-    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules)
+    weigh = weigher_for(inputs.commits, inputs.files, inputs.settings, inputs.rules, repo=inputs.repo)
     return [o for o in outliers(inputs.commits, weigh, inputs.judgments, inputs.settings) if o.slop is None]
 
 
@@ -763,7 +774,7 @@ class SlopMeterLoop:
         files = {name: await self._mirror.read(repo, name) for name in CONFIG_FILES}
         logins, judgments = await self._store.logins(), await self._store.judgments(repo)
         areas = tuple((await self._areas_of([repo])).get(repo.lower(), []))
-        return Inputs(commits, events, logins, judgments, files, settings, FileRules.of(settings), areas)
+        return Inputs(commits, events, logins, judgments, files, settings, FileRules.of(settings), areas, repo=repo)
 
     async def _score(self, repo: str, *, judge: bool = True) -> None:
         """Score ``repo`` with the ``slop_meter`` section as it reads it, recording that section's version.

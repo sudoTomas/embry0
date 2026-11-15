@@ -33,7 +33,9 @@ import functools
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
+
+from embry0.bounded_patterns import NOT_SLASH, Node, Pattern, any_re2_fullmatch, either, lit, plus, seq, star
 
 #: Repository-relative glob patterns. ``**/`` matches any number of
 #: directories, none included; ``*`` stays inside one path segment.
@@ -125,20 +127,60 @@ def check_dir_name(name: str) -> str:
 
 
 @functools.lru_cache(maxsize=1024)
-def _compile(glob: str) -> re.Pattern[str]:
-    out: list[str] = []
+def _compile(glob: str) -> Pattern:
+    """``glob`` as a pattern over a whole path: ``**/`` any number of directories, ``*`` any run within one name,
+    every other character itself. Matched in bounded time (:mod:`embry0.bounded_patterns`)."""
+    return Pattern(_tree(glob))
+
+
+@functools.lru_cache(maxsize=64)
+def _any_of(globs: tuple[str, ...]) -> tuple[tuple[Pattern, ...], tuple[Pattern, ...], Pattern | None]:
+    """``globs`` to match a path against: those Python's regex matches, those RE2 does (a path encoded once for
+    them all, :func:`embry0.bounded_patterns.any_re2_fullmatch`), and the rest as one automaton, so a path is
+    walked once for all of them (None when there is none)."""
+    compiled = [_compile(g) for g in globs]
+    by_regex = tuple(p for p in compiled if p.engine == "re")
+    by_re2 = tuple(p for p in compiled if p.engine == "re2")
+    rest = [_tree(g) for g, p in zip(globs, compiled, strict=True) if p.engine == "automaton"]
+    return by_regex, by_re2, Pattern(either(*rest), prefer_regex=False, use_re2=False) if rest else None
+
+
+def _matches_one(
+    path: str,
+    by_regex: tuple[Pattern, ...],
+    by_re2: tuple[Pattern, ...],
+    programs: tuple[Any, ...],
+    rest: Pattern | None,
+) -> bool:
+    """Whether ``path`` matches one of the patterns :func:`_any_of` sorted, ``programs`` being ``by_re2``'s."""
+    if any(pattern.fullmatch(path) for pattern in by_regex):
+        return True
+    if by_re2:
+        try:
+            utf8 = path.encode()
+        except UnicodeEncodeError:  # a lone surrogate: each pattern reads it with its automaton
+            if any(pattern.fullmatch(path) for pattern in by_re2):
+                return True
+        else:
+            if any_re2_fullmatch(programs, utf8):
+                return True
+    return rest is not None and rest.fullmatch(path)
+
+
+def _tree(glob: str) -> Node:
+    parts: list[Node] = []
     i = 0
     while i < len(glob):
         if glob.startswith("**/", i):
-            out.append("(?:[^/]+/)*")
+            parts.append(star(plus(NOT_SLASH), lit("/")))
             i += 3
         elif glob[i] == "*":
-            out.append("[^/]*")
+            parts.append(star(NOT_SLASH))
             i += 1
         else:
-            out.append(re.escape(glob[i]))
+            parts.append(lit(glob[i]))
             i += 1
-    return re.compile("".join(out) + r"\Z")
+    return seq(*parts)
 
 
 @dataclass(frozen=True)
@@ -171,12 +213,14 @@ class FileRules:
         text. A path in a skipped directory, at any depth, is left out, as the
         command's excludes leave it.
         """
-        compiled = [(f"{glob}/", _compile(glob)) for glob in self.globs]
+        unders = tuple(f"{glob}/" for glob in self.globs)
+        by_regex, by_re2, rest = _any_of(self.globs)
+        programs = tuple(pattern.re2 for pattern in by_re2)
         return sorted(
             path
             for path in paths
             if not any(part in self.skipped_dirs for part in path.split("/")[:-1])
-            and any(path.startswith(under) or pattern.match(path) for under, pattern in compiled)
+            and (path.startswith(unders) or _matches_one(path, by_regex, by_re2, programs, rest))
         )
 
 

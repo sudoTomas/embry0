@@ -6,7 +6,7 @@ The schedule is off for every organization until an admin sets it.
 
 ## What it audits
 
-The instruction files are the paths that match one glob list; the schedule fingerprints those files, and each audit's task hands the auditor the same list as a `git ls-files` command. `**/` stands for any number of directories, none included, and `*` stays inside one path segment. Unless the [settings document](#choosing-the-files) names other files, the list is the built-in one, `INSTRUCTION_FILE_GLOBS` in `embry0/services/instruction_files.py`:
+The instruction files are the paths that match one glob list; the schedule fingerprints those files, and each audit's task hands the auditor the same list as a `git ls-files` command. `**/` stands for any number of directories, none included, and `*` stays inside one path segment; a glob is matched in time bounded by its length and the path's. Unless the [settings document](#choosing-the-files) names other files, the list is the built-in one, `INSTRUCTION_FILE_GLOBS` in `embry0/services/instruction_files.py`:
 
 ```
 **/CLAUDE.md                **/CLAUDE.local.md          **/AGENTS.md

@@ -15,7 +15,8 @@ A directory name is one name matched at any depth, and a test mark one word
 of a file's name (:func:`marked`). Every check raises :class:`ValueError`
 with a message that never repeats the text it checked.
 
-This module imports nothing of embry0, so a settings section may import it.
+This module imports nothing of embry0 but :mod:`embry0.bounded_patterns`, which imports nothing of it, so a
+settings section may import it. A glob is matched in bounded time: an automaton, not a regex that backtracks.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ import functools
 import re
 from collections.abc import Iterable
 from typing import Any, Final
+
+from embry0.bounded_patterns import ANY, NOT_SLASH, Node, Pattern, lit, plus, star
 
 MAX_GLOB_LENGTH: Final = 200
 MAX_DIR_LENGTH: Final = 100
@@ -87,39 +90,32 @@ def check_mark(mark: str) -> str:
     return mark
 
 
-def _segment(text: str) -> str:
-    out = []
-    for char in text:
-        if char == "*":
-            out.append("[^/]*")
-        elif char == "?":
-            out.append("[^/]")
-        else:
-            out.append(re.escape(char))
-    return "".join(out)
+def _segment(text: str) -> list[Node]:
+    return [star(NOT_SLASH) if char == "*" else NOT_SLASH if char == "?" else lit(char) for char in text]
 
 
 @functools.lru_cache(maxsize=4096)
-def compile_glob(glob: str) -> re.Pattern[str]:
-    """``glob`` as a regular expression over a lowercased name (no ``/`` in it) or path (one)."""
+def compile_glob(glob: str) -> Pattern:
+    """``glob`` as a pattern over a lowercased name (no ``/`` in it) or path (one), matched in bounded time
+    (:mod:`embry0.bounded_patterns`): a glob is matched over every file the meter scores."""
     lowered = glob.lower()
     if "/" not in lowered:
-        return re.compile(_segment(lowered) + r"\Z")
+        return Pattern(*_segment(lowered))
     segments = lowered.split("/")
-    out = []
+    parts: list[Node] = []
     for position, segment in enumerate(segments):
         last = position == len(segments) - 1
         if segment == "**":
-            out.append(".+" if last else "(?:[^/]+/)*")
+            parts.append(plus(ANY) if last else star(plus(NOT_SLASH), lit("/")))
         else:
-            out.append(_segment(segment) + ("" if last else "/"))
-    return re.compile("".join(out) + r"\Z")
+            parts += _segment(segment) + ([] if last else [lit("/")])
+    return Pattern(*parts)
 
 
 def matches(glob: str, path: str) -> bool:
     """Whether ``glob`` matches ``path``, a file's path from the repository's root, lowercased."""
     target = path if "/" in glob else path.rsplit("/", 1)[-1]
-    return compile_glob(glob).fullmatch(target) is not None
+    return compile_glob(glob).fullmatch(target)
 
 
 def marked(name: str, marks: frozenset[str]) -> bool:
@@ -229,7 +225,7 @@ def broad(glob: str) -> bool:
     return bucket(glob)[0] == "broad"
 
 
-_Entry = tuple[_Order, re.Pattern[str], Any]
+_Entry = tuple[_Order, Pattern, Any]
 
 
 class GlobIndex[V]:
@@ -285,7 +281,7 @@ class GlobIndex[V]:
     def _first(self, candidates: Iterable[_Entry], text: str) -> tuple[_Order, V] | None:
         for order, pattern, value in candidates:
             self.evaluations += 1
-            if pattern.fullmatch(text) is not None:
+            if pattern.fullmatch(text):
                 return order, value
         return None
 
