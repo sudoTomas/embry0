@@ -1302,7 +1302,7 @@ async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, 
     sub_tasks = decision.get("sub_tasks", [])
     if not sub_tasks:
         logger.warning("split_no_subtasks", issue_id=issue_id)
-        await self._issues.update(issue_id, status="open")
+        await self._issue_back_to_open(issue_id)
         return
 
     issue = await self._issues.get(issue_id)
@@ -1323,7 +1323,7 @@ async def _handle_split(self: IssueExecutor, issue_id: str | None, job_id: str, 
     await self._jobs.update(job_id, status="completed")
     await self._finish_credential_uses(job_id, error_code=None)
     await self._announce_finished(job_id)
-    await self._issues.update(issue_id, status="open")
+    await self._issue_back_to_open(issue_id)
     await self._issues.update_parent_status(issue_id)
 
     await self._emit_audit(
@@ -1473,7 +1473,7 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
         )
         await self._finish_credential_uses(job_id, error_code=ErrorCode.EMPTY_INTERRUPT.value)
         await self._announce_finished(job_id)
-        await self._issues.update(issue_id, status="open")
+        await self._issue_back_to_open(issue_id)
         return
 
     has_blocking = any(n["importance"] == "blocking" for n in normalized)
@@ -1654,6 +1654,6 @@ async def _handle_needs_info(self: IssueExecutor, issue_id: str | None, job_id: 
             )
         except Exception:
             logger.warning("auto_answer_retriage_failed", issue_id=issue_id, exc_info=True)
-            await self._issues.update(issue_id, status="open")
+            await self._issue_back_to_open(issue_id)
 
     logger.info("needs_info_handled", issue_id=issue_id, blocking=has_blocking)

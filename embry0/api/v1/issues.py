@@ -36,7 +36,7 @@ from embry0.api.v1.audit import AuditEntry, issue_activity
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.safety.error_codes import ErrorCode
-from embry0.services.answer_recorder import answers_context, record_answer
+from embry0.services.answer_recorder import answers_context, ended_job_takes_no_answer, record_answer
 from embry0.services.issue_executor import IssueExecutor
 from embry0.services.run_with import RunWith
 from embry0.storage.repositories.issue_inputs import IssueInputsRepository
@@ -627,6 +627,11 @@ async def answer_issue_input_as(
     # job-scoped endpoint carries the same rule).
     if inp["status"] == "answered":
         raise HTTPException(status_code=409, detail="Input has already been answered")
+    jobs_repo = getattr(request.app.state, "jobs_repo", None)
+    if inp.get("job_id") and jobs_repo is not None:
+        ended = ended_job_takes_no_answer(await jobs_repo.get(inp["job_id"]))
+        if ended is not None:
+            raise HTTPException(status_code=409, detail=ended)
 
     if executor.draining:
         # #499: an answer recorded now could not resume the job, and could not be sent again once recorded.

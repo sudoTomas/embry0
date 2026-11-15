@@ -28,6 +28,28 @@ from embry0.notifications.dispatcher import notify_answer_cross_channel
 logger = structlog.get_logger(__name__)
 
 
+#: The statuses of a job that ended without finishing its work: it never goes on, and nothing reads its answers.
+UNFINISHED_ENDS = frozenset({"cancelled", "failed", "expired", "skipped"})
+
+
+def ended_job_takes_no_answer(job: dict[str, Any] | None) -> str | None:
+    """Why an answer to a question of ``job`` is refused, when the job ended unfinished (#521); None otherwise.
+
+    A cancelled, failed, expired or skipped job never goes on, and reopening
+    its issue starts a new job rather than bringing it back, so an answer to
+    it would be taken and then do nothing. A completed job's questions still
+    take answers: a person's answer over the orchestrator's own (RAV-1059), or
+    to a question that did not hold the job, reaches the issue's next run.
+    """
+    status = str((job or {}).get("status") or "")
+    if status not in UNFINISHED_ENDS:
+        return None
+    return (
+        f"Job {(job or {}).get('job_id')} has ended ({status}), so its questions take no more answers; "
+        "reopening its issue or starting it again runs a new job"
+    )
+
+
 def answers_context(answered: list[dict[str, Any]]) -> str:
     """The questions and their answers, as a resume hands them to the agent: a person's answer, else the
     orchestrator's own."""

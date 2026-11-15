@@ -126,6 +126,8 @@ def _main_path_executor():
     ex._jobs.get = AsyncMock(return_value={"trace_id": None})
     ex._jobs.update = AsyncMock()
     ex._issues = MagicMock()
+    # #521: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._issues.update = AsyncMock()
     ex._traces = MagicMock()
     ex._traces.total_cost_for_job = AsyncMock(return_value=0.0)

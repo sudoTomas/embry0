@@ -508,6 +508,8 @@ async def test_handle_interrupt_max_retries_pauses():
     executor._jobs.update = AsyncMock()
     executor._issues = MagicMock()
     executor._issues.update = AsyncMock()
+    # #521: a job that ends reads its issue before putting it back to open.
+    executor._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
 
     await executor._handle_interrupt("iss-1", "job-1", {"reason": "max_retries"})
     executor._jobs.update.assert_any_await("job-1", status="paused")

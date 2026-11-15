@@ -35,7 +35,7 @@ from embry0.trackers import (
     TrackerIssueRef,
     TriggerContext,
     create_tracked_issue,
-    end_answer_waits,
+    end_waits,
     extract_labels,
     start_triage,
 )
@@ -137,8 +137,8 @@ class GitLabSyncService:
             ended: list[str] = []
             if existing is not None:
                 await self._safe_status(issues_repo, existing["id"], "closed")
-                # #518: a job that waits for answers on a closed issue is never resumed; its wait ends here.
-                ended = await end_answer_waits(ctx.issue_executor, existing["id"])
+                # #518, #521: a closed issue's job that waits for answers, or is paused, never goes on; it ends here.
+                ended = await end_waits(ctx.issue_executor, existing["id"])
             return {"status": "accepted", "action": "issue_closed", **({"cancelled_jobs": ended} if ended else {})}
 
         if action not in _DISPATCHABLE_ACTIONS:

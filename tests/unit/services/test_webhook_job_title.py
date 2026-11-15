@@ -18,6 +18,8 @@ def _executor(job_row=None):
     ex._jobs.update = AsyncMock()
     ex._jobs.get = AsyncMock(return_value=job_row)
     ex._issues = MagicMock()
+    # #521: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._issues.update = AsyncMock()
     ex._issues.update_parent_status = AsyncMock()
     ex._db = None

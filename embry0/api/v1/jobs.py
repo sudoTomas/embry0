@@ -20,7 +20,7 @@ from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.safety.redaction import job_secret_values, redact_event
-from embry0.services.answer_recorder import answers_context, record_answer
+from embry0.services.answer_recorder import answers_context, ended_job_takes_no_answer, record_answer
 from embry0.services.run_with import RunWith, apply_run_with
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
@@ -352,6 +352,17 @@ async def _brief_and_words(
     return (brief_view(row) if row else None), status_words(job, interrupt, failure=failure)
 
 
+async def _issue_ended(request: Request, job: dict[str, Any]) -> str | None:
+    """The status of the job's issue when it is closed or cancelled (#521); None otherwise, or with no issue."""
+    from embry0.services.issue_executor import ENDED_ISSUE_STATUSES
+
+    issues = getattr(request.app.state, "issues_repo", None)
+    if issues is None or not job.get("issue_id"):
+        return None
+    status = str(((await issues.get(job["issue_id"])) or {}).get("status") or "")
+    return status if status in ENDED_ISSUE_STATUSES else None
+
+
 def _job_not_found() -> HTTPException:
     """What the routes that read or act on a job's row answer for a job that does not exist, and for one the
     caller's key does not cover (``embry0.api.job_allowlist``)."""
@@ -598,6 +609,9 @@ async def answer_job_input_as(
     # next resume; only a real human answer is final.
     if inp["status"] == "answered":
         raise HTTPException(status_code=409, detail="Input has already been answered")
+    ended = ended_job_takes_no_answer(job)
+    if ended is not None:
+        raise HTTPException(status_code=409, detail=ended)
 
     # RAV-1076: shared record path — persists the answer, mirrors it to the
     # Telegram question message, and posts the Q&A on the linked Linear issue.
@@ -662,6 +676,18 @@ async def resume_job_as(
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}, not paused")
 
     executor = request.app.state.issue_executor
+    issue_ended = await _issue_ended(request, job)
+    if issue_ended is not None:
+        # #521: a paused job of a closed or cancelled issue cannot go on (its resume could not move the issue);
+        # it may only be stopped, which releases its sandbox.
+        if req.choice == "abandon":
+            await executor.cancel_job(job_id, actor=actor)
+            return {"job_id": job_id, "status": "cancelled", "choice": "abandon"}
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id}'s issue is {issue_ended}, so the job cannot go on; reopening the issue runs a new "
+            "job. Stop this one to release its sandbox.",
+        )
     if job.get("account_wait"):
         # Spent account waits (spec 2026-10-25): a job parked for its account
         # stops waiting on "abandon" and otherwise goes on now ("Try now").

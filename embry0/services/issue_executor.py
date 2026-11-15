@@ -667,7 +667,7 @@ class IssueExecutor:
             issue = await self._issues.get(issue_id)
             if (issue or {}).get("status") in ENDED_ISSUE_STATUSES:
                 # #518: nothing may go on with a job whose issue was closed while it waited; its wait ends.
-                await self._end_answer_wait(job_id, str((issue or {}).get("status")))
+                await self._end_wait({"job_id": job_id, "status": "awaiting_input"}, str((issue or {}).get("status")))
                 return False
             if (issue or {}).get("status") == "awaiting_input":
                 if not await self._issues.claim_answered(issue_id):
@@ -691,44 +691,55 @@ class IssueExecutor:
             raise
         return True
 
-    async def _end_answer_wait(self, job_id: str, issue_status: str) -> bool:
-        """Cancel a job waiting for answers whose issue is closed or cancelled (#518); False when it no longer waits.
+    async def _end_wait(self, job: Mapping[str, Any], issue_status: str) -> bool:
+        """Cancel a waiting job whose issue is closed or cancelled (#518, #521); False when it no longer waits.
 
-        The job is taken first (``claim_answer_wait``, one winner), so a job an
-        answer is already resuming is left alone, and two callers cancel it
-        once.
+        A job waiting for answers, or paused (at its retries, for a person's
+        choice, or parked for its LLM account): nothing may go on with it once
+        its issue ended. The job is taken first (``claim_answer_wait``,
+        ``claim_pause`` or ``claim_account_wait``, one winner), so a job an
+        answer or a person is already resuming is left alone, and two callers
+        cancel it once.
         """
-        if not await self._jobs.claim_answer_wait(job_id):
+        job_id, status = str(job["job_id"]), str(job.get("status") or "")
+        if status == "awaiting_input":
+            taken, gave_back = await self._jobs.claim_answer_wait(job_id), "awaiting_input"
+            why = "while it waited for answers, so embry0 did not resume it"
+        elif status == "paused":
+            if job.get("account_wait"):
+                taken = await self._jobs.claim_account_wait(job_id)
+            else:
+                taken = await self._jobs.claim_pause(job_id)
+            gave_back, why = "paused", "while it was paused, so it cannot go on"
+        else:
             return False
-        logger.info("answer_wait_ended_for_its_issue", job_id=job_id, issue_status=issue_status)
+        if not taken:
+            return False
+        logger.info("wait_ended_for_its_issue", job_id=job_id, job_status=status, issue_status=issue_status)
         try:
-            await self.cancel_job(
-                job_id,
-                reason=f"Its issue was {issue_status} while it waited for answers, so embry0 did not resume it.",
-            )
+            await self.cancel_job(job_id, reason=f"Its issue was {issue_status} {why}.")
         except Exception:
-            # Never leave it taken with nothing running: it waits again, for the next answer or boot to end it.
+            # Never leave it taken with nothing running: it waits again, for the next close, answer or boot.
             with contextlib.suppress(Exception):
-                await self._jobs.update(job_id, status="awaiting_input")
+                if gave_back == "paused":
+                    await self._jobs.update(job_id, status="paused")
+                else:
+                    await self._jobs.update(job_id, status="awaiting_input")
             raise
         return True
 
-    async def end_answer_waits(self, issue_id: str) -> list[str]:
-        """Cancel the jobs of a closed or cancelled issue that wait for answers (#518): nothing will resume them.
+    async def end_waits(self, issue_id: str) -> list[str]:
+        """Cancel the waiting jobs of a closed or cancelled issue (#518, #521): nothing will go on with them.
 
-        Called when a tracker closes the issue. Returns the jobs cancelled.
+        The jobs that wait for answers and the paused ones. Called when a
+        tracker closes the issue. Returns the jobs cancelled.
         """
         issue = await self._issues.get(issue_id)
         status = str((issue or {}).get("status") or "")
         if status not in ENDED_ISSUE_STATUSES:
             return []
         jobs_list, _ = await self._jobs.list_all(issue_id=issue_id, limit=10, offset=0)
-        ended = [
-            str(job["job_id"])
-            for job in jobs_list
-            if job["status"] == "awaiting_input" and await self._end_answer_wait(str(job["job_id"]), status)
-        ]
-        return ended
+        return [str(job["job_id"]) for job in jobs_list if await self._end_wait(job, status)]
 
     async def _issue_back_to_open(self, issue_id: str | None) -> None:
         """Put a job's issue back to ``open`` once the job ended, unless the issue is closed or cancelled (#518)."""
@@ -851,7 +862,7 @@ class IssueExecutor:
             logger.info("pipeline_resumed_fresh", issue_id=issue_id, job_id=job_id)
         except Exception:
             logger.warning("pipeline_resume_failed", issue_id=issue_id, exc_info=True)
-            await self._issues.update(issue_id, status="open")
+            await self._issue_back_to_open(issue_id)
 
     async def start_job(
         self,

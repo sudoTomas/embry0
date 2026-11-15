@@ -258,7 +258,7 @@ async def test_closing_an_issue_ends_its_jobs_answer_waits():
             super().__init__()
             self.ended: list[str] = []
 
-        async def end_answer_waits(self, issue_id: str) -> list[str]:
+        async def end_waits(self, issue_id: str) -> list[str]:
             self.ended.append(issue_id)
             return []
 

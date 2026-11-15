@@ -32,6 +32,8 @@ def _executor() -> IssueExecutor:
     ex._jobs.update = AsyncMock()
     ex._jobs.get = AsyncMock(return_value={"repo": "acme/app", "task": "Fix the idle timer", "issue_number": 7})
     ex._issues = MagicMock()
+    # #521: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._issues.update = AsyncMock()
     ex._issues.update_parent_status = AsyncMock()
     ex._traces = MagicMock()
