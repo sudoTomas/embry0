@@ -473,3 +473,36 @@ def test_a_layer_over_the_bound_because_a_document_below_grew_can_still_write() 
     )
     refused = _stored_layer({"weights": {**org, "s1*": 0.5}}, {"weights": deployment}, {"weights": org})
     assert "checked against every path" in refused.get("weights", ""), "but not add an eleventh of its own"
+
+
+# ---- a glob too costly to match ----
+
+COSTLY = "*a" + "?" * 196 + "*"  # the sixth review's: one name of a '*', 196 '?' and a '*', 199 characters
+
+
+@pytest.mark.parametrize("key", ["weights", "test_files"])
+def test_a_glob_too_costly_to_match_is_refused_when_written(key: str) -> None:
+    """A glob the meter would match with its automaton (its DFA is too large for RE2) costs seconds over a
+    repository's paths: a write that adds one is refused at its key, without repeating it. One of fourteen
+    '**/*/', whose DFA RE2 holds, is taken."""
+    values = {"weights": {COSTLY: 0.5}} if key == "weights" else {"test_files": ["src/**/*.py", COSTLY]}
+    refused = _stored_layer(values, {}, {})
+    assert "too costly to match" in refused.get(key, ""), f"a glob too costly to match was taken: {refused}"
+    assert "?" * 20 not in refused[key], "the message never repeats the text"
+    assert _stored_layer({"weights": {"**/*/" * 14 + "a": 0.5}}, {}, {}) == {}
+    from embry0.services.slop_meter.globs import slow
+
+    assert slow(COSTLY) and not slow("**/*/" * 14 + "a")
+
+
+def test_a_glob_too_costly_to_match_stored_before_keeps_working() -> None:
+    """A layer that stored one before the release that refuses it still writes its other keys, and reads it."""
+    stored = {"weights": {COSTLY: 0.5}}
+    assert _stored_layer({**stored, "lines_per_hour": 25}, {}, stored) == {}, "an unrelated key"
+    assert "too costly to match" in _stored_layer({"weights": {COSTLY: 0.5, COSTLY[:-2] + "*": 0.5}}, {}, stored).get(
+        "weights", ""
+    ), "but not a second one"
+    from embry0.settings.sections.slop_meter import SLOP_METER
+
+    snapshot = _snapshot({"organization:acme": stored})
+    assert snapshot.resolve(SLOP_METER, repo=WIDGETS).model.weights.get(COSTLY) == 0.5, "the stored one reads"

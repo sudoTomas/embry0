@@ -112,6 +112,13 @@ def compile_glob(glob: str) -> Pattern:
     return Pattern(*parts)
 
 
+def slow(glob: str) -> bool:
+    """Whether ``glob`` (one :func:`check_glob` takes) is matched by the automaton: it can backtrack and its DFA is
+    too large for RE2 (:mod:`embry0.bounded_patterns`), as with one name of a ``*`` and many ``?``. Such a glob costs
+    a matcher time and memory on every path it is checked against, so a write refuses one."""
+    return compile_glob(glob).engine == "automaton"
+
+
 def matches(glob: str, path: str) -> bool:
     """Whether ``glob`` matches ``path``, a file's path from the repository's root, lowercased."""
     target = path if "/" in glob else path.rsplit("/", 1)[-1]

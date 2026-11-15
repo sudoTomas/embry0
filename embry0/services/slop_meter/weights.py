@@ -13,7 +13,9 @@ algorithm's.
 
 from __future__ import annotations
 
+import threading
 import tomllib
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from statistics import quantiles
@@ -23,13 +25,35 @@ import structlog
 
 from embry0.bounded_patterns import ANY, NOT_SLASH, Memory, Node, Pattern, any_re2_fullmatch, lit, opt, seq, star
 from embry0.json_text import json_object
-from embry0.services.slop_meter.globs import GlobIndex, marked
+from embry0.services.slop_meter.globs import GlobIndex, marked, slow
 from embry0.settings.sections.slop_meter import SLOP_METER, SlopMeterSettings
 
 logger = structlog.get_logger(__name__)
 
 #: The most path weights one :class:`FileRules` keeps.
 _KEPT_MAX = 200_000
+
+
+#: The settings globs a slow-glob warning was logged for, newest last, so each is logged once (at most this many).
+_SLOW_WARNED: OrderedDict[str, None] = OrderedDict()
+_SLOW_WARNED_MOST: Final = 4096
+_slow_warned_lock = threading.Lock()
+
+
+def _warn_slow(globs: Iterable[str], key: str) -> None:
+    """Log ``slop_meter_slow_glob`` once for each glob of ``key`` the meter matches with its automaton (a write
+    refuses one now; one stored before keeps working)."""
+    for glob in globs:
+        if not slow(glob):
+            continue
+        with _slow_warned_lock:
+            if glob in _SLOW_WARNED:
+                _SLOW_WARNED.move_to_end(glob)
+                continue
+            _SLOW_WARNED[glob] = None
+            if len(_SLOW_WARNED) > _SLOW_WARNED_MOST:
+                _SLOW_WARNED.popitem(last=False)
+        logger.warning("slop_meter_slow_glob", key=key, glob=glob[:100], length=len(glob))
 
 
 class FileRules:
@@ -52,6 +76,9 @@ class FileRules:
         test_marks: Iterable[str],
         test_weight: float,
     ) -> None:
+        test_files = tuple(test_files)
+        _warn_slow(weights, "weights")
+        _warn_slow(test_files, "test_files")
         self._weights: GlobIndex[float] = GlobIndex((glob, float(weight)) for glob, weight in weights.items())
         self._tests: GlobIndex[bool] = GlobIndex((glob, True) for glob in test_files)
         self.excluded_dirs = frozenset(name.lower() for name in excluded_dirs)
@@ -211,9 +238,10 @@ def _compiled(pattern: str) -> Pattern:
     return Pattern(*parts)
 
 
-#: The work a scoring pass's ignore lines may do, as their automata count it
-#: (:meth:`embry0.bounded_patterns.Pattern.fullmatch_counted`: for each character read by working out where the
-#: states move, the number of states; a step read from memory, and a line Python's regex takes, count none).
+#: The work a scoring pass's ignore lines may do, as their matchers count it
+#: (:meth:`embry0.bounded_patterns.Pattern.fullmatch_counted`: for each character the automaton reads by working
+#: out where the states move, the number of states; for each byte RE2 reads of a line whose DFA crowds its memory,
+#: a unit for each 256 sets past 256; a step read from memory, Python's regex and RE2 on a small DFA count none).
 #: Once the pass's lines have done more than :data:`IGNORE_PASS_WORK` between them, every line that has done more
 #: than :data:`IGNORE_LINE_WORK` is dropped for the rest of the pass, and so is a line that passes it later. A
 #: common line works out a few hundred to a few thousand steps, a number its pattern sets whatever the repository
@@ -231,9 +259,10 @@ class IgnoreLines:
     (:data:`IGNORE_PASS_WORK`).
 
     A path is matched against the lines Python's regex takes, then those RE2
-    takes (the path encoded once for them all), then the rest, which the
-    automaton walks: the order of their cost. A line the automaton walks, and
-    any line for a path only it can read, is matched by a copy of its
+    reads from a small DFA (the path encoded once for them all), then those
+    RE2 reads from a larger one, then the rest, which the automaton walks: the
+    order of their cost. A line of the last two, and any line for a path only
+    its automaton can read, is matched by a copy of its
     automaton the pass keeps (:meth:`embry0.bounded_patterns.Pattern.run_copy`),
     so its work depends only on the paths of the pass, in their order: the
     same pass drops the same lines at the same paths, whatever else was
@@ -261,9 +290,15 @@ class IgnoreLines:
         self._by_regex = tuple(
             (index, pattern.regex, pattern.regex_reads_newlines) for index, pattern in kept if pattern.regex
         )
-        self._by_re2 = tuple((index, pattern.re2) for index, pattern in kept if pattern.re2 is not None)
+        # RE2's lines whose reading counts no work, asked together; those whose reading counts work (a DFA that
+        # crowds RE2's memory) one by one with the automaton's, their work counted against the budget.
+        self._by_re2 = tuple(
+            (index, pattern.re2) for index, pattern in kept if pattern.re2 is not None and not pattern.re2_counts_work
+        )
         self._re2_programs = tuple(program for _, program in self._by_re2)
-        self._by_automaton = tuple(index for index, pattern in kept if pattern.engine == "automaton")
+        self._by_counted = tuple(index for index, pattern in kept if pattern.re2_counts_work) + tuple(
+            index for index, pattern in kept if pattern.engine == "automaton"
+        )
 
     def __bool__(self) -> bool:
         return bool(self.patterns)
@@ -287,7 +322,7 @@ class IgnoreLines:
             else:
                 if any_re2_fullmatch(self._re2_programs, utf8):
                     return True
-        return any(self._counted(index, path) for index in self._by_automaton)
+        return any(self._counted(index, path) for index in self._by_counted)
 
     def _counted(self, index: int, path: str) -> bool:
         """Whether line ``index``'s copy matches ``path``, its work counted against the pass's budget."""

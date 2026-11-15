@@ -72,6 +72,7 @@ from embry0.services.slop_meter.globs import (
     check_dir_name,
     check_glob,
     check_mark,
+    slow,
 )
 from embry0.settings.registry import STORED, EnvImport, Section, SectionModel, refuse_unprintable
 
@@ -195,6 +196,28 @@ def _few_broad(globs: Iterable[str], info: ValidationInfo) -> None:
             f"{GRAM} literal characters in a row (such as */* or *x*); at most {MAX_BROAD_GLOBS}, since each is "
             "checked against every path"
         )
+
+
+def _none_slow(globs: Iterable[str], info: ValidationInfo) -> None:
+    """Refuse, on a write, a glob the meter would match with its automaton (:func:`slow`).
+
+    Checked when a write is stored, as :func:`_few_broad` is, never when a
+    stored value is read: a glob readers read before the write (:data:`STORED`)
+    is taken again, so a stored one keeps working (the meter logs
+    ``slop_meter_slow_glob`` when it reads one) and the layer's other keys can
+    still change.
+    """
+    if info.context is None:
+        return
+    stored = info.context.get(STORED) if isinstance(info.context, Mapping) else None
+    held = stored.get(info.field_name) if isinstance(stored, Mapping) and info.field_name else None
+    before = set(held or ())
+    for position, glob in enumerate(globs, start=1):
+        if glob not in before and slow(glob):
+            raise ValueError(
+                f"glob {position}: too costly to match: one name with a '*' and many '?' or '*' after it needs a "
+                "matcher of more than 1,000 states for every path it is checked against; write a shorter one"
+            )
 
 
 def _identity(text: str) -> str:
@@ -496,6 +519,7 @@ class SlopMeterSettings(SectionModel):
             if not 0 <= weight <= 10:
                 raise ValueError(f"glob {position}: a weight is from 0 to 10")
         _few_broad(value, info)
+        _none_slow(value, info)
         return value
 
     @field_validator("excluded_dirs", "test_dirs")
@@ -508,6 +532,7 @@ class SlopMeterSettings(SectionModel):
     def _test_files(cls, value: tuple[str, ...], info: ValidationInfo) -> tuple[str, ...]:
         _each(value, check_glob, "glob")
         _few_broad(value, info)
+        _none_slow(value, info)
         return value
 
     @field_validator("test_marks")

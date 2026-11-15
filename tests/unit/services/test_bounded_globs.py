@@ -18,6 +18,12 @@ import time
 
 import pytest
 
+#: Every test here runs with the process's memory capped (tests/fixtures/memory_cap.py): a matcher that grows
+#: without bound, as one whose size check stopped checking, fails at once with MemoryError instead of taking the
+#: host's memory first.
+pytestmark = pytest.mark.memory_capped
+
+
 # ---- main's three translators, verbatim but for their names -------------------------------------------------
 
 
@@ -412,6 +418,7 @@ def test_a_common_repository_s_ignore_lines_are_never_dropped_and_ignore_what_th
     common = COMMON_LINES + JS_MONOREPO_LINES
     engines = [_compiled(line).engine for line in common]
     assert engines.count("re2") == 20 and "automaton" not in engines, "the lines RE2 takes are tested"
+    assert not any(_compiled(line).re2_counts_work for line in common), "a common line's reading counts work"
     paths = _tree(random.Random(3), 20_000) + _js_tree(random.Random(4769), 20_000)
     lines = IgnoreLines(common, repo="acme/web")
     references = [_main_ignore(line) for line in common]
@@ -430,7 +437,7 @@ def test_a_line_built_to_walk_is_dropped_for_the_pass_and_the_rest_still_apply(l
     remembered goes back to the pass's memory, and the other lines still apply."""
     from structlog.testing import capture_logs
 
-    from embry0.services.slop_meter.weights import IGNORE_MEMORY, IgnoreLines, _compiled
+    from embry0.services.slop_meter.weights import IGNORE_MEMORY, IGNORE_PASS_WORK, IgnoreLines, _compiled
 
     # Beside it, two lines the regex takes and one the automaton does (its DFA is too large for RE2: any 'c' starts
     # a new try), which works out a few steps of its own: names of 'a' and 'b' hold no 'c'.
@@ -451,7 +458,9 @@ def test_a_line_built_to_walk_is_dropped_for_the_pass_and_the_rest_still_apply(l
     assert line not in repr(dropped[0]) and "?" * 20 not in repr(dropped[0]), "the log names the text"
     kept = lines._copies[3]
     assert kept is not None and lines._memory.spent == kept._cost, "the dropped line kept what it remembered"
-    assert took < 2, f"2,000 names took {took:.1f}s with the line dropped (each was 1 to 4 ms with it)"
+    # The work, not the time, which a loaded host stretches: the pass stops at its budget, where the line alone
+    # would do about 10,000 a name (2,000 names: 20 million and more).
+    assert lines._pass_work < 2 * IGNORE_PASS_WORK, f"the pass did {lines._pass_work} of work ({took:.1f}s)"
 
 
 def test_a_dropped_line_gives_back_what_it_remembered(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -513,6 +522,41 @@ def test_a_line_dropped_answers_no_more_whatever_reads_it(monkeypatch: pytest.Mo
         assert lines.ignored(path), "the line applies before it is dropped"
         lines.ignored(read_by_its_automaton)
         assert lines.dropped == [0] and not lines.ignored(path), (line, lines.dropped)
+
+
+#: Lines built for RE2 to read from a DFA that crowds its memory, never matching (no path holds a 'q').
+def _crowding_line(rng: random.Random) -> str:
+    return "*" + "".join(rng.choice(["*", "?", "?", "ø", "ñ"]) for _ in range(30)) + "*q"
+
+
+RE2_CROWDING_LINES = [_crowding_line(random.Random(seed)) for seed in range(400)]
+
+
+def test_lines_re2_reads_from_a_dfa_that_crowds_its_memory_are_charged_and_dropped() -> None:
+    """The sixth review's case: never-matching lines whose DFA has hundreds of sets, against long paths of their
+    own characters, cost RE2 a few µs a path each. Their reading counts work, so the pass drops each, logged once
+    by its position, and keeps the line beside them that RE2 reads from a small DFA."""
+    from structlog.testing import capture_logs
+
+    from embry0.services.slop_meter.weights import IGNORE_PASS_WORK, IgnoreLines, _compiled
+
+    crowding = [line for line in RE2_CROWDING_LINES if _compiled(line).re2_counts_work][:64]
+    assert len(crowding) == 64
+    small = "**/*.module.*.css"
+    assert _compiled(small).engine == "re2" and not _compiled(small).re2_counts_work
+    rng = random.Random(4770)
+    paths = ["".join(rng.choice("øñx") for _ in range(250)) for _ in range(3000)]
+    lines = IgnoreLines([small, *crowding], repo="acme/web")
+    with capture_logs() as logs:
+        started = time.perf_counter()
+        for path in paths:
+            lines.ignored(path)
+        took = time.perf_counter() - started
+        assert lines.ignored("a/b.module.x.css"), "the line RE2 reads from a small DFA still applies"
+    assert sorted(lines.dropped) == list(range(1, 65)), f"{len(lines.dropped)} of 64 dropped"
+    assert sorted(e["position"] for e in _dropped(logs)) == list(range(2, 66)), "one log line each, by position"
+    # The work, not the time, which a loaded host stretches: each line would count hundreds a path undropped.
+    assert lines._pass_work < 2 * IGNORE_PASS_WORK, f"the pass did {lines._pass_work} of work ({took:.1f}s)"
 
 
 def test_many_lines_built_to_walk_are_all_dropped_in_bounded_time() -> None:
@@ -577,3 +621,21 @@ def test_a_scoring_pass_s_two_weighers_share_the_budget() -> None:
     weigh = weigher_for(commits, {".prettierignore": "node_modules/\n" + LINE_BUILT_TO_WALK}, repo="acme/web")
     assert weigh._ignore.dropped == [1], weigh._ignore.dropped
     assert weigh("web/node_modules/a.py") == 0.0 and weigh("web/app.py") > 0
+
+
+def test_a_stored_glob_too_costly_to_match_is_read_with_one_warning() -> None:
+    """A settings glob stored before a write refused one still weighs what it matches; the meter logs
+    slop_meter_slow_glob for it once, however many passes read it."""
+    from structlog.testing import capture_logs
+
+    from embry0.services.slop_meter.weights import _SLOW_WARNED, FileRules
+
+    costly = "*a" + "?" * 195 + "*z"
+    _SLOW_WARNED.pop(costly, None)
+    rules = {"excluded_dirs": (), "test_dirs": (), "test_files": (), "test_marks": (), "test_weight": 0.3}
+    with capture_logs() as logs:
+        first = FileRules({costly: 0.25, "*.py": 1.0}, **rules)
+        FileRules({costly: 0.25}, **rules)
+    warned = [e for e in logs if e["event"] == "slop_meter_slow_glob"]
+    assert len(warned) == 1 and warned[0]["key"] == "weights", warned
+    assert first.weight("a" + "b" * 195 + "z") == 0.25 and first.weight("x.py") == 1.0

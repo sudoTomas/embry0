@@ -67,6 +67,8 @@ Worth the ~16 minutes serially, or ~5 with `-n 4` (below), when a change touches
 
 **A test that changes the schema is marked `@pytest.mark.changes_schema`** (every test of a `test_migration*` module is, by name). The database fixtures reset the database without migrating it again and check a digest of the schema after every database test: an unmarked test that changes it fails, naming itself (`tests/fixtures/postgres.py`).
 
+**A test of a matcher that could grow without bound is marked `@pytest.mark.memory_capped`** (the matcher test modules are, whole). It runs with the process's address space capped at 256 MiB past its start: what the process maps when the test begins, or its module's base if more (what the process mapped when the module's first capped test began). A size check that stopped checking then fails with `MemoryError` in seconds instead of taking the host's memory (`tests/fixtures/memory_cap.py`). Linux only (`RLIMIT_AS`, `/proc`): elsewhere the marker does nothing.
+
 The database fixtures drop the schema and empty every table between tests, so two concurrent runs against one database destroy each other and it looks like a broken branch. Use a private database name, not just a private port.
 
 ### Merge hazards, each from a real incident
