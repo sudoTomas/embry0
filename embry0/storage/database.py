@@ -40,8 +40,15 @@ def _jsonb_encoder(value: Any) -> str:
     Called by asyncpg once per JSONB parameter. Repository code MUST pass a
     Python value (dict/list/scalar/None), not a pre-encoded JSON string —
     pre-encoding double-wraps the value inside a JSON string scalar.
+
+    A value that holds :data:`TOO_LONG_TO_READ` was read only in part
+    (#527), so writing it back would store that part in place of the whole:
+    it is refused with ``ValueError``.
     """
-    return json.dumps(value)
+    text = json.dumps(value)
+    if _TOO_LONG_TO_READ_JSON in text:
+        raise ValueError("a JSONB value read only in part is not written back (#527)")
+    return text
 
 
 def _jsonb_decoder(value: str) -> Any:
@@ -50,7 +57,8 @@ def _jsonb_decoder(value: str) -> Any:
     ``json.loads`` recurses once per level, so a value nested past the
     interpreter's limit (about 10,000 levels; Postgres stores up to about
     20,000) raised ``RecursionError`` on every read of its row (#479). Such
-    a value is decoded by :func:`_loads_deep`, which keeps its own stack.
+    a value is decoded by :func:`_loads_deep`, which keeps its own stack, as
+    far as its first :data:`DEEP_DECODE_MAX_CHARS` characters (#527).
 
     ``json.loads`` also refuses an integer longer than ``int`` reads (4,300
     digits by default, :func:`sys.get_int_max_str_digits`), with a plain
@@ -89,8 +97,20 @@ _WHITESPACE = " \t\n\r"
 _NUMBER = re.compile(r"(-?(?:0|[1-9][0-9]*))(\.[0-9]+)?([eE][-+]?[0-9]+)?")
 _LITERALS = (("true", True), ("false", False), ("null", None))
 
+#: How far into a value :func:`_loads_deep` reads (#527). It is pure Python and runs where the codec runs,
+#: in asyncpg's protocol on the event loop, at about 4 MB/s on the densest JSON: this much holds the loop
+#: for some 30 ms, where a 7.5 MB value held it, and every request with it, for seconds. The codec has to
+#: answer then and there, so the reading cannot be handed to a thread. The deepest value Postgres stores
+#: (about 16,300 levels) is shorter than this in its barest form.
+DEEP_DECODE_MAX_CHARS = 128 * 1024
 
-def _loads_deep(text: str) -> Any:
+#: Where :func:`_loads_deep` stopped reading a value longer than its limit: the rest of the value.
+TOO_LONG_TO_READ = "[the rest of a document too long to read]"
+#: The marker as :func:`_jsonb_encoder` writes it, to find it in a value about to be written back.
+_TOO_LONG_TO_READ_JSON = json.dumps(TOO_LONG_TO_READ)
+
+
+def _loads_deep(text: str, limit: int = DEEP_DECODE_MAX_CHARS) -> Any:
     """``json.loads(text)`` for a value of any depth: the same value, built with a stack of its own.
 
     Postgres hands JSONB back as canonical JSON, so this reads only what that
@@ -98,6 +118,15 @@ def _loads_deep(text: str) -> Any:
     ``null``. Anything else raises ``ValueError``, as ``json.loads`` does.
     An integer longer than ``int`` reads is its digits, as
     :func:`_jsonb_decoder` reads it (#523).
+
+    It reads no value that starts past ``limit`` characters (#527): that value
+    is :data:`TOO_LONG_TO_READ`, standing for the rest of the text, and every
+    container still open closes with what it holds. So a longer value comes
+    back as far as its first ``limit`` characters go, still the object or the
+    array it is stored as, and a read serves what was read: nested past 200
+    levels, as its JSON text (``embry0.json_text.served``), ending in that
+    marker. Only a row written some other way than the API holds such a
+    value: the write paths refuse a document past 200 levels.
     """
     containers: list[Any] = []  # the objects and arrays still open, outermost first
     keys: list[str | None] = []  # for each open object, the key its next value goes under
@@ -127,6 +156,18 @@ def _loads_deep(text: str) -> Any:
     try:
         i = skip(0)
         while True:
+            if i > limit:
+                # The rest stays unread: the marker stands for it, and every open container closes around it.
+                value: Any = TOO_LONG_TO_READ
+                while containers:
+                    container = containers.pop()
+                    if isinstance(container, dict):
+                        container[keys.pop()] = value
+                    else:
+                        keys.pop()
+                        container.append(value)
+                    value = container
+                return value
             # A value starts at i: open a container, or read a scalar.
             char = text[i]
             if char in "{[":
@@ -139,7 +180,7 @@ def _loads_deep(text: str) -> Any:
                     else:
                         keys.append(None)
                     continue
-                value: Any = {} if char == "{" else []
+                value = {} if char == "{" else []
                 i += 1
             elif char == '"':
                 value, i = string_at(i)

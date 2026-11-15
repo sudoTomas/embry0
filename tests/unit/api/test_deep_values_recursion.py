@@ -9,6 +9,7 @@ recursed too (about 10,000 levels; Postgres stores up to about 20,000).
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -81,3 +82,27 @@ async def test_a_job_whose_pipeline_config_is_deeper_than_json_loads_goes_is_rea
         assert answer.status_code == 200, f"pipeline_config {levels} deep: {path} answered {answer.status_code}"
     job = (await client.get("/api/v1/jobs/job-deep")).json()
     assert isinstance(job["pipeline_config"], str), "a value too deep to serve is served as text"
+
+
+async def test_a_job_whose_pipeline_config_is_too_long_to_read_on_the_loop_is_served_as_far_as_read(
+    client: AsyncClient,
+) -> None:
+    """Past ``DEEP_DECODE_MAX_CHARS`` the codec stops reading such a value; the read serves what it read (#527)."""
+    from embry0.storage.database import DEEP_DECODE_MAX_CHARS, TOO_LONG_TO_READ
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await db.execute(
+        "INSERT INTO jobs (job_id, task, repo, status) VALUES ('job-deep', 't', 'acme/widgets', 'completed')"
+    )
+    levels, beside = 12_000, '"' + "s" * 80 + '"'
+    text = '{"x": ' + f'{{"a": {beside}, "z": ' * levels + '"leaf"' + "}" * (levels + 1)
+    assert len(text) > 8 * DEEP_DECODE_MAX_CHARS
+    await db.execute("UPDATE jobs SET pipeline_config = $1::text::jsonb", text)
+    for path in ("/api/v1/jobs/job-deep", "/api/v1/jobs"):
+        answer = await client.get(path)
+        assert answer.status_code == 200, f"{path} answered {answer.status_code}"
+    served = (await client.get("/api/v1/jobs/job-deep")).json()["pipeline_config"]
+    assert isinstance(served, str), "a value too deep to serve is served as text"
+    assert served.startswith('{"x": {"a": ') and served.endswith(
+        json.dumps(TOO_LONG_TO_READ) + "}" * served.count("{")
+    ), f"not served as far as it was read: {served[:40]}...{served[-40:]}"
