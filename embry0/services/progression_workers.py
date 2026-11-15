@@ -16,9 +16,11 @@ runs on its loop: the same queries, the same fold, the same answer. Only the
 rules, the scope and the clock go to a worker, and only the progression, or
 a rollup's new head, comes back: tens of kilobytes.
 
-- **Two lanes.** The deployment's computations have a process of their own;
-  the keys' sets of repositories share the others. A crash, a hang or a
-  cancelled caller in a key's fold never takes the deployment's process.
+- **Three lanes.** The deployment's reads have a process of their own, and
+  so do the deployment's rollup builds; the keys' sets of repositories share
+  the others. A crash, a hang or a cancelled caller in a key's fold never
+  takes the deployment's processes, and a build of the deployment's rollup,
+  however long, never holds up its reads.
 - **One computation per process,** each process its own executor, so a
   process that dies fails only the computation it was running. That one is
   run once more on a new process; one that kills its process twice fails,
@@ -61,8 +63,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-#: The worker processes at most, the deployment's included (:func:`fold_processes` takes fewer on fewer CPUs).
+#: The worker processes at most, the deployment's two included (:func:`fold_processes` takes fewer on fewer CPUs).
 FOLD_WORKERS = 4
+#: The worker processes at least: the deployment's reads', its builds' and one for the keys' sets.
+FOLD_WORKERS_LEAST = 3
 #: Seconds a read may wait for a process and compute before it fails, its process killed: under the 30 s a dashboard
 #: request waits, so the caller sees the 503 and its Retry-After. The rollup build its scope needs goes on meanwhile.
 READ_LIMIT = 25.0
@@ -125,10 +129,10 @@ def _quota_v1(cgroup: Path) -> float | None:
 
 
 def fold_processes(configured: int = FOLD_WORKERS, cpus: float | None = None) -> int:
-    """How many worker processes: ``configured`` at most, one CPU left to the API, and two at least (the
-    deployment's and one for the keys' sets)."""
+    """How many worker processes: ``configured`` at most, one CPU left to the API, and :data:`FOLD_WORKERS_LEAST` at
+    least (the deployment's reads', its builds' and one for the keys' sets)."""
     usable = available_cpus() if cpus is None else cpus
-    return max(2, min(configured, math.floor(usable) - 1))
+    return max(FOLD_WORKERS_LEAST, min(configured, math.floor(usable) - 1))
 
 
 class _Slot:
@@ -166,7 +170,7 @@ class _Slot:
 
 class FoldWorkers:
     """Runs a progression service's computations in worker processes over ``database_url``: one for the
-    deployment's, ``processes - 1`` for the keys' sets of repositories."""
+    deployment's reads, one for its rollup builds, ``processes - 2`` for the keys' sets of repositories."""
 
     def __init__(
         self,
@@ -177,17 +181,20 @@ class FoldWorkers:
         read_limit: float = READ_LIMIT,
         write_limit: float = WRITE_LIMIT,
     ) -> None:
-        if processes < 2:
-            raise ValueError("fold workers need two processes at least: the deployment's and one for the sets")
+        if processes < FOLD_WORKERS_LEAST:
+            raise ValueError(
+                "fold workers need three processes at least: the deployment's reads', its builds', the sets'"
+            )
         initargs = (database_url, json_logs)
         self._url = database_url
         self._processes = processes
         self._limits = {"read": read_limit, "write": write_limit}
         self._slots = [_Slot(initargs) for _ in range(processes)]
-        self._lanes: dict[bool, asyncio.Queue[_Slot]] = {False: asyncio.Queue(), True: asyncio.Queue()}
-        self._lanes[False].put_nowait(self._slots[0])
-        for slot in self._slots[1:]:
-            self._lanes[True].put_nowait(slot)
+        self._lanes: dict[str, asyncio.Queue[_Slot]] = {lane: asyncio.Queue() for lane in ("reads", "builds", "sets")}
+        self._lanes["reads"].put_nowait(self._slots[0])
+        self._lanes["builds"].put_nowait(self._slots[1])
+        for slot in self._slots[2:]:
+            self._lanes["sets"].put_nowait(slot)
 
     async def progression(
         self, rules: Rules, scope: Scope, *, through_rollup: bool, rollup: bool, now: datetime
@@ -200,7 +207,7 @@ class FoldWorkers:
         return await self._run(scope, "write", _maintain, rules, scope, force_since, now)
 
     async def _run(self, scope: Scope, kind: str, work: Callable[..., T], *args: Any) -> T:
-        lane = self._lanes[scope.repos is not None]
+        lane = self._lanes["sets" if scope.repos is not None else "builds" if kind == "write" else "reads"]
         limit = self._limits[kind]
         loop = asyncio.get_running_loop()
         # A read's limit counts its wait for a process too: a caller waits on both. A write runs in the background

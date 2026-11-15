@@ -20,6 +20,7 @@ skill packs.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from collections.abc import Callable, Collection, Iterable
@@ -591,11 +592,14 @@ class ProgressionService:
     allowlist covers, whose progression is the one a deployment holding only
     them would compute. Each scope has its own cache and rollup.
 
-    Every write of this process, a background one or an admin's rebuild,
-    goes through one lock, so at most one of its pool connections waits on
-    the rollup's advisory lock while the writer holding it needs another. A
-    write that fails is retried after a delay that doubles, from
-    :data:`WRITE_RETRY_FIRST` to :data:`WRITE_RETRY_MAX`, not on every read.
+    The writes of one scope, a background one or an admin's rebuild, go one
+    at a time, and those of different scopes side by side, so a write that
+    hangs holds up only its own scope's. On the loop (without workers) every
+    write of this process also waits its turn behind the others, so at most
+    one of its pool connections waits on an advisory lock while the writer
+    holding it needs another. A write that fails is retried after a delay that
+    doubles, from :data:`WRITE_RETRY_FIRST` to :data:`WRITE_RETRY_MAX`, not on
+    every read.
 
     ``workers`` runs every read's computation and every write in worker
     processes, over the same database (:class:`Computation` there), so a fold
@@ -629,7 +633,8 @@ class ProgressionService:
         self._locks: dict[str, asyncio.Lock] = {}
         #: Each scope's background write, by its key, and the lock every write of this process takes.
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._write_lock = asyncio.Lock()
+        self._write_locks: dict[str, asyncio.Lock] = {}
+        self._loop_writes = asyncio.Lock()
         #: Each scope's failed writes in a row and when it may write again.
         self._retry: dict[str, tuple[int, float]] = {}
         #: Moves with every rollup write: a read that began before one does not cache what it computed.
@@ -723,13 +728,17 @@ class ProgressionService:
     async def _write(
         self, rules: Rules, *, force_since: datetime | None = None, scope: Scope | None = None
     ) -> Maintained:
-        """One write of the scope's rollup (the deployment's by default), after any other write of this process."""
+        """One write of the scope's rollup (the deployment's by default), after any other write of that scope (and, on
+        the loop, of this process)."""
         from embry0.services.progression_rollup import EVERY
 
         if self._rollup is None:
             raise RuntimeError("this progression service keeps no rollup")
         scope = EVERY if scope is None else scope
-        async with self._write_lock:
+        async with (
+            self._write_locks.setdefault(scope.key, asyncio.Lock()),
+            self._loop_writes if self._workers is None else contextlib.nullcontext(),
+        ):
             if self._workers is None:
                 done = await self._local.maintain(rules, scope, force_since=force_since)
             else:

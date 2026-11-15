@@ -63,7 +63,7 @@ def _clock() -> None:
 
 @pytest.fixture
 async def workers(db_with_migrations: DatabasePool) -> AsyncIterator[FoldWorkers]:
-    found = FoldWorkers(db_with_migrations._url, processes=2, json_logs=False)  # noqa: SLF001 - the test database's
+    found = FoldWorkers(db_with_migrations._url, processes=3, json_logs=False)  # noqa: SLF001 - the test database's
     try:
         yield found
     finally:
@@ -222,13 +222,13 @@ async def test_a_stopped_worker_fails_its_read_in_time_and_the_next_read_answers
     writer = Writer(db, random.Random(7))
     await writer.setup()
     await writer.some(CLOCK - timedelta(days=3), CLOCK)
-    workers = FoldWorkers(db._url, processes=2, json_logs=False, read_limit=3.0)  # noqa: SLF001
+    workers = FoldWorkers(db._url, processes=3, json_logs=False, read_limit=3.0)  # noqa: SLF001
     service = _service(db, workers)
     try:
         await service.read(list(SCOPE))
         await service.settle()  # the scope's rollup, built: the process stopped below runs nothing else
         expected = await service.read(list(SCOPE))
-        stopped = workers._slots[1].processes()[0].pid  # noqa: SLF001 - the sets' process
+        stopped = workers._slots[2].processes()[0].pid  # noqa: SLF001 - the sets' process
         assert stopped is not None
         os.kill(stopped, signal.SIGSTOP)
         started = time.monotonic()
@@ -271,7 +271,7 @@ async def test_the_production_wiring_serves_the_progression_routes_from_workers(
         await service.settle()  # the rollups the first reads asked for, built: the answers below read them
         through_workers = await answers()
         used = {p.pid for slot in workers._slots for p in slot.processes() if p.is_alive()}  # noqa: SLF001
-        assert len(used) == 2, f"the deployment's and a set's computations ran in two worker processes: {used}"
+        assert len(used) == 3, f"the deployment's reads, its build and a set's ran in three worker processes: {used}"
         service._workers = None  # noqa: SLF001 - the same app, computing on its loop
         on_the_loop = await answers()
         moved = sorted(
@@ -400,7 +400,7 @@ async def test_a_cold_read_past_its_limit_leaves_the_build_running_in_the_worker
     await writer.setup()
     for _ in range(3):
         await writer.some(CLOCK - timedelta(days=14), CLOCK)
-    workers = FoldWorkers(db._url, processes=2, json_logs=False, read_limit=0.05)  # noqa: SLF001
+    workers = FoldWorkers(db._url, processes=3, json_logs=False, read_limit=0.05)  # noqa: SLF001
     service = _service(db, workers)
     try:
         with pytest.raises(FoldTimeout):
@@ -439,3 +439,36 @@ async def test_a_worker_s_read_that_finds_its_rollup_behind_schedules_the_write(
     after = await service.read(list(SCOPE))
     assert after.rollup is not None and after.rollup["through_day"] > built.rollup["through_day"]
     await service.settle()
+
+
+async def test_a_write_that_hangs_holds_up_only_its_own_scope_s(db_with_migrations: DatabasePool) -> None:
+    """The writes of one scope go one at a time, those of others side by side: with one scope's build hung, another
+    scope's and the deployment's are written, and a second write of the hung scope waits."""
+    db = db_with_migrations
+    writer = Writer(db, random.Random(29))
+    await writer.setup()
+    for _ in range(3):
+        await writer.some(CLOCK - timedelta(days=14), CLOCK)
+    stand_in = _Workers(db, late=0)
+    hung = asyncio.Event()
+    real = stand_in.maintain
+
+    async def maintain(rules: Any, scope: Scope, *, force_since: datetime | None, now: datetime) -> Any:
+        if scope == Scope.of(["acme/lib"]):
+            await hung.wait()
+        return await real(rules, scope, force_since=force_since, now=now)
+
+    stand_in.maintain = maintain  # type: ignore[method-assign]
+    service = _service(db, stand_in)  # type: ignore[arg-type]
+    rules = await service.rules()
+    stuck = asyncio.create_task(service._write(rules, scope=Scope.of(["acme/lib"])))  # noqa: SLF001
+    await asyncio.sleep(0.1)
+    done = await asyncio.wait_for(service._write(rules, scope=Scope.of(SCOPE)), 10)  # noqa: SLF001
+    assert done.action == "built", "another scope's build went on"
+    assert (await asyncio.wait_for(service.rebuild(), 10))["action"] in {"built", "rebuilt"}, "and the deployment's"
+    again = asyncio.create_task(service._write(rules, scope=Scope.of(["acme/lib"])))  # noqa: SLF001
+    await asyncio.sleep(0.2)
+    assert not again.done(), "a second write of the hung scope waits for the first"
+    hung.set()
+    assert (await asyncio.wait_for(stuck, 10)).action == "built"
+    assert (await asyncio.wait_for(again, 10)).action is None, "and finds nothing left to do"

@@ -23,8 +23,9 @@ When the stored fold is written:
 
 Writes happen in the background, never on a read: a read whose rollup is
 missing or holds rewards that moved answers from the raw rows, as before the
-rollup, and schedules the build. Writers take one advisory lock, so two
-replicas build once; a reader's snapshot never sees a write half done.
+rollup, and schedules the build. Writers of a scope take its advisory lock,
+so two replicas build it once, and builds of different scopes go on side by
+side; a reader's snapshot never sees a write half done.
 
 **Scopes** (migration 149). The deployment's fold reads every row. A key
 with a repository allowlist reads the experience of its repositories' work
@@ -174,7 +175,7 @@ class RollupStore(Protocol):
 
     async def version(self, pack_hash: str, scope: str = DEPLOYMENT) -> str | None: ...
 
-    def writing(self) -> AbstractAsyncContextManager[RollupWriting]: ...
+    def writing(self, scope: str = DEPLOYMENT) -> AbstractAsyncContextManager[RollupWriting]: ...
 
 
 def day_start(day: date, rules: Rules) -> datetime:
@@ -373,7 +374,7 @@ class ProgressionRollup:
         A second caller waits for the first and finds nothing left to do.
         ``force_since`` asks for a full rebuild unless one finished after it.
         """
-        async with self._store.writing() as writer:
+        async with self._store.writing(scope.key) as writer:
             return await self._maintain(writer, rules, force_since, scope)
 
     async def _maintain(
