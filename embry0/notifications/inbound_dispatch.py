@@ -44,6 +44,8 @@ class InboundResult:
     # separately because it is the one unmatched case the author can fix by
     # re-sending the directive with the question's id.
     unresolved_sequence: int = 0
+    # Answers to a question another answer took first, between the lookup and the write (#499): not applied.
+    already_answered: int = 0
 
 
 async def _resolve(
@@ -78,7 +80,7 @@ async def apply_inbound_directives(
     inputs_repo: Any,
     on_all_answered: Callable[[], Awaitable[None]],
     answered_by: str,
-    record: Callable[[dict[str, Any], str], Awaitable[None]] | None = None,
+    record: Callable[[dict[str, Any], str], Awaitable[bool | None]] | None = None,
     resolve_sequence: Callable[[int], Awaitable[dict[str, Any] | None]] | None = None,
 ) -> InboundResult:
     """For each (reference, action, value) directive, look up the
@@ -120,9 +122,13 @@ async def apply_inbound_directives(
         input_id = row["id"]
         if action == "answer":
             if record is not None:
-                await record(row, value)
+                recorded = await record(row, value)
             else:
-                await inputs_repo.answer(input_id, answer=value, answered_by=answered_by)
+                recorded = await inputs_repo.answer(input_id, answer=value, answered_by=answered_by)
+            if recorded is False:
+                logger.info("inbound_directive_already_answered", issue_id=issue_id, input_id=input_id)
+                result.already_answered += 1
+                continue
             result.applied += 1
         elif action == "skip":
             await inputs_repo.skip(input_id, skipped_by=answered_by)

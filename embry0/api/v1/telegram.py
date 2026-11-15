@@ -181,7 +181,7 @@ async def telegram_callback(request: Request) -> Response | dict[str, Any]:
     # on ``asking_node``: a reply-to-message routes to whichever input row
     # owns that ``telegram_message_id`` — triage ``needs_info`` and
     # developer/review ``agent_ask_user`` rows alike.
-    await record_answer(
+    recorded = await record_answer(
         inp=inp,
         answer=answer_text,
         answered_by=answered_by,
@@ -191,6 +191,10 @@ async def telegram_callback(request: Request) -> Response | dict[str, Any]:
         tracker_channels=getattr(request.app.state, "tracker_channels", None),
         config=config,
     )
+    if recorded is False:
+        # #499: another answer to this question was taken first, between the read above and this write.
+        logger.info("telegram_reply_already_answered", input_id=inp["id"])
+        return {"status": "already_answered"}
     logger.info("telegram_input_answered", input_id=inp["id"], answered_by=answered_by)
 
     # Edit the original Telegram message to reflect the answer

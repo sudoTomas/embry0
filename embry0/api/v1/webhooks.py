@@ -433,9 +433,9 @@ async def _handle_issue_comment(request: Request, payload: dict[str, Any], actio
     async def _resume() -> None:
         await executor.resume_for_issue(issue_id)
 
-    async def _record(row: dict[str, Any], value: str) -> None:
+    async def _record(row: dict[str, Any], value: str) -> bool:
         # RAV-1076: shared record path — Telegram mirror + Linear comment.
-        await record_answer(
+        return await record_answer(
             inp=row,
             answer=value,
             answered_by=f"github:{login}",
@@ -471,6 +471,7 @@ async def _handle_issue_comment(request: Request, payload: dict[str, Any], actio
         "applied": result.applied,
         "skipped": result.skipped,
         "unmatched": result.unmatched,
+        "already_answered": result.already_answered,
     }
 
 

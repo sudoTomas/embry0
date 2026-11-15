@@ -252,3 +252,27 @@ async def test_dispatch_does_not_resume_when_blocking_questions_remain():
         resolve_sequence=_by_sequence(_ROWS, ["inp-1", "inp-2"]),
     )
     resume_called.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("through", ["the record callback", "the bare repository write"])
+async def test_an_answer_another_one_beat_to_its_question_is_not_counted_as_applied(through):
+    """#499: the reply read the question pending, but another answer was written first: it was not applied."""
+    from embry0.notifications.inbound_dispatch import apply_inbound_directives
+
+    inputs_repo = _repo()
+    inputs_repo.answer = AsyncMock(return_value=False)
+    record = AsyncMock(return_value=False) if through == "the record callback" else None
+
+    result = await apply_inbound_directives(
+        issue_id="iss-1",
+        directives=[("inp-1", "answer", "PostgreSQL")],
+        inputs_repo=inputs_repo,
+        on_all_answered=AsyncMock(),
+        answered_by="github:someone",
+        record=record,
+    )
+
+    assert (result.applied, getattr(result, "already_answered", None)) == (0, 1), (
+        f"an answer that was not taken counted as applied ({through}): {result}"
+    )

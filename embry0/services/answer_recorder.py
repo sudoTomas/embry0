@@ -28,6 +28,12 @@ from embry0.notifications.dispatcher import notify_answer_cross_channel
 logger = structlog.get_logger(__name__)
 
 
+def answers_context(answered: list[dict[str, Any]]) -> str:
+    """The questions and their answers, as a resume hands them to the agent: a person's answer, else the
+    orchestrator's own."""
+    return "\n\n".join(f"Q: {a['question']}\nA: {a.get('answer') or a.get('auto_answer') or ''}" for a in answered)
+
+
 async def record_answer(
     *,
     inp: dict[str, Any],
@@ -38,8 +44,8 @@ async def record_answer(
     issues_repo: Any | None = None,
     tracker_channels: dict[str, Any] | None = None,
     config: Any | None = None,
-) -> None:
-    """Persist an answer and fan out its side effects.
+) -> bool:
+    """Persist an answer and fan out its side effects; False, with no side effect, when it was answered already.
 
     Args:
         inp: The pending ``issue_inputs`` row being answered (needs ``id``;
@@ -57,7 +63,9 @@ async def record_answer(
             ``tracker_channels`` maps tracker name to a
             :class:`~embry0.notifications.tracker_comment.TrackerCommentChannel`.
     """
-    await inputs_repo.answer(inp["id"], answer=answer, answered_by=answered_by)
+    if await inputs_repo.answer(inp["id"], answer=answer, answered_by=answered_by) is False:
+        # Another answer to the same question was taken first (#499): nothing of this one is said anywhere.
+        return False
 
     if config is not None and channel != "telegram":
         try:
@@ -79,6 +87,7 @@ async def record_answer(
         issues_repo=issues_repo,
         tracker_channels=tracker_channels,
     )
+    return True
 
 
 async def _post_tracker_answer(

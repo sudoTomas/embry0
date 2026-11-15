@@ -285,6 +285,20 @@ class IssuesRepository:
         )
         return [dict(r) for r in rows], int(total or 0)
 
+    async def claim_answered(self, issue_id: str) -> bool:
+        """Take an issue whose questions are answered: ``awaiting_input`` to ``triaging`` in one statement (#499).
+
+        The one gate for going on with an issue once its last blocking question
+        is answered, whether that resumes its waiting job or starts a fresh run:
+        of two answers (or an answer and an inbound reply) that each find no
+        question left, only the one that takes the issue goes on.
+        """
+        row = await self._db.fetchrow(
+            "UPDATE issues SET status = 'triaging' WHERE id = $1 AND status = 'awaiting_input' RETURNING id",
+            issue_id,
+        )
+        return row is not None
+
     async def update(self, issue_id: str | None, **fields: Any) -> None:
         """Update specific fields on an issue. updated_at is always refreshed.
 
