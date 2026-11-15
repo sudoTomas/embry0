@@ -131,12 +131,9 @@ class FakeProgression:
     async def rules(self) -> Rules:
         return default_rules()
 
-    async def narrowed(self, progression: Progression, repos: Any) -> Progression:
-        """The service evaluates a key's quests and diaries again from its repositories' journal; a fake keeps its
-        own, so what a route's own filters leave is what a test reads."""
-        return progression
-
-    async def read(self) -> Progression:
+    async def read(self, repos: Any = None) -> Progression:
+        """Every caller's the same: the service reads a key's repositories' progression; a fake keeps its own, so
+        what a route's own filters leave is what a test reads."""
         rules = default_rules()
         return Progression(
             characters={a: Character(a, rules=rules) for a in ("developer", "review", "why")}, rules=rules

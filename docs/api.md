@@ -1215,17 +1215,9 @@ about repositories and owners by `embry0/api/repository_reads.py`, to jobs
 by `embry0/api/job_allowlist.py`, to issues by
 `embry0/api/issue_allowlist.py` and to healing cases by
 `embry0/api/case_allowlist.py`, and to the audit log by
-`embry0/api/audit_allowlist.py`). These reads are not narrowed yet and
-follow in stages of their own, so a key with an allowlist still reads them
-for the whole deployment:
-
-- the account's and the characters' experience, levels, skills and
-  achievements (in `GET /progression`, `GET /progression/preview`,
-  `GET /world` and `GET /world/characters/{agent}`), the levels reached,
-  rares dropped and achievements unlocked among their `recent` entries,
-  which therefore also decide which of the key's own quest and diary
-  entries are among the newest 20, a character that exists only because
-  another repository's work made it, and the preview's `changes`.
+`embry0/api/audit_allowlist.py`). No read is left for the whole
+deployment: the container logs, whose lines cannot be told to belong to one
+repository, are refused to such a key (below).
 
 Everything below narrows to the repositories the key covers:
 
@@ -1241,10 +1233,9 @@ Everything below narrows to the repositories the key covers:
   work is on it however much newer work another repository has. An
   achievement or a quest still shows; its evidence or place is null unless
   it names a repository the key covers, or, for evidence, characters
-  rather than work. The account's and the characters' experience, levels
-  and achievements, and the preview's `changes`, count every repository's
-  work, without naming any (the rollup folds them per day for the
-  deployment); the characters' quest totals and the quests do not (below).
+  rather than work. The account's and the characters' experience, levels,
+  skills and achievements, the recent entries and the preview's `changes`
+  count only the key's repositories' work (below).
 - Totals. These count, for a key with an allowlist, the work of the
   repositories it covers alone, in the query, exactly as a deployment
   holding only those repositories counts it: a job by the
@@ -1265,10 +1256,14 @@ Everything below narrows to the repositories the key covers:
   runs; a page holds 1 to 200 runs. The characters' quest totals (`stats`
   in `GET /world` and `GET /world/characters/{agent}`: quests, outcomes,
   average cost and time, the last quest, the ratings) count only the quests
-  in those repositories. `GET /progression`, `GET /progression/preview` and
-  `GET /world` evaluate the quests, the quest points, the cloak trim a
-  quest earns, the quest cloak and the repo diaries from those
-  repositories' work alone, so a quest's steps are the ones that work took. The setup cost
+  in those repositories. `GET /progression`, `GET /progression/preview`,
+  `GET /world` and `GET /world/characters/{agent}` read the progression of
+  those repositories' work alone, as a deployment holding only them would
+  compute it: the account's and the characters' experience, levels, skills,
+  rares and achievements, the quests, the quest points and the cloak trim
+  and quest cloak they earn, the repo diaries, the recent entries, and the
+  preview's `changes`. A key's set of repositories is folded as one, with a
+  rollup of its own ([progression.md](progression.md#how-experience-is-read)). The setup cost
   (`GET /repos/{repo}/-/setup/cost`) counts the recorded setup runs, and
   their typical cost, of those repositories. The MCP `stats` tool reads
   `GET /stats`, so it is narrowed too. A test compares every GET route's

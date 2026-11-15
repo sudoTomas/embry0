@@ -13,7 +13,9 @@ total, a count or a sum reads. Jobs of most statuses and deliveries, their
 costs, a job whose repository is only in its git context, the background
 features' jobs and model calls, agents' runs with their tokens, cost and tool
 calls, an issue with a review, a QA pass and a merge on it, ratings, a
-pre-built QA image and a forge credential bound to the repository.
+pre-built QA image and a forge credential bound to the repository, and a
+merged job with its runs on a day long closed, which the progression's rollup
+folds (:data:`LONG_AGO`).
 
 :meth:`Deployment.add_uncovered` then gives :data:`UNCOVERED` and its owner
 the same, with other numbers and earlier times, and work of kinds the covered
@@ -234,6 +236,27 @@ async def plant(app: FastAPI, db: DatabasePool, repo: str) -> None:
         job_id(repo, "closed"),
     )
     await _counted_beside_jobs(app, db, repo)
+    await _long_ago(db, repo)
+
+
+#: How long before :data:`NOW` each repository's work of a closed day happened: a day the rollup folds.
+LONG_AGO = {COVERED: timedelta(days=4), UNCOVERED: timedelta(days=5)}
+
+
+async def _long_ago(db: DatabasePool, repo: str) -> None:
+    """``repo``'s merged job of a day long closed, and its runs: what the progression's rollup folds once, so a read
+    resumes from it."""
+    at = NOW - LONG_AGO[repo]
+    await _job(
+        db,
+        repo,
+        "long-ago",
+        "pr_merged",
+        "merged",
+        {"created_at": at, "started_at": at, "finished_at": at, "updated_at": at, "delivery_state_at": at},
+    )
+    for n, agent in enumerate(("developer", "review", "developer", "triage")):
+        await _run(db, repo, "long-ago", agent, 20 + n, at=at + timedelta(minutes=n))
 
 
 async def _onboarded_and_retried(db: DatabasePool, repo: str) -> None:
@@ -342,7 +365,7 @@ def forget_caches(app: FastAPI) -> None:
     app.state.world_cache = WorldCache()
     progression = getattr(app.state, "progression", None)
     if progression is not None:
-        progression._cached = None  # noqa: SLF001 - the service's own cache, kept a minute
+        progression._cached.clear()  # noqa: SLF001 - the service's own caches, each kept a minute
 
 
 @dataclass

@@ -226,19 +226,16 @@ async def _brief_titles(request: Request, job_ids: list[str]) -> dict[str, str]:
 async def read_world(request: Request) -> dict[str, Any]:
     """Everything the guild hall and the map show, read in one go; the parties are always fresh."""
     repo = _state(request, "world_repo")
-    service = _state(request, "progression")
-    progression = await service.read()
     cache = _cache(request)
     now = datetime.now(UTC)
     # What the caller's key covers only: the parties, quests, inbox, loot, regions and dungeons of its
     # repositories, and the characters' quest totals over them. The parties, inbox, loot and totals are read
     # narrowed to them, before each list's limit; the cache holds every repository's, shared by every caller, so
-    # what comes from it is narrowed after it, and a key's totals are not read from it. The progression's quests
-    # (the quest points, the cloaks they trim, the quest cloak and the quests among the recent entries) are the
-    # key's repositories' as GET /progression reads them.
+    # what comes from it is narrowed after it, and a key's totals are not read from it. The progression (the
+    # account, the characters' experience and levels, the quests and the recent entries) is its repositories', as
+    # GET /progression reads it.
     covered = covered_slugs(request)
-    if covered is not None:
-        progression = await service.narrowed(progression, covered)
+    progression = await _state(request, "progression").read(covered)
     jobs = [
         j
         for j in await repo.jobs(returning_seconds=RETURN_SECONDS, repos=covered)
@@ -340,14 +337,14 @@ def covered_places(request: Request, places: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/world/characters/{agent_type}")
 async def read_character(agent_type: str, request: Request) -> dict[str, Any]:
-    """One character: its sheet's numbers, its totals and its quest log, newest first; the totals and the log of the
-    repositories the caller's key covers."""
-    progression = await _state(request, "progression").read()
+    """One character: its sheet's numbers, its totals and its quest log, newest first; the sheet, the totals and the
+    log of the repositories the caller's key covers."""
+    covered = covered_slugs(request)
+    progression = await _state(request, "progression").read(covered)
     character = progression.characters.get(agent_type)
     if character is None:
         raise HTTPException(status_code=404, detail=f"no character {agent_type}")
     repo = _state(request, "world_repo")
-    covered = covered_slugs(request)
     stats, log = await asyncio.gather(repo.stats(agent_type, repos=covered), repo.quest_log(agent_type, repos=covered))
     log = [r for r in log if key_covers(request, r.get("repo"))]
     titles = await _brief_titles(request, [str(r["job_id"]) for r in log])

@@ -35,7 +35,7 @@ class _Rows:
 
 
 class _Characters(FakeProgression):
-    async def read(self) -> Progression:
+    async def read(self, repos: Any = None) -> Progression:
         rules = default_rules()
         types = ("developer", "qa", "scout", "watchman", "lost")
         return Progression(characters={a: Character(a, rules=rules) for a in types}, rules=rules)
