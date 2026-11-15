@@ -184,6 +184,15 @@ class ReaderPlace:
     restart goes on from it too. The next page is kept as its number, never as
     a URL: the reader asks for it on its own listing's path, through the
     forge client's base.
+
+    A comment listing goes on from its cursor, which holds everything it read,
+    except among comments that share the update it was asked from: there it
+    goes on by page number (#510), and its cursor holds that update, so the
+    page it reached is kept too (``tied_page``), and the next run asks for that
+    page from the cursor (#526). Otherwise a run with fewer calls than such a
+    block has pages asks for its first pages again every run and never gets
+    past them. A place stored before ``tied_page`` was kept goes on from the
+    cursor, as it did.
     """
 
     stage: int
@@ -195,6 +204,7 @@ class ReaderPlace:
     pulls_left: int = 0
     logins: tuple[str, ...] | None = None
     failures: int = 0
+    tied_page: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -207,6 +217,7 @@ class ReaderPlace:
             "pulls_left": self.pulls_left,
             "logins": None if self.logins is None else list(self.logins),
             "failures": self.failures,
+            "tied_page": self.tied_page,
         }
 
     @classmethod
@@ -238,14 +249,22 @@ class ReaderPlace:
             ):
                 return None
             next_page = data.get("next_page")
+            stage = _whole(data["stage"], 0, 4)
+            pages = _whole(data.get("pages", 0), 0, 2 * max_pages)
+            tied_page = data.get("tied_page")
+            if tied_page is not None:
+                # A comment listing below its page cap, at a page no later than the one after those it read.
+                tied_page = _whole(tied_page, 2, min(max_pages, pages + 1))
+                if stage > 1:
+                    return None
             seen = tuple(_whole(n, 1) for n in data.get("seen") or [])
             pulls_left = _whole(data.get("pulls_left", 0), 0, max_pulls)
             if len(pulls) > pulls_left or len(seen) > found_cap:
                 return None
             return cls(
-                stage=_whole(data["stage"], 0, 4),
+                stage=stage,
                 # The pull request listing reads at most twice its page cap (shifts), and its next page follows.
-                pages=_whole(data.get("pages", 0), 0, 2 * max_pages),
+                pages=pages,
                 next_page=None if next_page is None else _whole(next_page, 2, 2 * max_pages + 1),
                 pulls=tuple(pulls),
                 found=_whole(data.get("found", 0), 0, found_cap),
@@ -253,6 +272,7 @@ class ReaderPlace:
                 pulls_left=pulls_left,
                 logins=None if logins is None else tuple(logins),
                 failures=_whole(data.get("failures", 0), 0, MAX_FAILURES - 1),
+                tied_page=tied_page,
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -329,6 +349,11 @@ class EventReader:
             # A comment listing goes on from its cursor, which holds everything it read; the pull request
             # listing has none, so it goes on from its next page.
             self._next = place.next_page if place.stage == 2 else None
+            if place.stage <= 1 and place.tied_page is not None:
+                # Among comments that share the cursor's update, it goes on at the page it reached, asked for from
+                # that update, as it would have in one run (#526).
+                self._next = place.tied_page
+                self._since = getattr(self.batch, _LISTINGS[place.stage][3])
             self._pulls = list(place.pulls)
             self._found = place.found
             self._seen = set(place.seen) | {number for _updated, number in place.pulls}
@@ -351,10 +376,11 @@ class EventReader:
         """
         if self.done:
             return None
+        listing = self._stage <= 1
         return ReaderPlace(
             stage=self._stage,
             pages=self._pages,
-            next_page=self._next,
+            next_page=None if listing else self._next,
             pulls=tuple(sorted(self._pulls)[: max(0, self._max_pulls)]),
             found=self._found,
             # While the listing is read, every pull request it found, so a page that brings one again (a newer one
@@ -363,6 +389,8 @@ class EventReader:
             pulls_left=self._max_pulls,
             logins=None if self._logins is None else tuple(self._logins),
             failures=self._failures,
+            # A comment listing's next page by number: it stands among comments that share its cursor's update.
+            tied_page=self._next if listing else None,
         )
 
     @property
