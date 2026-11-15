@@ -186,3 +186,103 @@ def test_no_forge_token_lookup_is_passed_no_resolver() -> None:
                 if isinstance(first, ast.Constant) and first.value is None:
                     bare.append(f"{path.relative_to(_SRC)}:{node.lineno}")
     assert bare == [], f"forge_token called with no resolver: {bare}"
+
+
+# ---- a path naming another owner --------------------------------------------------------------------------------------
+
+_PATHS = [
+    # (forge, the owner the token is for, path, sent or refused)
+    ("github", "acme", "/repos/acme/app/hooks", "sent"),
+    ("github", "acme", "/orgs/acme/repos", "sent"),
+    ("github", "acme", "/users/Acme", "sent"),
+    ("github", "acme", "/user", "sent"),
+    ("github", "acme", "/repos/other/app/hooks", "refused"),
+    ("github", "acme", "/repos/acme-corp/app", "refused"),
+    ("github", "acme", "/orgs/other", "refused"),
+    ("github", "acme", "https://api.github.com/repos/other/app/contents?page=2", "refused"),
+    ("github", None, "/user", "sent"),
+    ("github", None, "/repos/acme/app", "refused"),
+    ("gitlab", "grp", "/projects/grp%2Fapp", "sent"),
+    ("gitlab", "grp", "/groups/grp/projects", "sent"),
+    ("gitlab", "grp", "/projects/1234", "sent"),
+    ("gitlab", "grp", "/projects/other%2Fapp", "refused"),
+    ("gitlab", "grp", "/groups/other", "refused"),
+    ("gitlab", "grp/sub", "/projects/grp%2Fother%2Fapp", "refused"),
+    ("gitlab", "grp", "https://gitlab.example.com/api/v4/projects/other%2Fapp/hooks", "refused"),
+    ("gitlab", None, "/projects/grp%2Fapp", "refused"),
+]
+
+
+@pytest.mark.parametrize(("forge", "owner", "path", "outcome"), _PATHS)
+async def test_a_chosen_token_s_call_whose_path_names_another_owner_is_refused(
+    forge: str, owner: str | None, path: str, outcome: str
+) -> None:
+    """As a call naming another owner's repository with ``repo=``: the path alone names it, so the token stays home."""
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(str(request.url.path))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as http:
+        kw: dict[str, Any] = {"owner_env_tokens": False, "token_owner": owner, "http_client": http}
+        client: Any = (
+            GitHubClient(default_token=CHOSEN, **kw)
+            if forge == "github"
+            else GitLabClient(default_token=CHOSEN, gitlab_url="https://gitlab.example.com", **kw)
+        )
+        try:
+            await client.get(path)
+            got = "sent"
+        except _refused():
+            got = "refused"
+    assert (got, len(sent)) == (outcome, 1 if outcome == "sent" else 0), f"{forge} {owner} {path}: {got}, {sent}"
+
+
+async def test_a_deployment_default_client_reads_any_path_as_before() -> None:
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(str(request.url.path))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as http:
+        await GitHubClient(default_token=CHOSEN, http_client=http).get("/repos/other/app")
+    assert sent == ["/repos/other/app"]
+
+
+async def test_discovery_lists_a_repository_of_another_owner_without_reading_it() -> None:
+    """A user's listing (``type=all``) can hold a repository they are a member of: discovery keeps it, marked, and
+    reads nothing of it with this owner's token, which its client would refuse."""
+    from embry0.services.org_discovery import scan_repository
+
+    calls: list[str] = []
+
+    class _Client:
+        async def get(self, path: str, **_: Any) -> httpx.Response:
+            calls.append(path)
+            return httpx.Response(404, json={})
+
+    facts = await scan_repository(_Client(), "acme", {"full_name": "other/app", "name": "app"}, hook_origins=())
+    assert facts.facts == {"skipped": "another owner's repository"} and calls == [], (facts.facts, calls)
+
+
+async def test_the_probe_does_not_read_hooks_of_another_owner_s_repository() -> None:
+    from embry0.services.organizations import probe_github
+
+    calls: list[str] = []
+
+    class _Client:
+        async def get(self, path: str, **_: Any) -> httpx.Response:
+            calls.append(path)
+            if path == "/user":
+                return httpx.Response(200, json={"login": "acme-bot"})
+            if path.startswith("/orgs/"):
+                return httpx.Response(404, json={})
+            if path == "/users/acme":
+                return httpx.Response(200, json={"public_repos": 1})
+            return httpx.Response(200, json=[{"full_name": "other/app"}])
+
+    probe = await probe_github("acme", CHOSEN, client=_Client())
+    assert not any(c.endswith("/hooks") for c in calls), calls
+    assert probe.hooks is None and probe.sample_repo == "other/app", probe

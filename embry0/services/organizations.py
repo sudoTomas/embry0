@@ -396,7 +396,8 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     sample = str(repos[0].get("full_name") or "") or None if read and repos and isinstance(repos[0], dict) else None
 
     hooks: bool | None = None
-    if sample:
+    # Only the owner's own repository: a user's listing can hold one they are a member of, which this token is not for.
+    if sample and sample.lower().startswith(owner.lower() + "/"):
         hooks_resp = await client.get(f"/repos/{sample}/hooks")
         hooks = hooks_resp.status_code == 200
 

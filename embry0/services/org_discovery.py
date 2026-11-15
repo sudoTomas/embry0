@@ -239,6 +239,11 @@ async def scan_repository(
     if facts.archived:
         facts.facts = {"skipped": "archived"}
         return facts
+    if not full.lower().startswith(owner.lower() + "/"):
+        # A user's listing (type all) holds repositories they are a member of: the token is this owner's to use, and
+        # its client refuses another owner's (ChosenTokenRefused), so they are listed and not read.
+        facts.facts = {"skipped": "another owner's repository"}
+        return facts
 
     listing = await client.get(
         f"/repos/{full}/contents/", params={"ref": facts.default_branch} if facts.default_branch else None

@@ -195,6 +195,23 @@ class ForgeClient:
         if self._token_owner is None or not repo.lower().startswith(self._token_owner + "/"):
             raise ChosenTokenRefused(repo, self._token_owner)
 
+    def _check_chosen_path(self, path: str) -> None:
+        """Refuse a call whose path names an owner or repository outside the one a chosen token is for, as a call
+        naming it with ``repo=`` is refused: ``/repos/other/x`` on GitHub, ``/projects/other%2Fx`` on GitLab."""
+        if self._owner_env_tokens:
+            return
+        named = self.path_names(path)
+        if named is None:
+            return
+        named = named.lower()
+        if self._token_owner is None or (named != self._token_owner and not named.startswith(self._token_owner + "/")):
+            raise ChosenTokenRefused(named, self._token_owner)
+
+    def path_names(self, path: str) -> str | None:
+        """The owner, or the owner and repository, a request path names (``/repos/acme/app`` names ``acme``); None
+        when it names none or one it cannot tell (a numeric id). Each forge's client reads its own paths."""
+        return None
+
     # -- subclass hooks ---------------------------------------------------
 
     def headers(self, repo: str | None = None, **kwargs: Any) -> dict[str, str]:  # pragma: no cover - abstract
@@ -239,6 +256,7 @@ class ForgeClient:
         accepted can still be answered 5xx or lose its answer in transit, and
         sending it again would post it twice.
         """
+        self._check_chosen_path(path)
         headers = self.headers(repo, token=await self.token_for(repo), **header_kwargs)
         if extra_headers:
             headers.update(extra_headers)

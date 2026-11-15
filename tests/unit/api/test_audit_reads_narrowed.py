@@ -19,6 +19,7 @@ A key without a list, and the master key, read every row as before.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -511,19 +512,41 @@ def _detail_keys_written() -> set[str]:
     return found
 
 
+#: A detail key that may name a person: who did something, a person's address, a forge login, a user, an author.
+_NAMES_A_PERSON = re.compile(
+    r"^(?:by|to|actor|email|login|user|author|owner_login|recipient|assignee|reviewer|requester)$"
+    r"|_(?:by|email|login|author)$|^(?:user|author)_"
+)
+#: Keys of that shape that name no person, each with why.
+_NOT_A_PERSON = {
+    "matched_by": "how a duplicate pull request was matched (``ticket ABC-1``), not who matched it",
+    "user_id": "a user's id, which names nobody; the person's address is ``email``",
+}
+
+
 def test_every_detail_naming_a_person_is_answered_as_the_actor_is() -> None:
-    """A detail key that names who did something (``…_by``, ``by``, ``to``, ``actor``) reads to a key with an
-    allowlist as the row's actor does: each is listed, so a new one is not read in clear."""
+    """A detail key that may name a person (``…_by``, ``by``, ``to``, ``actor``, ``email`` and ``…_email``, ``login``
+    and ``…_login``, ``user`` and ``user_…``, ``author``) reads to a key with an allowlist as the row's actor does:
+    each one an audit writer puts in a row is listed, or named here as one that is no person, so a new one is not
+    read in clear."""
     from embry0.api.v1.audit import PERSON_DETAIL_KEYS
 
     written = _detail_keys_written()
     assert len(written) > 100, f"only {len(written)} detail keys found: the walk measures nothing"
-    # ``matched_by`` says how a duplicate pull request was matched (``ticket ABC-1``), not who matched it.
-    naming = {k for k in written if k.endswith("_by") or k in {"by", "to", "actor"}} - {"matched_by"}
-    assert naming, "no detail names a person: the walk measures nothing"
+    naming = {k for k in written if _NAMES_A_PERSON.search(k)} - set(_NOT_A_PERSON)
+    assert {"decided_by", "email", "login"} <= naming, f"the walk misses details known to name a person: {naming}"
     assert naming <= PERSON_DETAIL_KEYS, (
-        f"details naming a person a key with an allowlist reads: {naming - PERSON_DETAIL_KEYS}"
+        f"details that may name a person, read as stored by a key with an allowlist: {naming - PERSON_DETAIL_KEYS}"
     )
+    assert set(_NOT_A_PERSON) <= written, "an exception no writer puts in a row any more"
+
+
+@pytest.mark.parametrize(
+    "key", ["author_email", "reviewer", "owner_login", "user_name", "merged_by", "email", "requester", "login"]
+)
+def test_the_guard_names_a_new_person_key(key: str) -> None:
+    """The shape the guard reads names each of these, so a writer adding one fails it unless it is listed."""
+    assert _NAMES_A_PERSON.search(key) and key not in _NOT_A_PERSON, key
 
 
 def test_every_integration_destination_is_a_detail_a_limited_key_reads_as_null() -> None:
