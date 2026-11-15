@@ -1539,8 +1539,21 @@ Everything below narrows to the repositories the key covers:
   `GET /audit/actions`, the Audit filter's list, offers it only the actions
   of the rows it reads (a current action whose rows, under its name or one
   it replaced, it reads, and a retired name such a row carries); the actor
-  filter is matched within those rows. An issue's activity
-  (`GET /issues/{id}/activity`) is its rows read the same way.
+  filter is matched within those rows.
+  Whatever its tier, it reads who wrote each of those rows as a caller
+  that is not an admin does: its own actors and embry0's (`embry0:…`), and
+  `null` for anyone else's; the same for each person a row's details name
+  (`decided_by`, `accepted_by`, `closed_by`, `by`, `to`, `actor`,
+  `created_by`, `updated_by`, `answered_by`, `requested_by`, at any depth).
+  An actor filter naming anyone else finds nothing (`total` 0), as below
+  admin. A detail naming the deployment's own configuration (where
+  notifications go and the chat, `slack_webhook_url`, `telegram_chat_id`,
+  `webhook_notify_url`; which tracker team files which repository's work,
+  `linear_repo_map`; a tracker target, `tracker_target`, `team_id`,
+  `project_id`) reads `null` to it. An issue's activity
+  (`GET /issues/{id}/activity`) is its rows read the same way, but for
+  these: it is a collaboration view, and reads its actors and details to
+  every reader of the issue.
 - The container log routes. `GET /logs/query` and `GET /logs/containers`
   are refused to a key with an allowlist, whatever its tier
   ([Container logs](#container-logs)): a line cannot be told to belong to

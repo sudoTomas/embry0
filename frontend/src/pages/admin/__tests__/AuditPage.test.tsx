@@ -80,6 +80,16 @@ describe("AuditPage", () => {
     expect(table.getByText("tier admin")).toBeInTheDocument();
   });
 
+  it("shows a dash for an actor the caller does not read", async () => {
+    mockFetchAuditLog.mockResolvedValue({ entries: [{ ...ENTRY, actor: null }], total: 1 });
+    renderPage();
+    const table = await auditTable();
+    expect(table.getByText("Signed in")).toBeInTheDocument();
+    const row = table.getByText("Signed in").closest("tr") as HTMLElement;
+    expect(within(row).getAllByText("—").length).toBeGreaterThan(0);
+    expect(within(row).queryByText("t@example.com")).toBeNull();
+  });
+
   it("reads an action the registry does not list in sentence case, never raw", async () => {
     mockFetchAuditLog.mockResolvedValue({
       entries: [
