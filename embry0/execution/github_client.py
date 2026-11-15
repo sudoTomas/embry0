@@ -22,8 +22,10 @@ header trio, and per-owner token resolution.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import unquote
 
 import structlog
 
@@ -68,6 +70,10 @@ class MergeResult:
     message: str = ""
 
 
+#: A GitHub API path that names an owner: its repositories, its organization or its user record.
+_GITHUB_OWNER_PATH = re.compile(r"(?:^|/)(?:repos|orgs|users)/([^/?#]+)")
+
+
 class GitHubClient(ForgeClient):
     """Thin, retrying wrapper over the GitHub REST API."""
 
@@ -88,6 +94,12 @@ class GitHubClient(ForgeClient):
         if token:
             built["Authorization"] = f"Bearer {token}"
         return built
+
+    def path_names(self, path: str) -> str | None:
+        """The owner a GitHub path names: ``/repos/<owner>/…``, ``/orgs/<owner>…`` or ``/users/<owner>…``, in a
+        relative path or a full URL (a page's ``next`` link)."""
+        found = _GITHUB_OWNER_PATH.search(path)
+        return unquote(found.group(1)) if found else None
 
     async def get_repo(self, repo: str) -> dict[str, object] | None:
         """Repository record, or None when it is missing or not visible.

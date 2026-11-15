@@ -22,8 +22,9 @@ it and ``/api/v4`` is appended.
 
 from __future__ import annotations
 
+import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
 import structlog
@@ -56,6 +57,10 @@ def encode_project(repo: str) -> str:
     return quote(repo, safe="")
 
 
+#: A GitLab API path that names a project or a group, under the API's base (``/api/v4``) or not.
+_GITLAB_SCOPE_PATH = re.compile(r"(?:^|/)(?:projects|groups)/([^/?#]+)")
+
+
 class GitLabClient(ForgeClient):
     """Thin, retrying wrapper over the GitLab REST v4 API."""
 
@@ -68,6 +73,16 @@ class GitLabClient(ForgeClient):
             kwargs.setdefault("verify", build_ssl_context(ca_pem))
         super().__init__(base_url=api_base(gitlab_url), **kwargs)
         self._gitlab_url = (gitlab_url or DEFAULT_GITLAB_URL).rstrip("/")
+
+    def path_names(self, path: str) -> str | None:
+        """The group, or the group and project, a GitLab path names: ``/projects/<path>…`` or ``/groups/<path>…``,
+        URL-encoded as the API takes them, in a relative path or a full URL; None for a numeric id, which names
+        neither."""
+        found = _GITLAB_SCOPE_PATH.search(path)
+        if not found:
+            return None
+        named = unquote(found.group(1))
+        return None if named.isdigit() else named
 
     @property
     def gitlab_url(self) -> str:
