@@ -62,9 +62,9 @@ def _state(**over: Any) -> dict[str, Any]:
 CONFIG = {"configurable": {"agent_runner": MagicMock(), "credentials": {}, "repo_preferences_repo": None}}
 
 
-def _kept(update: dict[str, Any], output: str, cost: float) -> list[str]:
+def _kept(update: dict[str, Any], outputs: list[str], cost: float) -> list[str]:
     problems = []
-    if [o.get("output") for o in update.get("agent_outputs") or []] != [output]:
+    if [o.get("output") for o in update.get("agent_outputs") or []] != outputs:
         problems.append(f"agent_outputs: {update.get('agent_outputs')}")
     if update.get("total_cost_usd") != cost:
         problems.append(f"total_cost_usd: {update.get('total_cost_usd')}")
@@ -88,7 +88,7 @@ async def test_triage_past_the_cap_on_its_first_pass_keeps_its_run() -> None:
         result = await triage_node(_state(), CONFIG)
 
     assert isinstance(result, Command) and result.goto == "max_retries", result
-    problems = _kept(result.update, "first", 0.42)
+    problems = _kept(result.update, ["first"], 0.42)
     assert not problems, "the exhausted update lost the run's record: " + "; ".join(problems)
 
 
@@ -109,5 +109,6 @@ async def test_triage_past_the_cap_on_its_re_run_keeps_the_re_run() -> None:
         result = await triage_node(_state(), CONFIG)
 
     assert isinstance(result, Command) and result.goto == "max_retries", result
-    problems = _kept(result.update, "again", 0.25)
+    # The re-run's record beside the first pass's output, which the re-run keeps (#482).
+    problems = _kept(result.update, ["first", "again"], 0.25)
     assert not problems, "the exhausted update lost the re-run's record: " + "; ".join(problems)
