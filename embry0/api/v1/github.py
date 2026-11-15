@@ -92,7 +92,7 @@ class DiscoverableReposResponse(BaseModel):
 
 def _headers(token: str) -> dict[str, str]:
     """Standard GitHub headers. Delegates so there is one definition (#158)."""
-    return GitHubClient(default_token=token).headers()
+    return GitHubClient(default_token=token, owner_env_tokens=False).headers()
 
 
 def _to_repo_response(r: dict[str, Any]) -> RepoResponse:

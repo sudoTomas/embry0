@@ -665,7 +665,7 @@ async def run_discovery(
             raise RuntimeError("GitLab discovery is not in this release")
         from embry0.execution.github_client import GitHubClient
 
-        client = GitHubClient(default_token=token, max_attempts=2)
+        client = GitHubClient(default_token=token, max_attempts=2, owner_env_tokens=False)
 
         async def progress(seen: int, total: int) -> None:
             await facts_repo.progress(run_id, seen=seen, total=total)
@@ -787,7 +787,7 @@ def make_forge_client(request: Request, org: Organization, token: str) -> Any:
     with. A module function so tests swap in a fake."""
     from embry0.execution.github_client import GitHubClient
 
-    return GitHubClient(default_token=token, max_attempts=2)
+    return GitHubClient(default_token=token, max_attempts=2, owner_env_tokens=False)
 
 
 async def _org_for_hooks(request: Request, owner: str) -> tuple[Organization, Any]:

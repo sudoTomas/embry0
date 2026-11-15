@@ -155,7 +155,9 @@ async def _projects_for_entries(
     succeeded = False
     for entry in entries:
         try:
-            client = GitLabClient(default_token=entry.token, gitlab_url=gitlab_url, ca_pem=ca_pem)
+            client = GitLabClient(
+                default_token=entry.token, gitlab_url=gitlab_url, ca_pem=ca_pem, owner_env_tokens=False
+            )
             raw_projects = await client.paginate(
                 "/projects",
                 params={"membership": "true", "order_by": "last_activity_at", "simple": "false"},

@@ -75,10 +75,11 @@ class GitLabClient(ForgeClient):
         return self._gitlab_url
 
     def headers(self, repo: str | None = None, *, token: str | None = None, **_: object) -> dict[str, str]:
-        """``token`` from the registry wins; None runs the env lookup."""
+        """``token`` from the registry wins; None runs the env lookup, unless the client was built with a token of
+        its caller's choosing (``owner_env_tokens=False``)."""
         built = {"Accept": "application/json"}
         if token is None:
-            token = resolve_for_repo(repo, self._default_token)
+            token = resolve_for_repo(repo, self._default_token) if self._owner_env_tokens else self._default_token
         if token:
             if token.startswith(_OAUTH_TOKEN_PREFIXES):
                 built["Authorization"] = f"Bearer {token}"

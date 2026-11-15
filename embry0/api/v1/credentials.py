@@ -768,12 +768,13 @@ async def _probe_login(secret: str, provider: str, config: Any) -> str:
             gitlab_url=str(config.gitlab_url),
             ca_pem=load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or "")),
             max_attempts=1,
+            owner_env_tokens=False,
         )
         field = "username"
     else:
         from embry0.execution.github_client import GitHubClient
 
-        client = GitHubClient(default_token=secret, max_attempts=1)
+        client = GitHubClient(default_token=secret, max_attempts=1, owner_env_tokens=False)
         field = "login"
     resp = await client.get("/user")
     if resp.status_code != 200:
