@@ -164,7 +164,7 @@ class MemoryStore:
         return StoredRollup(head, xp, sorted(self.milestones[pack_hash], key=lambda m: m.seq))
 
     @asynccontextmanager
-    async def writing(self) -> AsyncIterator[MemoryWriter]:
+    async def writing(self, scope: str = "") -> AsyncIterator[MemoryWriter]:
         async with self.lock:
             yield MemoryWriter(self)
 
@@ -680,7 +680,7 @@ async def test_a_write_that_fails_leaves_the_reads_going() -> None:
 
     class Broken(MemoryStore):
         @asynccontextmanager
-        async def writing(self) -> AsyncIterator[MemoryWriter]:
+        async def writing(self, scope: str = "") -> AsyncIterator[MemoryWriter]:
             raise RuntimeError("the database went away")
             yield MemoryWriter(self)  # pragma: no cover
 
@@ -724,7 +724,7 @@ async def test_a_failed_write_waits_longer_each_time_before_it_is_tried_again() 
 
     class Broken(MemoryStore):
         @asynccontextmanager
-        async def writing(self) -> AsyncIterator[MemoryWriter]:
+        async def writing(self, scope: str = "") -> AsyncIterator[MemoryWriter]:
             tries.append(clock[0])
             raise RuntimeError("the database went away")
             yield MemoryWriter(self)  # pragma: no cover
@@ -756,7 +756,7 @@ async def test_shutdown_waits_a_bounded_time_for_a_write_that_will_not_stop(monk
 
     class Stubborn(MemoryStore):
         @asynccontextmanager
-        async def writing(self) -> AsyncIterator[MemoryWriter]:
+        async def writing(self, scope: str = "") -> AsyncIterator[MemoryWriter]:
             started.set()
             try:
                 await asyncio.sleep(3600)

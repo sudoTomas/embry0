@@ -15,9 +15,10 @@ exact time and in the order the fold recorded them. Migration 131's tables
 previous release's, which reads and writes them if rolled back to; nothing
 here touches them.
 
-Writers serialise on one advisory lock, so two orchestrator replicas never
-build at once; a reader takes one repeatable-read snapshot, so it never sees
-a rollup half written. The service that folds and decides what to write is
+Writers of one scope serialise on that scope's advisory lock, so two
+orchestrator replicas never build it at once, and writers of different
+scopes never wait on each other; a reader takes one repeatable-read snapshot,
+so it never sees a rollup half written. The service that folds and decides what to write is
 ``embry0/services/progression_rollup.py``.
 """
 
@@ -34,8 +35,8 @@ import asyncpg
 
 from embry0.storage.database import DatabasePool
 
-#: The advisory lock every rollup writer takes, hashed with ``hashtextextended`` like the
-#: other text keys registered next to ``MIGRATIONS_ADVISORY_LOCK_KEY``.
+#: The advisory locks rollup writers take, one per scope (:func:`lock_of`), hashed with ``hashtextextended`` like
+#: the other text keys registered next to ``MIGRATIONS_ADVISORY_LOCK_KEY``.
 LOCK_KEY = "progression_rollup"
 #: The deployment's scope: every repository's work, and work of none.
 DEPLOYMENT = ""
@@ -191,8 +192,13 @@ async def _insert_rows(
         )
 
 
+def lock_of(scope: str) -> str:
+    """The advisory lock's key of ``scope``'s rollup."""
+    return f"{LOCK_KEY}:{scope}"
+
+
 class RollupWriter:
-    """Writes under the rollup's advisory lock, inside one transaction: a reader sees all of it or none."""
+    """Writes under a scope's advisory lock, inside one transaction: a reader sees all of it or none."""
 
     def __init__(self, conn: asyncpg.Connection) -> None:
         self._conn = conn
@@ -204,14 +210,25 @@ class RollupWriter:
     async def replace(self, head: RollupHead, daily: Sequence[DailyXp], milestones: Sequence[Milestone]) -> None:
         """A full build: the scope's rollups of any pack are deleted with their rows, and this one written. Every
         other scope's rollup of another pack goes too, and a set of repositories' fold no read has advanced in
-        :data:`UNREAD_FOR`: what is kept is bounded by the sets read lately."""
-        await self._conn.execute(
-            "DELETE FROM progression_scope_rollups WHERE scope = $1 OR pack_hash <> $2 OR (scope <> $3 AND built_at < $4)",
+        :data:`UNREAD_FOR`: what is kept is bounded by the sets read lately. Another scope's rollup goes only when
+        its lock is free: a writer of it keeps it, never waits on this one, and a later build lets it go."""
+        await self._conn.execute("DELETE FROM progression_scope_rollups WHERE scope = $1", head.scope)
+        let_go = (
+            "scope <> $1 AND (pack_hash <> $2 OR (scope <> $3 AND built_at < $4))",
             head.scope,
             head.pack_hash,
             DEPLOYMENT,
             head.built_at - UNREAD_FOR,
         )
+        for row in await self._conn.fetch(
+            f"SELECT DISTINCT scope FROM progression_scope_rollups WHERE {let_go[0]}", *let_go[1:]
+        ):
+            if await self._conn.fetchval(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))", lock_of(row["scope"])
+            ):
+                await self._conn.execute(
+                    f"DELETE FROM progression_scope_rollups WHERE scope = $5 AND {let_go[0]}", *let_go[1:], row["scope"]
+                )
         await self._conn.execute(
             f"INSERT INTO progression_scope_rollups ({_HEAD_COLUMNS})"
             " VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11)",
@@ -272,8 +289,9 @@ class ProgressionRollupRepository:
                 return await _load(conn, pack_hash, scope)
 
     @asynccontextmanager
-    async def writing(self) -> AsyncIterator[RollupWriter]:
-        """A transaction holding the rollup's advisory lock: a second writer waits for the first to commit."""
+    async def writing(self, scope: str = DEPLOYMENT) -> AsyncIterator[RollupWriter]:
+        """A transaction holding ``scope``'s advisory lock: a second writer of that scope waits for the first to
+        commit, and a writer of another scope does not wait."""
         async with self._db.transaction() as conn:
-            await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", LOCK_KEY)
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lock_of(scope))
             yield RollupWriter(conn)

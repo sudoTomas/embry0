@@ -40,7 +40,7 @@ ONE, TWO = Scope.of(["acme/one"]), Scope.of(["acme/two"])
 
 @pytest.fixture
 async def workers() -> AsyncIterator[FoldWorkers]:
-    found = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=2.0)
+    found = FoldWorkers("postgresql://unused/unused", processes=4, json_logs=False, read_limit=2.0)
     try:
         yield found
     finally:
@@ -90,6 +90,7 @@ async def test_the_sets_never_take_the_deployment_s_process(workers: FoldWorkers
     assert time.monotonic() - started > 0.8, "a set's computation took a process whose caller had left mid-fold"
     await busy
     assert deployment not in {p.pid for slot in workers._slots[1:] for p in slot.processes()}  # noqa: SLF001
+    assert workers._slots[1].processes() == [], "nothing but a deployment's build takes the builds' process"  # noqa: SLF001
 
 
 async def test_a_computation_that_kills_its_process_runs_again_once_and_fails_alone(
@@ -117,7 +118,7 @@ async def test_a_computation_that_kills_its_process_runs_again_once_and_fails_al
 
 async def test_a_computation_past_its_limit_loses_its_process() -> None:
     """One process for the sets, so the next computation shows whether it was replaced."""
-    workers = FoldWorkers("postgresql://unused/unused", processes=2, json_logs=False, read_limit=2.0)
+    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=2.0)
     try:
         await _past_its_limit(workers)
     finally:
@@ -149,7 +150,7 @@ async def test_a_worker_exits_when_the_process_that_started_it_is_killed(tmp_pat
         from embry0.services.progression_workers import FoldWorkers
 
         async def main():
-            workers = FoldWorkers("postgresql://unused/unused", processes=2, json_logs=False)
+            workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False)
             print(await workers._run(EVERY, "read", os.getpid), flush=True)
             time.sleep(60)
 
@@ -205,13 +206,13 @@ async def test_the_cpus_are_the_cgroup_s_quota_not_the_host_s(tmp_path: Path) ->
         {"cpu,cpuacct/cpu.cfs_quota_us": "200000\n", "cpu,cpuacct/cpu.cfs_period_us": "100000\n"},
     )
     assert available_cpus(v1_joined, tmp_path / "none") == min(host, 2.0), "cgroup v1 with no cpu link"
-    assert [fold_processes(4, cpus) for cpus in (48.0, 4.0, 3.5, 2.0, 1.0)] == [4, 3, 2, 2, 2]
+    assert [fold_processes(4, cpus) for cpus in (48.0, 4.0, 3.5, 2.0, 1.0)] == [4, 3, 3, 3, 3]
 
 
 async def test_a_read_that_waits_past_its_limit_for_a_process_fails() -> None:
     """A read's limit counts its wait: with the sets' one process busy with a long write, a set's read fails at its
     limit instead of waiting for it."""
-    workers = FoldWorkers("postgresql://unused/unused", processes=2, json_logs=False, read_limit=1.0)
+    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=1.0)
     try:
         write = asyncio.create_task(workers._run(ONE, "write", time.sleep, 4))  # noqa: SLF001
         await asyncio.sleep(0.5)
@@ -236,7 +237,7 @@ async def test_a_read_fails_before_the_dashboard_stops_waiting_for_it() -> None:
 
 async def test_a_write_past_its_limit_fails_as_one_and_is_not_run_again() -> None:
     """A write that runs past its limit is no crash: it fails with ``FoldTimeout`` once, not again on a new process."""
-    workers = FoldWorkers("postgresql://unused/unused", processes=2, json_logs=False, write_limit=1.0)
+    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, write_limit=1.0)
     try:
         started = time.monotonic()
         with capture_logs() as logs, pytest.raises(FoldTimeout):
@@ -245,3 +246,16 @@ async def test_a_write_past_its_limit_fails_as_one_and_is_not_run_again() -> Non
         assert [e["event"] for e in logs if e["event"].startswith("progression_fold")] == ["progression_fold_timed_out"]
     finally:
         await workers.aclose(timeout=5)
+
+
+async def test_a_build_of_the_deployment_s_rollup_never_holds_up_its_reads(workers: FoldWorkers) -> None:
+    """The deployment's builds have a process of their own: a long one leaves its reads, and the sets', theirs."""
+    build = asyncio.create_task(workers._run(EVERY, "write", time.sleep, 3))  # noqa: SLF001
+    await asyncio.sleep(0.5)
+    started = time.monotonic()
+    read = await asyncio.wait_for(workers._run(EVERY, "read", os.getpid), 10)  # noqa: SLF001
+    sets = await asyncio.wait_for(workers._run(ONE, "read", os.getpid), 10)  # noqa: SLF001
+    assert time.monotonic() - started < 2, "the deployment's read and a set's waited for the build"
+    built = [p.pid for p in workers._slots[1].processes()]  # noqa: SLF001
+    assert built and read not in built and sets not in built, "the build ran in the builds' process alone"
+    await build
