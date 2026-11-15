@@ -27,6 +27,8 @@ def _executor(*, trace_cost: float = 0.0) -> IssueExecutor:
     ex._jobs.update = AsyncMock()
     ex._issues = MagicMock()
     ex._issues.update = AsyncMock()
+    # #518: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._traces = MagicMock()
     ex._traces.total_cost_for_job = AsyncMock(return_value=trace_cost)
     ex._sandbox = MagicMock()

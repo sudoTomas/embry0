@@ -18,7 +18,7 @@ from embry0.trackers.author_association import (
     parse_author_roles,
 )
 from embry0.trackers.base import IssueTracker, TriggerContext
-from embry0.trackers.dispatch import create_tracked_issue, dispatch_open_issue, start_triage
+from embry0.trackers.dispatch import create_tracked_issue, dispatch_open_issue, end_answer_waits, start_triage
 from embry0.trackers.models import (
     TrackerIssue,
     TrackerIssueRef,
@@ -42,6 +42,7 @@ __all__ = [
     "check_comment_author",
     "create_tracked_issue",
     "dispatch_open_issue",
+    "end_answer_waits",
     "extract_labels",
     "forge_number_of",
     "github_number_of",

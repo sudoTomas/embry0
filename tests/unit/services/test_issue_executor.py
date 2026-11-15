@@ -350,6 +350,8 @@ async def test_cancel_job_cancels_running_task(monkeypatch):
 
     issues = MagicMock()
     issues.update = AsyncMock()
+    # #518: a job that ends reads its issue before putting it back to open.
+    issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     executor._issues = issues
 
     sandbox = MagicMock()
@@ -416,6 +418,8 @@ async def test_cancel_job_is_idempotent_when_no_task(monkeypatch):
 
     issues = MagicMock()
     issues.update = AsyncMock()
+    # #518: a job that ends reads its issue before putting it back to open.
+    issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     executor._issues = issues
     executor._sandbox = None  # no sandbox to destroy
 

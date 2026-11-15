@@ -412,3 +412,25 @@ async def test_case_variant_relabel_is_still_idempotent():
 
     assert result["dispatched"] is False
     assert ex.calls == []
+
+
+async def test_closing_an_issue_ends_its_jobs_answer_waits():
+    """#518: a job that waits for answers on an issue closed on GitHub is cancelled, not left to be resumed."""
+
+    class Ending(FakeExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ended: list[str] = []
+
+        async def end_answer_waits(self, issue_id: str) -> list[str]:
+            self.ended.append(issue_id)
+            return ["job-waiting"]
+
+    repo, ex = FakeIssuesRepo(), Ending()
+    issue_id = repo.seed(repo="owner/repo", github_number=42, labels=[], status="awaiting_input")
+
+    result = await _handle("closed", _payload(42, []), repo, ex)
+
+    assert repo.rows[issue_id]["status"] == "closed"
+    assert ex.ended == [issue_id], f"closing the issue did not end its jobs' answer waits: {ex.ended}"
+    assert result == {"status": "accepted", "action": "issue_closed", "cancelled_jobs": ["job-waiting"]}, result
