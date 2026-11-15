@@ -83,6 +83,7 @@ class GitHubClient(ForgeClient):
         with a token of its caller's choosing (``owner_env_tokens=False``)."""
         built = {"Accept": accept, "X-GitHub-Api-Version": API_VERSION}
         if token is None:
+            self._check_chosen_token(repo)
             token = resolve_for_repo(repo, self._default_token) if self._owner_env_tokens else self._default_token
         if token:
             built["Authorization"] = f"Bearer {token}"

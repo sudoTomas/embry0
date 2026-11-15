@@ -79,6 +79,7 @@ class GitLabClient(ForgeClient):
         its caller's choosing (``owner_env_tokens=False``)."""
         built = {"Accept": "application/json"}
         if token is None:
+            self._check_chosen_token(repo)
             token = resolve_for_repo(repo, self._default_token) if self._owner_env_tokens else self._default_token
         if token:
             if token.startswith(_OAUTH_TOKEN_PREFIXES):

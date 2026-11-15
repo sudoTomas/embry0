@@ -2009,6 +2009,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     register_known_secrets(await app.state.credential_resolver.known_secret_values())
     register_redacted_fields(config.log_redaction_fields)
+    # The registered owners an owner's env token is checked against where no resolver is wired: a variable two of
+    # them read serves neither (embry0.execution.env_token_owners). The resolver records them again each time it
+    # reads them.
+    from embry0.execution.env_token_owners import note_known_owners
+
+    try:
+        note_known_owners(await app.state.credentials_repo.known_owners())
+    except Exception:
+        logger.warning("credential_env_owners_unread", exc_info=True)
 
     # Now that _init_app_state has populated the repos and docker is ready,
     # construct SharedVolumeManager and update both the placeholder on app.state

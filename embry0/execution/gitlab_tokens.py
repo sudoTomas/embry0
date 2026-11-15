@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import os
 
+from embry0.execution.env_token_owners import serves
+
 
 def namespace_of(repo: str | None) -> str | None:
     """Top-level group of a GitLab project path, or None."""
@@ -35,9 +37,14 @@ def env_key(namespace: str) -> str:
 
 
 def resolve_gitlab_token(namespace: str | None, default: str) -> str:
+    """``namespace``'s env token, else ``default``. A variable another known group reads too serves neither of them
+    (:mod:`embry0.execution.env_token_owners`): ``default`` instead."""
     if not namespace:
         return default
-    return os.environ.get(env_key(namespace)) or default
+    token = os.environ.get(env_key(namespace))
+    if token and not serves("gitlab", namespace, env_key):
+        return default
+    return token or default
 
 
 def resolve_for_repo(repo: str | None, default: str) -> str:

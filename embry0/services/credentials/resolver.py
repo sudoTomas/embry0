@@ -20,6 +20,7 @@ from cryptography.fernet import InvalidToken
 
 from embry0.agents.fallback import Pause
 from embry0.execution import github_tokens, gitlab_tokens
+from embry0.execution.env_token_owners import note_known_owners
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.credentials.providers import (
     base_url_host,
@@ -266,6 +267,8 @@ class CredentialResolver:
             return [owner]
         key = _ENV_KEY[forge](owner)
         known = await self._repo.known_owners()
+        # What the lookup without a resolver checks an owner's variable against (env_token_owners).
+        note_known_owners(known)
         return sorted({owner, *(o for o in known.get(forge, set()) if _ENV_KEY[forge](o) == key)})
 
     async def _env_key_shared(self, owner: str, forge: str, key: str) -> str | None:

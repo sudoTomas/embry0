@@ -101,7 +101,7 @@ async def _forge_client(request: Request, owner: str, forge: str, credential_id:
     token, _source = await _token_for(request, owner, forge, credential_id)
     from embry0.execution.github_client import GitHubClient
 
-    return GitHubClient(default_token=token, max_attempts=2, owner_env_tokens=False)
+    return GitHubClient(default_token=token, max_attempts=2, owner_env_tokens=False, token_owner=owner)
 
 
 async def _refusal(request: Request, action: str, repo: str, *, dry_run: bool) -> str | None:

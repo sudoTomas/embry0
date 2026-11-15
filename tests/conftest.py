@@ -271,6 +271,16 @@ def _no_leaked_image_pins() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_leaked_known_env_owners() -> Iterator[None]:
+    """The registered owners an env token is checked against are process-wide (env_token_owners): the startup path and
+    the resolver record them, and a later test's lookup without a resolver must not read them."""
+    from embry0.execution.env_token_owners import forget_known_owners
+
+    yield
+    forget_known_owners()
+
+
+@pytest.fixture(autouse=True)
 def _no_leaked_known_secrets() -> Iterator[None]:
     """The registered scrub values are process-wide (spec 3.6). Creating a
     sandbox or prechecking a job's LLM accounts registers its secrets, so a
