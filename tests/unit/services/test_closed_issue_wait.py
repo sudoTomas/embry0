@@ -234,7 +234,10 @@ async def test_an_answer_to_a_job_that_ended_is_refused_and_says_what_to_do(
         f"an answer to an ended job on {route} route: {response.status_code} {response.text}, the question {stored}"
     )
     detail = response.json()["detail"]
-    assert f"Job {job_id} has ended (cancelled)" in detail and "runs a new job" in detail, detail
+    assert f"Job {job_id} has ended (cancelled)" in detail, detail
+    # Reopening the issue starts nothing on GitHub or GitLab: the message says what does (review of #535).
+    assert "runs a new job" not in detail, f"the refusal promises a run a reopen does not start: {detail}"
+    assert f"POST /api/v1/jobs/{job_id}/run-again" in detail and "re-add the trigger label `embry0`" in detail, detail
 
 
 @pytest.mark.asyncio
@@ -269,7 +272,11 @@ async def test_the_resume_route_refuses_a_paused_job_of_a_closed_issue(db_with_m
     response = await _post(app, f"/api/v1/jobs/{job_id}/resume", {"choice": choice})
 
     assert response.status_code == 409, f"{choice} on a paused job of a closed issue: {response.status_code}"
-    assert "issue is closed, so the job cannot go on" in response.json()["detail"], response.json()
+    detail = response.json()["detail"]
+    assert "issue is closed, so the job cannot go on" in detail and "Stop it to release its sandbox" in detail, detail
+    assert "runs a new job" not in detail and f"/api/v1/jobs/{job_id}/run-again" in detail, (
+        f"the refusal does not say what starts a new run: {detail}"
+    )
     assert executor.schedule_resume.call_count == 0  # type: ignore[attr-defined]
     assert (await jobs.get(job_id) or {})["status"] == "paused", "a refused resume changed the job"
 
@@ -309,3 +316,33 @@ async def test_the_resume_route_refuses_a_parked_job_of_a_closed_issue(db_with_m
 
     assert response.status_code == 409, f"Try now on a parked job of a closed issue: {response.status_code}"
     executor.go_on_after_account_wait.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_inbound_reply_to_a_question_of_a_job_that_ended_is_not_taken(db_with_migrations: Any) -> None:
+    """The review's case: a GitHub `/answer` to a cancelled job's question was applied (`applied=1 input=answered`)."""
+    import inspect
+
+    from embry0.notifications.inbound_dispatch import apply_inbound_directives
+
+    if "jobs_repo" not in inspect.signature(apply_inbound_directives).parameters:
+        pytest.fail("the inbound dispatcher cannot ask whether a question's job ended")
+    issues, jobs, issue_id, job_id, input_id = await _closed_while_waiting(db_with_migrations)
+    await db_with_migrations.execute("UPDATE jobs SET status = 'cancelled' WHERE job_id = $1", job_id)
+    await issues.update(issue_id, status="open")
+    inputs = IssueInputsRepository(db_with_migrations)
+    resumed = AsyncMock()
+
+    result = await apply_inbound_directives(
+        issue_id=issue_id,
+        directives=[(input_id, "answer", "monotonic")],
+        inputs_repo=inputs,
+        on_all_answered=resumed,
+        answered_by="github:ada",
+        jobs_repo=jobs,
+    )
+
+    stored = (await inputs.get(input_id) or {}).get("status")
+    assert (result.applied, getattr(result, "job_ended", None), stored) == (0, 1, "pending"), (
+        f"an inbound answer to an ended job: {result}, the question {stored}"
+    )

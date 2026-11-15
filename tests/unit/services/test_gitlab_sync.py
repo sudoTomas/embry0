@@ -268,3 +268,21 @@ async def test_closing_an_issue_ends_its_jobs_answer_waits():
     assert repo.rows[issue_id]["status"] == "closed"
     assert ex.ended == [issue_id], f"closing the issue did not end its jobs' answer waits: {ex.ended}"
     assert result == {"status": "accepted", "action": "issue_closed"}, result
+
+
+@pytest.mark.parametrize("status", ["closed", "cancelled"])
+async def test_a_reopened_issue_reads_open_again(status):
+    """#521: as a reopened GitHub issue does; a close is what made it read as ended and refused its jobs."""
+    repo, ex = FakeIssuesRepo(), FakeExecutor()
+    issue_id = repo.seed(repo=PROJECT, tracker_key="11", labels=["embry0"], status=status)
+    result = await _handle(gitlab_issue(action="reopen", iid=11, labels=["embry0"]), repo, ex)
+    assert repo.rows[issue_id]["status"] == "open", f"a reopened {status} issue reads {repo.rows[issue_id]['status']}"
+    assert ex.calls == [], "a reopen starts a run by itself"
+    assert result["action"] == "issue_reopen", result
+
+
+async def test_a_reopen_of_an_issue_that_never_closed_writes_nothing():
+    repo, ex = FakeIssuesRepo(), FakeExecutor()
+    issue_id = repo.seed(repo=PROJECT, tracker_key="11", labels=["embry0"], status="in_progress")
+    await _handle(gitlab_issue(action="reopen", iid=11, labels=["embry0"]), repo, ex)
+    assert repo.rows[issue_id]["status"] == "in_progress"

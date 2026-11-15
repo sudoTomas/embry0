@@ -629,7 +629,9 @@ async def answer_issue_input_as(
         raise HTTPException(status_code=409, detail="Input has already been answered")
     jobs_repo = getattr(request.app.state, "jobs_repo", None)
     if inp.get("job_id") and jobs_repo is not None:
-        ended = ended_job_takes_no_answer(await jobs_repo.get(inp["job_id"]))
+        from embry0.api.trigger_context import trigger_labels_to_name
+
+        ended = ended_job_takes_no_answer(await jobs_repo.get(inp["job_id"]), await trigger_labels_to_name(request))
         if ended is not None:
             raise HTTPException(status_code=409, detail=ended)
 

@@ -16,11 +16,12 @@ from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, ref
 from embry0.api.schemas import JobCreateRequest, JobListResponse, JobResponse, QAJobOverrides
 from embry0.api.schemas.jobs import DoneWhenEditRequest, JobResumeRequest
 from embry0.api.served import ServedRoute
+from embry0.api.trigger_context import trigger_labels_to_name
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.safety.redaction import job_secret_values, redact_event
-from embry0.services.answer_recorder import answers_context, ended_job_takes_no_answer, record_answer
+from embry0.services.answer_recorder import answers_context, ended_job_takes_no_answer, record_answer, start_again_says
 from embry0.services.run_with import RunWith, apply_run_with
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
@@ -609,7 +610,7 @@ async def answer_job_input_as(
     # next resume; only a real human answer is final.
     if inp["status"] == "answered":
         raise HTTPException(status_code=409, detail="Input has already been answered")
-    ended = ended_job_takes_no_answer(job)
+    ended = ended_job_takes_no_answer(job, await trigger_labels_to_name(request))
     if ended is not None:
         raise HTTPException(status_code=409, detail=ended)
 
@@ -685,8 +686,8 @@ async def resume_job_as(
             return {"job_id": job_id, "status": "cancelled", "choice": "abandon"}
         raise HTTPException(
             status_code=409,
-            detail=f"Job {job_id}'s issue is {issue_ended}, so the job cannot go on; reopening the issue runs a new "
-            "job. Stop this one to release its sandbox.",
+            detail=f"Job {job_id}'s issue is {issue_ended}, so the job cannot go on. Stop it to release its sandbox; "
+            + start_again_says(job_id, await trigger_labels_to_name(request)),
         )
     if job.get("account_wait"):
         # Spent account waits (spec 2026-10-25): a job parked for its account

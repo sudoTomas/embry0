@@ -351,3 +351,17 @@ async def test_issue_comment_for_unknown_repo_is_ignored():
     issues_repo.get_by_tracker_ref.assert_awaited_once_with("github", "owner/repo", "1")
     inputs_repo.answer.assert_not_awaited()
     executor.resume_for_issue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_answer_to_a_question_of_a_job_that_ended_is_not_applied():
+    """#521: the question's job was cancelled (its issue closed, then reopened); the reply records nothing."""
+    row = {**_pending("inp-gh1", 1), "job_id": "job-1"}
+    app, _, inputs_repo, executor, _ = _make_app(issue=ISSUE, rendered=[row])
+    app.state.jobs_repo = MagicMock(get=AsyncMock(return_value={"job_id": "job-1", "status": "cancelled"}))
+
+    r = await _post(app, "/answer inp-gh1: monotonic")
+
+    assert r.status_code == 200, r.text
+    assert (r.json().get("applied"), r.json().get("job_ended")) == (0, 1), f"an ended job's answer: {r.json()}"
+    inputs_repo.answer.assert_not_awaited()

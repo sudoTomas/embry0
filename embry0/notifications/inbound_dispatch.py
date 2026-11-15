@@ -30,6 +30,8 @@ from typing import Any
 
 import structlog
 
+from embry0.services.answer_recorder import answer_refused_for_its_job
+
 logger = structlog.get_logger(__name__)
 
 _INTEGER_RE = re.compile(r"^\d+$")
@@ -46,6 +48,8 @@ class InboundResult:
     unresolved_sequence: int = 0
     # Answers to a question another answer took first, between the lookup and the write (#499): not applied.
     already_answered: int = 0
+    # Answers to a question of a job that ended unfinished (#521): nothing would read them; not applied.
+    job_ended: int = 0
 
 
 async def _resolve(
@@ -82,6 +86,7 @@ async def apply_inbound_directives(
     answered_by: str,
     record: Callable[[dict[str, Any], str], Awaitable[bool | None]] | None = None,
     resolve_sequence: Callable[[int], Awaitable[dict[str, Any] | None]] | None = None,
+    jobs_repo: Any = None,
 ) -> InboundResult:
     """For each (reference, action, value) directive, look up the
     corresponding pending input and apply.
@@ -94,6 +99,10 @@ async def apply_inbound_directives(
     ``answer_recorder.record_answer`` path (RAV-1076) with its channel and
     side-effect dependencies. Falls back to ``inputs_repo.answer`` when
     absent so library users keep the minimal behavior.
+
+    jobs_repo: when given, an answer to a question of a job that ended
+    unfinished is refused and counted in ``job_ended`` (#521): nothing would
+    read it.
 
     resolve_sequence: optional ``(n) -> row | None`` coroutine mapping a
     1-based position back to the input it had **at render time** on the
@@ -120,6 +129,11 @@ async def apply_inbound_directives(
                 result.unresolved_sequence += 1
             continue
         input_id = row["id"]
+        if action == "answer" and await answer_refused_for_its_job(row, jobs_repo):
+            # #521: the question's job ended unfinished; nothing would read the answer.
+            logger.info("inbound_directive_job_ended", issue_id=issue_id, input_id=input_id)
+            result.job_ended += 1
+            continue
         if action == "answer":
             if record is not None:
                 recorded = await record(row, value)

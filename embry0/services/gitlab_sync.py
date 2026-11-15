@@ -141,6 +141,12 @@ class GitLabSyncService:
                 ended = await end_waits(ctx.issue_executor, existing["id"])
             return {"status": "accepted", "action": "issue_closed", **({"cancelled_jobs": ended} if ended else {})}
 
+        if action == "reopen" and existing is not None and existing.get("status") in ("closed", "cancelled"):
+            # #521: a reopened GitLab issue reads open again, as a reopened GitHub one does; a close is what made it
+            # read as ended, and refused its jobs.
+            await self._safe_status(issues_repo, existing["id"], "open")
+            existing = {**existing, "status": "open"}
+
         if action not in _DISPATCHABLE_ACTIONS:
             return {"status": "ignored", "reason": f"unhandled action: {action}"}
 
