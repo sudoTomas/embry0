@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
+from embry0.safety.error_codes import ErrorCode
+
 if TYPE_CHECKING:
     from embry0.services.credentials.resolver import CredentialResolver
 
@@ -120,6 +122,19 @@ def forge_write(response: httpx.Response) -> ForgeWrite:
     return ForgeWrite(status_code=response.status_code, detail=(detail or response.text)[:1000])
 
 
+class ChosenTokenRefused(ValueError):
+    """A client built with a token chosen for one owner was asked to call for another owner's repository."""
+
+    #: The token cannot be used for that repository, and another owner's must not be: a credential that cannot be used.
+    error_code = ErrorCode.CREDENTIAL_UNAVAILABLE
+
+    def __init__(self, repo: str, owner: str | None) -> None:
+        whose = f"chosen for {owner}" if owner else "chosen for no owner"
+        super().__init__(f"a forge client built with a token {whose} does not call for {repo}")
+        self.repo = repo
+        self.owner = owner
+
+
 class ForgeClient:
     """Retrying HTTP client over one forge's REST API.
 
@@ -148,14 +163,20 @@ class ForgeClient:
         verify: ssl.SSLContext | bool | str = True,
         credential_resolver: CredentialResolver | None = None,
         owner_env_tokens: bool = True,
+        token_owner: str | None = None,
     ) -> None:
         """``owner_env_tokens`` False is for a client built with a token its caller chose (a credential to probe, the
         account an organization's discovery or actions use, one listing's own token): that token is sent on every
         call, and a call naming a repository never reads its owner's environment token (``GITHUB_TOKEN__<OWNER>``,
         ``GITLAB_TOKEN__<GROUP>``) in its place. Such a variable is not one owner's alone: ``my-org`` and
-        ``my_org`` read the same one."""
+        ``my_org`` read the same one.
+
+        ``token_owner`` is the owner such a token was chosen for (an organization's): a call naming a repository
+        outside it is refused (:class:`ChosenTokenRefused`), since the token is that owner's to use, and with no
+        ``token_owner`` (a credential being verified, a listing's own token) every call naming one is."""
         self._default_token = default_token or ""
         self._owner_env_tokens = owner_env_tokens
+        self._token_owner = token_owner.strip("/").lower() if token_owner else None
         self._http = http_client
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
@@ -166,6 +187,13 @@ class ForgeClient:
         # caller-supplied ``http_client`` owns its own TLS configuration.
         self._verify = verify
         self._credential_resolver = credential_resolver
+
+    def _check_chosen_token(self, repo: str | None) -> None:
+        """Refuse a call naming a repository outside the owner a chosen token is for (``__init__``)."""
+        if self._owner_env_tokens or not repo:
+            return
+        if self._token_owner is None or not repo.lower().startswith(self._token_owner + "/"):
+            raise ChosenTokenRefused(repo, self._token_owner)
 
     # -- subclass hooks ---------------------------------------------------
 

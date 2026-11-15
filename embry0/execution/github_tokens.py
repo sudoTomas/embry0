@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 
+from embry0.execution.env_token_owners import serves
+
 
 def env_key(owner: str) -> str:
     """The env variable that holds ``owner``'s token: ``GITHUB_TOKEN__`` and the owner uppercased, '-' as '_'.
@@ -21,9 +23,14 @@ def env_key(owner: str) -> str:
 
 
 def resolve_github_token(owner: str | None, default: str) -> str:
+    """``owner``'s env token, else ``default``. A variable another known owner reads too serves neither of them
+    (:mod:`embry0.execution.env_token_owners`): ``default`` instead."""
     if not owner:
         return default
-    return os.environ.get(env_key(owner)) or default
+    token = os.environ.get(env_key(owner))
+    if token and not serves("github", owner, env_key):
+        return default
+    return token or default
 
 
 def resolve_for_repo(repo: str | None, default: str) -> str:

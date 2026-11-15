@@ -23,10 +23,20 @@ import httpx
 import pytest
 
 import embry0
+from embry0.execution import forge_client
 from embry0.execution.github_client import GitHubClient
 from embry0.execution.gitlab_client import GitLabClient
 
 CHOSEN = "chosen-000000000001"
+
+
+def _refused() -> type[Exception]:
+    refused = getattr(forge_client, "ChosenTokenRefused", None)
+    if refused is None:
+        pytest.fail("a client built with a chosen token refuses no call for another owner's repository")
+    return refused
+
+
 SIBLING = "sibling-000000000002"
 
 
@@ -37,12 +47,32 @@ def _a_sibling_owners_env_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GITLAB_TOKEN__MY_GROUP", SIBLING)
 
 
-def test_a_client_with_a_chosen_token_sends_it_for_a_call_naming_a_repository() -> None:
-    chosen = GitHubClient(default_token=CHOSEN, owner_env_tokens=False)
+def test_a_client_with_a_chosen_token_sends_it_for_a_call_naming_its_owner_s_repository() -> None:
+    chosen = GitHubClient(default_token=CHOSEN, owner_env_tokens=False, token_owner="my_org")
     assert chosen.headers("my_org/app")["Authorization"] == f"Bearer {CHOSEN}"
+    assert chosen.headers("My_Org/app")["Authorization"] == f"Bearer {CHOSEN}", "an owner's name, case aside"
     assert chosen.headers(None)["Authorization"] == f"Bearer {CHOSEN}"
-    lab = GitLabClient(default_token=CHOSEN, owner_env_tokens=False)
-    assert lab.headers("my_group/app")["PRIVATE-TOKEN"] == CHOSEN
+    lab = GitLabClient(default_token=CHOSEN, owner_env_tokens=False, token_owner="my_group")
+    assert lab.headers("my_group/sub/app")["PRIVATE-TOKEN"] == CHOSEN
+
+
+@pytest.mark.parametrize(
+    ("client", "repo"),
+    [
+        (lambda: GitHubClient(default_token=CHOSEN, owner_env_tokens=False, token_owner="acme"), "my_org/app"),
+        (lambda: GitHubClient(default_token=CHOSEN, owner_env_tokens=False, token_owner="my-org"), "my_org/app"),
+        (lambda: GitHubClient(default_token=CHOSEN, owner_env_tokens=False, token_owner="acme"), "acme-corp/app"),
+        (lambda: GitHubClient(default_token=CHOSEN, owner_env_tokens=False), "acme/app"),
+        (lambda: GitLabClient(default_token=CHOSEN, owner_env_tokens=False, token_owner="grp/sub"), "grp/other/app"),
+        (lambda: GitLabClient(default_token=CHOSEN, owner_env_tokens=False), "my_group/app"),
+    ],
+)
+def test_a_client_with_a_chosen_token_refuses_a_call_for_another_owner_s_repository(client: Any, repo: str) -> None:
+    """The token is its owner's to use: a call for another owner's repository, or any repository for a token chosen
+    for no owner (a credential being verified, a listing's own token), is refused before anything is sent."""
+    with pytest.raises(_refused()) as refused:
+        client().headers(repo)
+    assert refused.value.repo == repo, refused.value
 
 
 def test_a_client_built_with_the_deployment_default_still_reads_the_owners_variable() -> None:
@@ -60,9 +90,11 @@ async def test_a_request_through_a_client_with_a_chosen_token_carries_it() -> No
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as http:
-        client = GitHubClient(default_token=CHOSEN, owner_env_tokens=False, http_client=http)
+        client = GitHubClient(default_token=CHOSEN, owner_env_tokens=False, token_owner="my_org", http_client=http)
         await client.get("/repos/my_org/app/hooks", repo="my_org/app")
-    assert sent == [f"Bearer {CHOSEN}"], sent
+        with pytest.raises(_refused()):
+            await client.get("/repos/acme/app/hooks", repo="acme/app")
+    assert sent == [f"Bearer {CHOSEN}"], f"a refused call was sent: {sent}"
 
 
 # ---- every client in embry0 is one or the other ---------------------------------------------------------------------
@@ -74,6 +106,15 @@ CHOSEN_TOKEN_SITES = {
     ("api/v1/credentials.py", "_probe_login"),
     ("api/v1/github.py", "_headers"),
     ("api/v1/gitlab.py", "_projects_for_entries"),
+    ("api/v1/org_actions.py", "_forge_client"),
+    ("api/v1/organizations.py", "run_discovery"),
+    ("api/v1/organizations.py", "make_forge_client"),
+    ("services/organizations.py", "probe_github"),
+    ("services/organizations.py", "probe_gitlab"),
+}
+#: Those of them whose token is an organization's: each names the owner, so a call for another owner's repository is
+#: refused. The others (a credential being verified, a listing's own token) are chosen for no owner.
+OWNER_SITES = {
     ("api/v1/org_actions.py", "_forge_client"),
     ("api/v1/organizations.py", "run_discovery"),
     ("api/v1/organizations.py", "make_forge_client"),
@@ -128,6 +169,10 @@ def test_every_forge_client_is_built_with_the_resolver_or_says_its_token_was_cho
     )
     chosen = {(rel, fn) for rel, fn, call in found if _says(call, "owner_env_tokens", False)}
     assert chosen == CHOSEN_TOKEN_SITES, f"clients built with a chosen token: {sorted(chosen)}"
+    owned = {
+        (rel, fn) for rel, fn, call in found if _says(call, "owner_env_tokens", False) and _says(call, "token_owner")
+    }
+    assert owned == OWNER_SITES, f"chosen-token clients that name the owner their token is for: {sorted(owned)}"
     assert {(rel, fn) for rel, fn, _call in found} >= set(NEITHER), "an allowed exception no longer builds a client"
 
 
