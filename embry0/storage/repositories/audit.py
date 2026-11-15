@@ -87,11 +87,15 @@ def _where(
     until: datetime | None,
     hidden_actors: Sequence[str] = (),
     narrowing: AuditNarrowing | None = None,
+    issue_id: str | None = None,
 ) -> tuple[str, list[Any]]:
     """What follows ``FROM audit_log`` in a filtered read: with ``narrowing``, the join reading what each row is
-    about, then the ``WHERE``."""
+    about, then the ``WHERE``. ``issue_id`` keeps one issue's rows (``idx_audit_issue_id``)."""
     clauses: list[str] = []
     args: list[Any] = []
+    if issue_id is not None:
+        args.append(issue_id)
+        clauses.append(f"audit_log.issue_id = ${len(args)}")
     if actors is not None:
         args.append(list(actors))
         clauses.append(f"actor = ANY(${len(args)})")
@@ -133,15 +137,16 @@ class AuditRepository:
         offset: int = 0,
         hidden_actors: Sequence[str] = (),
         narrowing: AuditNarrowing | None = None,
+        issue_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Newest-first page of audit rows; ``actors=None`` = unrestricted, ``hidden_actors`` left out, and only what
-        ``narrowing`` reads when given.
+        """Newest-first page of audit rows; ``actors=None`` = unrestricted, ``hidden_actors`` left out, only what
+        ``narrowing`` reads when given, and only ``issue_id``'s rows when given.
 
         Explicit column list — trace_id is ops-internal and never leaves the
         repository. ``id DESC`` tiebreak keeps same-timestamp rows stable
         across pages.
         """
-        where, args = _where(actors, action, since, until, hidden_actors, narrowing)
+        where, args = _where(actors, action, since, until, hidden_actors, narrowing, issue_id)
         args.extend((limit, offset))
         rows = await self._db.fetch(
             f"""

@@ -570,24 +570,3 @@ class IssuesRepository:
             escaped + "%",
         )
         return [dict(r) for r in rows]
-
-    async def get_activity(
-        self,
-        issue_id: str,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[dict[str, Any]]:
-        """Fetch audit log entries associated with an issue."""
-        rows = await self._db.fetch(
-            """
-            SELECT *
-            FROM audit_log
-            WHERE issue_id = $1
-            ORDER BY created_at DESC, id DESC
-            LIMIT $2 OFFSET $3
-            """,
-            issue_id,
-            limit,
-            offset,
-        )
-        return [dict(r) for r in rows]
