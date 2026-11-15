@@ -31,6 +31,12 @@ logger = structlog.get_logger(__name__)
 
 async def find_open_mr_for_branch(client: GitLabClient, repo: str, branch: str) -> str | None:
     """URL of an open MR whose source branch is ``branch``, if one exists."""
+    found = await _open_mr_for_branch(client, repo, branch)
+    return None if found is None else str(found.get("web_url") or "") or None
+
+
+async def _open_mr_for_branch(client: GitLabClient, repo: str, branch: str) -> dict[str, Any] | None:
+    """The open MR whose source branch is ``branch``, as GitLab lists it, if one exists."""
     resp = await client.get(
         client.project_path(repo, "/merge_requests"),
         repo=repo,
@@ -39,9 +45,8 @@ async def find_open_mr_for_branch(client: GitLabClient, repo: str, branch: str) 
     if resp.status_code != 200:
         return None
     body = resp.json()
-    if isinstance(body, list) and body:
-        url = str((body[0] or {}).get("web_url") or "")
-        return url or None
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        return body[0]
     return None
 
 
@@ -67,6 +72,7 @@ async def ensure_mr_for_branch(
     title: str,
     body: str,
     client: GitLabClient,
+    labels: list[str] | None = None,
     target_branch: str | None = None,
     diagnostics: dict[str, Any] | None = None,
 ) -> str | None:
@@ -84,6 +90,11 @@ async def ensure_mr_for_branch(
 
     ``diagnostics``, when given, receives ``change_request_error``: why no
     merge request came of it, in words a person reads (#459).
+
+    ``labels`` go on the merge request it opens or finds, as on a pull
+    request (#477); when GitLab will not take them the merge request still
+    counts, and :func:`_labels_or_say_so` says so on it and in
+    ``diagnostics``.
     """
 
     def _why(reason: str) -> None:
@@ -101,9 +112,11 @@ async def ensure_mr_for_branch(
         return None
 
     try:
-        existing = await find_open_mr_for_branch(client, repo, branch)
-        if existing:
+        found = await _open_mr_for_branch(client, repo, branch)
+        existing = None if found is None else str(found.get("web_url") or "") or None
+        if found is not None and existing:
             logger.info("mr_fallback_found_existing", repo=repo, branch=branch, url=existing)
+            await _labels_or_say_so(client, repo=repo, iid=found.get("iid"), labels=labels, diagnostics=diagnostics)
             return existing
 
         target = target_branch or await default_branch_for(client, repo)
@@ -129,13 +142,19 @@ async def ensure_mr_for_branch(
             created: dict[str, Any] = resp.json()
             url = str(created.get("web_url") or "") or None
             logger.info("mr_fallback_created", repo=repo, branch=branch, target=target, url=url)
+            if url:
+                await _labels_or_say_so(
+                    client, repo=repo, iid=created.get("iid"), labels=labels, diagnostics=diagnostics, opened=True
+                )
             return url
 
         # 409 means someone created it between our lookup and our create.
         if resp.status_code == 409:
-            recovered = await find_open_mr_for_branch(client, repo, branch)
-            if recovered:
+            again = await _open_mr_for_branch(client, repo, branch)
+            recovered = None if again is None else str(again.get("web_url") or "") or None
+            if again is not None and recovered:
                 logger.info("mr_fallback_recovered_after_conflict", repo=repo, branch=branch)
+                await _labels_or_say_so(client, repo=repo, iid=again.get("iid"), labels=labels, diagnostics=diagnostics)
                 return recovered
 
         logger.warning(
@@ -151,3 +170,105 @@ async def ensure_mr_for_branch(
         logger.warning("mr_fallback_failed", repo=repo, branch=branch, error=str(exc))
         _why(f"GitLab refused it: {exc}"[:300])
         return None
+
+
+async def _apply_mr_labels(
+    client: GitLabClient, *, repo: str, iid: Any, labels: list[str] | None
+) -> tuple[list[str] | None, str | None]:
+    """Labels on a merge request, beside the ones it has: the labels it still lacks, and what GitLab said.
+
+    Nothing missing (``[]``) when they are on it, or there is nothing to put
+    on. GitLab can answer 200 and leave labels off (a token whose role may not
+    set them), so the merge request it answers with is read back: a label it
+    does not carry is missing too. An answer that names no labels at all says
+    neither, so the labels it was asked for are taken as on, as before, but
+    ``None`` comes back for "missing", not ``[]``: nothing tells a person they
+    are on. Adding labels twice changes nothing, so the client's own retries
+    are safe here, as for a pull request (#472).
+    """
+    if not labels:
+        return [], None
+    from embry0.safety.redaction import redact_bounded
+    from embry0.services.github_prs import forge_said
+
+    if not isinstance(iid, int) or isinstance(iid, bool):
+        return list(labels), "GitLab named no merge request number to put them on"
+    try:
+        resp = await client.put(
+            client.project_path(repo, f"/merge_requests/{iid}"),
+            repo=repo,
+            json={"add_labels": ",".join(labels)},
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("mr_label_failed", repo=repo, iid=iid, labels=labels, error=str(exc))
+        return list(labels), redact_bounded(forge_said(exc), 300)
+    try:
+        carried = resp.json().get("labels")
+    except Exception:  # noqa: BLE001 - an answer that is not the merge request says nothing of its labels
+        carried = None
+    if not isinstance(carried, list):
+        return None, None
+    names = {str(label.get("name") if isinstance(label, dict) else label) for label in carried}
+    missing = [label for label in labels if label not in names]
+    if missing:
+        logger.warning("mr_label_not_applied", repo=repo, iid=iid, labels=missing)
+        return missing, "GitLab answered 200 and left them off; the token's role may not be allowed to set labels"
+    return [], None
+
+
+async def _labels_or_say_so(
+    client: GitLabClient,
+    *,
+    repo: str,
+    iid: Any,
+    labels: list[str] | None,
+    diagnostics: dict[str, Any] | None,
+    opened: bool = False,
+) -> None:
+    """Put ``labels`` on the merge request; when they will not go on, say so on it and in ``diagnostics`` (#477).
+
+    The GitLab twin of :func:`embry0.services.github_prs._labels_or_say_so`:
+    the merge request still counts, but a missing ``human-merge-only`` is what
+    tells a person, and anything keyed on the label, not to merge it. So the
+    merge request gets one note naming the missing labels (one per merge
+    request, :data:`~embry0.services.github_prs.LABELS_NOTE_MARKER`: a later
+    outcome edits it), and ``diagnostics`` gets ``labels_missing``,
+    ``labels_error`` and ``labels_noted``, for the job to record. When a later
+    outcome does put them on, that note is edited to say so. A merge request
+    embry0 has just ``opened`` has no note to edit, so none is looked for.
+    """
+    if not labels:
+        return
+    missing, said = await _apply_mr_labels(client, repo=repo, iid=iid, labels=labels)
+    from embry0.services.github_prs import LABELS_NOTE_MARKER
+    from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
+
+    numbered = isinstance(iid, int) and not isinstance(iid, bool)
+    if not missing:
+        if missing is not None and numbered and not opened:
+            named = ", ".join(f"`{label}`" for label in labels)
+            done = f"{LABELS_NOTE_MARKER}\n\nThe labels {named} are on this merge request now."
+            try:
+                await client.edit_sticky_mr_note(repo, iid, done, marker=LABELS_NOTE_MARKER)
+            except Exception as exc:  # noqa: BLE001 - the labels are on; only the old note stays as it was
+                logger.warning("mr_label_note_edit_failed", repo=repo, iid=iid, error=str(exc))
+        return
+    named = ", ".join(f"`{label}`" for label in missing)
+    body = f"embry0 could not add the labels {named} to this merge request ({said})."
+    if HUMAN_MERGE_LABEL in missing:
+        body += (
+            f" It should carry `{HUMAN_MERGE_LABEL}`: only a person should merge it, after reviewing it. "
+            "Please add the label by hand."
+        )
+    noted = False
+    if numbered:
+        try:
+            await client.upsert_sticky_mr_note(repo, iid, f"{LABELS_NOTE_MARKER}\n\n{body}", marker=LABELS_NOTE_MARKER)
+            noted = True
+        except Exception as exc:  # noqa: BLE001 - the job still says so
+            logger.warning("mr_label_note_failed", repo=repo, iid=iid, error=str(exc))
+    if diagnostics is not None:
+        diagnostics["labels_missing"] = missing
+        diagnostics["labels_error"] = said
+        diagnostics["labels_noted"] = noted
