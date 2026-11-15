@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import math
+from decimal import Decimal
 from typing import Any
 
 import pytest
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, field_serializer
 
@@ -89,6 +90,12 @@ def _client() -> TestClient:
     async def json_only() -> JsonOnly:
         return JsonOnly(id="r1")
 
+    @router.get("/no-model-deep", response_model=None)
+    async def no_model_deep(response: Response) -> Any:
+        response.headers["ETag"] = '"7"'
+        # jsonable_encoder recurses past this (#479); a Decimal it writes as a number.
+        return {"id": "r1", "cost": Decimal("1.5"), "config": {"notes": _nested(2_000)}}
+
     @router.get("/no-model", response_model=None)
     async def no_model() -> Any:
         return {"id": "r1", "x": math.nan}  # rendered without pydantic; the response refuses NaN
@@ -133,6 +140,17 @@ def test_every_other_failure_stands() -> None:
         assert client.get("/api/not-finite").status_code == 500, "a failure with nothing too deep is raised as before"
     assert client.get("/api/not-text").status_code == 500, "a value JSON cannot write is no value too deep"
     assert client.get("/api/json-only").status_code == 500, "a model's own JSON failure is raised as before"
+
+
+def test_a_route_with_no_response_model_serves_its_deep_field_as_text() -> None:
+    answer = _client().get("/api/no-model-deep")
+    assert answer.status_code == 200, answer.text[:200]
+    body = answer.json()
+    assert json.loads(body["config"]) == {"notes": _nested(2_000)} and body["id"] == "r1", str(body)[:200]
+    assert answer.headers.get("etag") == '"7"', f"the endpoint's headers stay on the answer: {dict(answer.headers)}"
+    assert body["cost"] == 1.5 and isinstance(body["cost"], float), (
+        f"a Decimal is a number, as FastAPI writes it: {body['cost']!r}"
+    )
 
 
 def test_a_route_with_no_response_model_raises_its_own_error() -> None:
