@@ -1496,23 +1496,31 @@ class WatcherService:
             str(getattr(self._config, "context_proxy_container_allowlist", "") or "").strip()
         )
 
-    def _drilldown_section(self) -> str:
-        """Rendered {drilldown} block, empty when the context-proxy is off."""
+    def _log_scope(self, entries: Sequence[LogEntry]) -> list[str]:
+        """The containers this tick's analysis may query (:func:`~embry0.services.job_log_access.analysis_scope`):
+        those its stack's own ``context_proxy_container_allowlist`` names (each exact entry, and each container the
+        tick's lines came from that one of its patterns admits), or, for a stack that names none, the containers its
+        own query returned in this tick; only those the deployment's allowlist admits. The analysis job is enrolled
+        with these alone, never the context proxy's whole allowlist."""
         if not self._context_proxy_on():
+            return []
+        from embry0.services.job_log_access import analysis_scope, deployment_allowlist, own_entries
+        from embry0.services.watcher_stacks import StackConfig
+
+        if isinstance(self._config, StackConfig):
+            own, deployment = own_entries(self._config.stack), deployment_allowlist(self._config.base)
+        else:
+            own, deployment = None, deployment_allowlist(self._config)
+        return analysis_scope(own, deployment, (entry.service or "" for entry in entries))
+
+    def _drilldown_section(self, containers: Sequence[str]) -> str:
+        """Rendered {drilldown} block naming the containers the analysis may query; empty when it may query none."""
+        if not containers:
             return ""
-        from embry0.execution.proxy.container_allowlist import is_pattern
         from embry0.execution.proxy.context_proxy import MAX_LIMIT, MAX_SINCE_MINUTES
 
-        entries = [c.strip() for c in str(self._config.context_proxy_container_allowlist).split(",") if c.strip()]
-        containers = ", ".join(entries)
-        if any(is_pattern(entry) for entry in entries):
-            # Containers named per release (blue/green slots) are allowlisted by pattern.
-            containers += (
-                " (a * stands for any run of letters, digits, - or _ in a container name, such as a"
-                " deploy slot: query the full name your excerpts show)"
-            )
         return _DRILLDOWN_SECTION.format(
-            containers=containers,
+            containers=", ".join(containers),
             since_cap=MAX_SINCE_MINUTES,
             limit_cap=MAX_LIMIT,
             quota=getattr(self._config, "context_proxy_query_quota", 30),
@@ -1528,7 +1536,7 @@ class WatcherService:
             logger.warning("watcher_local_first_read_failed", exc_info=True)
             return ""
 
-    async def _run_analysis_job(self, task: str) -> dict[str, Any] | None:
+    async def _run_analysis_job(self, task: str, log_containers: Sequence[str] = ()) -> dict[str, Any] | None:
         """Dispatch an issue-less analysis job and poll it to a terminal state."""
         # #294: this text is the prompt, and the job row stores it. The items
         # cut to a length were redacted before the cut; this pass covers the
@@ -1541,8 +1549,12 @@ class WatcherService:
         # the schema deliberately). init_node reads the flag to provision the
         # mediated log tool.
         context: dict[str, Any] = {"type": "none"}
-        if self._context_proxy_on():
+        if self._context_proxy_on() and log_containers:
             context["watcher_log_access"] = True
+            # The containers its log tool may query (_log_scope), not the proxy's whole allowlist. A ceiling: a job
+            # started again copies this context, and init_node and a resume cut it again to what the stored stack and
+            # the deployment admit then (job_log_access.analysis_job_scope).
+            context["watcher_log_containers"] = list(log_containers)
         pipeline_config = apply_run_with(resolve_watcher_job_budget(self._config).as_pipeline_config(), self._run_with)
         local_model = await self._local_first()
         # A model a person chose for the tick (Run with) wins over the preference.
@@ -1634,7 +1646,9 @@ class WatcherService:
         # isinstance, not truthiness: test doubles answer any attribute.
         return wait.record() if isinstance(wait, AccountWait) else None
 
-    async def _analyse(self, task: str, *, kinds: Collection[str] = DEFAULT_KINDS) -> dict[str, Any]:
+    async def _analyse(
+        self, task: str, *, kinds: Collection[str] = DEFAULT_KINDS, log_containers: Sequence[str] = ()
+    ) -> dict[str, Any]:
         """Run the analysis to a parsed verdict, re-running it ONCE on garbage.
 
         SH-P2.4: a completed job whose deliverable matches neither contract
@@ -1650,7 +1664,9 @@ class WatcherService:
         verdict: dict[str, Any] | None = None
         failure: str | None = None
         for attempt in range(1 + _MAX_PARSE_RETRIES):
-            job = await self._run_analysis_job(task if attempt == 0 else _RETRY_NOTE.format(reason=failure) + task)
+            job = await self._run_analysis_job(
+                task if attempt == 0 else _RETRY_NOTE.format(reason=failure) + task, log_containers
+            )
             job_ids.append((job or {}).get("job_id"))
             cost += float((job or {}).get("total_cost_usd") or 0.0)
             if job and job.get("status") == "paused" and isinstance(job.get("account_wait"), dict):
@@ -1951,6 +1967,7 @@ class WatcherService:
                 # #169: what the analysis is told of slop, and the kinds its verdict may name, are the
                 # stack's repository's slop_policy, read for this analysis.
                 policy = await self._policy()
+                log_containers = self._log_scope(entries)
                 task = _ANALYSIS_TASK_TEMPLATE.format(
                     window_start=window_start.strftime("%Y-%m-%d %H:%M"),
                     window_end=window_end.strftime("%Y-%m-%d %H:%M"),
@@ -1958,7 +1975,7 @@ class WatcherService:
                     line_count=len(lines),
                     known_issues=known_issues,
                     excerpts=excerpt_block,
-                    drilldown=self._drilldown_section(),
+                    drilldown=self._drilldown_section(log_containers),
                     slop_guide=policy.classifier_guide,
                     slop_lines=WATCHER_CONTRACT_LINES,
                     **sections,
@@ -1970,7 +1987,7 @@ class WatcherService:
                     return await record(
                         "skipped_account_paused", log_lines=len(lines), detail=_account_wait_detail(waiting)
                     )
-                analysis = await self._analyse(task, kinds=policy.kinds)
+                analysis = await self._analyse(task, kinds=policy.kinds, log_containers=log_containers)
                 tick_fields.update(analysis["run_fields"])
                 if analysis.get("account_wait"):
                     return await record(

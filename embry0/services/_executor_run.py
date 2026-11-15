@@ -7,6 +7,7 @@ pre-split module.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import structlog
@@ -1108,6 +1109,7 @@ async def _stream_workflow(
                     self,
                     paused,
                     job_id,
+                    configurable=graph_config.get("configurable") or {},
                     llm_ids=llm_ids,
                     llm_kinds=llm_kinds,
                     git_push=pipeline not in _READ_ONLY_PIPELINES,
@@ -1117,6 +1119,7 @@ async def _stream_workflow(
                     self,
                     paused,
                     job_id,
+                    configurable=graph_config.get("configurable") or {},
                     llm_ids=llm_ids,
                     llm_kinds=llm_kinds,
                     git_push=pipeline not in _READ_ONLY_PIPELINES,
@@ -1176,6 +1179,7 @@ async def _reenroll_paused_sandbox(
     values: dict[str, Any],
     job_id: str,
     *,
+    configurable: Mapping[str, Any],
     llm_ids: dict[str, str],
     llm_kinds: dict[str, str],
     git_push: bool = False,
@@ -1187,8 +1191,9 @@ async def _reenroll_paused_sandbox(
     precheck just resolved for this resume; the proxy injects an account's
     token only for an oauth account, as at create. ``git_push`` restores the
     push right the sandbox was created with (#521), for the one branch the
-    checkpoint names (#559). Raises what
-    ``SandboxManager.reenroll`` raises: ``SANDBOX_GONE`` fails the resume,
+    checkpoint names (#559). ``configurable`` is the graph's, the one init_node
+    read: the log scope is worked out again from it as init_node works it out.
+    Raises what ``SandboxManager.reenroll`` raises: ``SANDBOX_GONE`` fails the resume,
     ``SandboxReenrollError`` leaves the job paused (``IssueExecutor.resume``).
     """
     sandbox = getattr(self, "_sandbox", None)
@@ -1201,10 +1206,23 @@ async def _reenroll_paused_sandbox(
     forge = await self._forge_for(repo) if repo else "github"
     xai_credential_id = llm_ids.get("xai") if llm_kinds.get("xai") == "llm_oauth" else None
     context_scope: bool | list[str] | None = None
-    if values.get("watcher_log_tool"):
-        context_scope = True
-    elif values.get("case_log_containers"):
-        context_scope = list(values["case_log_containers"])
+    if values.get("watcher_log_tool") or values.get("case_log_containers"):
+        # A job that had the log tool gets it back worked out again, as init_node works it out: what it was given is a
+        # ceiling, cut to what the stored stack and the deployment admit now (embry0.services.job_log_access). A
+        # checkpoint written before scoping, or before its stack's list changed, grants no more than that; a job made
+        # without containers, or left with none, is given none back.
+        from embry0.services.job_log_access import analysis_job_scope, developer_job_scope
+        from embry0.workflows.issue_to_pr.nodes._common import job_repository
+
+        config = configurable.get("embry0_config")
+        job_repo = job_repository(values)  # the repository init_node scoped the job to
+        if values.get("watcher_log_tool"):
+            context = values.get("context")
+            chosen = context.get("watcher_log_containers") if isinstance(context, dict) else None
+            context_scope = await analysis_job_scope(job_repo, chosen or [], configurable, config) or None
+        else:
+            granted = values["case_log_containers"]
+            context_scope = await developer_job_scope(job_repo, granted, configurable, config) or None
     git_push_branches: list[str] = []
     if git_push:
         # #559: the branch the paused job may push, from its checkpoint: the
@@ -1239,6 +1257,7 @@ async def _reclaim_sandbox_after_restart(
     values: dict[str, Any],
     job_id: str,
     *,
+    configurable: Mapping[str, Any],
     llm_ids: dict[str, str],
     llm_kinds: dict[str, str],
     git_push: bool,
@@ -1264,7 +1283,9 @@ async def _reclaim_sandbox_after_restart(
         await sandbox.stop_agent(container)
     except Exception:  # noqa: BLE001 — reenroll below says whether the sandbox is usable
         logger.warning("sandbox_agent_stop_failed", job_id=job_id, exc_info=True)
-    await _reenroll_paused_sandbox(self, values, job_id, llm_ids=llm_ids, llm_kinds=llm_kinds, git_push=git_push)
+    await _reenroll_paused_sandbox(
+        self, values, job_id, configurable=configurable, llm_ids=llm_ids, llm_kinds=llm_kinds, git_push=git_push
+    )
 
 
 async def _handle_interrupt(

@@ -18,6 +18,7 @@ from embry0.execution.sandbox_manager import SandboxInitError, SandboxReenrollEr
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.credentials.resolver import ResolvedCredential
 from embry0.services.issue_executor import IssueExecutor
+from embry0.services.watcher_stacks import WatcherStack
 
 PAUSED_STATE = {
     "sandbox_container_id": "cid-1",
@@ -25,6 +26,12 @@ PAUSED_STATE = {
     "case_log_containers": ["widgets-backend"],
     "branch_name": "embry0/iss-1-fix-widgets",
 }
+
+
+#: The deployment's context-proxy allowlist, and the watched stacks a resume reads (a stack's own container list, None
+#: for a stack with none), by repository.
+_DEPLOYMENT = "widgets-backend,widgets-frontend,widgets-worker,globex-api"
+_STACKS: dict[str, str | None] = {"acme/widgets": "widgets-backend,widgets-frontend"}
 
 
 def _resolved(provider: str, kind: str) -> ResolvedCredential:
@@ -50,7 +57,27 @@ class _Saver:
         return False
 
 
-def _executor(order: list[Any], *, state: dict[str, Any] = PAUSED_STATE, xai_kind: str = "llm_oauth") -> IssueExecutor:
+class _Stacks:
+    """The stored watched stacks, by repository: a stack's own container list, None for a stack with none."""
+
+    def __init__(self, own: dict[str, str | None]) -> None:
+        self._own = own
+
+    async def get(self, repo: str) -> WatcherStack | None:
+        if repo not in self._own:
+            return None
+        named = self._own[repo]
+        settings = {} if named is None else {"context_proxy_container_allowlist": named}
+        return WatcherStack(repo=repo, logql='{app="x"}', settings=settings)
+
+
+def _executor(
+    order: list[Any],
+    *,
+    state: dict[str, Any] = PAUSED_STATE,
+    xai_kind: str = "llm_oauth",
+    stacks: dict[str, str | None] | None = None,
+) -> IssueExecutor:
     ex = IssueExecutor.__new__(IssueExecutor)
     resolver = MagicMock()
 
@@ -62,8 +89,15 @@ def _executor(order: list[Any], *, state: dict[str, Any] = PAUSED_STATE, xai_kin
     ex._db = None
     ex._jobs = MagicMock()
     ex._jobs.get = AsyncMock(return_value={"repo": "acme/widgets"})
-    ex._config = SimpleNamespace(default_auth_mode="oauth", default_execution_mode="sdk")
-    ex._build_graph_config = lambda job_id, **_kw: {"configurable": {"thread_id": job_id}}  # type: ignore[method-assign]
+    ex._config = SimpleNamespace(
+        default_auth_mode="oauth",
+        default_execution_mode="sdk",
+        context_proxy_container_allowlist=_DEPLOYMENT,
+        developer_log_tool_enabled=True,
+    )
+    # The graph's configurable, the one init_node reads: the resume works a job's log scope out again from it.
+    configurable = {"embry0_config": ex._config, "watcher_stacks_repo": _Stacks(_STACKS if stacks is None else stacks)}
+    ex._build_graph_config = lambda job_id, **_kw: {"configurable": {"thread_id": job_id, **configurable}}  # type: ignore[method-assign]
     graph = MagicMock()
     graph.aget_state = AsyncMock(return_value=SimpleNamespace(values=dict(state), next=()))
     workflow = MagicMock()
@@ -121,6 +155,113 @@ async def test_a_resume_reenrolls_the_sandbox_before_the_graph_runs(resume_value
         # embry0's own git config is rewritten with the identity as at init.
         "prefs_repo": None,
     }, kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("context", "scope"),
+    [
+        (
+            {"type": "none", "watcher_log_access": True, "watcher_log_containers": ["widgets-frontend"]},
+            ["widgets-frontend"],
+        ),
+        ({"type": "none", "watcher_log_access": True}, None),
+    ],
+    ids=["its-stack", "none-chosen"],
+)
+async def test_a_resumed_watcher_job_gets_back_only_its_stack_s_containers(context, scope):
+    """A watcher analysis job is re-enrolled as init_node enrolled it: scoped to the containers the watcher chose,
+    never the context proxy's whole allowlist, and with none when it was made without them."""
+    order: list[Any] = []
+    state = {"sandbox_container_id": "cid-1", "repo": "acme/widgets", "watcher_log_tool": True, "context": context}
+    ex = _executor(order, state=state)
+
+    await ex._execute_workflow_stream(Command(resume={"choice": "continue_retrying", "guidance": ""}), "iss-1", "j1")
+
+    _, _container, kwargs = order[0]
+    assert kwargs["context_scope"] == scope, kwargs
+
+
+_CONTINUE = Command(resume={"choice": "continue_retrying", "guidance": ""})
+
+
+def _analysis(*containers: str) -> dict[str, Any]:
+    return {"type": "none", "watcher_log_access": True, "watcher_log_containers": list(containers)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("checkpoint", "change", "scope"),
+    [
+        # A checkpoint written before scoping holds another repository's container (the developer job's grant).
+        ({"case_log_containers": ["globex-api", "widgets-backend"]}, {}, ["widgets-backend"]),
+        ({"case_log_containers": ["globex-api"]}, {}, None),
+        # The stack's list no longer names what the job was given.
+        ({"case_log_containers": ["widgets-backend"]}, {"stack": "widgets-frontend"}, None),
+        # The developer log tool was turned off since.
+        ({"case_log_containers": ["widgets-backend"]}, {"developer_log_tool_enabled": False}, None),
+        # An analysis job: its stack's own list now, then the deployment's allowlist.
+        (
+            {"watcher_log_tool": True, "context": _analysis("widgets-backend", "widgets-frontend")},
+            {"stack": "widgets-frontend"},
+            ["widgets-frontend"],
+        ),
+        (
+            {"watcher_log_tool": True, "context": _analysis("widgets-worker", "unlisted-box")},
+            {"stack": None},
+            ["widgets-worker"],
+        ),
+        # Its stack is gone.
+        ({"watcher_log_tool": True, "context": _analysis("widgets-backend")}, {"stack": "gone"}, None),
+    ],
+    ids=[
+        "developer-old-checkpoint",
+        "developer-only-another-s",
+        "developer-stack-narrowed",
+        "developer-tool-off",
+        "analysis-stack-narrowed",
+        "analysis-no-own-list",
+        "analysis-stack-gone",
+    ],
+)
+async def test_a_resume_works_the_log_scope_out_again(checkpoint, change, scope):
+    """A paused job's log scope is a ceiling, never a grant: the resume cuts it again to what its repository's
+    stored stack and the deployment's allowlist admit now, as init_node does, rather than trusting the checkpoint."""
+    order: list[Any] = []
+    state = {"sandbox_container_id": "cid-1", "repo": "acme/widgets", **checkpoint}
+    stacks = dict(_STACKS)
+    if change.get("stack") == "gone":
+        stacks.pop("acme/widgets")
+    elif "stack" in change:
+        stacks["acme/widgets"] = change["stack"]
+    ex = _executor(order, state=state, stacks=stacks)
+    if "developer_log_tool_enabled" in change:
+        ex._config.developer_log_tool_enabled = change["developer_log_tool_enabled"]
+
+    await ex._execute_workflow_stream(_CONTINUE, "iss-1", "j1")
+
+    _, _container, kwargs = order[0]
+    assert kwargs["context_scope"] == scope, kwargs
+
+
+@pytest.mark.asyncio
+async def test_a_job_going_on_after_a_restart_works_its_log_scope_out_again():
+    """After a restart the sandbox is reclaimed and re-enrolled the same way: from the stored stack, not the
+    checkpoint."""
+    order: list[Any] = []
+    state = {
+        "sandbox_container_id": "cid-1",
+        "repo": "acme/widgets",
+        "case_log_containers": ["globex-api", "widgets-backend"],
+    }
+    ex = _executor(order, state=state)
+    ex._sandbox.stop_agent = AsyncMock()
+
+    await ex._execute_workflow_stream(None, "iss-1", "j1")
+
+    reenrolled = [entry for entry in order if entry[0] == "reenroll"]
+    assert reenrolled, order
+    assert reenrolled[0][2]["context_scope"] == ["widgets-backend"], reenrolled
 
 
 @pytest.mark.asyncio

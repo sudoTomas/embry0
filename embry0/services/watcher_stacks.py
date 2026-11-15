@@ -442,6 +442,11 @@ class StackConfig:
     def stack(self) -> WatcherStack:
         return self._stack
 
+    @property
+    def base(self) -> Any:
+        """The process config, without this stack's overrides: the deployment's own values."""
+        return self._base
+
     def __getattr__(self, name: str) -> Any:
         # Called only for attributes not found normally, so the two private
         # ones above never reach here.

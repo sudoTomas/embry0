@@ -540,6 +540,13 @@ async def test_deploy_markers_bound_line_length_and_skip_blank_lines():
 # ---- RAV-1140: context-proxy flag + drill-down prompt section ---------------
 
 
+def _entries_from(*services: str) -> list[LogEntry]:
+    return [
+        LogEntry(line=f"e{i}", timestamp=_T0 + timedelta(seconds=i), service=service)
+        for i, service in enumerate(services)
+    ]
+
+
 @pytest.mark.asyncio
 async def test_context_proxy_on_flags_job_and_renders_drilldown():
     cfg = _config(
@@ -548,31 +555,116 @@ async def test_context_proxy_on_flags_job_and_renders_drilldown():
         context_proxy_query_quota=30,
     )
     job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
-    svc = _service(config=cfg, lines=["[api] e1", "[api] e2", "[api] e3"], job_result=job)
+    svc = _service(config=cfg, job_result=job)
+    svc._fetch_log_entries = AsyncMock(return_value=_entries_from("acme-backend", "acme-frontend", "acme-backend"))
     await svc.run_once()
     kwargs = svc._jobs.create.await_args.kwargs
-    assert kwargs["context"] == {"type": "none", "watcher_log_access": True}
+    assert kwargs["context"] == {
+        "type": "none",
+        "watcher_log_access": True,
+        "watcher_log_containers": ["acme-backend", "acme-frontend"],
+    }
     task = kwargs["task"]
     assert "mcp__context__logs_query" in task
-    assert "acme-backend, acme-frontend" in task
+    assert "Queryable containers: acme-backend, acme-frontend." in task
     assert "30 queries" in task
-    assert "a * stands for" not in task
 
 
 @pytest.mark.asyncio
-async def test_drilldown_explains_a_pattern_entry():
-    """Slot containers are allowlisted as acme-backend*; the agent is
-    told to query the full name its excerpts show, not the pattern."""
-    cfg = _config(
-        context_proxy_enabled=True,
-        context_proxy_container_allowlist="acme-backend*, acme-frontend",
+async def test_the_drilldown_names_the_containers_the_analysis_may_query():
+    """Slot containers are allowlisted as acme-backend*: the drill-down names the full name the tick's lines came
+    from, the one the analysis may query, never the pattern, nor a container it may not query."""
+    cfg = _config(context_proxy_enabled=True, context_proxy_container_allowlist="acme-backend*, acme-frontend")
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(config=cfg, job_result=job)
+    svc._fetch_log_entries = AsyncMock(return_value=_entries_from(*["acme-backend-blue"] * 3))
+    await svc.run_once()
+    task = svc._jobs.create.await_args.kwargs["task"]
+    assert "Queryable containers: acme-backend-blue." in task, task
+    assert "acme-backend*" not in task
+    assert "acme-frontend" not in task
+
+
+@pytest.mark.asyncio
+async def test_a_stack_that_names_no_containers_is_analysed_with_those_its_query_returned():
+    """A stack with no container list of its own: its analysis may query the containers its own query returned in
+    the tick, those the deployment's allowlist admits (exactly or by a pattern); never another container that
+    allowlist names."""
+    cfg = _config(context_proxy_enabled=True, context_proxy_container_allowlist="acme-backend*, acme-frontend")
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(config=cfg, job_result=job)
+    svc._fetch_log_entries = AsyncMock(
+        return_value=_entries_from("acme-backend-blue", "acme-backend-blue", "other-box", "acme-backend-green")
     )
+    await svc.run_once()
+    context = svc._jobs.create.await_args.kwargs["context"]
+    assert context["watcher_log_containers"] == ["acme-backend-blue", "acme-backend-green"], context
+
+
+@pytest.mark.asyncio
+async def test_a_tick_whose_lines_come_from_no_admitted_container_gives_no_log_tool():
+    """No known container, no log tool: the analysis is not given the deployment's allowlist instead."""
+    cfg = _config(context_proxy_enabled=True, context_proxy_container_allowlist="acme-backend, acme-frontend")
     job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
     svc = _service(config=cfg, lines=["[api] e1", "[api] e2", "[api] e3"], job_result=job)
     await svc.run_once()
-    task = svc._jobs.create.await_args.kwargs["task"]
-    assert "acme-backend*, acme-frontend (a * stands for" in task
-    assert "query the full name your excerpts show" in task
+    kwargs = svc._jobs.create.await_args.kwargs
+    assert kwargs["context"] == {"type": "none"}
+    assert "mcp__context__logs_query" not in kwargs["task"]
+
+
+_TICK = ("acme-web", "shop-globex-payments", "unlisted-thing")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("settings", "scope"),
+    [
+        # No list of its own: the containers its query returned, those the deployment admits.
+        ({}, ["acme-web", "shop-globex-payments"]),
+        # Its own list: its exact entries the deployment admits (another-box is not one).
+        ({"context_proxy_container_allowlist": "acme-web, another-box"}, ["acme-web"]),
+        # Its own pattern admits every name; the deployment's allowlist still decides.
+        ({"context_proxy_container_allowlist": "*"}, ["acme-web", "shop-globex-payments"]),
+        # An empty list of its own names nothing.
+        ({"context_proxy_container_allowlist": ""}, None),
+    ],
+    ids=["no-own-list", "own-exact", "own-pattern", "own-empty"],
+)
+async def test_a_stack_s_analysis_scope_is_cut_to_the_deployment_s_allowlist(settings, scope):
+    """A stack's analysis may query its own list's containers or, without one, those its own query returned in the
+    tick: in either case only those the deployment's allowlist admits, whatever the stack says."""
+    from embry0.services.watcher_stacks import StackConfig, WatcherStack
+
+    base = _config(context_proxy_enabled=True, context_proxy_container_allowlist="acme-web, globex-gizmos-api, shop-*")
+    stack = WatcherStack(repo="acme/web", logql='{app="web"}', settings=settings)
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(config=StackConfig(base, stack), job_result=job)
+    svc._fetch_log_entries = AsyncMock(return_value=_entries_from(*_TICK))
+    await svc.run_once()
+    kwargs = svc._jobs.create.await_args.kwargs
+    assert kwargs["context"].get("watcher_log_containers") == scope, kwargs["context"]
+    if scope:
+        assert f"Queryable containers: {', '.join(scope)}." in kwargs["task"]
+    else:
+        assert "mcp__context__logs_query" not in kwargs["task"]
+
+
+@pytest.mark.asyncio
+async def test_a_stack_s_own_container_allowlist_scopes_its_analysis():
+    """A stack that names its own containers is analysed with those, not the deployment's whole allowlist."""
+    from embry0.services.watcher_stacks import StackConfig, WatcherStack
+
+    base = _config(context_proxy_enabled=True, context_proxy_container_allowlist="acme-backend, globex-api")
+    stack = WatcherStack(
+        repo="acme/web", logql='{app="web"}', settings={"context_proxy_container_allowlist": "acme-backend"}
+    )
+    job = {"job_id": "job-w1", "status": "completed", "result_summary": "NO_ISSUE"}
+    svc = _service(config=StackConfig(base, stack), job_result=job)
+    svc._fetch_log_entries = AsyncMock(return_value=_entries_from("acme-backend", "globex-api", "globex-api"))
+    await svc.run_once()
+    context = svc._jobs.create.await_args.kwargs["context"]
+    assert context["watcher_log_containers"] == ["acme-backend"], context
 
 
 @pytest.mark.asyncio
