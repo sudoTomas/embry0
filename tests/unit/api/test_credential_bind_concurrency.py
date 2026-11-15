@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from embry0.storage.database import DatabasePool
-from tests.fixtures.repository_writes import COVERED, MASTER, call, repository_writes_app
+from tests.fixtures.repository_writes import COVERED, MASTER, call, key_id, made_before_its_list, repository_writes_app
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -40,8 +40,20 @@ async def test_binds_of_one_repository_at_once_all_commit_one_after_the_other(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, _values):
-        forge = await _credential(app, keys.limited, "bot-forge", "forge_token", "github")
-        llm = await _credential(app, keys.limited, "bot-llm", "llm_api_key", "anthropic")
+        # The limited key's own: it created them before it had a list (a key with one creates none).
+        limited = await key_id(app, "limited")
+        forge = await made_before_its_list(
+            app,
+            limited,
+            keys.limited,
+            {"kind": "forge_token", "provider": "github", "label": "bot-forge", "secret": "x" * 30},
+        )
+        llm = await made_before_its_list(
+            app,
+            limited,
+            keys.limited,
+            {"kind": "llm_api_key", "provider": "anthropic", "label": "bot-llm", "secret": "x" * 30},
+        )
         other_forge = await _credential(app, MASTER, "admin-forge", "forge_token", "github")
         binds: list[tuple[str, str, list[dict[str, Any]]]] = [
             (

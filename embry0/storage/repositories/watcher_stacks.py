@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack
@@ -46,34 +46,45 @@ class WatcherStacksRepository:
         row = await self._db.fetchrow(f"SELECT {_COLUMNS} FROM watcher_stacks WHERE repo = $1", repo)
         return _stack(row) if row else None
 
-    async def upsert(self, stack: WatcherStack) -> WatcherStack:
+    async def upsert(
+        self, stack: WatcherStack, *, check: Callable[[WatcherStack | None], None] | None = None
+    ) -> WatcherStack:
         """Create or replace one stack. Unknown setting keys are dropped —
-        a typo must not become a setting nothing reads (SETTING_KEYS)."""
+        a typo must not become a setting nothing reads (SETTING_KEYS).
+
+        ``check``, when given, is called with the stored stack (None when
+        none is stored) while its row is held, before anything is written;
+        whatever it raises rolls the write back."""
         if stack.tracker not in VALID_TRACKERS:
             raise ValueError(f"unknown tracker {stack.tracker!r}")
         if not stack.repo.strip() or not stack.logql.strip():
             raise ValueError("a stack needs a repo and a LogQL selector")
         settings = {k: v for k, v in (stack.settings or {}).items() if k in SETTING_KEYS}
-        row = await self._db.fetchrow(
-            f"""
-            INSERT INTO watcher_stacks (repo, enabled, logql, tracker, tracker_target, settings)
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
-            ON CONFLICT (repo) DO UPDATE SET
-                enabled = EXCLUDED.enabled,
-                logql = EXCLUDED.logql,
-                tracker = EXCLUDED.tracker,
-                tracker_target = EXCLUDED.tracker_target,
-                settings = EXCLUDED.settings,
-                updated_at = NOW()
-            RETURNING {_COLUMNS}
-            """,
-            stack.repo.strip(),
-            stack.enabled,
-            stack.logql.strip(),
-            stack.tracker,
-            dict(stack.tracker_target or {}),
-            settings,
-        )
+        repo = stack.repo.strip()
+        async with self._db.transaction() as conn:
+            if check is not None:
+                held = await conn.fetchrow(f"SELECT {_COLUMNS} FROM watcher_stacks WHERE repo = $1 FOR UPDATE", repo)
+                check(_stack(held) if held else None)
+            row = await conn.fetchrow(
+                f"""
+                INSERT INTO watcher_stacks (repo, enabled, logql, tracker, tracker_target, settings)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+                ON CONFLICT (repo) DO UPDATE SET
+                    enabled = EXCLUDED.enabled,
+                    logql = EXCLUDED.logql,
+                    tracker = EXCLUDED.tracker,
+                    tracker_target = EXCLUDED.tracker_target,
+                    settings = EXCLUDED.settings,
+                    updated_at = NOW()
+                RETURNING {_COLUMNS}
+                """,
+                repo,
+                stack.enabled,
+                stack.logql.strip(),
+                stack.tracker,
+                dict(stack.tracker_target or {}),
+                settings,
+            )
         return _stack(row)
 
     async def set_enabled(self, repo: str, enabled: bool) -> WatcherStack | None:

@@ -35,7 +35,9 @@ class FakeStacksRepo:
     async def get(self, repo: str) -> WatcherStack | None:
         return self.stacks.get(repo)
 
-    async def upsert(self, stack: WatcherStack) -> WatcherStack:
+    async def upsert(self, stack: WatcherStack, *, check: Any = None) -> WatcherStack:
+        if check is not None:
+            check(self.stacks.get(stack.repo))
         if stack.tracker not in {"linear", "github", "gitlab"}:
             raise ValueError(f"unknown tracker {stack.tracker!r}")
         kept = WatcherStack(

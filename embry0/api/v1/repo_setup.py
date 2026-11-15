@@ -26,13 +26,14 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor
-from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers
+from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers, restricted_key_name
 from embry0.api.repository_reads import covered
 from embry0.api.resolution_view import scopes_read
 from embry0.api.schemas import RunWithRequest
 from embry0.api.served import ServedRoute
 from embry0.api.trigger_context import resolve_trigger_labels
 from embry0.api.v1.jobs import CREATE_A_JOB, start_onboard_job
+from embry0.api.v1.qa_config import refuse_the_shared_cache
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
@@ -49,6 +50,7 @@ from embry0.services.repo_setup import (
     skip_testing,
     start_branch,
 )
+from embry0.services.shared_build_cache import SharedBuildCacheRefused, keeps_the_shared_cache
 from embry0.storage.repositories.repo_setup_proposals import LiveProposalExists
 
 router = APIRouter(route_class=ServedRoute)
@@ -147,6 +149,18 @@ async def apply_setup_proposal(
     full_repo: str, proposal_id: str, request: Request, req: ApplyRequest | None = None
 ) -> dict[str, int | None]:
     await enforce_repo_allowlist(request, full_repo, action="apply a setup proposal")
+    if restricted_key_name(request) is not None:
+        # Over the setup the proposal was drafted from, the only one apply_proposal writes over.
+        proposal = await request.app.state.repo_setup_proposals_repo.get(proposal_id)
+        if proposal is not None and proposal["repo"] == full_repo and proposal["status"] == "pending":
+            stored = await request.app.state.qa_configs_repo.get(full_repo)
+            if (stored["updated_at"] if stored is not None else None) == proposal["base_updated_at"]:
+                try:
+                    keeps_the_shared_cache(str(proposal["proposed_yaml"] or ""))(
+                        stored["yaml_text"] if stored is not None else None
+                    )
+                except SharedBuildCacheRefused:
+                    await refuse_the_shared_cache(request)
     try:
         revision_id = await apply_proposal(
             request.app.state,

@@ -27,6 +27,11 @@ from langgraph.config import get_stream_writer
 
 from embry0.execution import events
 from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
+from embry0.services.shared_build_cache import (
+    SharedBuildCacheRefused,
+    keeps_the_shared_cache,
+    leaves_the_shared_cache,
+)
 from embry0.workflows.pipeline_graphs import onboard_pipeline_graph
 
 logger = structlog.get_logger(__name__)
@@ -552,8 +557,24 @@ async def write_config_node(state: dict[str, Any], config: RunnableConfig) -> di
     qa_configs_repo = configurable.get("qa_configs_repo")
     if qa_configs_repo is None:
         return _failed("qa_configs_repo unavailable — cannot persist the config")
+    text = ob["qa_yaml_text"]
+    # The draft comes from the repository, so onboarding never turns the shared build cache on, whoever started the
+    # job; a job a key with a repository allowlist started also replaces no setup that has it on (checked on the
+    # stored setup, its row held; embry0.services.shared_build_cache).
+    by_allowlisted_key = bool(ob.get("by_allowlisted_key"))
+    check = leaves_the_shared_cache(text) if by_allowlisted_key else keeps_the_shared_cache(text)
     try:
-        await qa_configs_repo.upsert(repo, ob["qa_yaml_text"], updated_by="onboard-pipeline")
+        await qa_configs_repo.upsert(repo, text, updated_by="onboard-pipeline", check=check)
+    except SharedBuildCacheRefused as exc:
+        why = (
+            "a key with a repository allowlist started this job"
+            if by_allowlisted_key
+            else "onboarding never turns it on from a repository's content"
+        )
+        return _failed(
+            f"the draft was not stored: {exc} (cache.turbo_remote), which the deployment turns on, and {why}; "
+            "an admin stores the setup with PUT /repos/{repo}/-/qa-config"
+        )
     except Exception as exc:  # noqa: BLE001
         return _failed(f"config store write failed: {exc}")
 

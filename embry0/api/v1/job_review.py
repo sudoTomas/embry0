@@ -39,7 +39,7 @@ from embry0.api.carried_config import carried_config
 from embry0.api.deps import ensure_admin, request_actor
 from embry0.api.issue_allowlist import hidden_issue_ids
 from embry0.api.job_allowlist import hide_job_unless_covered
-from embry0.api.repo_allowlist import enforce_reach
+from embry0.api.repo_allowlist import enforce_reach, restricted_key_name
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
@@ -280,6 +280,9 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
     pipeline_config = apply_run_with(carried, run_with)
     if run_with is not None and run_with.model and launch.get("runner") in ("qa", "onboard"):
         launch = {**launch, "agent_models": models_with(launch.get("agent_models"), run_with)}
+    if launch.get("runner") == "onboard":
+        # Whoever starts it again: a key with an allowlist runs it under that rule, whoever started the first.
+        launch = {**launch, "by_allowlisted_key": restricted_key_name(request) is not None}
     actor = request_actor(request)
     issue_id, issue_number = job.get("issue_id"), job.get("issue_number")
     if await hidden_issue_ids(request, [issue_id, launch.get("issue_id")]):
