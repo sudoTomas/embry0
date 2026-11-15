@@ -143,4 +143,5 @@ markers = [
     "changes_schema: tests the migrations or changes the schema; its database is migrated from empty, and the next test's too. Every test of a test_migration* module has it.",
     "requires_minio: needs a reachable MinIO instance (set MINIO_ENDPOINT)",
     "requires_dind: needs a reachable DinD instance (set DIND_ENDPOINT)",
+    "memory_capped(margin=...): runs with the process's address space capped, so a matcher that grows without bound fails at once with MemoryError (tests/fixtures/memory_cap.py)",
 ]

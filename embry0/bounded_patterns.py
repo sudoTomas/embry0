@@ -30,7 +30,7 @@ stays small too. A part that matches every rest of a text (a trailing
 then matched by the regex only on a text without a newline, where that holds.
 
 **RE2, for most of the rest.** A pattern that can backtrack goes to RE2
-(``google-re2``) when its DFA is small: :meth:`Pattern._small_dfa` builds
+(``google-re2``) when its DFA is small: :meth:`Pattern._dfa_size` builds
 every set of states the pattern can be in, one character of each kind at a
 time, and RE2 takes the pattern when there are at most :data:`_DFA_STATES`
 of them. RE2 then reads a text in one pass of a DFA it holds, in C, in at
@@ -43,6 +43,9 @@ as ``*a`` and sixty ``?`` before a ``*``, stays with the automaton: RE2 would
 run out of memory on it and read on with its NFA, at 0.1 to 0.5 ms a
 260-character text, beyond any budget a caller keeps; the automaton counts
 its work (:meth:`Pattern.fullmatch_counted`), which a caller can budget.
+RE2's reading of a pattern whose DFA has more than :data:`_RE2_FREE_SETS`
+sets counts work too, for each byte it reads, so a caller's budget covers a
+pattern that crowds RE2's memory as it covers the automaton.
 
 **Memory.** The automaton remembers the sets of states it walked, and where
 each character moves each set, so a path like ones it has seen is a lookup
@@ -207,11 +210,18 @@ _MAX_ANALYSED: Final = 40
 #: The most product states the ambiguity check visits before it gives up and keeps the automaton.
 _MAX_VISITS: Final = 200_000
 
-#: The most sets of states a pattern's DFA may have, and the most work (states moved, :meth:`Pattern._small_dfa`)
+#: The most sets of states a pattern's DFA may have, and the most work (states moved, :meth:`Pattern._dfa_size`)
 #: finding them may take, for RE2 to match it: its DFA then fits RE2's memory, and RE2 reads each text in one pass
 #: of it. A common pattern's has tens; one built to make a DFA grow has more than any bound.
 _DFA_STATES: Final = 1_000
 _DFA_WORK: Final = 100_000
+#: A DFA of at most this many sets RE2 holds whole and reads a byte from at about the cost of a lookup, so its
+#: reading counts no work (:meth:`Pattern.fullmatch_counted`). Past it RE2 builds more of its DFA as it reads,
+#: forgets some to stay in its memory and builds them again, and at worst reads on with its NFA: each byte it
+#: reads counts one unit for each :data:`_RE2_SETS_PER_UNIT` sets past it. A common pattern's DFA has tens of sets;
+#: a pattern built to make one grow, hundreds.
+_RE2_FREE_SETS: Final = 256
+_RE2_SETS_PER_UNIT: Final = 256
 #: What one RE2 program may hold (its DFA is built as it reads, so a small one holds little), and its largest size.
 _RE2_MAX_MEM: Final = 2 << 20
 _RE2_MAX_PROGRAM: Final = 10_000
@@ -309,7 +319,7 @@ class Pattern:
 
     A pattern that cannot backtrack much (:meth:`_backtracks`) is matched by
     Python's regex, which is fastest; any other by RE2 when its DFA is small
-    (:meth:`_small_dfa`) and RE2 takes it, and else by the automaton, as a DFA
+    (:meth:`_dfa_size`) and RE2 takes it, and else by the automaton, as a DFA
     built as it is walked. ``prefer_regex=False`` leaves Python's regex out,
     ``use_re2=False`` RE2.
     """
@@ -320,6 +330,7 @@ class Pattern:
         "_chars",
         "_codes",
         "_cost",
+        "_dfa_sets",
         "_epsilon",
         "_ids",
         "_lock",
@@ -357,7 +368,8 @@ class Pattern:
         self._universal_tail = False
         backtracks = self._backtracks(tree)
         self._regex = re.compile(_regex(tree)) if prefer_regex and not backtracks else None
-        self._re2 = _re2_program(_re2_source(tree)) if self._regex is None and use_re2 and self._small_dfa() else None
+        self._dfa_sets = self._dfa_size() if self._regex is None and use_re2 else 0
+        self._re2 = _re2_program(_re2_source(tree)) if self._dfa_sets else None
 
     def __del__(self) -> None:
         # A pattern let go gives its share of the budget back (at shutdown the module may be gone already).
@@ -373,7 +385,19 @@ class Pattern:
         What a copy remembers then depends only on the texts the run gives it, in their order, so the work it
         counts (:meth:`fullmatch_counted`) does too."""
         copy = object.__new__(Pattern)
-        for name in ("_accept", "_chars", "_codes", "_epsilon", "_re2", "_regex", "_start_states", "_tests", "_to"):
+        names = (
+            "_accept",
+            "_chars",
+            "_codes",
+            "_dfa_sets",
+            "_epsilon",
+            "_re2",
+            "_regex",
+            "_start_states",
+            "_tests",
+            "_to",
+        )
+        for name in names:
             setattr(copy, name, getattr(self, name))  # built once, never changed: shared
         copy._universal_tail = self._universal_tail
         copy._start_remembering(memory)
@@ -512,12 +536,12 @@ class Pattern:
                     changed = True
         return frozenset(found)
 
-    def _small_dfa(self) -> bool:
-        """Whether the pattern's DFA has at most :data:`_DFA_STATES` sets of states, all found within
-        :data:`_DFA_WORK` states moved: every set reachable from the start on one character of each kind (a literal
-        of the pattern, a slash, a newline, any other), as RE2's DFA would build them."""
+    def _dfa_size(self) -> int:
+        """How many sets of states the pattern's DFA has, when at most :data:`_DFA_STATES`, all found within
+        :data:`_DFA_WORK` states moved; else 0. The sets are every one reachable from the start on one character of
+        each kind (a literal of the pattern, a slash, a newline, any other), as RE2's DFA would build them."""
         if _re2_binding is None:
-            return False
+            return 0
         kinds = sorted(self._codes)
         kinds.append(next(c for c in map(chr, range(1, 0x110000)) if c not in self._codes))
         seen = {self._start_states}
@@ -528,16 +552,16 @@ class Pattern:
             for ch in kinds:
                 work += len(states)
                 if work > _DFA_WORK:
-                    return False
+                    return 0
                 following = self._closure(
                     {self._to[s] for s in states if (test := self._tests[s]) is not None and test(ch)}
                 )
                 if following and following not in seen:
                     if len(seen) >= _DFA_STATES:
-                        return False
+                        return 0
                     seen.add(following)
                     waiting.append(following)
-        return True
+        return len(seen)
 
     def _tails(self, chars: list[int], alphabet: list[str]) -> frozenset[int]:
         """The character states of a tail every text without a newline matches, whichever way it is read (as
@@ -704,38 +728,51 @@ class Pattern:
         return self._re2
 
     @property
+    def dfa_sets(self) -> int:
+        """How many sets of states its DFA has, for a pattern RE2 may take (:meth:`_dfa_size`); else 0."""
+        return self._dfa_sets
+
+    @property
+    def re2_counts_work(self) -> bool:
+        """Whether RE2's reading of this pattern counts work: its DFA has more than :data:`_RE2_FREE_SETS` sets."""
+        return self._re2 is not None and self._dfa_sets > _RE2_FREE_SETS
+
+    @property
     def engine(self) -> str:
         """What matches this pattern: ``"re"`` (Python's regex), ``"re2"`` or ``"automaton"``."""
         return "re" if self._regex is not None else "re2" if self._re2 is not None else "automaton"
 
-    def _re2_fullmatch(self, text: str) -> bool | None:
-        """RE2's answer, or None for a text it cannot read (a lone surrogate, which UTF-8 cannot hold)."""
+    def _re2_fullmatch(self, text: str) -> tuple[bool, int] | None:
+        """RE2's answer and the work it counts (:data:`_RE2_FREE_SETS`), or None for a text it cannot read (a lone
+        surrogate, which UTF-8 cannot hold)."""
         program = self._re2
         try:
             encoded = text.encode()
         except UnicodeEncodeError:
             return None
-        return program is not None and bool(program.Match(_RE2_BOTH, encoded, 0, len(encoded))[0] != _RE2_NO_MATCH)
+        found = program is not None and bool(program.Match(_RE2_BOTH, encoded, 0, len(encoded))[0] != _RE2_NO_MATCH)
+        return found, len(encoded) * max(0, self._dfa_sets - _RE2_FREE_SETS) // _RE2_SETS_PER_UNIT
 
     def fullmatch(self, text: str) -> bool:
         """Whether all of ``text`` matches."""
         if self._regex is not None and not (self._universal_tail and "\n" in text):
             return self._regex.fullmatch(text) is not None
-        if self._re2 is not None and (found := self._re2_fullmatch(text)) is not None:
-            return found
+        if self._re2 is not None and (answer := self._re2_fullmatch(text)) is not None:
+            return answer[0]
         return self.fullmatch_counted(text)[0]
 
     def fullmatch_counted(self, text: str) -> tuple[bool, int]:
         """Whether all of ``text`` matches, and the work it took the automaton: for each character it read by
         working out where its states move (a step it had not remembered, or a walk without remembering), the
         number of states. A remembered step is a lookup and counts none, nor does Python's regex, which takes
-        only a pattern that cannot backtrack and so reads a text in linear time, nor RE2, which takes only a
-        pattern whose DFA it holds and so reads a text in one pass. A pattern's own copy (:meth:`run_copy`)
+        only a pattern that cannot backtrack and so reads a text in linear time, nor RE2 on a pattern whose DFA
+        it holds whole. On a larger one (more than :data:`_RE2_FREE_SETS` sets) RE2 counts, for each byte it reads,
+        one unit for each :data:`_RE2_SETS_PER_UNIT` sets past that. A pattern's own copy (:meth:`run_copy`)
         counts the same for the same texts in the same order, on every run."""
         if self._regex is not None and not (self._universal_tail and "\n" in text):
             return self._regex.fullmatch(text) is not None, 0
-        if self._re2 is not None and (found := self._re2_fullmatch(text)) is not None:
-            return found, 0
+        if self._re2 is not None and (answer := self._re2_fullmatch(text)) is not None:
+            return answer
         if not self._remember:
             return self._walk(self._start_states, text)
         codes = self._codes

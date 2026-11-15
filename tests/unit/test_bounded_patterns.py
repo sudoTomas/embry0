@@ -12,6 +12,12 @@ import pytest
 
 from embry0.bounded_patterns import ANY, NOT_SLASH, Memory, Node, Pattern, either, lit, opt, plus, seq, star
 
+#: Every test here runs with the process's memory capped (tests/fixtures/memory_cap.py): a matcher that grows
+#: without bound, as one whose size check stopped checking, fails at once with MemoryError instead of taking the
+#: host's memory first.
+pytestmark = pytest.mark.memory_capped
+
+
 # ---- the engine against Python's regex ---------------------------------------------------------------------
 
 
@@ -338,3 +344,97 @@ def test_the_automaton_s_work_is_bounded_by_its_pattern_not_by_the_characters_of
     for _ in range(3000):
         work += copy.fullmatch_counted("/".join("".join(rng.choice(alphabet) for _ in range(6)) for _ in range(5)))[1]
     assert work < 2_000, f"the pattern worked out {work} state steps"
+
+
+def test_re2_s_reading_of_a_dfa_that_crowds_its_memory_counts_work() -> None:
+    """RE2 reads a byte of a small DFA at about the cost of a lookup and counts none; past 256 sets it builds and
+    forgets states as it reads, and each byte counts a unit for each 256 sets past 256, so a budget covers it."""
+    from embry0 import bounded_patterns
+
+    built = "*a??b*????a?*??*b?*b??aa?*a*q"  # as an ignore line: 521 sets
+    crowding = Pattern(
+        opt(star(ANY), lit("/")),
+        *[star(NOT_SLASH) if c == "*" else NOT_SLASH if c == "?" else lit(c) for c in built],
+        opt(lit("/"), star(ANY)),
+    )
+    small = Pattern(star(NOT_SLASH), lit("a"), star(NOT_SLASH), lit("b"))
+    assert (crowding.engine, small.engine) == ("re2", "re2")
+    assert crowding.dfa_sets > bounded_patterns._RE2_FREE_SETS >= small.dfa_sets
+    assert crowding.re2_counts_work and not small.re2_counts_work
+    text = "ab" * 100 + "é"  # 202 bytes in UTF-8
+    excess = crowding.dfa_sets - bounded_patterns._RE2_FREE_SETS
+    copy = crowding.run_copy(Memory(10_000))
+    assert copy.fullmatch_counted(text) == (False, 202 * excess // bounded_patterns._RE2_SETS_PER_UNIT)
+    assert small.run_copy(Memory(10_000)).fullmatch_counted(text) == (False, 0)
+
+
+def test_a_test_here_is_held_to_its_memory_cap() -> None:
+    """The cap is on (the module's marker): an allocation past its margin fails at once."""
+    import resource
+
+    from tests.fixtures.memory_cap import DEFAULT_MARGIN, mapped_bytes
+
+    if mapped_bytes() is None:
+        pytest.skip("no /proc here: the marker caps nothing")
+
+    assert resource.getrlimit(resource.RLIMIT_AS)[0] != resource.RLIM_INFINITY, "no cap is set"
+    with pytest.raises(MemoryError):
+        bytearray(DEFAULT_MARGIN + (256 << 20))
+
+
+def test_the_memory_cap_holds_for_its_block_and_is_lifted_after() -> None:
+    import resource
+
+    from tests.fixtures.memory_cap import capped_memory, mapped_bytes
+
+    if mapped_bytes() is None:
+        pytest.skip("no /proc here: the marker caps nothing")
+    before = resource.getrlimit(resource.RLIMIT_AS)
+    with capped_memory(16 << 20) as cap:
+        assert cap is not None and resource.getrlimit(resource.RLIMIT_AS)[0] == cap
+        with pytest.raises(MemoryError):
+            bytearray(64 << 20)
+    assert resource.getrlimit(resource.RLIMIT_AS) == before, "the cap outlived its block"
+    assert len(bytearray(64 << 20)) == 64 << 20
+
+
+def test_a_module_s_cap_is_measured_from_one_base() -> None:
+    """The base is read once for a module, so what one test leaves mapped never raises the next test's cap."""
+    from tests.fixtures.memory_cap import mapped_bytes, module_base
+
+    if mapped_bytes() is None:
+        pytest.skip("no /proc here: the marker caps nothing")
+    first = module_base("tests.example_module")
+    kept = bytearray(64 << 20)
+    assert first is not None and module_base("tests.example_module") == first, "the base moved with the process"
+    del kept
+
+
+def test_a_test_begun_after_others_grew_the_process_still_gets_its_margin() -> None:
+    """The eighth review's case: under xdist another module's test can leave the process 400 MiB larger between
+    two capped tests. The cap starts from what the process maps when the test starts, so the test still has its
+    margin, and no allocation it was given room for fails."""
+    from tests.fixtures.memory_cap import capped_memory, mapped_bytes
+
+    now = mapped_bytes()
+    if now is None:
+        pytest.skip("no /proc here: the marker caps nothing")
+    with capped_memory(64 << 20, base=now - (400 << 20)) as cap:  # the module's base, from before the growth
+        assert cap is not None and cap >= now + (64 << 20), f"the cap is {cap >> 20} MiB, the process maps {now >> 20}"
+        assert len(bytearray(32 << 20)) == 32 << 20
+
+
+def test_where_nothing_can_be_capped_the_marker_does_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without resource (not a Unix) or /proc (not Linux) the cap is a no-op, never an error."""
+    import resource
+
+    from tests.fixtures import memory_cap
+
+    before = resource.getrlimit(resource.RLIMIT_AS)
+    for name, value in (("resource", None), ("mapped_bytes", lambda: None)):
+        with monkeypatch.context() as patched:
+            patched.setattr(memory_cap, name, value)
+            with memory_cap.capped_memory() as cap:
+                assert cap is None and resource.getrlimit(resource.RLIMIT_AS) == before, name
+            if name == "mapped_bytes":
+                assert memory_cap.module_base("tests.nowhere") is None

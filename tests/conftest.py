@@ -165,6 +165,22 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    """A test marked ``memory_capped`` runs with the process's address space capped (tests/fixtures/memory_cap.py:
+    what it maps when the test starts, or its module's base if more, plus a margin; Linux only), for its call only:
+    the cap is lifted before pytest writes the report, which needs memory of its own."""
+    marker = item.get_closest_marker("memory_capped")
+    if marker is None:
+        return (yield)
+    from tests.fixtures.memory_cap import DEFAULT_MARGIN, capped_memory, module_base
+
+    module = getattr(item, "module", None)
+    base = module_base(module.__name__ if module is not None else item.nodeid)
+    with capped_memory(marker.kwargs.get("margin", DEFAULT_MARGIN), base=base):
+        return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item: pytest.Item) -> Generator[None, None, None]:
     """Once a test's fixtures are torn down: after a test marked ``changes_schema`` the next test's
     database is migrated from empty, and any other database test that changed the schema fails."""
