@@ -740,3 +740,101 @@ def test_a_pull_request_and_a_merge_request_read_alike() -> None:
         assert "only a person" not in labels_missing_note(["embry0"], "403 Forbidden", noun=noun)
         on = labels_on_note(["embry0", "human-merge-only"], noun=noun)
         assert on == f"{LABELS_NOTE_MARKER}\n\nThe labels `embry0`, `human-merge-only` are on this {noun} now.", on
+
+
+# ---- a pull request opened between the lookup and the create (#525) ----
+
+_EXISTS = {
+    "message": "Validation Failed",
+    "errors": [{"resource": "PullRequest", "code": "custom", "message": "A pull request already exists for o:b."}],
+}
+
+
+def _race_handler(*, create: tuple[int, dict], again: list[dict] | None = None, again_status: int = 200):
+    """A GitHub with no open PR for the branch at the lookup, whose create answers ``create``, and whose
+    next lookup finds ``again`` (as GitHub would, base filter or not: the stand-in ignores it)."""
+    seen: dict = {"lookups": [], "labels": [], "creates": 0}
+
+    def handler(request):
+        path = request.url.path
+        if request.method == "GET" and path == "/repos/o/r/pulls":
+            seen["lookups"].append(dict(request.url.params))
+            if len(seen["lookups"]) == 1:
+                return httpx.Response(200, json=[])
+            return httpx.Response(again_status, json=(again or []) if again_status == 200 else {"message": "boom"})
+        if request.method == "POST" and path == "/repos/o/r/pulls":
+            seen["creates"] += 1
+            return httpx.Response(create[0], json=create[1])
+        if request.method == "POST" and path.startswith("/repos/o/r/issues/") and path.endswith("/labels"):
+            seen["labels"].append((path, _json.loads(request.content)["labels"]))
+            return httpx.Response(200, json=[{"name": n} for n in _json.loads(request.content)["labels"]])
+        if request.method == "GET" and path.endswith("/comments"):
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    return handler, seen
+
+
+async def _open_raced(handler) -> tuple[str | None, dict]:
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        labels=["embry0", "human-merge-only"],
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+        diagnostics=diagnostics,
+    )
+    return url, diagnostics
+
+
+_RACED = {"html_url": "https://github.com/o/r/pull/7", "number": 7, "base": {"ref": "main"}}
+
+
+@pytest.mark.asyncio
+async def test_a_pr_opened_between_the_lookup_and_the_create_is_the_jobs(no_backoff):
+    """GitHub's 422 "already exists" means the PR is open now: find it, label it, and return it."""
+    handler, seen = _race_handler(create=(422, _EXISTS), again=[_RACED])
+    url, diagnostics = await _open_raced(handler)
+    assert url == "https://github.com/o/r/pull/7", f"the job loses the PR its branch has: {diagnostics}"
+    assert "change_request_error" not in diagnostics and "labels_missing" not in diagnostics, diagnostics
+    assert seen["labels"] == [("/repos/o/r/issues/7/labels", ["embry0", "human-merge-only"])], seen["labels"]
+    assert seen["creates"] == 1, f"the create was sent {seen['creates']} times"
+    assert seen["lookups"][1] == {"state": "open", "head": "o:b", "base": "main"}, (
+        f"the second lookup does not ask for the PR into the job's base: {seen['lookups']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_pr_into_another_base_is_not_taken_for_the_raced_one(no_backoff):
+    into_release = dict(_RACED, base={"ref": "release"})
+    handler, _seen = _race_handler(create=(422, _EXISTS), again=[into_release])
+    url, diagnostics = await _open_raced(handler)
+    assert url is None, "a PR into another base is not the job's"
+    assert "already exists" in diagnostics.get("change_request_error", ""), diagnostics
+
+
+@pytest.mark.asyncio
+async def test_another_422_is_a_refusal_as_before(no_backoff):
+    """No commits between the branches is not a race: nothing is looked up again, and the job says why."""
+    no_commits = {
+        "message": "Validation Failed",
+        "errors": [{"resource": "PullRequest", "code": "custom", "message": "No commits between main and b"}],
+    }
+    handler, seen = _race_handler(create=(422, no_commits), again=[_RACED])
+    url, diagnostics = await _open_raced(handler)
+    assert url is None and len(seen["lookups"]) == 1, (url, seen["lookups"])
+    assert "No commits between main and b" in diagnostics.get("change_request_error", ""), diagnostics
+
+
+@pytest.mark.asyncio
+async def test_a_raced_pr_github_will_not_list_is_said_as_the_422(no_backoff):
+    handler, seen = _race_handler(create=(422, _EXISTS), again_status=502)
+    url, diagnostics = await _open_raced(handler)
+    assert url is None and len(seen["lookups"]) >= 2, (url, seen["lookups"])
+    assert "422 Validation Failed (A pull request already exists" in diagnostics.get("change_request_error", ""), (
+        diagnostics
+    )

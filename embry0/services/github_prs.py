@@ -197,8 +197,11 @@ async def ensure_pr_for_branch(
     Checks for an existing open PR with the same head first — a developer
     that opened the PR but failed to report ``pr_url`` must not produce a
     duplicate (GitHub would 422 the create anyway; the lookup recovers the
-    URL instead). NEVER raises: any failure logs and returns None, and the
-    job completes exactly as before, just without a PR.
+    URL instead). A PR opened between that lookup and the create gets that
+    422, "A pull request already exists": the branch's open PR into the base
+    is looked up again and is the job's, labelled like any other, as GitLab's
+    opener does after a 409 (#525). NEVER raises: any failure logs and
+    returns None, and the job completes exactly as before, just without a PR.
 
     ``labels`` are applied to the PR best-effort (#163) — labeling used to be
     delegated to the sandbox agent via a prompt addendum, which contradicted
@@ -276,6 +279,17 @@ async def ensure_pr_for_branch(
             repo=repo,
             json={"title": title, "head": branch, "base": base, "body": body},
         )
+        if create.status_code == 422 and _says_already_exists(create):
+            # Opened between the lookup and the create (the developer, a person, another outcome of the job):
+            # GitHub keys that 422 on head and base, so the one it means is the branch's open PR into ``base``.
+            again = await _open_pr_into(client, repo=repo, owner=owner, branch=branch, base=base)
+            recovered = str((again or {}).get("html_url") or "") or None
+            if again is not None and recovered:
+                logger.info("pr_fallback_recovered_after_conflict", repo=repo, branch=branch, base=base, url=recovered)
+                await _labels_or_say_so(
+                    client, repo=repo, pr_number=again.get("number"), labels=labels, diagnostics=diagnostics
+                )
+                return recovered
         create.raise_for_status()
         created = create.json() or {}
         created_url = str(created.get("html_url") or "") or None
@@ -290,6 +304,52 @@ async def ensure_pr_for_branch(
         logger.warning("pr_fallback_failed", repo=repo, branch=branch, error=str(exc))
         _why(f"GitHub refused it: {forge_said(exc)}")
         return None
+
+
+def _says_already_exists(resp: httpx.Response) -> bool:
+    """Whether GitHub's 422 to a create says a pull request for that head and base is already open (#525).
+
+    Only that 422: another (no commits between the branches, a head that does
+    not exist) is a refusal, and the opener says so as before.
+    """
+    try:
+        payload = resp.json()
+    except Exception:  # noqa: BLE001 - a body that is not JSON says nothing of which 422 it is
+        return False
+    if not isinstance(payload, dict):
+        return False
+    said = [str(payload.get("message") or "")]
+    said += [str(e.get("message") or "") for e in payload.get("errors") or [] if isinstance(e, dict)]
+    return any("pull request already exists" in text.lower() for text in said)
+
+
+async def _open_pr_into(
+    client: GitHubClient, *, repo: str, owner: str, branch: str, base: str
+) -> dict[str, Any] | None:
+    """The open pull request from ``branch`` into ``base``, or None, also when GitHub will not say (#525).
+
+    ``base`` is a filter of GitHub's own: the branch may have an open pull
+    request into another base, and that one is not the job's.
+    """
+    try:
+        resp = await client.get(
+            f"/repos/{repo}/pulls",
+            repo=repo,
+            params={"state": "open", "head": f"{owner}:{branch}", "base": base},
+        )
+        resp.raise_for_status()
+        found = resp.json()
+    except Exception as exc:
+        logger.warning("pr_fallback_relookup_failed", repo=repo, branch=branch, base=base, error=str(exc))
+        return None
+    if not isinstance(found, list):
+        return None
+    for pr in found:
+        into = pr.get("base") if isinstance(pr, dict) else None
+        # Belt and braces: a pull request that names another base is not the job's, filter or none.
+        if isinstance(pr, dict) and (not isinstance(into, dict) or into.get("ref") in (None, base)):
+            return pr
+    return None
 
 
 async def _apply_pr_labels(
