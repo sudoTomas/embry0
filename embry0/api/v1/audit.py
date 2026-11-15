@@ -125,13 +125,18 @@ PERSON_DETAIL_KEYS: frozenset[str] = frozenset(
         "actor",
         "accepted_by",
         "answered_by",
+        "author",
         "by",
         "closed_by",
         "created_by",
         "decided_by",
+        "email",
+        "login",
+        "owner_login",
         "requested_by",
         "to",
         "updated_by",
+        "user",
     }
 )
 #: Detail keys naming the deployment's own configuration, never one repository's: the integrations' destinations
