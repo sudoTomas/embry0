@@ -32,7 +32,7 @@ from embry0.workflows.issue_to_pr.plan_route import DELIVERABLES_BUCKET, _collec
 
 pytestmark = pytest.mark.requires_docker
 
-_IMAGE = "python:3.12.15-slim-bookworm"
+_IMAGE = "python:3.12.16-slim-bookworm"
 _DELIVERABLES = "/workspace/deliverables"
 
 
