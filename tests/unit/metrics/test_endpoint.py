@@ -137,6 +137,9 @@ async def test_build_snapshot_reads_the_cap_the_watcher_is_bound_by() -> None:
         },
         reconciler_actor="linear-reconciler",
     )
+    # deadline=False: what the sources read, not whether a loaded host ran them within the scrape's 2 s; the
+    # deadline is test_snapshot.py's (#421). The scrape then renders this refresh, still within the ttl.
+    await app.state.loop_snapshot.refresh(deadline=False)
     _, body = await _scrape(app)
     assert 'embry0_watcher_open_proposals{stack="acme/backend"} 7.0' in body
     assert 'embry0_watcher_open_proposals{stack="acme/widgets"} 7.0' in body
