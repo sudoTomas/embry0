@@ -241,30 +241,22 @@ async def _labels_or_say_so(
     if not labels:
         return
     missing, said = await _apply_mr_labels(client, repo=repo, iid=iid, labels=labels)
-    from embry0.services.github_prs import LABELS_NOTE_MARKER
-    from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
+    from embry0.services.github_prs import LABELS_NOTE_MARKER, labels_missing_note, labels_on_note
 
     numbered = isinstance(iid, int) and not isinstance(iid, bool)
     if not missing:
         if missing is not None and numbered and not opened:
-            named = ", ".join(f"`{label}`" for label in labels)
-            done = f"{LABELS_NOTE_MARKER}\n\nThe labels {named} are on this merge request now."
+            done = labels_on_note(labels, noun="merge request")
             try:
                 await client.edit_sticky_mr_note(repo, iid, done, marker=LABELS_NOTE_MARKER)
             except Exception as exc:  # noqa: BLE001 - the labels are on; only the old note stays as it was
                 logger.warning("mr_label_note_edit_failed", repo=repo, iid=iid, error=str(exc))
         return
-    named = ", ".join(f"`{label}`" for label in missing)
-    body = f"embry0 could not add the labels {named} to this merge request ({said})."
-    if HUMAN_MERGE_LABEL in missing:
-        body += (
-            f" It should carry `{HUMAN_MERGE_LABEL}`: only a person should merge it, after reviewing it. "
-            "Please add the label by hand."
-        )
+    body = labels_missing_note(missing, said, noun="merge request")
     noted = False
     if numbered:
         try:
-            await client.upsert_sticky_mr_note(repo, iid, f"{LABELS_NOTE_MARKER}\n\n{body}", marker=LABELS_NOTE_MARKER)
+            await client.upsert_sticky_mr_note(repo, iid, body, marker=LABELS_NOTE_MARKER)
             noted = True
         except Exception as exc:  # noqa: BLE001 - the job still says so
             logger.warning("mr_label_note_failed", repo=repo, iid=iid, error=str(exc))
