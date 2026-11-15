@@ -248,3 +248,23 @@ async def test_trigger_matching_is_case_insensitive():
     repo, ex = FakeIssuesRepo(), FakeExecutor()
     result = await _handle(gitlab_issue(action="open", iid=4, labels=["Embry0"]), repo, ex)
     assert result["dispatched"] is True
+
+
+async def test_closing_an_issue_ends_its_jobs_answer_waits():
+    """#518: as on GitHub, a closed issue's jobs waiting for answers are cancelled."""
+
+    class Ending(FakeExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.ended: list[str] = []
+
+        async def end_answer_waits(self, issue_id: str) -> list[str]:
+            self.ended.append(issue_id)
+            return []
+
+    repo, ex = FakeIssuesRepo(), Ending()
+    issue_id = repo.seed(repo=PROJECT, tracker_key="11", labels=["embry0"], status="awaiting_input")
+    result = await _handle(gitlab_issue(action="close", iid=11, labels=["embry0"]), repo, ex)
+    assert repo.rows[issue_id]["status"] == "closed"
+    assert ex.ended == [issue_id], f"closing the issue did not end its jobs' answer waits: {ex.ended}"
+    assert result == {"status": "accepted", "action": "issue_closed"}, result

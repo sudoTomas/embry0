@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,9 @@ from embry0.workflows.qa.graph import QAWorkflow
 from embry0.workflows.registry import WorkflowRegistry
 
 logger = structlog.get_logger(__name__)
+
+#: Issue statuses no job goes on from: a person closed or cancelled the issue (#518).
+ENDED_ISSUE_STATUSES = frozenset({"closed", "cancelled"})
 
 __all__ = ["IssueExecutor", "_fold_auto_answers_into_context"]
 
@@ -661,6 +665,10 @@ class IssueExecutor:
         took_issue = False
         if issue_id and not issue_taken:
             issue = await self._issues.get(issue_id)
+            if (issue or {}).get("status") in ENDED_ISSUE_STATUSES:
+                # #518: nothing may go on with a job whose issue was closed while it waited; its wait ends.
+                await self._end_answer_wait(job_id, str((issue or {}).get("status")))
+                return False
             if (issue or {}).get("status") == "awaiting_input":
                 if not await self._issues.claim_answered(issue_id):
                     logger.info("resume_answered_taken", job_id=job_id, issue_id=issue_id, kind=kind)
@@ -682,6 +690,55 @@ class IssueExecutor:
                 await self._issues.update(issue_id, status="awaiting_input")
             raise
         return True
+
+    async def _end_answer_wait(self, job_id: str, issue_status: str) -> bool:
+        """Cancel a job waiting for answers whose issue is closed or cancelled (#518); False when it no longer waits.
+
+        The job is taken first (``claim_answer_wait``, one winner), so a job an
+        answer is already resuming is left alone, and two callers cancel it
+        once.
+        """
+        if not await self._jobs.claim_answer_wait(job_id):
+            return False
+        logger.info("answer_wait_ended_for_its_issue", job_id=job_id, issue_status=issue_status)
+        try:
+            await self.cancel_job(
+                job_id,
+                reason=f"Its issue was {issue_status} while it waited for answers, so embry0 did not resume it.",
+            )
+        except Exception:
+            # Never leave it taken with nothing running: it waits again, for the next answer or boot to end it.
+            with contextlib.suppress(Exception):
+                await self._jobs.update(job_id, status="awaiting_input")
+            raise
+        return True
+
+    async def end_answer_waits(self, issue_id: str) -> list[str]:
+        """Cancel the jobs of a closed or cancelled issue that wait for answers (#518): nothing will resume them.
+
+        Called when a tracker closes the issue. Returns the jobs cancelled.
+        """
+        issue = await self._issues.get(issue_id)
+        status = str((issue or {}).get("status") or "")
+        if status not in ENDED_ISSUE_STATUSES:
+            return []
+        jobs_list, _ = await self._jobs.list_all(issue_id=issue_id, limit=10, offset=0)
+        ended = [
+            str(job["job_id"])
+            for job in jobs_list
+            if job["status"] == "awaiting_input" and await self._end_answer_wait(str(job["job_id"]), status)
+        ]
+        return ended
+
+    async def _issue_back_to_open(self, issue_id: str | None) -> None:
+        """Put a job's issue back to ``open`` once the job ended, unless the issue is closed or cancelled (#518)."""
+        if not issue_id:
+            return
+        issue = await self._issues.get(issue_id)
+        if (issue or {}).get("status") in ENDED_ISSUE_STATUSES:
+            logger.info("issue_left_as_ended", issue_id=issue_id, status=(issue or {}).get("status"))
+            return
+        await self._issues.update(issue_id, status="open")
 
     async def resume_answered_waits(self) -> list[str]:
         """At boot: resume each job still awaiting input whose blocking questions are all answered (#499).
@@ -1222,10 +1279,15 @@ class IssueExecutor:
         logger.info("executor_drained", interrupted=stamped)
         return stamped
 
-    async def cancel_job(self, job_id: str, *, actor: str = "system") -> None:
+    async def cancel_job(self, job_id: str, *, actor: str = "system", reason: str | None = None) -> None:
         """Centralised cancellation: cancels the active task, purges the
         sandbox, purges the LangGraph checkpoint, transitions DB status,
         resets the associated issue. Idempotent.
+
+        ``reason``, when given, is the job's ``error_message``: why embry0
+        cancelled it rather than a person. The issue is reset to ``open``
+        unless it is closed or cancelled (#518): a cancelled job never reopens
+        its issue.
         """
         from embry0.orchestration.checkpoint import purge_thread
 
@@ -1284,7 +1346,7 @@ class IssueExecutor:
                 logger.warning("cancel_status_recheck_failed", job_id=job_id, exc_info=True)
 
         try:
-            await self._jobs.update(job_id, status="cancelled")
+            await self._jobs.update(job_id, status="cancelled", **({"error_message": reason} if reason else {}))
             await self._finish_credential_uses(job_id, error_code="cancelled")
             await self._announce_finished(job_id)
         except StatusTransitionConflict:
@@ -1302,7 +1364,7 @@ class IssueExecutor:
             logger.warning("job_fetch_during_cancel_failed", job_id=job_id, exc_info=True)
         if job and job.get("issue_id"):
             try:
-                await self._issues.update(job["issue_id"], status="open")
+                await self._issue_back_to_open(job["issue_id"])
             except Exception:
                 logger.warning("issue_reset_on_cancel_failed", issue_id=job["issue_id"], exc_info=True)
 
@@ -1496,7 +1558,7 @@ class IssueExecutor:
         await self._announce_finished(job_id)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
-        await self._issues.update(issue_id, status="open")
+        await self._issue_back_to_open(issue_id)
         # A resumed job owns a sandbox too, and this path never destroyed
         # it — invisible until `hard` mode started raising mid-run.
         await self._cleanup_sandbox(last_state, job_id)

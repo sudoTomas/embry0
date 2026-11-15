@@ -20,6 +20,21 @@ from embry0.trackers.models import TrackerIssue
 logger = structlog.get_logger(__name__)
 
 
+async def end_answer_waits(executor: Any, issue_id: str) -> list[str]:
+    """When a tracker closes an issue, cancel its jobs that wait for answers (#518): nothing will resume them.
+
+    Never raises: the close is recorded either way, and a job left waiting is
+    cancelled when an answer or the startup pass reaches it.
+    """
+    if executor is None:
+        return []
+    try:
+        return list(await executor.end_answer_waits(issue_id))
+    except Exception:
+        logger.warning("answer_waits_end_failed", issue_id=issue_id, exc_info=True)
+        return []
+
+
 async def create_tracked_issue(issues_repo: Any, issue: TrackerIssue, *, created_by: str) -> str:
     """Create the embry0 row mirroring a tracker's issue and return its id.
 

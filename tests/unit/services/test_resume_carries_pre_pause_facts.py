@@ -126,6 +126,8 @@ def _executor(builder: StateGraph) -> IssueExecutor:
     ex._issues = MagicMock()
     ex._issues.update = AsyncMock()
     ex._issues.update_parent_status = AsyncMock()
+    # #518: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._db = None
     ex._audit_log_path = None
     ex._database_url = "postgresql://unused"

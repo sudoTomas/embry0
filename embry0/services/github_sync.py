@@ -14,6 +14,7 @@ from embry0.trackers import (
     TrackerIssueRef,
     TriggerContext,
     create_tracked_issue,
+    end_answer_waits,
     extract_labels,
     github_number_of,
     start_triage,
@@ -206,7 +207,9 @@ class GitHubSyncService:
             return {"status": "accepted", "action": "issue_updated"}
         if action == "closed":
             await issues_repo.update(issue_id, status="closed")
-            return {"status": "accepted", "action": "issue_closed"}
+            # #518: a job that waits for answers on a closed issue is never resumed; its wait ends here.
+            ended = await end_answer_waits(ctx.issue_executor, issue_id)
+            return {"status": "accepted", "action": "issue_closed", **({"cancelled_jobs": ended} if ended else {})}
         if action == "reopened":
             await issues_repo.update(issue_id, status="open")
             return {"status": "accepted", "action": "issue_reopened"}

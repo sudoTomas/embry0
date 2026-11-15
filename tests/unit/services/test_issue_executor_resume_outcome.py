@@ -23,6 +23,8 @@ def _executor():
     ex._jobs.get = AsyncMock(return_value={"status": "completed"})
     ex._issues = MagicMock()
     ex._issues.update = AsyncMock()
+    # #518: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._handle_workflow_result = AsyncMock()
     ex._handle_interrupt = AsyncMock()
     ex._cleanup_sandbox = AsyncMock()
