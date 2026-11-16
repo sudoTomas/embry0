@@ -1058,18 +1058,27 @@ async def test_orchestrator_skips_image_lookup_when_disabled(monkeypatch):
     fake_image_repo.get_active.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
-    """warm_shared_volume must NOT be called when cache.shared_volume.enabled=False."""
+#: The QA config above with the shared volume turned on and nothing else changed.
+_QA_YAML_SHARED_VOLUME_ON = _QA_YAML_CACHE_DISABLED.replace(
+    "  shared_volume:\n    enabled: false\n", "  shared_volume:\n    enabled: true\n    scope: per-job\n"
+)
 
-    warmer_called = []
 
-    async def fake_warm(*a, **kw):
-        warmer_called.append(True)
+async def _init_with_shared_volume(monkeypatch, tmp_path, qa_yaml: str) -> tuple[dict, list[dict], AsyncMock]:
+    """``init_orchestrator_node`` on ``qa_yaml``, stored as the repository's QA config, with a lockfile in the workspace
+    and a volume manager to hand out a volume: all a run needs to warm a shared volume but the setting. Answers the
+    node's output, the keyword arguments of each call to the warmer, and the volume manager."""
+    from types import SimpleNamespace
 
+    warmed: list[dict] = []
+
+    async def fake_warm(**kwargs):
+        warmed.append(kwargs)
+        return "warmed"
+
+    monkeypatch.setattr("embry0.cache.volume_warmer.warm_shared_volume", fake_warm)
     monkeypatch.setattr(
-        "embry0.cache.volume_warmer.warm_shared_volume",
-        fake_warm,
+        "embry0.workflows.qa.orchestrator._staging_dir_for", lambda job_id: tmp_path / f"embry0-workspace-{job_id}"
     )
 
     class _Sb:
@@ -1094,30 +1103,54 @@ async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch):
             joined = " ".join(cmd)
             if "rev-parse HEAD" in joined:
                 return "abc123\n"
-            if "/workspace/.embry0/qa.yaml" in joined:
-                return _QA_YAML_CACHE_DISABLED
+            if "package-lock.json" in joined:
+                return '{"lockfileVersion": 3}'
             return ""
 
-    state = {
-        "job_id": "run-e1-volume",
-        "repo": "org/repo",
-        "branch_name": "main",
-        "qa": {},
-    }
+    volume_mgr = AsyncMock()
+    volume_mgr.ensure.return_value = SimpleNamespace(
+        name="qa-vol-run-e1-volume", scope=SimpleNamespace(value="per-job"), scope_key="run-e1-volume"
+    )
     config = {
         "configurable": {
             "docker": _Docker(),
             "sandbox_manager": _Sb(),
             "profiles_repo": _Profiles(),
-            "qa_shared_volume_manager": AsyncMock(),
+            "qa_configs_repo": _FakeQAConfigs({"org/repo": qa_yaml}),
+            "qa_shared_volume_manager": volume_mgr,
             "qa_volume_state_repo": AsyncMock(),
         }
     }
+    state = {"job_id": "run-e1-volume", "repo": "org/repo", "branch_name": "main", "qa": {}}
+    return await init_orchestrator_node(state, config), warmed, volume_mgr
 
-    out = await init_orchestrator_node(state, config)
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch, tmp_path):
+    """warm_shared_volume must NOT be called when cache.shared_volume.enabled=False, on a run that reads that setting:
+    its stored QA config loaded and its lockfile read (#381)."""
+    out, warmed, volume_mgr = await _init_with_shared_volume(monkeypatch, tmp_path, _QA_YAML_CACHE_DISABLED)
+    parsed = out["qa"].get("qa_yaml_v2_parsed") or {}
+    assert parsed.get("cache", {}).get("shared_volume", {}).get("enabled") is False, (
+        f"init stopped before it read the shared volume's setting: {out['qa'].get('outcome')}"
+    )
+    assert warmed == [], "warm_shared_volume should not have been called"
+    assert (volume_mgr.ensure.await_count, volume_mgr.recreate.await_count) == (0, 0), (
+        "a shared volume was created or recreated with the setting off"
+    )
     # shared_volume_name must NOT be set when enabled=False
-    assert out["qa"].get("shared_volume_name") is None
-    assert warmer_called == [], "warm_shared_volume should not have been called"
+    assert out["qa"].get("shared_volume_name") is None, "the run took a shared volume with the setting off"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_warms_the_volume_when_enabled(monkeypatch, tmp_path):
+    """The same run with only the setting on warms the volume: the run above reaches the warmer but for the setting."""
+    out, warmed, volume_mgr = await _init_with_shared_volume(monkeypatch, tmp_path, _QA_YAML_SHARED_VOLUME_ON)
+    assert [call["volume_name"] for call in warmed] == ["qa-vol-run-e1-volume"], (
+        f"the run warmed no shared volume with it on: {out['qa'].get('outcome')}"
+    )
+    assert out["qa"]["shared_volume_name"] == "qa-vol-run-e1-volume"
+    assert volume_mgr.ensure.await_count == 1, "the run did not ask the volume manager for its volume"
 
 
 @pytest.mark.asyncio
