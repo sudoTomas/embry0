@@ -33,8 +33,9 @@ async def test_missing_row_returns_fallback():
 
 
 @pytest.mark.asyncio
-async def test_load_error_returns_fallback():
+async def test_a_load_error_raises_rather_than_running_on_the_fallback():
+    """#551: the agent would otherwise run on the code's model, tools and prompt, not the operator's."""
     with patch("embry0.storage.repositories.agent_definitions.AgentDefinitionsRepository") as repo_cls:
         repo_cls.return_value.get = AsyncMock(side_effect=RuntimeError("db down"))
-        out = await load_agent_definition({"configurable": {"db": object()}}, "developer", _FALLBACK)
-    assert out is _FALLBACK
+        with pytest.raises(RuntimeError, match="db down"):
+            await load_agent_definition({"configurable": {"db": object()}}, "developer", _FALLBACK)

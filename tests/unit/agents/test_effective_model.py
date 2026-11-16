@@ -48,7 +48,6 @@ _ROWS: dict[str, dict[str, Any] | Exception] = {
         "default_model": "claude-haiku-4-5",
         "disabled_models": [],
     },
-    "unreadable": RuntimeError("db down"),
 }
 # The layer under the row: Embry0Config's tiers (MODEL_HEAVY and the rest).
 _CONFIG = Embry0Config(_env_file=None, model_heavy="grok-4.7")
@@ -126,3 +125,15 @@ async def test_an_agent_with_no_model_reports_the_built_in_default(provider_row:
     assert reported["effective_model"] == await _run_model("research", definition)
     if reported["effective_model_source"] != "default_model":
         assert reported["effective_model_source"] in ("builtin_default", "disabled_fallback")
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_provider_row_cannot_be_read_takes_no_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#551: a run whose provider row cannot be read fails; it never runs on the tier defaults."""
+
+    async def get(self: ProviderConfigRepository) -> dict[str, Any]:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ProviderConfigRepository, "get", get)
+    with pytest.raises(RuntimeError, match="db down"):
+        await load_model_policy({"configurable": {"db": _DB, "embry0_config": _CONFIG}})

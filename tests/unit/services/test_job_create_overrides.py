@@ -173,19 +173,6 @@ async def test_run_workflow_repo_preferences_null_profile_leaves_default():
 
 
 @pytest.mark.asyncio
-async def test_run_workflow_repo_preferences_fetch_failure_is_fail_open():
-    """A prefs read failure degrades to the default profile, not a dead job."""
-    executor, captured = _executor_with_job_row({"trace_id": None, "pipeline_config": None})
-    prefs = MagicMock()
-    prefs.get = AsyncMock(side_effect=RuntimeError("db down"))
-    executor._repo_prefs = prefs
-
-    await executor._run_workflow(None, "job-7", _ISSUE)
-
-    assert "sandbox_profile" not in captured["initial_state"]
-
-
-@pytest.mark.asyncio
 async def test_run_workflow_seeds_dev_checks_from_repo_preferences():
     """RAV-1254: repo_preferences.dev_checks ride state into the developer prompt."""
     checks = [{"name": "python", "paths": ["ml"], "command": "cd ml && poetry run pytest -q"}]

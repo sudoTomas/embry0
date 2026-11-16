@@ -188,12 +188,15 @@ async def test_policy_without_a_store_is_the_section_defaults() -> None:
 
 
 @pytest.mark.asyncio
-async def test_policy_falls_back_to_the_defaults_when_the_store_cannot_be_read() -> None:
+async def test_a_store_that_cannot_be_read_fails_the_budget_not_defaults_it() -> None:
+    """#551: a job whose budget cannot be read does not run on the defaults."""
+
     class _Broken(_Store):
         async def snapshot(self) -> Snapshot:
             raise ConnectionResetError("pool is down")
 
-    assert await load_budget_policy(_config("hard", store=_Broken())) == (10.0, "soft")
+    with pytest.raises(ConnectionResetError, match="pool is down"):
+        await load_budget_policy(_config("hard", store=_Broken()))
 
 
 @pytest.mark.asyncio

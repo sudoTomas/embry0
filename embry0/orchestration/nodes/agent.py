@@ -38,7 +38,6 @@ from embry0.orchestration.budget import (
 from embry0.orchestration.state import AgentOutputEntry
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
-from embry0.storage.database import StoredValueTooDeep
 
 if TYPE_CHECKING:
     from embry0.settings.sections.budget import BudgetSettings
@@ -187,20 +186,18 @@ def _auth_error_updates(
 
 
 async def load_agent_definition_or_none(config: Any, agent_type: str) -> dict[str, Any] | None:
-    """The DB agent_definitions row for ``agent_type``; None without a db, without a row, or on a failed read."""
+    """The DB agent_definitions row for ``agent_type``; None without a db or without a row.
+
+    A failed read raises (#551): the agent would otherwise run on the code's
+    model, tools and prompt instead of the operator's, and nobody would know.
+    """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     db = configurable.get("db")
     if db is None:
         return None
-    try:
-        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+    from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
-        return await AgentDefinitionsRepository(db).get(agent_type)
-    except StoredValueTooDeep:
-        raise  # the code's definition would widen the operator's tools (#527)
-    except Exception:
-        logger.warning("agent_definition_load_failed", agent_type=agent_type, exc_info=True)
-        return None
+    return await AgentDefinitionsRepository(db).get(agent_type)
 
 
 async def load_agent_definition(config: Any, agent_type: str, fallback: dict[str, Any]) -> dict[str, Any]:
@@ -208,27 +205,26 @@ async def load_agent_definition(config: Any, agent_type: str, fallback: dict[str
 
     RAV-602: workflow nodes load their definition (model/tools/skills/
     system_prompt) from the DB so operators can edit them per deployment,
-    instead of hardcoding tool lists inline. Best-effort — tests and minimal
-    setups without a ``db`` in configurable keep the code defaults, and a
-    load failure must never block the agent run.
+    instead of hardcoding tool lists inline. Tests and minimal setups without
+    a ``db`` in configurable keep the code defaults; a failed read raises
+    (#551).
     """
     return await load_agent_definition_or_none(config, agent_type) or fallback
 
 
-async def _provider_config_row(config: Any, *, failure_event: str) -> dict[str, Any] | None:
-    """The provider_config row (or its env defaults); None without a DB or on a failed read."""
+async def _provider_config_row(config: Any) -> dict[str, Any] | None:
+    """The provider_config row (or its env defaults); None without a DB.
+
+    A failed read raises (#551): the run would otherwise go on with no model
+    policy (no deployment default, no disabled models, no fallbacks) and the
+    tier defaults, a config nobody chose.
+    """
     db = _graph_configurable(config).get("db")
     if db is None:
         return None
-    try:
-        from embry0.storage.repositories.provider_config import ProviderConfigRepository
+    from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
-        row = await ProviderConfigRepository(db).get()
-    except StoredValueTooDeep:
-        raise  # no policy would let a disabled model run (#527)
-    except Exception:
-        logger.warning(failure_event, exc_info=True)
-        return None
+    row = await ProviderConfigRepository(db).get()
     return row if isinstance(row, dict) else None
 
 
@@ -239,11 +235,10 @@ async def load_model_policy(config: Any) -> dict[str, Any] | None:
     "disabled_models": [...], "tier_models": {"model_heavy": ...,
     "model_medium": ..., "model_light": ...}} — consumed by the resolver: the
     deployment-wide default model (#465) and the RAV-1297 disabled-model tier
-    fallback. None (test/minimal setups, load failure, or a row that sets
-    neither) means the resolver applies no policy; a provider setting must
-    never block an agent run.
+    fallback. None (test/minimal setups, or a row that sets neither) means
+    the resolver applies no policy. A failed read raises (#551).
     """
-    cfg = await _provider_config_row(config, failure_event="model_policy_load_failed")
+    cfg = await _provider_config_row(config)
     if cfg is None:
         return None
     policy = build_model_policy(cfg)
@@ -261,7 +256,7 @@ async def load_triage_model_settings(config: Any) -> tuple[str, dict[str, str]]:
     tests, minimal setups), through ``resolve_tier_models``, which ``GET
     /agents`` reads them with too. Best-effort like ``load_model_policy``.
     """
-    cfg = await _provider_config_row(config, failure_event="triage_model_settings_load_failed")
+    cfg = await _provider_config_row(config)
     default_model = build_model_policy(cfg or {})["default_model"]
     return default_model, resolve_tier_models(cfg, _graph_configurable(config).get("embry0_config"))
 
@@ -274,32 +269,28 @@ async def load_budget_settings(config: Any) -> BudgetSettings:
     one snapshot per call, so a cap changed while the job runs holds from its
     next check, and a key not imported yet reads as the release before read
     it. Without one: a settings store the config carries (tests), else a
-    policy over ``db``. When none can be read, the variables the release
-    before fell back to (``embry0_config``), never no cap.
+    policy over ``db``. With none of them, the variables the release before
+    fell back to (``embry0_config``), never no cap. A read that fails raises
+    (#551): the job's budget is what the operator set, not those variables.
     """
     from embry0.services.budget_policy import BudgetPolicy, env_budget
     from embry0.settings.sections.budget import BUDGET
 
     configurable = _graph_configurable(config)
     app_config = configurable.get("embry0_config")
-    try:
-        policy = configurable.get("budget_policy")
-        if policy is not None:
-            settings: BudgetSettings = await policy.settings()
-            return settings
-        store = configurable.get("settings_store")
-        if store is not None:
-            settings = (await store.snapshot()).get(BUDGET)
-            return settings
-        if configurable.get("db") is not None:
-            from embry0.settings.store import SettingsStore
+    policy = configurable.get("budget_policy")
+    if policy is not None:
+        settings: BudgetSettings = await policy.settings()
+        return settings
+    store = configurable.get("settings_store")
+    if store is not None:
+        settings = (await store.snapshot()).get(BUDGET)
+        return settings
+    if configurable.get("db") is not None:
+        from embry0.settings.store import SettingsStore
 
-            settings = await BudgetPolicy(SettingsStore(configurable["db"]), app_config, retry_seconds=None).settings()
-            return settings
-    except StoredValueTooDeep:
-        raise  # the variables' budget is not the one the document sets (#527)
-    except Exception:
-        logger.warning("budget_policy_load_failed", exc_info=True, hint="read from the variables instead")
+        settings = await BudgetPolicy(SettingsStore(configurable["db"]), app_config, retry_seconds=None).settings()
+        return settings
     return env_budget(app_config)
 
 
@@ -374,7 +365,11 @@ def _stamp_loaded_preferences(
 
 
 async def _load_repo_preferences(state: dict[str, Any], config: Any) -> dict[str, Any] | None:
-    """The prefs row for this repo, once. Later nodes read it off state."""
+    """The prefs row for this repo, once. Later nodes read it off state.
+
+    A failed read raises (#551): the agent would otherwise run on the default
+    execution and auth modes instead of the repository's.
+    """
     existing = state.get("repo_preferences")
     if isinstance(existing, dict):
         return existing
@@ -382,13 +377,7 @@ async def _load_repo_preferences(state: dict[str, Any], config: Any) -> dict[str
     prefs_repo = _graph_configurable(config).get("repo_preferences_repo")
     if not isinstance(repo, str) or not repo or prefs_repo is None:
         return None
-    try:
-        row = await prefs_repo.get(repo)
-    except StoredValueTooDeep:
-        raise  # the run would go on without the repository's modes (#527)
-    except Exception:
-        logger.warning("repo_preferences_load_failed", repo=repo, exc_info=True)
-        return None
+    row = await prefs_repo.get(repo)
     return row if isinstance(row, dict) else None
 
 
@@ -540,7 +529,7 @@ async def _local_slots(config: Any) -> tuple[Any, int] | None:
         from embry0.storage.repositories.local_model_leases import LocalModelLeasesRepository
 
         slots = LocalSlots(LocalModelLeasesRepository(db))
-    row = await _provider_config_row(config, failure_event="local_slot_config_load_failed")
+    row = await _provider_config_row(config)
     cap = (row or {}).get("local_max_runs")
     return slots, cap if isinstance(cap, int) and cap > 0 else 1
 
