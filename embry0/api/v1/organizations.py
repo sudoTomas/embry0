@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from typing import Any, cast
 
 import httpx
@@ -169,7 +170,11 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
     A forge that never answers (a refused connection, a failed name lookup, a
     timeout) is a 502 naming it (#379): the caller is told the forge could not
     be reached, which a 500 does not say and a probe result would only guess
-    at.
+    at. So is one that answers with an outage (a 5xx, a 429, a 403 carrying a
+    rate-limit signal) once the client's retries are spent, and one that does
+    not answer within the probe's deadline (#571): none is an answer about
+    access, and read as one it stored "not visible" over what an earlier probe
+    found.
     """
     config = getattr(request.app.state, "config", None)
     try:
@@ -183,17 +188,30 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
                 ca_pem=load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or "")),
             )
         return await org_service.probe_github(owner, token)
-    except httpx.RequestError as exc:
+    except (httpx.RequestError, org_service.ForgeOutage, org_service.ProbeOutOfTime) as exc:
         name = "GitLab" if forge == "gitlab" else "GitHub"
+        outage = exc if isinstance(exc, org_service.ForgeOutage) else None
         # Classes, not text: the text can carry the request's URL.
         logger.warning(
             "organization_probe_unreachable",
             owner=owner,
             forge=forge,
             error=type(exc).__name__,
+            status=outage.status if outage else None,
+            rate_limited=outage.rate_limited if outage else None,
+            wait=outage.wait if outage else None,
             cause=_root_cause(exc),
         )
-        raise HTTPException(status_code=502, detail=f"{name} could not be reached") from exc
+        if outage is not None:
+            what = "rate limited the probe" if outage.rate_limited else "could not answer"
+            detail = f"{name} {what} ({outage.status})"
+            if outage.wait:
+                detail += f": it asks to wait {math.ceil(outage.wait)} s"
+        elif isinstance(exc, org_service.ProbeOutOfTime):
+            detail = f"{name} did not answer within {org_service.PROBE_SECONDS:g} seconds"
+        else:
+            detail = f"{name} could not be reached"
+        raise HTTPException(status_code=502, detail=detail) from exc
 
 
 def _root_cause(exc: BaseException) -> str | None:

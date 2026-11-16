@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -638,7 +639,19 @@ def _forge_unreachable(monkeypatch: pytest.MonkeyPatch, how: str) -> list[str]:
 
     monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
     monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    _no_waiting(monkeypatch)
     return asked
+
+
+def _no_waiting(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The forge client's retries without their waits: each backoff is recorded by its reason, not slept."""
+    backoffs: list[str] = []
+
+    async def backoff(self: Any, attempt: int, response: Any, *, method: str, path: str, reason: str) -> None:
+        backoffs.append(reason)
+
+    monkeypatch.setattr(forge_client.ForgeClient, "_backoff", backoff)
+    return backoffs
 
 
 async def _answer(app: Any, path: str, body: dict[str, Any] | None = None) -> httpx.Response:
@@ -706,3 +719,393 @@ async def test_registering_with_a_probe_github_never_answers_is_a_502_and_stores
     assert resp.status_code == 502, f"a registration whose probe GitHub never answered: {resp.status_code} {resp.text}"
     assert resp.json()["detail"] == "GitHub could not be reached"
     assert app.state.organizations_repo.orgs == {}, "an owner whose probe got no answer was registered"
+
+
+# ---- a forge that answers with an outage (#571) ----------------------------------------
+
+
+def _forge_answers(monkeypatch: pytest.MonkeyPatch, status: int) -> tuple[list[str], list[str]]:
+    """The real probe, the forge answering who the token is with 200 and every other request with ``status``, as
+    during an outage, a proxy in front of a restarting GitLab, or a secondary rate limit. Answers the paths it was
+    asked, in order, and the client's backoffs."""
+    asked: list[str] = []
+    real_client = httpx.AsyncClient
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        asked.append(path)
+        if path.endswith("/user"):
+            return httpx.Response(200, json={"login": "acme-bot", "username": "acme-bot"})
+        return httpx.Response(status, json={"message": "unavailable"})
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(answer), **kwargs)
+
+    monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
+    monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    return asked, _no_waiting(monkeypatch)
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504, 429])
+@pytest.mark.asyncio
+async def test_a_probe_github_answers_with_an_outage_is_a_502_naming_it(
+    app: Any, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """#571: one attempt a request, and any status but 200 read as an answer: "acme is not visible", "cannot list
+    repositories", for a token that can see both."""
+    asked, backoffs = _forge_answers(monkeypatch, status)
+    with capture_logs() as logs:
+        resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    assert resp.status_code == 502, f"a probe GitHub answered {status}: {resp.status_code} {resp.text}"
+    what = "rate limited the probe" if status == 429 else "could not answer"
+    assert resp.json()["detail"] == f"GitHub {what} ({status})"
+    assert asked.count("/orgs/acme") == 3 and backoffs == [f"status_{status}"] * 2, (
+        f"the client retried by its policy, three attempts, before the probe gave up: {asked}, {backoffs}"
+    )
+    (logged,) = [e for e in logs if e["event"] == "organization_probe_unreachable"]
+    assert (logged["owner"], logged["forge"], logged["error"], logged["status"]) == (
+        "acme",
+        "github",
+        "ForgeOutage",
+        status,
+    ), logged
+
+
+@pytest.mark.asyncio
+async def test_a_probe_gitlab_answers_with_an_outage_is_a_502_naming_it(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app.state.config.gitlab_token = "glpat-placeholder"
+    asked, backoffs = _forge_answers(monkeypatch, 502)
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme", "forge": "gitlab"})
+    assert resp.status_code == 502, f"a probe GitLab answered 502: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitLab could not answer (502)"
+    in_outage = [path for path in asked if not path.endswith("/user")]
+    assert len(set(in_outage)) == 1 and len(in_outage) == 3 and backoffs == ["status_502"] * 2, (
+        f"the GitLab client retried by its policy too, three attempts, before the probe gave up: {asked}, {backoffs}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_reprobe_github_answers_with_an_outage_keeps_what_was_stored(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The issue's sequence: a re-probe during a 503 rewrote stored access to "not visible", and the organization
+    webhook install, which reads the stored ``hooks``, was then refused."""
+    async with _client(app) as client:
+        assert (await client.post("/api/v1/orgs", json={"owner": "acme"})).status_code == 201
+    org = app.state.organizations_repo.orgs["acme"]
+    stored, count = dict(org.access), org.repo_count
+    assert (stored["read"], stored["hooks"], stored["owner_kind"]) == (True, True, "organization"), stored
+    _forge_answers(monkeypatch, 503)
+    resp = await _answer(app, "/api/v1/orgs/acme/probe")
+    assert resp.status_code == 502, f"a re-probe GitHub answered 503: {resp.status_code} {resp.text}"
+    assert (org.access, org.repo_count) == (stored, count), "a re-probe that got an outage rewrote the stored access"
+
+
+@pytest.mark.asyncio
+async def test_registering_with_a_probe_github_answers_with_an_outage_stores_nothing(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forge_answers(monkeypatch, 429)
+    resp = await _answer(app, "/api/v1/orgs", {"owner": "acme"})
+    assert resp.status_code == 502, f"a registration whose probe GitHub rate-limited: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitHub rate limited the probe (429)"
+    assert app.state.organizations_repo.orgs == {}, "an owner whose probe got an outage was registered"
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+@pytest.mark.asyncio
+async def test_a_refusal_is_still_an_answer_about_access(
+    app: Any, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A 401, 403 or 404 says what the token may do: the probe reads it, once, and answers what it found."""
+    asked, backoffs = _forge_answers(monkeypatch, status)
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    assert resp.status_code == 200, f"a probe GitHub answered {status}: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert (body["read"], body["owner_kind"]) == (False, None), body
+    assert "acme is not visible" in body["detail"] and backoffs == [], (body, backoffs)
+
+
+#: Each request a probe makes, and the forge's answers when all is well: the outage is put on one of them alone.
+_GITHUB_OK: dict[str, httpx.Response] = {
+    "/user": httpx.Response(200, json={"login": "acme-bot"}),
+    "/orgs/acme": httpx.Response(200, json={"public_repos": 3}),
+    "/orgs/acme/repos": httpx.Response(200, json=[{"full_name": "acme/app"}]),
+    "/repos/acme/app/hooks": httpx.Response(200, json=[]),
+}
+_GITLAB_OK: dict[str, httpx.Response] = {
+    "/api/v4/user": httpx.Response(200, json={"username": "acme-bot"}),
+    "/api/v4/groups/acme": httpx.Response(200, json={"id": 1}),
+    "/api/v4/groups/acme/projects": httpx.Response(200, json=[{"path_with_namespace": "acme/app"}]),
+}
+
+
+def _one_request_in_an_outage(monkeypatch: pytest.MonkeyPatch, ok: dict[str, httpx.Response], down: str) -> None:
+    """The forge answering every probe request as ``ok`` does, but ``down`` with a 503, every attempt."""
+    real_client = httpx.AsyncClient
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == down:
+            return httpx.Response(503)
+        known = ok.get(path)
+        return httpx.Response(known.status_code, content=known.content) if known else httpx.Response(404)
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(answer), **kwargs)
+
+    monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
+    monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    _no_waiting(monkeypatch)
+
+
+@pytest.mark.parametrize(
+    ("forge", "down"),
+    [
+        ("github", "/user"),
+        ("github", "/orgs/acme"),
+        ("github", "/users/acme"),
+        ("github", "/orgs/acme/repos"),
+        ("github", "/repos/acme/app/hooks"),
+        ("gitlab", "/api/v4/user"),
+        ("gitlab", "/api/v4/groups/acme"),
+        ("gitlab", "/api/v4/groups/acme/projects"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_outage_on_any_one_of_a_probe_s_requests_is_a_502(
+    app: Any, monkeypatch: pytest.MonkeyPatch, forge: str, down: str
+) -> None:
+    """Every request a probe makes reads an outage as one, not only the first: the rest answering is no answer
+    about what the request in the outage would have said."""
+    ok = dict(_GITHUB_OK if forge == "github" else _GITLAB_OK)
+    if down == "/users/acme":
+        # Asked only when the owner is not an organization.
+        ok.pop("/orgs/acme")
+        ok["/users/acme/repos"] = ok.pop("/orgs/acme/repos")
+    if forge == "gitlab":
+        app.state.config.gitlab_token = "glpat-placeholder"
+        app.state.config.gitlab_url = "https://gitlab.example.com"
+    _one_request_in_an_outage(monkeypatch, ok, down)
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme", "forge": forge})
+    name = "GitLab" if forge == "gitlab" else "GitHub"
+    assert (resp.status_code, resp.json().get("detail")) == (502, f"{name} could not answer (503)"), (
+        f"{down} in an outage, the rest answering: {resp.status_code} {resp.text}"
+    )
+
+
+# ---- a probe's deadline, and rate limits GitHub sends as 403 (#571 review) ----------------------------------------
+
+
+class _FakeTime:
+    """The probe's clock and its waits: each wait recorded and added to the clock, none slept."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+        self.waits: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, delay: float) -> None:
+        self.waits.append(delay)
+        self.now += delay
+
+
+def _forge_answering(
+    monkeypatch: pytest.MonkeyPatch, answer: Callable[[httpx.Request], Any]
+) -> tuple[list[str], _FakeTime]:
+    """The real probe over ``answer``, with the real client's backoffs, waiting on a fake clock."""
+    from embry0.services import organizations as org_service
+
+    asked: list[str] = []
+    real_client = httpx.AsyncClient
+
+    async def recorded(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        result = answer(request)
+        return await result if hasattr(result, "__await__") else result
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(recorded), **kwargs)
+
+    fake = _FakeTime()
+    monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
+    monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    monkeypatch.setattr(org_service, "_monotonic", fake.monotonic, raising=False)
+    monkeypatch.setattr(org_service, "_sleep", fake.sleep, raising=False)
+    return asked, fake
+
+
+def _gitlab_answers(**overrides: httpx.Response) -> Callable[[httpx.Request], httpx.Response]:
+    """GitLab answering a probe of the group acme it can read, but for the paths in ``overrides`` (under /api/v4)."""
+    ok = {
+        "/api/v4/user": httpx.Response(200, json={"username": "acme-bot"}),
+        "/api/v4/groups/acme": httpx.Response(200, json={"id": 1}),
+        "/api/v4/groups/acme/projects": httpx.Response(200, json=[{"path_with_namespace": "acme/app"}]),
+    }
+    replies = {**ok, **{f"/api/v4/{k.replace('__', '/')}": v for k, v in overrides.items()}}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        reply = replies.get(request.url.path, httpx.Response(404))
+        return httpx.Response(reply.status_code, headers=reply.headers, content=reply.content)
+
+    return answer
+
+
+def _with_forge(app: Any, forge: str) -> dict[str, str]:
+    """The probe's body for ``forge``, with GitLab configured when it is GitLab."""
+    if forge == "gitlab":
+        app.state.config.gitlab_token = "glpat-placeholder"
+        app.state.config.gitlab_url = "https://gitlab.example.com"
+    return {"owner": "acme", "forge": forge}
+
+
+def _github_answers(**overrides: httpx.Response) -> Callable[[httpx.Request], httpx.Response]:
+    """GitHub answering a probe of acme as an organization it can read, but for the paths in ``overrides``."""
+    ok = {
+        "/user": httpx.Response(200, json={"login": "acme-bot"}),
+        "/orgs/acme": httpx.Response(200, json={"public_repos": 3}),
+        "/orgs/acme/repos": httpx.Response(200, json=[{"full_name": "acme/app"}]),
+        "/repos/acme/app/hooks": httpx.Response(200, json=[]),
+    }
+    replies = {**ok, **{f"/{k.replace('__', '/')}": v for k, v in overrides.items()}}
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        reply = replies.get(request.url.path, httpx.Response(404))
+        return httpx.Response(reply.status_code, headers=reply.headers, content=reply.content)
+
+    return answer
+
+
+@pytest.mark.parametrize("forge", ["github", "gitlab"])
+@pytest.mark.asyncio
+async def test_a_wait_longer_than_the_probe_has_left_ends_it_at_once(
+    app: Any, monkeypatch: pytest.MonkeyPatch, forge: str
+) -> None:
+    """A 429 asking for 60 s: the client waited 30 s twice (its cap), a minute in all, and the dashboard's request
+    had timed out at 30. The probe has 25 s in all, so it answers at once, saying what the forge asked, rather than
+    wait less than it asked."""
+    limited = httpx.Response(429, headers={"Retry-After": "60"})
+    down = "/orgs/acme" if forge == "github" else "/api/v4/groups/acme"
+    answers = _github_answers(orgs__acme=limited) if forge == "github" else _gitlab_answers(groups__acme=limited)
+    asked, fake = _forge_answering(monkeypatch, answers)
+    body = _with_forge(app, forge)
+    try:
+        with capture_logs() as logs:
+            resp = await asyncio.wait_for(_answer(app, "/api/v1/orgs/probe", body), timeout=10)
+    except TimeoutError:
+        pytest.fail("the probe waited, for real, on a Retry-After past its deadline")
+    name = "GitHub" if forge == "github" else "GitLab"
+    assert (resp.status_code, resp.json().get("detail")) == (
+        502,
+        f"{name} rate limited the probe (429): it asks to wait 60 s",
+    ), f"a wait past the probe's deadline: {resp.status_code} {resp.text}"
+    assert (fake.waits, asked.count(down)) == ([], 1), f"nothing was waited for: {fake.waits}, {asked}"
+    (logged,) = [e for e in logs if e["event"] == "organization_probe_unreachable"]
+    assert (logged["status"], logged["rate_limited"], logged["wait"]) == (429, True, 60.0), logged
+
+
+@pytest.mark.asyncio
+async def test_a_wait_the_client_would_cut_short_is_not_waited(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The client caps each wait (MAX_BACKOFF_SECONDS). With a cap shorter than what is left of the probe, a
+    Retry-After past the deadline would be cut to the cap and retried early, only to be refused again: the probe
+    reads the wait the forge asked for, not the capped one, and answers at once."""
+    monkeypatch.setattr(forge_client, "MAX_BACKOFF_SECONDS", 10.0)
+    asked, fake = _forge_answering(
+        monkeypatch, _github_answers(orgs__acme=httpx.Response(429, headers={"Retry-After": "30"}))
+    )
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    assert (resp.status_code, resp.json().get("detail")) == (
+        502,
+        "GitHub rate limited the probe (429): it asks to wait 30 s",
+    ), f"a wait past the deadline, cut to the cap: {resp.text}"
+    assert (fake.waits, asked.count("/orgs/acme")) == ([], 1), f"nothing was waited for: {fake.waits}, {asked}"
+
+
+@pytest.mark.asyncio
+async def test_a_wait_within_the_deadline_is_waited_in_full(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 429 asking for 5 s is waited for, all of it, each time, then answered as the outage it still is."""
+    asked, fake = _forge_answering(
+        monkeypatch, _github_answers(orgs__acme=httpx.Response(429, headers={"Retry-After": "5"}))
+    )
+    try:
+        resp = await asyncio.wait_for(_answer(app, "/api/v1/orgs/probe", {"owner": "acme"}), timeout=20)
+    except TimeoutError:
+        pytest.fail("the probe's waits were not on its clock")
+    assert (resp.status_code, resp.json().get("detail")) == (
+        502,
+        "GitHub rate limited the probe (429): it asks to wait 5 s",
+    ), resp.text
+    assert (fake.waits, asked.count("/orgs/acme")) == ([5.0, 5.0], 3), f"each wait in full: {fake.waits}, {asked}"
+
+
+@pytest.mark.parametrize("forge", ["github", "gitlab"])
+@pytest.mark.asyncio
+async def test_a_forge_that_never_answers_ends_at_the_probe_s_deadline(
+    app: Any, monkeypatch: pytest.MonkeyPatch, forge: str
+) -> None:
+    """A forge that takes the connection and never answers held the probe for every attempt's whole timeout (48 s in
+    the review). The probe answers at its deadline, here a fifth of a second."""
+    import asyncio
+    import time
+
+    from embry0.services import organizations as org_service
+
+    async def hang(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user"):
+            return httpx.Response(200, json={"login": "acme-bot", "username": "acme-bot"})
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    _forge_answering(monkeypatch, hang)
+    body = _with_forge(app, forge)
+    monkeypatch.setattr(org_service, "_monotonic", time.monotonic, raising=False)
+    monkeypatch.setattr(org_service, "PROBE_SECONDS", 0.2, raising=False)
+    started = time.monotonic()
+    try:
+        resp = await asyncio.wait_for(_answer(app, "/api/v1/orgs/probe", body), timeout=10)
+    except TimeoutError:
+        pytest.fail("the probe waited on a forge that never answers past 10 s")
+    took = time.monotonic() - started
+    name = "GitHub" if forge == "github" else "GitLab"
+    assert (resp.status_code, resp.json().get("detail")) == (502, f"{name} did not answer within 0.2 seconds"), (
+        f"after {took:.2f}s: {resp.status_code} {resp.text}"
+    )
+    assert took < 3, f"answered at the deadline: {took:.2f}s"
+
+
+@pytest.mark.parametrize(
+    ("headers", "detail"),
+    [
+        ({"X-RateLimit-Remaining": "0"}, "GitHub rate limited the probe (403)"),
+        ({"Retry-After": "60"}, "GitHub rate limited the probe (403): it asks to wait 60 s"),
+    ],
+    ids=["primary-limit", "secondary-limit"],
+)
+@pytest.mark.asyncio
+async def test_a_403_carrying_a_rate_limit_is_an_outage(
+    app: Any, monkeypatch: pytest.MonkeyPatch, headers: dict[str, str], detail: str
+) -> None:
+    """GitHub sends its rate limits as 403: read as "no access", the probe answered "not visible", registering was
+    refused and a re-probe overwrote what was stored."""
+    async with _client(app) as client:
+        assert (await client.post("/api/v1/orgs", json={"owner": "acme"})).status_code == 201
+    org = app.state.organizations_repo.orgs["acme"]
+    stored = dict(org.access)
+    _forge_answering(monkeypatch, _github_answers(orgs__acme=httpx.Response(403, headers=headers)))
+    probe = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    reprobe = await _answer(app, "/api/v1/orgs/acme/probe")
+    assert [(r.status_code, r.json().get("detail")) for r in (probe, reprobe)] == [(502, detail)] * 2, (
+        f"a rate-limited 403 is an outage, and said to be a rate limit: {probe.text} {reprobe.text}"
+    )
+    assert org.access == stored, "a re-probe GitHub rate-limited rewrote the stored access"
+
+
+@pytest.mark.asyncio
+async def test_a_403_with_no_rate_limit_is_still_an_answer(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    _forge_answering(monkeypatch, _github_answers(orgs__acme=httpx.Response(403), users__acme=httpx.Response(403)))
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    assert resp.status_code == 200 and "acme is not visible" in resp.json()["detail"], resp.text
