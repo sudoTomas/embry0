@@ -23,7 +23,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from embry0.api.forge_listings import PastDeadline, read_each
+from embry0.api.forge_listings import PastDeadline, nobody_answered, read_each
 from embry0.api.repo_allowlist import key_covers, restricted_key_name
 from embry0.api.v1.credentials import discovery_entries
 from embry0.execution.github_client import GitHubClient
@@ -145,12 +145,14 @@ async def _fetch_repos_for_token(
 
 async def _fetch_all_repo_entries(
     entries: list[ForgeCredentialEntry], *, per_page: int, sort: str
-) -> tuple[dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]], list[str], list[str]]:
+) -> tuple[dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]], list[str], list[str], bool]:
     """Fan /user/repos out across every credential entry.
 
     Returns ``full_name -> (granting entry, raw repo dict)`` — first entry
-    wins on duplicates — the keys whose listings were truncated, and the
-    labels whose listings raised.
+    wins on duplicates — the keys whose listings were truncated, the labels
+    whose listings raised, and whether the answer is complete: false when an
+    account is missing for a reason the next read may not have (it could not
+    be reached, or ran past a deadline), so the answer is not cached.
 
     One failing credential (e.g. an expired PAT) must not hide the repos the
     others can see — log it, record its label, and continue. That holds for a
@@ -158,9 +160,11 @@ async def _fetch_all_repo_entries(
     timeout, a refused connection) and one not done by the listing's deadline:
     the accounts are read concurrently, within one deadline
     (:func:`embry0.api.forge_listings.read_each`, #340). Raise only when
-    nothing succeeded, 502 either way: GitHub refusing every account is not
-    the caller's credentials failing, and a 401 would read as a bad embry0
-    key (#568). An empty entry list is "nothing is configured".
+    nothing succeeded, 502 either way, its detail counting what GitHub did
+    (:func:`embry0.api.forge_listings.nobody_answered`): GitHub refusing
+    every account is not the caller's credentials failing, and a 401 would
+    read as a bad embry0 key (#568). An empty entry list is "nothing is
+    configured".
     """
     if not entries:
         raise HTTPException(status_code=400, detail="No GitHub token configured")
@@ -168,8 +172,9 @@ async def _fetch_all_repo_entries(
     by_name: dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]] = {}
     truncated_env_keys: list[str] = []
     failed: list[str] = []
-    last_error: httpx.HTTPStatusError | None = None
-    unreachable: Exception | None = None
+    refused: list[int] = []
+    unreachable = 0
+    cause: Exception | None = None
     succeeded = False
 
     async def read(entry: ForgeCredentialEntry) -> tuple[list[dict[str, Any]], bool]:
@@ -188,10 +193,11 @@ async def _fetch_all_repo_entries(
                 label=entry.label,
             )
             failed.append(entry.label)
-            if isinstance(result, httpx.HTTPStatusError):
-                last_error = result
+            if status is not None:
+                refused.append(status)
             else:
-                unreachable = result
+                unreachable += 1
+            cause = result
             continue
         if isinstance(result, BaseException):
             raise result
@@ -204,14 +210,9 @@ async def _fetch_all_repo_entries(
             by_name.setdefault(r["full_name"], (shown, r))
 
     if not succeeded:
-        if last_error is not None:
-            status = last_error.response.status_code
-            raise HTTPException(
-                status_code=502, detail=f"GitHub API returned {status} for every account"
-            ) from last_error
-        raise HTTPException(status_code=502, detail="GitHub could not be reached") from unreachable
+        raise HTTPException(status_code=502, detail=nobody_answered("GitHub", refused, unreachable)) from cause
 
-    return by_name, truncated_env_keys, failed
+    return by_name, truncated_env_keys, failed, unreachable == 0
 
 
 async def _env_github_entries(default_token: str) -> list[ForgeCredentialEntry]:
@@ -221,7 +222,7 @@ async def _env_github_entries(default_token: str) -> list[ForgeCredentialEntry]:
 
 async def _fetch_all_repos(default_token: str, *, per_page: int, sort: str) -> list[RepoResponse]:
     """Fetch /user/repos with every configured env token; merge, dedup, sort."""
-    by_name, _, _ = await _fetch_all_repo_entries(
+    by_name, _, _, _ = await _fetch_all_repo_entries(
         await _env_github_entries(default_token), per_page=per_page, sort=sort
     )
     return sorted(
@@ -246,7 +247,7 @@ async def list_repos(
     only the repositories its list covers (``embry0.api.v1.credentials.discovery_entries``).
     """
     if restricted_key_name(request) is not None:
-        by_name, _, _ = await _fetch_all_repo_entries(
+        by_name, _, _, _ = await _fetch_all_repo_entries(
             await discovery_entries(request, "github"), per_page=per_page, sort=sort
         )
         own = (_to_repo_response(raw) for name, (_, raw) in by_name.items() if key_covers(request, name))
@@ -285,7 +286,7 @@ async def list_discoverable_repos(
     (``embry0.api.v1.credentials.discovery_entries``).
     """
     if restricted_key_name(request) is not None:
-        by_name, truncated, failed = await _fetch_all_repo_entries(
+        by_name, truncated, failed, _complete = await _fetch_all_repo_entries(
             await discovery_entries(request, "github"), per_page=100, sort="updated"
         )
         listing: dict[str, Any] = {"by_name": by_name, "truncated": truncated, "failed": failed}
@@ -299,8 +300,10 @@ async def list_discoverable_repos(
         )
         if not cached:
             entries = await discovery_entries(request, "github")
-            by_name, truncated, failed = await _fetch_all_repo_entries(entries, per_page=100, sort="updated")
-            _DISCOVERY_CACHE["at"] = time.monotonic()
+            by_name, truncated, failed, complete = await _fetch_all_repo_entries(entries, per_page=100, sort="updated")
+            # An answer missing an account that could not be reached, or ran past a deadline, is served once and not
+            # kept: the next read asks every account again.
+            _DISCOVERY_CACHE["at"] = time.monotonic() if complete else 0.0
             _DISCOVERY_CACHE["by_name"] = by_name
             _DISCOVERY_CACHE["truncated"] = truncated
             _DISCOVERY_CACHE["failed"] = failed

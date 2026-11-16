@@ -16,7 +16,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from embry0.api.forge_listings import PastDeadline, read_each
+from embry0.api.forge_listings import PastDeadline, nobody_answered, read_each
 from embry0.api.repo_allowlist import key_covers, restricted_key_name
 from embry0.api.v1.credentials import discovery_entries
 from embry0.execution.gitlab_client import GitLabClient
@@ -102,7 +102,7 @@ async def list_discoverable_projects(
         return DiscoverableProjectsResponse(projects=[], cached=False, configured=False, failed=[])
 
     if restricted:
-        by_path, failed = await _projects_for_entries(own, config)
+        by_path, failed, _complete = await _projects_for_entries(own, config)
         listing: dict[str, Any] = {"by_path": by_path, "failed": failed}
         cached = False
     else:
@@ -110,8 +110,10 @@ async def list_discoverable_projects(
         cached = not refresh and bool(_CACHE["by_path"]) and now - _CACHE["at"] < _CACHE_TTL_SECONDS
         if not cached:
             entries = await discovery_entries(request, "gitlab")
-            by_path, failed = await _projects_for_entries(entries, config)
-            _CACHE["at"] = time.monotonic()
+            by_path, failed, complete = await _projects_for_entries(entries, config)
+            # An answer missing an account that could not be reached, or ran past a deadline, is served once and not
+            # kept: the next read asks every account again.
+            _CACHE["at"] = time.monotonic() if complete else 0.0
             _CACHE["by_path"] = by_path
             _CACHE["failed"] = failed
         listing = _CACHE
@@ -137,8 +139,10 @@ async def list_discoverable_projects(
 
 async def _projects_for_entries(
     entries: list[ForgeCredentialEntry], config: Any
-) -> tuple[dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]], list[str]]:
-    """One client per entry. The entry is the token — no resolver.
+) -> tuple[dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]], list[str], bool]:
+    """One client per entry. The entry is the token — no resolver. Returns the projects by path, the labels whose
+    listings raised, and whether the answer is complete (as the GitHub fan-out's: false when an account could not be
+    reached or ran past a deadline, so the answer is not cached).
 
     First path wins. A listing that raises is recorded by label and skipped,
     whether GitLab refused it (an HTTP status), never answered (a timeout, a
@@ -150,14 +154,15 @@ async def _projects_for_entries(
     the pages it already had and the dead token would look like an empty list.
     """
     if not entries:
-        return {}, []
+        return {}, [], True
 
     ca_pem = load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or ""))
     gitlab_url = str(getattr(config, "gitlab_url", "") or "")
     by_path: dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]] = {}
     failed: list[str] = []
-    last_error: httpx.HTTPStatusError | None = None
-    unreachable: Exception | None = None
+    refused: list[int] = []
+    unreachable = 0
+    cause: Exception | None = None
     succeeded = False
 
     # Each entry's own token, chosen for no owner: a listing's.
@@ -185,10 +190,11 @@ async def _projects_for_entries(
                 "gitlab_projects_fetch_failed", status=status, error=type(result).__name__, label=entry.label
             )
             failed.append(entry.label)
-            if isinstance(result, httpx.HTTPStatusError):
-                last_error = result
+            if status is not None:
+                refused.append(status)
             else:
-                unreachable = result
+                unreachable += 1
+            cause = result
             continue
         if isinstance(result, BaseException):
             raise result
@@ -203,10 +209,5 @@ async def _projects_for_entries(
                 by_path[path] = (shown, raw)
 
     if not succeeded:
-        if last_error is not None:
-            status = last_error.response.status_code
-            raise HTTPException(
-                status_code=502, detail=f"GitLab API returned {status} for every account"
-            ) from last_error
-        raise HTTPException(status_code=502, detail="GitLab could not be reached") from unreachable
-    return by_path, failed
+        raise HTTPException(status_code=502, detail=nobody_answered("GitLab", refused, unreachable)) from cause
+    return by_path, failed, unreachable == 0

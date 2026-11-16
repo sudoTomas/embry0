@@ -364,3 +364,31 @@ async def test_hanging_gitlab_accounts_end_at_the_deadline(monkeypatch):
     body = resp.json()
     assert sorted(body["failed"]) == [f"slow-{n}" for n in range(4)], f"each hanging account is named: {body}"
     assert [p["full_name"] for p in body["projects"]] == ["acme/widgets"], body["projects"]
+
+
+async def test_a_gitlab_answer_missing_an_unreachable_account_is_not_kept(monkeypatch):
+    """#340 review, GitLab alike: an answer without an account that could not be reached is served once, not kept."""
+    down = {"glpat-offline-placeholder"}
+
+    async def fake_paginate(self, path, **kwargs):
+        if self._default_token in down:
+            raise httpx.ConnectError("connection refused")
+        return [_project("acme/widgets" if self._default_token == "glpat-alice-placeholder" else "acme/gadgets")]
+
+    monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", fake_paginate)
+    app = _with_registry(_app(gitlab_token=""))
+    await _add_gitlab_credential(app, "alice", "glpat-alice-placeholder")
+    await _add_gitlab_credential(app, "offline", "glpat-offline-placeholder")
+    resolver = MagicMock()
+    resolver.has_forge_credential = AsyncMock(return_value=True)
+    app.state.credential_resolver = resolver
+    async with _client(app) as c:
+        first = (await c.get("/api/v1/gitlab/discoverable-projects")).json()
+        down.clear()
+        second = (await c.get("/api/v1/gitlab/discoverable-projects")).json()
+    assert first["failed"] == ["offline"], first
+    assert (second["cached"], second["failed"], sorted(p["full_name"] for p in second["projects"])) == (
+        False,
+        [],
+        ["acme/gadgets", "acme/widgets"],
+    ), f"the next read asks the account that was missing: {second}"

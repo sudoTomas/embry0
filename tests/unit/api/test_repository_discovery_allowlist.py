@@ -58,13 +58,15 @@ def forge(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         asked.append(env_key)
         return [_raw(name) for name in SEEN], False
 
-    async def gitlab_listing(entries: list[ForgeCredentialEntry], _config: Any) -> tuple[dict[str, Any], list[str]]:
+    async def gitlab_listing(
+        entries: list[ForgeCredentialEntry], _config: Any
+    ) -> tuple[dict[str, Any], list[str], bool]:
         by_path: dict[str, Any] = {}
         for entry in entries:
             asked.append(entry.key)
             for name in SEEN:
                 by_path.setdefault(name, (entry.without_token(), _raw(name)))
-        return by_path, []
+        return by_path, [], True
 
     monkeypatch.setattr(github, "_fetch_repos_for_token", github_listing)
     monkeypatch.setattr(gitlab, "_projects_for_entries", gitlab_listing)
