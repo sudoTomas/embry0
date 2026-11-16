@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from embry0.orchestration.checkpoint import checkpointer_context
 from embry0.orchestration.restart import NOT_RESUMABLE_PIPELINES, ShutdownInterrupt
 from embry0.safety.error_codes import ErrorCode, classify_failure, classify_qa_outcome
+from embry0.safety.part_read import refuse_part_read
 from embry0.safety.redaction import register_known_secrets
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
@@ -465,6 +466,8 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
     review = dict((job_row or {}).get("pipeline_config") or {})
     sink: dict[str, Any] = {}
     try:
+        # Read only in part (#527), the review's frozen config has lost its keys past the cut: the job fails.
+        refuse_part_read((job_row or {}).get("pipeline_config"), f"job {job_id}'s pipeline_config")
         if await self._refuse_if_over_budget(job_id, actor=(job_row or {}).get("dispatched_by")):
             return
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
@@ -1415,6 +1418,9 @@ async def _run_workflow(
         # - budget_overrun_mode: "hard" pins this job to a hard stop under a
         #   soft fleet mode (#275); run_agent_node ignores any other value.
         # - execution/auth mode overrides: read by run_agent_node.
+        # Read only in part (#527), the job's config has lost its keys past the cut (its budget, its models, its
+        # narrowed tools): each would be its default, so the job fails instead.
+        refuse_part_read((job_row or {}).get("pipeline_config"), f"job {job_id}'s pipeline_config")
         overrides = (job_row or {}).get("pipeline_config") or {}
         if isinstance(overrides, dict):
             agent_models_override = overrides.get("agent_models_override")

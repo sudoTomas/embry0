@@ -4,7 +4,9 @@
 pure Python and runs where the codec runs, in asyncpg's protocol on the event
 loop: a 7.5 MB value 15,000 levels deep held the loop, and every other request,
 for seconds. It now reads no value that starts past ``DEEP_DECODE_MAX_CHARS``:
-that value is a marker standing for the rest, and every open container closes.
+that value is a marker standing for the rest, and every open container closes,
+marked as read in part (``PartReadDict``, ``PartReadList``) so that readers
+refuse it and it is never written back.
 """
 
 from __future__ import annotations
@@ -13,13 +15,18 @@ import json
 
 import pytest
 
-from embry0.storage.database import (
-    DEEP_DECODE_MAX_CHARS,
+from embry0.safety import part_read
+from embry0.safety.part_read import (
     TOO_LONG_TO_READ,
-    _jsonb_decoder,
-    _jsonb_encoder,
-    _loads_deep,
+    PartReadDict,
+    PartReadError,
+    PartReadList,
+    is_part_read,
+    refuse_part_read,
+    refuse_part_read_columns,
 )
+from embry0.storage import database
+from embry0.storage.database import DEEP_DECODE_MAX_CHARS, _jsonb_decoder, _jsonb_encoder, _loads_deep
 from tests.unit.storage.test_jsonb_decoder_deep import _depth_and_leaf, _same
 
 LEVELS = 12_000
@@ -28,10 +35,18 @@ BESIDE = json.dumps("s" * 80)
 
 def test_a_value_that_starts_past_the_limit_is_not_read() -> None:
     assert _same(_loads_deep("[1, 2, 3]", limit=7), [1, 2, 3]), "a value starting at the limit is read"
-    assert _same(_loads_deep("[1, 2, 3]", limit=6), [1, 2, TOO_LONG_TO_READ]), "a value past the limit is read"
+    assert _same(_loads_deep("[1, 2, 3]", limit=6), PartReadList([1, 2, TOO_LONG_TO_READ])), (
+        "a value past the limit is read, or its array is not marked as read in part"
+    )
     text = '{"a": [1, {"b": 2, "c": 3}], "d": 4}'
-    assert _same(_loads_deep(text, limit=text.index("3") - 1), {"a": [1, {"b": 2, "c": TOO_LONG_TO_READ}]}), (
-        "the open containers do not close around the marker, each under its own key"
+    expected = PartReadDict({"a": PartReadList([1, PartReadDict({"b": 2, "c": TOO_LONG_TO_READ})])})
+    assert _same(_loads_deep(text, limit=text.index("3") - 1), expected), (
+        "the open containers do not close around the marker, each under its own key and marked as read in part"
+    )
+    text = '{"a": [1, {"b": 2}], "c": [3, 4, 5]}'
+    expected = PartReadDict({"a": [1, {"b": 2}], "c": PartReadList([3, TOO_LONG_TO_READ])})
+    assert _same(_loads_deep(text, limit=text.index("4") - 1), expected), (
+        "a container read whole before the cut is marked as read in part"
     )
 
 
@@ -57,12 +72,87 @@ def test_the_deepest_value_postgres_stores_is_read_whole() -> None:
     assert _depth_and_leaf(_jsonb_decoder(barest)) == (16_300, 1), "the limit cuts a value Postgres can store"
 
 
-def test_a_value_read_only_in_part_is_not_written_back() -> None:
-    """Shallow enough for ``json.dumps``, it would store what was read in place of the whole: refused."""
+def _shallow_part_read() -> dict:
+    """A value read in part that is shallow enough for ``json.dumps``: about 250 of 12,000 levels."""
     level = '{"p": ' + json.dumps("x" * 500) + ', "a": ['
-    text = level * LEVELS + '"leaf"' + "]}" * LEVELS
-    read = _jsonb_decoder(text)
-    assert json.dumps(TOO_LONG_TO_READ) in json.dumps(read), "the value was read whole: nothing to refuse"
-    with pytest.raises(ValueError, match="read only in part"):
+    return _jsonb_decoder(level * LEVELS + '"leaf"' + "]}" * LEVELS)
+
+
+def test_a_value_read_only_in_part_is_not_written_back() -> None:
+    """Shallow enough for ``json.dumps``, it would store what was read in place of the whole: refused by its type."""
+    read = _shallow_part_read()
+    assert is_part_read(read), "the value was read whole, or is not marked: nothing to refuse"
+    with pytest.raises(PartReadError, match="read only in part"):
         _jsonb_encoder(read)
+    with pytest.raises(PartReadError, match="read only in part"):
+        _jsonb_encoder({"copied": [read["a"]]})  # a part of it, put in another value
+
+
+def test_a_value_that_only_says_what_the_marker_says_is_written() -> None:
+    """The marker is text for a person: a stored value equal to it is written as any other."""
+    for value in ({"note": TOO_LONG_TO_READ}, [TOO_LONG_TO_READ], TOO_LONG_TO_READ):
+        assert _jsonb_encoder(value) == json.dumps(value)
+    read = _shallow_part_read()  # alive, so writes are walked: the marker's text is still not refused
+    assert is_part_read(read)
+    assert _jsonb_encoder({"note": TOO_LONG_TO_READ}) == json.dumps({"note": TOO_LONG_TO_READ})
+
+
+def test_a_write_is_walked_only_while_a_value_read_in_part_is_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+    def walked(value: object) -> bool:
+        raise AssertionError("an ordinary write is walked while no value read in part is alive")
+
+    monkeypatch.setattr(database, "holds_part_read", walked)
+    part_read._PART_READS.clear()
     assert _jsonb_encoder({"a": [1, "x"]}) == '{"a": [1, "x"]}', "an ordinary value is written as before"
+
+
+def test_a_reader_refuses_a_value_read_in_part_by_name() -> None:
+    read = _shallow_part_read()
+    with pytest.raises(PartReadError, match=r"the job's pipeline_config is stored nested too deep"):
+        refuse_part_read(read, "the job's pipeline_config")
+    with pytest.raises(PartReadError, match=r"job job-1\.pipeline_config is stored"):
+        refuse_part_read_columns({"job_id": "job-1", "pipeline_config": read}, "job job-1")
+    refuse_part_read({"a": 1}, "a whole value")  # a value read whole is used as before
+    refuse_part_read_columns({"job_id": "job-1", "pipeline_config": {"a": 1}}, "job job-1")
+
+
+def test_a_string_is_read_by_json_s_own_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A long string is not stepped through character by character in Python on the event loop."""
+    calls: list[int] = []
+    real = database._scanstring
+
+    def scan(text: str, end: int) -> tuple[str, int]:
+        calls.append(end)
+        return real(text, end)
+
+    monkeypatch.setattr(database, "_scanstring", scan)
+    long = "x" * 1_000_000
+    text = '{"a": ' * LEVELS + json.dumps(long + '\\"\u00e9') + "}" * LEVELS
+    assert _depth_and_leaf(_jsonb_decoder(text)) == (LEVELS, long + '\\"é')
+    assert calls, "the strings are not read by json's scanner"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "agent_definition",
+        "global_defaults",
+        "repo_prefs",
+        "job_overrides",
+        "pipeline_config",
+        "template_config",
+        "model_policy",
+    ],
+)
+def test_an_agent_invocation_refuses_what_was_read_in_part(field: str) -> None:
+    """Whatever an agent's invocation is built from, read in part, it is refused rather than read as its defaults."""
+    from embry0.agents.resolver import resolve_agent_invocation
+    from tests.unit.agents.test_resolver_extended import _base_args
+
+    args = _base_args()
+    whole = dict(args.get(field) or {})
+    cut = PartReadDict({"a": 1, "cut": TOO_LONG_TO_READ})
+    # A definition is a row: one of its JSONB columns is what was read in part.
+    args[field] = {**whole, "mcp_servers": cut} if field == "agent_definition" else PartReadDict({**whole, **cut})
+    with pytest.raises(PartReadError, match="read only in part"):
+        resolve_agent_invocation(**args)

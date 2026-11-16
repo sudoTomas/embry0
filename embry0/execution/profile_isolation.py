@@ -149,7 +149,17 @@ def field_problem(field: str, value: Any, registry: str = "") -> str | None:
 def profile_isolation_problems(profile: Mapping[str, Any], registry: str = "") -> list[str]:
     """Every reason ``profile`` would weaken a sandbox's isolation. Empty when it would not.
 
-    A missing key means that field's default, which is always safe.
+    A missing key means that field's default, which is always safe. A column
+    read only in part (#527) has lost its keys past the cut, so it is a problem
+    too, whatever the field: what is missing is not known to be a default.
     """
+    from embry0.safety.part_read import holds_part_read
+
     problems = (field_problem(field, profile[field], registry) for field in ISOLATION_FIELDS if field in profile)
-    return [problem for problem in problems if problem is not None]
+    part_read = [
+        f"{column}: stored nested too deep and too long to read whole, so it was read only in part (#527); "
+        "store the profile again, whole"
+        for column, value in profile.items()
+        if holds_part_read(value)
+    ]
+    return part_read + [problem for problem in problems if problem is not None]

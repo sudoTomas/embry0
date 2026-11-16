@@ -88,7 +88,8 @@ async def test_a_job_whose_pipeline_config_is_too_long_to_read_on_the_loop_is_se
     client: AsyncClient,
 ) -> None:
     """Past ``DEEP_DECODE_MAX_CHARS`` the codec stops reading such a value; the read serves what it read (#527)."""
-    from embry0.storage.database import DEEP_DECODE_MAX_CHARS, TOO_LONG_TO_READ
+    from embry0.safety.part_read import TOO_LONG_TO_READ
+    from embry0.storage.database import DEEP_DECODE_MAX_CHARS
 
     db = client.app.state.db  # type: ignore[attr-defined]
     await db.execute(

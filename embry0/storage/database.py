@@ -24,12 +24,21 @@ ambiguous. The cast does NOT cause double-encoding; only manual
 
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
 import structlog
+
+from embry0.safety.part_read import (
+    TOO_LONG_TO_READ,
+    PartReadError,
+    any_part_read_alive,
+    holds_part_read,
+    is_part_read,
+    mark_part_read,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -41,14 +50,15 @@ def _jsonb_encoder(value: Any) -> str:
     Python value (dict/list/scalar/None), not a pre-encoded JSON string —
     pre-encoding double-wraps the value inside a JSON string scalar.
 
-    A value that holds :data:`TOO_LONG_TO_READ` was read only in part
-    (#527), so writing it back would store that part in place of the whole:
-    it is refused with ``ValueError``.
+    A value read only in part (#527), or one that holds such a value, is
+    refused with :class:`PartReadError`: writing it would store that part in
+    place of the whole. It is told by its type (:func:`is_part_read`), so a
+    value that only says what the marker says is written as any other. While
+    no value read in part is alive in this process, nothing is walked.
     """
-    text = json.dumps(value)
-    if _TOO_LONG_TO_READ_JSON in text:
-        raise ValueError("a JSONB value read only in part is not written back (#527)")
-    return text
+    if is_part_read(value) or (any_part_read_alive() and holds_part_read(value)):
+        raise PartReadError("a JSONB value read only in part is not written back (#527)")
+    return json.dumps(value)
 
 
 def _jsonb_decoder(value: str) -> Any:
@@ -97,17 +107,16 @@ _WHITESPACE = " \t\n\r"
 _NUMBER = re.compile(r"(-?(?:0|[1-9][0-9]*))(\.[0-9]+)?([eE][-+]?[0-9]+)?")
 _LITERALS = (("true", True), ("false", False), ("null", None))
 
+#: ``json``'s C string scanner (its ``scanstring``: the string from just after an opening quote, and the index after
+#: the closing one), which the stubs do not declare.
+_scanstring: Callable[[str, int], tuple[str, int]] = json.decoder.scanstring  # type: ignore[attr-defined]
+
 #: How far into a value :func:`_loads_deep` reads (#527). It is pure Python and runs where the codec runs,
 #: in asyncpg's protocol on the event loop, at about 4 MB/s on the densest JSON: this much holds the loop
 #: for some 30 ms, where a 7.5 MB value held it, and every request with it, for seconds. The codec has to
 #: answer then and there, so the reading cannot be handed to a thread. The deepest value Postgres stores
 #: (about 16,300 levels) is shorter than this in its barest form.
 DEEP_DECODE_MAX_CHARS = 128 * 1024
-
-#: Where :func:`_loads_deep` stopped reading a value longer than its limit: the rest of the value.
-TOO_LONG_TO_READ = "[the rest of a document too long to read]"
-#: The marker as :func:`_jsonb_encoder` writes it, to find it in a value about to be written back.
-_TOO_LONG_TO_READ_JSON = json.dumps(TOO_LONG_TO_READ)
 
 
 def _loads_deep(text: str, limit: int = DEEP_DECODE_MAX_CHARS) -> Any:
@@ -121,10 +130,12 @@ def _loads_deep(text: str, limit: int = DEEP_DECODE_MAX_CHARS) -> Any:
 
     It reads no value that starts past ``limit`` characters (#527): that value
     is :data:`TOO_LONG_TO_READ`, standing for the rest of the text, and every
-    container still open closes with what it holds. So a longer value comes
-    back as far as its first ``limit`` characters go, still the object or the
-    array it is stored as, and a read serves what was read: nested past 200
-    levels, as its JSON text (``embry0.json_text.served``), ending in that
+    container still open closes with what it holds, as a
+    :class:`PartReadDict` or :class:`PartReadList`. So a longer value comes
+    back as far as its first ``limit`` characters go, marked as read in part:
+    the readers that act on it refuse it (:func:`refuse_part_read`), it is
+    never written back, and the API serves what was read (nested past 200
+    levels, as its JSON text, ``embry0.json_text.served``), ending in that
     marker. Only a row written some other way than the API holds such a
     value: the write paths refuse a document past 200 levels.
     """
@@ -138,11 +149,9 @@ def _loads_deep(text: str, limit: int = DEEP_DECODE_MAX_CHARS) -> Any:
         return i
 
     def string_at(i: int) -> tuple[str, int]:
-        """The string whose opening quote is at ``i``, and the index after its closing one."""
-        j = i + 1
-        while text[j] != '"':
-            j += 2 if text[j] == "\\" else 1
-        return json.loads(text[i : j + 1]), j + 1
+        """The string whose opening quote is at ``i``, and the index after its closing one: ``json``'s own C
+        scanner reads it, so a long string costs no Python step per character on the event loop (#527)."""
+        return _scanstring(text, i + 1)
 
     def key_at(i: int) -> tuple[str, int]:
         if text[i] != '"':
@@ -158,6 +167,8 @@ def _loads_deep(text: str, limit: int = DEEP_DECODE_MAX_CHARS) -> Any:
         while True:
             if i > limit:
                 # The rest stays unread: the marker stands for it, and every open container closes around it.
+                # Each container closed here is read in part, and marked so: readers refuse it, and it is
+                # never written back. A container is put in its own only when it closes, so none is held yet.
                 value: Any = TOO_LONG_TO_READ
                 while containers:
                     container = containers.pop()
@@ -166,7 +177,7 @@ def _loads_deep(text: str, limit: int = DEEP_DECODE_MAX_CHARS) -> Any:
                     else:
                         keys.pop()
                         container.append(value)
-                    value = container
+                    value = mark_part_read(container)
                 return value
             # A value starts at i: open a container, or read a scalar.
             char = text[i]

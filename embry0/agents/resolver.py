@@ -181,6 +181,11 @@ def resolve_agent_config(
        label on the ticket), then its ``"*"`` entry: the model chosen for
        every agent of the job (run with)
     """
+    from embry0.safety.part_read import refuse_part_read, refuse_part_read_columns
+
+    refuse_part_read_columns(agent_definition, f"the {agent_type} agent's definition")
+    refuse_part_read(template_config, f"the {agent_type} agent's template configuration")
+    refuse_part_read(pipeline_config, "the job's pipeline_config")
     model = agent_definition.get("model", "")
     tools = parse_tool_list(agent_definition.get("tools"))
     skills = _ensure_list(agent_definition.get("skills", []))
@@ -411,6 +416,17 @@ def resolve_agent_invocation(
 
     Validation raises AuthConfigError with the appropriate error_code.
     """
+    from embry0.safety.part_read import refuse_part_read
+
+    # Read only in part (#527), any of these has lost its keys past the cut. The definition, the template and
+    # pipeline_config are refused by resolve_agent_config, below.
+    for value, what in (
+        (global_defaults, "the agent defaults"),
+        (repo_prefs, "the repository's preferences"),
+        (job_overrides, "the job's overrides"),
+        (model_policy, "the model policy"),
+    ):
+        refuse_part_read(value, what)
     # -- execution_mode resolution
     repo_em = (repo_prefs or {}).get("execution_mode")
     job_em = (job_overrides or {}).get("execution_mode")
