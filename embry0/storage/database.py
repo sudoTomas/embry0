@@ -51,11 +51,36 @@ def _jsonb_decoder(value: str) -> Any:
     interpreter's limit (about 10,000 levels; Postgres stores up to about
     20,000) raised ``RecursionError`` on every read of its row (#479). Such
     a value is decoded by :func:`_loads_deep`, which keeps its own stack.
+
+    ``json.loads`` also refuses an integer longer than ``int`` reads (4,300
+    digits by default, :func:`sys.get_int_max_str_digits`), with a plain
+    ``ValueError`` for the whole value, so one such number in a row made every
+    read of it fail, a list with it (#523). Such an integer is read as its
+    digits, a ``str``: past that many digits it is far past a ``float``'s range
+    (``inf``, which JSON cannot write), and an ``int`` that long cannot be
+    written out either. Only a value that holds one is read a second time, so
+    every other value is read by the one ``json.loads`` call it always was.
     """
     try:
         return json.loads(value)
     except RecursionError:
         return _loads_deep(value)
+    except json.JSONDecodeError:
+        raise
+    except ValueError:
+        # Not malformed text, which is a JSONDecodeError: an integer past int's digit limit (#523).
+        try:
+            return json.loads(value, parse_int=_int_or_digits)
+        except RecursionError:
+            return _loads_deep(value)
+
+
+def _int_or_digits(digits: str) -> int | str:
+    """The integer ``digits`` spell, or ``digits`` themselves when ``int`` will not read that many (#523)."""
+    try:
+        return int(digits)
+    except ValueError:
+        return digits
 
 
 _WHITESPACE = " \t\n\r"
@@ -71,6 +96,8 @@ def _loads_deep(text: str) -> Any:
     Postgres hands JSONB back as canonical JSON, so this reads only what that
     can hold: objects, arrays, strings, numbers, ``true``, ``false``,
     ``null``. Anything else raises ``ValueError``, as ``json.loads`` does.
+    An integer longer than ``int`` reads is its digits, as
+    :func:`_jsonb_decoder` reads it (#523).
     """
     containers: list[Any] = []  # the objects and arrays still open, outermost first
     keys: list[str | None] = []  # for each open object, the key its next value goes under
@@ -120,7 +147,10 @@ def _loads_deep(text: str) -> Any:
                 number = _NUMBER.match(text, i)
                 if number is not None:
                     whole, fraction, exponent = number.groups()
-                    value = float(whole + (fraction or "") + (exponent or "")) if fraction or exponent else int(whole)
+                    if fraction or exponent:
+                        value = float(whole + (fraction or "") + (exponent or ""))
+                    else:
+                        value = _int_or_digits(whole)
                     i = number.end()
                 else:
                     literal = next(((word, v) for word, v in _LITERALS if text.startswith(word, i)), None)
