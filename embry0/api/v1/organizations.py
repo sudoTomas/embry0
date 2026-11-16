@@ -169,9 +169,11 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
     A forge that never answers (a refused connection, a failed name lookup, a
     timeout) is a 502 naming it (#379): the caller is told the forge could not
     be reached, which a 500 does not say and a probe result would only guess
-    at. So is one that answers with an outage (a 5xx, a 429) once the client's
-    retries are spent (#571): that is not an answer about access either, and
-    read as one it stored "not visible" over what an earlier probe found.
+    at. So is one that answers with an outage (a 5xx, a 429, a 403 carrying a
+    rate-limit signal) once the client's retries are spent, and one that does
+    not answer within the probe's deadline (#571): none is an answer about
+    access, and read as one it stored "not visible" over what an earlier probe
+    found.
     """
     config = getattr(request.app.state, "config", None)
     try:
@@ -185,7 +187,7 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
                 ca_pem=load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or "")),
             )
         return await org_service.probe_github(owner, token)
-    except (httpx.RequestError, org_service.ForgeOutage) as exc:
+    except (httpx.RequestError, org_service.ForgeOutage, org_service.ProbeOutOfTime) as exc:
         name = "GitLab" if forge == "gitlab" else "GitHub"
         status = exc.status if isinstance(exc, org_service.ForgeOutage) else None
         # Classes, not text: the text can carry the request's URL.
@@ -197,7 +199,12 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
             status=status,
             cause=_root_cause(exc),
         )
-        detail = f"{name} could not be reached" if status is None else f"{name} could not answer ({status})"
+        if isinstance(exc, org_service.ProbeOutOfTime):
+            detail = f"{name} did not answer within {org_service.PROBE_SECONDS:g} seconds"
+        elif status is None:
+            detail = f"{name} could not be reached"
+        else:
+            detail = f"{name} could not answer ({status})"
         raise HTTPException(status_code=502, detail=detail) from exc
 
 

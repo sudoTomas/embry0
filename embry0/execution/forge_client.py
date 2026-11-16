@@ -85,6 +85,21 @@ def retry_after_seconds(response: httpx.Response) -> float | None:
     return None
 
 
+def rate_limited(response: httpx.Response) -> bool:
+    """Does this response carry a rate-limit signal despite its status?
+
+    GitHub answers a secondary rate limit with ``403`` plus ``Retry-After``
+    and/or ``x-ratelimit-remaining: 0``, and a primary one with ``403`` and
+    ``x-ratelimit-remaining: 0`` — a status that otherwise means "your token
+    cannot do that". Reading the headers is what tells the two apart.
+    """
+    advertised = retry_after_seconds(response)
+    if advertised is not None and advertised > 0:
+        return True
+    remaining: str | None = response.headers.get("X-RateLimit-Remaining") or response.headers.get("RateLimit-Remaining")
+    return remaining == "0"
+
+
 @dataclass(frozen=True)
 class ForgeWrite:
     """What a forge answered to one write: its status, and its own words when it refused."""

@@ -29,7 +29,7 @@ from typing import NoReturn
 import httpx
 import structlog
 
-from embry0.execution.forge_client import MAX_BACKOFF_SECONDS, retry_after_seconds
+from embry0.execution.forge_client import MAX_BACKOFF_SECONDS, rate_limited, retry_after_seconds
 
 logger = structlog.get_logger(__name__)
 
@@ -71,19 +71,6 @@ def advertised_delay(response: httpx.Response) -> float | None:
     return min(advertised, MAX_BACKOFF_SECONDS)
 
 
-def _rate_limited(response: httpx.Response) -> bool:
-    """Does this response carry a rate-limit signal despite its status?
-
-    GitHub answers a secondary rate limit with ``403`` plus ``Retry-After``
-    and/or ``x-ratelimit-remaining: 0`` — a status that otherwise means "your
-    token cannot do that". Reading the headers is what tells the two apart.
-    """
-    if advertised_delay(response) is not None:
-        return True
-    remaining: str | None = response.headers.get("X-RateLimit-Remaining") or response.headers.get("RateLimit-Remaining")
-    return remaining == "0"
-
-
 def classify_response(response: httpx.Response) -> NoReturn:
     """Raise the send error matching a failed response.
 
@@ -97,7 +84,7 @@ def classify_response(response: httpx.Response) -> NoReturn:
     Call this only on a response already judged a failure — it always raises.
     """
     status = response.status_code
-    if status == 429 or status >= 500 or (400 <= status < 500 and _rate_limited(response)):
+    if status == 429 or status >= 500 or (400 <= status < 500 and rate_limited(response)):
         raise TransientSendError(f"http_{status}", retry_after=advertised_delay(response))
     raise PermanentSendError(f"http_{status}")
 

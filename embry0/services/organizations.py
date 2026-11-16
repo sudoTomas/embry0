@@ -10,9 +10,11 @@ there. Discovery, the needs list and the wizard build on it.
 
 from __future__ import annotations
 
+import asyncio
 import math
+import time
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Final, Protocol, TypeGuard
@@ -345,11 +347,58 @@ class ForgeOutage(Exception):
         self.status = status
 
 
+class ProbeOutOfTime(Exception):
+    """The probe's deadline (:data:`PROBE_SECONDS`) ran out, or the forge asked to wait longer than what was left of
+    it: no answer about access either (#571)."""
+
+
+#: How long a probe may take in all, its retries and their waits included: under the dashboard's 30 s request
+#: timeout, so the person is answered rather than left with a timeout of their own.
+PROBE_SECONDS = 25.0
+#: The probe's clock and its waits, read when a probe starts.
+_monotonic: Callable[[], float] = time.monotonic
+_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+
+
+class _ProbeTime:
+    """What is left of one probe's :data:`PROBE_SECONDS`, and the client's waits measured against it."""
+
+    def __init__(self) -> None:
+        self._clock, self._wait = _monotonic, _sleep
+        self._end = self._clock() + PROBE_SECONDS
+
+    def left(self) -> float:
+        return max(0.0, self._end - self._clock())
+
+    async def sleep(self, delay: float) -> None:
+        """The client's wait before a retry. One longer than what is left of the deadline (a ``Retry-After`` or a
+        rate-limit reset further out) ends the probe at once: waiting less than the forge asked would only be
+        refused again."""
+        if delay >= self.left():
+            raise ProbeOutOfTime()
+        await self._wait(delay)
+
+
+async def _within(probe_time: _ProbeTime, probe: Awaitable[AccessProbe]) -> AccessProbe:
+    """``probe``, ended at its deadline: a forge that takes the connection and never answers would otherwise hold it
+    for every attempt's whole timeout."""
+    try:
+        async with asyncio.timeout(probe_time.left()):
+            return await probe
+    except TimeoutError:
+        raise ProbeOutOfTime() from None
+
+
 async def _ask(client: _Client, path: str, **kwargs: Any) -> Any:
-    """``client.get``, raising :class:`ForgeOutage` for an answer that is an outage rather than about access."""
+    """``client.get``, raising :class:`ForgeOutage` for an answer that is an outage rather than about access: a 5xx,
+    a 429, or a 4xx carrying a rate-limit signal (GitHub's primary and secondary rate limits come back as 403;
+    :func:`embry0.execution.forge_client.rate_limited`)."""
+    from embry0.execution.forge_client import rate_limited
+
     response = await client.get(path, **kwargs)
     status = getattr(response, "status_code", 200)
-    if status == 429 or status >= 500:
+    limited = 400 <= status < 500 and hasattr(response, "headers") and rate_limited(response)
+    if status == 429 or status >= 500 or limited:
         raise ForgeOutage(status)
     return response
 
@@ -388,11 +437,15 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     own policy; one that persists raises (a transport error, or
     :class:`ForgeOutage`) rather than being read as no access.
     """
+    probe_time = _ProbeTime()
     if client is None:
         from embry0.execution.github_client import GitHubClient
 
-        client = GitHubClient(default_token=token, owner_env_tokens=False, token_owner=owner)
+        client = GitHubClient(default_token=token, owner_env_tokens=False, token_owner=owner, sleep=probe_time.sleep)
+    return await _within(probe_time, _probe_github(owner, client))
 
+
+async def _probe_github(owner: str, client: _Client) -> AccessProbe:
     me = await _ask(client, "/user")
     identity = str((_json(me) or {}).get("login") or "") or None if me.status_code == 200 else None
 
@@ -450,6 +503,7 @@ async def probe_gitlab(
 ) -> AccessProbe:
     """Read and identity for a GitLab group with ``token``. Hooks are not probed in this release. Transient failures
     as :func:`probe_github`'s."""
+    probe_time = _ProbeTime()
     if client is None:
         from embry0.execution.gitlab_client import GitLabClient
 
@@ -459,8 +513,12 @@ async def probe_gitlab(
             ca_pem=ca_pem,
             owner_env_tokens=False,
             token_owner=owner,
+            sleep=probe_time.sleep,
         )
+    return await _within(probe_time, _probe_gitlab(owner, client))
 
+
+async def _probe_gitlab(owner: str, client: _Client) -> AccessProbe:
     me = await _ask(client, "/user")
     identity = str((_json(me) or {}).get("username") or "") or None if me.status_code == 200 else None
     group = await _ask(client, f"/groups/{quote(owner, safe='')}")
