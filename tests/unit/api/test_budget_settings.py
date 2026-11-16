@@ -726,6 +726,47 @@ async def test_the_first_effective_read_shows_the_import_it_starts(app: Any, cli
     assert (await app.state.budget_policy.settings()).daily_cap_usd == 42.0, "the gate reads the imported cap"
 
 
+def _shown(view: dict[str, Any], section: str, key: str) -> tuple[Any, Any]:
+    keys = next(s for s in view["sections"] if s["name"] == section)["keys"]
+    found = next(k for k in keys if k["key"] == key)
+    return found["value"], found["source"]
+
+
+async def test_an_organization_s_first_effective_read_shows_the_import_it_starts(
+    app: Any, client: AsyncClient, db_with_migrations: DatabasePool
+) -> None:
+    """#339 for an organization's view: the same read's retry copies the organization's moved settings (its
+    context-audit budget and days) into its layer. Read before the retry, the first view showed both, and the daily
+    cap, at their defaults."""
+    from embry0.services.budget_policy import BudgetPolicy
+    from embry0.settings.earlier import EARLIER_SOURCES
+
+    await OrganizationsRepository(db_with_migrations).register(
+        "acme", "github", settings={"context_audit_budget_usd": 0.5, "context_audit_days": 5}
+    )
+    app.state.budget_policy = BudgetPolicy(
+        app.state.settings,
+        _config(DAILY_BUDGET_CAP_USD="42"),
+        earlier=EARLIER_SOURCES,
+        moved=org_service.MOVED_SETTINGS,
+    )
+
+    reads = [
+        (await client.get("/api/v1/config/settings/effective?owner=acme", headers=_as(OPERATOR))).json() for _ in "ab"
+    ]
+    shown = [
+        (
+            _shown(view, "budget", "context_audit_job_usd"),
+            _shown(view, "context_audit", "days"),
+            _shown(view, "budget", "daily_cap_usd"),
+        )
+        for view in reads
+    ]
+    assert shown == [((0.5, "organization"), (5, "organization"), (42.0, "bootstrap"))] * 2, (
+        f"the organization's first read shows what the import it started wrote, as the next does: {shown}"
+    )
+
+
 async def test_while_the_import_is_pending_the_effective_view_shows_the_caps_enforced(
     app: Any, client: AsyncClient, db_with_migrations: DatabasePool
 ) -> None:
