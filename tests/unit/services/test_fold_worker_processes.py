@@ -13,9 +13,10 @@ Each test runs plain functions in real worker processes:
 - the pool is sized to the cgroup's CPU quota, not the host's count.
 
 A loaded host can take seconds to start a worker process, so no test measures
-how long anything took. A computation that must still be running is a
+how long that took. A computation that must still be running is a
 :class:`_Hold`, which keeps its process until the test lets it go; a time
-limit is short only for the computation meant to run past it; and every wait
+limit is short only for the computation meant to run past it, on a process
+already started, and must end it within :data:`PROMPTLY`; and every other wait
 for what must happen is bounded by :data:`WITHIN`, a bound for a hang, not a
 measure of speed.
 """
@@ -31,7 +32,7 @@ import subprocess
 import sys
 import textwrap
 import time
-from collections.abc import AsyncIterator, Awaitable, Coroutine, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,10 @@ WITHIN = 60.0
 LONG = 2 * WITHIN
 #: A time limit meant to run out: only the computation that should run past it gets it (:func:`_limit`).
 SHORT = 1.0
+#: How soon after its start a computation under :data:`SHORT` must fail: room for a loaded host, and short of the
+#: limit made many times longer, so the limit itself is pinned. Only computations on processes already started run in
+#: it: no process start, the one thing load stretches to seconds, falls inside the window (:func:`_past_its_limit`).
+PROMPTLY = WITHIN / 4
 
 
 @pytest.fixture
@@ -71,6 +76,16 @@ async def _soon[T](work: Awaitable[T], failure: str) -> T:
         return await asyncio.wait_for(work, WITHIN)
     except TimeoutError as exc:
         raise AssertionError(failure) from exc
+
+
+async def _past_its_limit(workers: FoldWorkers, kind: str, work: Callable[[], Awaitable[Any]], failure: str) -> None:
+    """``work()``, with ``kind``'s limit at :data:`SHORT`, fails with :class:`FoldTimeout` within :data:`PROMPTLY` of
+    its start, or the test fails saying ``failure``."""
+    with _limit(workers, kind), pytest.raises(FoldTimeout):
+        try:
+            await asyncio.wait_for(work(), PROMPTLY)
+        except TimeoutError as exc:
+            raise AssertionError(f"{failure}: no FoldTimeout within {PROMPTLY:.0f}s of a {SHORT:.0f}s limit") from exc
 
 
 @contextlib.contextmanager
@@ -206,24 +221,27 @@ async def test_a_computation_past_its_limit_loses_its_process(tmp_path: Path) ->
     """One process for the sets, so the next computation shows whether it was replaced."""
     workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=LONG)
     try:
-        await _past_its_limit(workers, _Hold(tmp_path, "never"))
+        await _losing_its_process(workers, _Hold(tmp_path, "never"))
     finally:
         await workers.aclose(timeout=5)
 
 
-async def _past_its_limit(workers: FoldWorkers, never: _Hold) -> None:
+async def _losing_its_process(workers: FoldWorkers, never: _Hold) -> None:
     pid = await _soon(workers._run(ONE, "read", os.getpid), "the first computation never ran")  # noqa: SLF001
-    # Its gate never opens: only the limit ends it.
-    with _limit(workers, "read"), pytest.raises(FoldTimeout):
-        await _soon(never.run(workers, ONE), "a computation ran past its limit")
+    # On the process just started; its gate never opens: only the limit ends it.
+    await _past_its_limit(workers, "read", lambda: never.run(workers, ONE), "a computation ran past its limit")
     assert _gone(pid), "the process past its limit was killed"
     after = await _soon(workers._run(ONE, "read", os.getpid), "its lane is stuck")  # noqa: SLF001
     assert after != pid, "and replaced"
 
     # A stopped process answers nothing: the same, and its lane is free again after it.
     os.kill(after, signal.SIGSTOP)
-    with _limit(workers, "read"), pytest.raises(FoldTimeout):
-        await _soon(workers._run(TWO, "read", os.getpid), "a stopped process held its computation past its limit")  # noqa: SLF001
+    await _past_its_limit(
+        workers,
+        "read",
+        lambda: workers._run(TWO, "read", os.getpid),  # noqa: SLF001
+        "a stopped process held its computation past its limit",
+    )
     assert _gone(after), "the stopped process was killed"
     assert await _soon(workers._run(ONE, "read", os.getpid), "its lane is stuck") not in {pid, after}, "and replaced"  # noqa: SLF001
 
@@ -249,6 +267,7 @@ async def test_a_worker_exits_when_the_process_that_started_it_is_killed(tmp_pat
         text=True,
         env={**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)},
     )
+    worker: int | None = None
     try:
         assert parent.stdout is not None
         worker = int(await _soon(asyncio.to_thread(parent.stdout.readline), "the parent's computation never ran"))
@@ -262,6 +281,10 @@ async def test_a_worker_exits_when_the_process_that_started_it_is_killed(tmp_pat
             parent.wait(WITHIN)
         if parent.stdout is not None:
             parent.stdout.close()
+        # A worker that outlived it, when this test fails, is not left running.
+        if worker is not None and _alive(worker):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(worker, signal.SIGKILL)
 
 
 def _cgroup(root: Path, files: dict[str, str]) -> Path:
@@ -300,8 +323,12 @@ async def test_a_read_that_waits_past_its_limit_for_a_process_fails(tmp_path: Pa
     try:
         write = asyncio.create_task(writing.run(workers, ONE, "write"))
         await writing.pid()
-        with _limit(workers, "read"), pytest.raises(FoldTimeout):
-            await _soon(workers._run(TWO, "read", os.getpid), "the read waited for the write past its limit")  # noqa: SLF001
+        await _past_its_limit(
+            workers,
+            "read",
+            lambda: workers._run(TWO, "read", os.getpid),  # noqa: SLF001
+            "the read waited for the write past its limit",
+        )
         assert not write.done(), "it failed at its limit, not when the write was done"
         writing.release()
         await _soon(write, "the write never finished")
