@@ -117,6 +117,12 @@ def plan_recovery(
     return plan
 
 
+#: Why boot failed a job whose row holds a value too deep to read (#527).
+UNREADABLE_MESSAGE = (
+    "Orchestrator restarted; the job's row holds a stored value too deep to read, so it could not be taken back. "
+    "Replace the value, then dispatch it again."
+)
+
 RESUME_LIMIT_MESSAGE = (
     "Orchestrator restarted during this job {attempts} times without a clean shutdown; "
     "it may be what stops the orchestrator, so it was not resumed again. Dispatch it again."
@@ -128,15 +134,24 @@ async def take_back_jobs(jobs_repo: Any, db: Any, *, max_attempts: int) -> tuple
 
     Fails the jobs whose attempts are used up (``ERR_RESUME_LIMIT``) and
     takes back the ones it will resume or launch again (``begin_recovery``).
-    Returns ``(recovered rows, each with an "action" key; exhausted ids)``.
+    A job whose row holds a value too deep to read (#527) fails as a storage
+    failure (``ERR_STORAGE``), and the others still recover. Returns
+    ``(recovered rows, each with an "action" key; the ids it failed)``.
     Everything else in flight is left for ``fail_orphaned``, which must be
     given the recovered ids as ``keep``. Starting the recovered jobs waits for
     the executor (``IssueExecutor.resume_after_restart`` / ``relaunch``).
     """
     from embry0.orchestration.checkpoint import checkpointed_threads
     from embry0.safety.error_codes import ErrorCode
+    from embry0.storage.database import StoredValueTooDeep
 
-    rows = await jobs_repo.inflight_for_recovery()
+    unreadable: list[str] = []
+    try:
+        rows = await jobs_repo.inflight_for_recovery()
+    except StoredValueTooDeep:
+        # One job's row holds a value too deep to read (#527): the others recover; that one fails, saying why.
+        rows, unread = await jobs_repo.inflight_for_recovery_readable()
+        unreadable = await jobs_repo.fail_jobs(unread, ErrorCode.STORAGE.value, UNREADABLE_MESSAGE)
     checkpointed = await checkpointed_threads(db, [row["job_id"] for row in rows])
     plan = plan_recovery(rows, checkpointed=checkpointed, max_attempts=max_attempts)
 
@@ -148,4 +163,4 @@ async def take_back_jobs(jobs_repo: Any, db: Any, *, max_attempts: int) -> tuple
     taken = set(await jobs_repo.begin_recovery(plan.recovered(), counted=plan.counted()))
     actions = {d.job_id: d.action for d in plan.decisions}
     recovered = [{**row, "action": actions[row["job_id"]]} for row in rows if row["job_id"] in taken]
-    return recovered, exhausted
+    return recovered, exhausted + unreadable

@@ -111,6 +111,8 @@ class OrgRediscoveryLoop:
         self._start_run = start_run
         self._clock = clock
         self._tick_seconds = tick_seconds
+        #: Owners whose row was too deep to read (#527), logged once each in this process, not every tick.
+        self._unreadable_logged: set[str] = set()
         # When each owner's last start was refused before a run row existed,
         # the one attempt nothing else records.
         self._refused_at: dict[str, datetime] = {}
@@ -134,6 +136,9 @@ class OrgRediscoveryLoop:
             # One organization's row is too deep to read (#527): the others go; that one does not, and says so.
             orgs, unreadable = await self._organizations.list_readable()
             for owner in unreadable:
+                if owner in self._unreadable_logged:
+                    continue
+                self._unreadable_logged.add(owner)
                 logger.error(
                     "org_rediscovery_unreadable",
                     owner=owner,

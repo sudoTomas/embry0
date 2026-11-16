@@ -354,6 +354,148 @@ async def test_one_organization_too_deep_to_read_leaves_the_others_rediscovered(
 
     with structlog.testing.capture_logs() as logs:
         await loop.tick()
+        await loop.tick()  # a second tick: beta is running, acme is not logged again
     assert loop.started == ["beta"], f"one bad organization stops every rediscovery: {loop.started}"
     named = [entry for entry in logs if entry.get("event") == "org_rediscovery_unreadable"]
     assert [entry.get("owner") for entry in named] == ["acme"] and named[0]["log_level"] == "error", logs
+
+
+# ---- a fresh job fails, against the real repository (round 9) ----
+
+
+@pytest.mark.parametrize("path", ["run", "review"])
+async def test_a_fresh_job_too_deep_to_read_fails_from_pending(client: AsyncClient, path: str) -> None:
+    """The job never ran: it goes from pending to failed (ERR_STORAGE), with no started_at, and its issue reopens."""
+    from unittest.mock import AsyncMock
+
+    from embry0.services._executor_run import _run_pr_review_workflow
+    from tests.unit.services.test_failed_job_pr import PR, _executor, _patches
+
+    app = client.app  # type: ignore[attr-defined]
+    db = app.state.db
+    issue = await app.state.issues_repo.create(title="t", repo="acme/widgets")
+    issue_id = issue["id"] if isinstance(issue, dict) else issue
+    await db.execute("UPDATE issues SET status = 'in_progress' WHERE id = $1", issue_id)
+    job = await app.state.jobs_repo.create(repo="acme/widgets", task="t", issue_id=issue_id)
+    await db.execute("UPDATE jobs SET pipeline_config = $1::text::jsonb WHERE job_id = $2", _doc({}), job)
+
+    ex = _executor()
+    ex._jobs, ex._issues = app.state.jobs_repo, app.state.issues_repo
+    ex._broadcast_event = AsyncMock()  # type: ignore[method-assign]
+    ex._refuse_if_over_budget = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    started: list[str] = []
+
+    async def _stream(input_value, issue_id, job_id, state_sink=None, **kw):  # noqa: ANN001, ANN003, ARG001
+        started.append(job_id)
+        raise RuntimeError("the workflow ran")
+
+    ex._execute_workflow_stream = _stream  # type: ignore[assignment]
+    a, b, c, d = _patches(AsyncMock(return_value=PR))
+    with a, b, c, d:
+        if path == "run":
+            await ex._run_workflow(issue_id, job, {"title": "t", "body": "", "repo": "acme/widgets"})
+        else:
+            await _run_pr_review_workflow(ex, job)
+
+    row = await db.fetchrow("SELECT status, error_code, error_message, started_at FROM jobs WHERE job_id = $1", job)
+    assert started == [], "the workflow started without the job's row"
+    assert (row["status"], row["error_code"]) == ("failed", "ERR_STORAGE"), f"the job was never failed: {dict(row)}"
+    assert row["started_at"] is None and "too deep" in str(row["error_message"]), dict(row)
+    if path == "run":
+        assert await db.fetchval("SELECT status FROM issues WHERE id = $1", issue_id) == "open", (
+            "the issue is left in progress"
+        )
+
+
+# ---- a pinned credential too deep to read is not the deployment's (round 9) ----
+
+
+async def _pinned_credential(db: Any, *, kind: str, provider: str, host: str, role: str) -> Any:
+    from embry0.storage.encryption import FernetSecretsProvider
+
+    secrets = FernetSecretsProvider(secret_key="test-secret-key")
+    cipher = secrets.encrypt("registry-token-000000000001")
+    if hasattr(cipher, "__await__"):
+        cipher = await cipher
+    await db.execute(
+        "INSERT INTO credentials (id, kind, provider, host, label, secret_ciphertext, masked_preview, created_by) "
+        "VALUES ('cred-0001', $2, $3, $4, 'bound-to-widgets', $1, '****', 'someone')",
+        cipher,
+        kind,
+        provider,
+        host,
+    )
+    await db.execute(
+        "INSERT INTO credential_bindings (scope_kind, scope_value, role, provider, credential_id, created_by, pinned) "
+        "VALUES ('repo', 'acme/widgets', $1, $2, 'cred-0001', 'someone', true)",
+        role,
+        provider,
+    )
+    await db.execute("UPDATE credentials SET metadata = $1::text::jsonb WHERE id = 'cred-0001'", _doc({}))
+    return secrets
+
+
+async def test_a_pinned_forge_credential_too_deep_to_read_fails_rather_than_taking_the_environments(
+    client: AsyncClient,
+) -> None:
+    from types import SimpleNamespace
+
+    from embry0.services.credentials.resolver import CredentialResolver
+    from embry0.storage.repositories.credentials import CredentialsRepository
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    secrets = await _pinned_credential(db, kind="forge_token", provider="github", host="github.com", role="forge")
+    resolver = CredentialResolver(
+        CredentialsRepository(db),
+        secrets,
+        SimpleNamespace(github_token="", gitlab_token=""),
+        environ={"GITHUB_TOKEN": "env-token-000000000002"},
+        cache_ttl_seconds=0,
+    )
+    with pytest.raises(StoredValueTooDeep, match="in credential_bindings, credentials"):
+        await resolver.resolve_forge("acme/widgets", "github")
+
+
+async def test_a_pinned_llm_credential_too_deep_to_read_fails_rather_than_taking_the_environments(
+    client: AsyncClient,
+) -> None:
+    from types import SimpleNamespace
+
+    from embry0.services.credentials.resolver import CredentialResolver
+    from embry0.storage.repositories.credentials import CredentialsRepository
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    secrets = await _pinned_credential(db, kind="llm_api_key", provider="anthropic", host="", role="llm")
+    resolver = CredentialResolver(
+        CredentialsRepository(db),
+        secrets,
+        SimpleNamespace(github_token="", gitlab_token="", anthropic_api_key="env-key-000000000003"),
+        environ={"ANTHROPIC_API_KEY": "env-key-000000000003"},
+        cache_ttl_seconds=0,
+    )
+    with pytest.raises(StoredValueTooDeep, match="in credential_bindings, credentials"):
+        await resolver.resolve_llm("acme/widgets", "anthropic")
+
+
+# ---- boot recovery takes back the readable jobs (round 9) ----
+
+
+async def test_one_in_flight_job_too_deep_to_read_leaves_the_others_to_recover(client: AsyncClient) -> None:
+    from embry0.orchestration.restart import take_back_jobs
+    from embry0.storage.repositories.jobs import JobsRepository
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    for job_id in ("job-deep", "job-ok"):
+        await db.execute(
+            "INSERT INTO jobs (job_id, task, repo, status, launch) VALUES ($1, 't', 'acme/widgets', 'pending', "
+            "$2::text::jsonb)",
+            job_id,
+            json.dumps({"kind": "issue", "issue_id": "iss-1"}),
+        )
+    await db.execute("UPDATE jobs SET launch = $1::text::jsonb WHERE job_id = 'job-deep'", _doc({"kind": "issue"}))
+
+    recovered, failed = await take_back_jobs(JobsRepository(db), db, max_attempts=3)
+    assert [row["job_id"] for row in recovered] == ["job-ok"], f"the readable job is not taken back: {recovered}"
+    assert failed == ["job-deep"], failed
+    row = await db.fetchrow("SELECT status, error_code FROM jobs WHERE job_id = 'job-deep'")
+    assert (row["status"], row["error_code"]) == ("failed", "ERR_STORAGE"), dict(row)

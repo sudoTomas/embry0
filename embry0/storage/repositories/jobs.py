@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from embry0.safety.error_codes import ErrorCode
-from embry0.storage.database import DatabasePool, StoredValueTooDeep
+from embry0.storage.database import DatabasePool, StoredValueTooDeep, read_jsonb_text
 from embry0.storage.repositories.gate_refusal import gate_refusal_sql
 from embry0.storage.schemas import JobStatus
 
@@ -68,20 +68,22 @@ VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
     JobStatus.PR_CLOSED: {JobStatus.PR_MERGED, JobStatus.COMPLETED},
 }
 
-# #348: the one runtime path from PENDING straight to FAILED. The dispatch
-# budget gate is asked before a job is marked running, so a job it refuses
-# never ran and must not carry a started_at it did not earn. Narrow on
-# purpose: only a write carrying ERR_BUDGET_REFUSED may take it, so every
-# other failure still has to pass through RUNNING. Kept out of the table
-# above because the table cannot express the condition.
-_GATE_REFUSAL_CODE = ErrorCode.BUDGET_REFUSED.value
+# #348: the runtime paths from PENDING straight to FAILED, each for a job that
+# never ran and must not carry a started_at it did not earn. The dispatch
+# budget gate is asked before a job is marked running (ERR_BUDGET_REFUSED);
+# and a run that cannot read what it would run on, its row holding a stored
+# value too deep to read (#527), fails before it starts (ERR_STORAGE). Narrow
+# on purpose: only a write carrying one of these codes may take it, so every
+# other failure still has to pass through RUNNING. Kept out of the table above
+# because the table cannot express the condition.
+_FAILED_BEFORE_START_CODES = frozenset({ErrorCode.BUDGET_REFUSED.value, ErrorCode.STORAGE.value})
 
 
 def _is_gate_refusal(current_status: str, new_status: str, fields: dict[str, Any]) -> bool:
     return (
         current_status == JobStatus.PENDING
         and new_status == JobStatus.FAILED
-        and fields.get("error_code") == _GATE_REFUSAL_CODE
+        and fields.get("error_code") in _FAILED_BEFORE_START_CODES
     )
 
 
@@ -762,6 +764,31 @@ class JobsRepository:
             """
         )
         return [dict(r) for r in rows]
+
+    async def inflight_for_recovery_readable(self) -> tuple[list[dict[str, Any]], list[str]]:
+        """:meth:`inflight_for_recovery` after it raised ``StoredValueTooDeep`` (#527): each row's ``launch``
+        read alone, so one row too deep to read leaves the others to recover; and the ids of those that could
+        not be read, which boot fails."""
+        rows = await self._db.fetch(
+            """
+            SELECT job_id, status, pipeline_template, issue_id, launch::text AS launch, interrupted_at,
+                   resume_attempts
+            FROM jobs
+            WHERE status IN ('running', 'pending')
+            ORDER BY created_at
+            """
+        )
+        readable: list[dict[str, Any]] = []
+        unreadable: list[str] = []
+        for row in rows:
+            job = dict(row)
+            try:
+                job["launch"] = read_jsonb_text(job["launch"]) if job["launch"] is not None else None
+            except StoredValueTooDeep:
+                unreadable.append(str(job["job_id"]))
+                continue
+            readable.append(job)
+        return readable, unreadable
 
     async def begin_recovery(self, job_ids: Collection[str], *, counted: Collection[str]) -> list[str]:
         """Take these in-flight jobs back at boot (#307).

@@ -29,6 +29,7 @@ from embry0.services.credentials.providers import (
     env_fallback_metadata,
     llm_providers,
 )
+from embry0.storage.database import StoredValueTooDeep
 from embry0.storage.encryption import SecretsProvider
 from embry0.storage.repositories.credentials import CredentialsRepository
 
@@ -396,6 +397,10 @@ class CredentialResolver:
                 trace.append(f"{scope_kind}:{scope_value} -> none")
         except CredentialUnavailableError:
             raise
+        except StoredValueTooDeep:
+            # A registry row too deep to read (#527) is not an outage: the pinned credential is unknown, not
+            # absent, so the job fails rather than taking the deployment's token.
+            raise
         except Exception as exc:  # noqa: BLE001 — a registry outage must not fail a job that env can serve
             logger.warning("credential_registry_error", repo=repo, forge=forge, error=str(exc)[:200])
             trace.append(f"registry error: {type(exc).__name__}")
@@ -707,6 +712,8 @@ class CredentialResolver:
                 trace.append(f"{scope_kind}:{scope_value} -> none")
         except CredentialUnavailableError:
             raise
+        except StoredValueTooDeep:
+            raise  # as for a forge credential: a row too deep to read is not an outage (#527)
         except Exception as exc:  # noqa: BLE001 — a registry outage must not fail a job that env can serve
             logger.warning("credential_registry_error", repo=repo, provider=provider, error=str(exc)[:200])
             trace.append(f"registry error: {type(exc).__name__}")
