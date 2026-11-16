@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import socket
+
 import pytest
 
 
@@ -126,3 +128,47 @@ async def test_presign_does_not_require_csrf_header(api_with_qa):
     # 422 = validation. NOT 403 (which would indicate CSRF blocked the request).
     assert r.status_code in (200, 401, 422)
     assert r.status_code != 403
+
+
+async def test_presign_mints_urls_without_reaching_the_storage(monkeypatch):
+    """The orchestrator signs URLs for the sandbox-facing endpoint (``minio-proxy``), a name it cannot resolve itself:
+    minting one reaches no network. The QA storage client's explicit region is what spares it the bucket-location
+    lookup (``embry0/execution/qa/minio_client.py``); without it every presign asks the storage first and fails."""
+    from httpx import ASGITransport, AsyncClient
+
+    from embry0.api.app import create_app
+    from embry0.config import Embry0Config
+    from embry0.execution.qa.minio_client import QAMinioClient
+    from embry0.execution.qa.token_registry import SandboxTokenRegistry
+
+    reached: list[tuple[str, object]] = []
+
+    def no_lookup(host, *args, **kwargs):
+        reached.append(("getaddrinfo", host))
+        raise socket.gaierror(-2, "Name or service not known")
+
+    def no_connect(self, address):
+        reached.append(("connect", address))
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
+    app.state.qa_minio = QAMinioClient("minio:9000", "access", "secret")
+    app.state.qa_minio_sandbox = QAMinioClient("minio-proxy:9100", "access", "secret")
+    tokens = SandboxTokenRegistry()
+    tokens.register("test-token-aaaaaaaaaaaaaaa", job_id="JOB1", attempt_n=1)
+    app.state.qa_token_registry = tokens
+    monkeypatch.setattr(socket, "getaddrinfo", no_lookup)
+    monkeypatch.setattr(socket.socket, "connect", no_connect)
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for direction in ("put", "get"):
+            r = await client.post(
+                "/api/v1/internal/qa/presign",
+                json={"sandbox_token": "test-token-aaaaaaaaaaaaaaa", "paths": ["result.json"], "direction": direction},
+            )
+            assert r.status_code == 200, (
+                f"a {direction} presign failed: {r.status_code} {r.text[:200]} (reached {reached})"
+            )
+            (url,) = [u["url"] for u in r.json()["urls"]]
+            assert url.startswith("http://minio-proxy:9100/qa-artifacts/JOB1/1/result.json?"), url
+    assert reached == [], f"minting presigned URLs reached the network: {reached}"
