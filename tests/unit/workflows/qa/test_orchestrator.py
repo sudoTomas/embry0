@@ -1064,10 +1064,10 @@ _QA_YAML_SHARED_VOLUME_ON = _QA_YAML_CACHE_DISABLED.replace(
 )
 
 
-async def _init_with_shared_volume(monkeypatch, tmp_path, qa_yaml: str) -> tuple[dict, list[dict]]:
+async def _init_with_shared_volume(monkeypatch, tmp_path, qa_yaml: str) -> tuple[dict, list[dict], AsyncMock]:
     """``init_orchestrator_node`` on ``qa_yaml``, stored as the repository's QA config, with a lockfile in the workspace
     and a volume manager to hand out a volume: all a run needs to warm a shared volume but the setting. Answers the
-    node's output and the keyword arguments of each call to the warmer."""
+    node's output, the keyword arguments of each call to the warmer, and the volume manager."""
     from types import SimpleNamespace
 
     warmed: list[dict] = []
@@ -1122,19 +1122,22 @@ async def _init_with_shared_volume(monkeypatch, tmp_path, qa_yaml: str) -> tuple
         }
     }
     state = {"job_id": "run-e1-volume", "repo": "org/repo", "branch_name": "main", "qa": {}}
-    return await init_orchestrator_node(state, config), warmed
+    return await init_orchestrator_node(state, config), warmed, volume_mgr
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch, tmp_path):
     """warm_shared_volume must NOT be called when cache.shared_volume.enabled=False, on a run that reads that setting:
     its stored QA config loaded and its lockfile read (#381)."""
-    out, warmed = await _init_with_shared_volume(monkeypatch, tmp_path, _QA_YAML_CACHE_DISABLED)
+    out, warmed, volume_mgr = await _init_with_shared_volume(monkeypatch, tmp_path, _QA_YAML_CACHE_DISABLED)
     parsed = out["qa"].get("qa_yaml_v2_parsed") or {}
     assert parsed.get("cache", {}).get("shared_volume", {}).get("enabled") is False, (
         f"init stopped before it read the shared volume's setting: {out['qa'].get('outcome')}"
     )
     assert warmed == [], "warm_shared_volume should not have been called"
+    assert (volume_mgr.ensure.await_count, volume_mgr.recreate.await_count) == (0, 0), (
+        "a shared volume was created or recreated with the setting off"
+    )
     # shared_volume_name must NOT be set when enabled=False
     assert out["qa"].get("shared_volume_name") is None, "the run took a shared volume with the setting off"
 
@@ -1142,11 +1145,12 @@ async def test_orchestrator_skips_warmer_when_volume_disabled(monkeypatch, tmp_p
 @pytest.mark.asyncio
 async def test_orchestrator_warms_the_volume_when_enabled(monkeypatch, tmp_path):
     """The same run with only the setting on warms the volume: the run above reaches the warmer but for the setting."""
-    out, warmed = await _init_with_shared_volume(monkeypatch, tmp_path, _QA_YAML_SHARED_VOLUME_ON)
+    out, warmed, volume_mgr = await _init_with_shared_volume(monkeypatch, tmp_path, _QA_YAML_SHARED_VOLUME_ON)
     assert [call["volume_name"] for call in warmed] == ["qa-vol-run-e1-volume"], (
         f"the run warmed no shared volume with it on: {out['qa'].get('outcome')}"
     )
     assert out["qa"]["shared_volume_name"] == "qa-vol-run-e1-volume"
+    assert volume_mgr.ensure.await_count == 1, "the run did not ask the volume manager for its volume"
 
 
 @pytest.mark.asyncio
