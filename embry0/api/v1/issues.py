@@ -19,7 +19,12 @@ from embry0.api.deps import (
     get_jobs_repo,
     request_actor,
 )
-from embry0.api.issue_allowlist import hide_input_unless_covered, parent_hidden, without_hidden_parents
+from embry0.api.issue_allowlist import (
+    hidden_issue_ids,
+    hide_input_unless_covered,
+    parent_hidden,
+    without_hidden_parents,
+)
 from embry0.api.repo_allowlist import covered_slugs, enforce_reach, enforce_repo_allowlist, hide_unless_covered
 from embry0.api.schemas import RunWithRequest
 from embry0.api.schemas.inputs import AnswerInputRequest, InputResponse
@@ -193,6 +198,12 @@ async def create_issue(
 # ---------------------------------------------------------------------------
 
 
+#: ``parent_issue_id``'s value for the top-level issues, its default, and for every issue at any level; any other
+#: value is an issue whose children are listed (#351).
+TOP_LEVEL = "__top_level__"
+ANY_PARENT = "any"
+
+
 @router.get("/issues")
 async def list_issues(
     request: Request,
@@ -201,14 +212,19 @@ async def list_issues(
     repo: str | None = None,
     labels: str | None = None,
     search: str | None = None,
-    parent_issue_id: str | None = "__top_level__",
+    parent_issue_id: str | None = TOP_LEVEL,
     sort: str = "created_at",
     order: str = "desc",
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     issues: IssuesRepository = Depends(get_issues_repo),
 ) -> IssueListResponse:
-    top_level_only = parent_issue_id == "__top_level__"
+    top_level_only = parent_issue_id == TOP_LEVEL
+    parent = parent_issue_id if parent_issue_id and parent_issue_id not in (TOP_LEVEL, ANY_PARENT) else None
+    if parent is not None and await hidden_issue_ids(request, [parent]):
+        # A parent the key does not read lists as one that does not exist: no children. Listing its children of
+        # repositories the key covers would name the parent each of them hides (without_hidden_parents, below).
+        return IssueListResponse(issues=[], total=0, offset=offset, limit=limit)
     rows, total = await issues.list_all(
         status=status,
         priority=priority,
@@ -216,6 +232,7 @@ async def list_issues(
         labels=labels,
         search=search,
         top_level_only=top_level_only,
+        parent_issue_id=parent,
         sort=sort,
         order=order,
         limit=limit,

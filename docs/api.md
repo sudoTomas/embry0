@@ -22,7 +22,10 @@ curl -X POST http://localhost:8200/api/v1/issues \
 #    orchestrator log. POST /issues/{issue_id}/triage retries and reports the
 #    same three fields (status 200).
 
-# List issues
+# List issues: the top-level ones by default; ?parent_issue_id=<id> lists that issue's children
+# instead (none for an issue the key does not read), ?parent_issue_id=any every issue at any
+# level, and ?labels=<label> keeps the issues carrying that one label. Every filter combines with
+# status, priority, repo and search.
 curl http://localhost:8200/api/v1/issues -H "X-Requested-With: XMLHttpRequest"
 
 # Get issue with children and jobs
