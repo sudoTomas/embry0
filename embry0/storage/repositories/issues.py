@@ -246,7 +246,8 @@ class IssuesRepository:
 
         ``repos`` (lower-cased slugs) keeps only the issues of those repositories, before the page is cut and the
         total counted, and counts only their children and jobs; None keeps every issue. ``labels`` is one label an
-        issue carries; ``parent_issue_id`` keeps that issue's children (#350, #351).
+        issue carries; ``parent_issue_id`` keeps that issue's children (#350, #351). ``top_level_only`` keeps the
+        issues with no parent, or, with ``repos``, none of those repositories.
         """
         conditions: list[str] = []
         args: list[Any] = []
@@ -282,7 +283,18 @@ class IssuesRepository:
             args.append(f"%{escaped}%")
             idx += 1
         if top_level_only:
-            conditions.append("i.parent_issue_id IS NULL")
+            # An issue at the top has no parent: none at all, or, to a caller held to ``repos``, none it reads. Such a
+            # caller reads an issue whose parent is of another repository as it reads one whose parent was deleted
+            # (the reference is set null): at the top (embry0.api.issue_allowlist). A bare NOT EXISTS holds for an
+            # issue with no parent too (``p.id = NULL`` matches nothing), and it alone lets Postgres plan an anti-join:
+            # ``parent_issue_id IS NULL OR`` before it would make it a subplan run per row.
+            if within is None:
+                conditions.append("i.parent_issue_id IS NULL")
+            else:
+                conditions.append(
+                    "NOT EXISTS (SELECT 1 FROM issues p WHERE p.id = i.parent_issue_id "
+                    f"AND lower(p.repo) = ANY({within}::text[]))"
+                )
         if parent_issue_id is not None:
             conditions.append(f"i.parent_issue_id = ${idx}")
             args.append(parent_issue_id)

@@ -1304,7 +1304,10 @@ Everything below narrows to the repositories the key covers:
   exist. A job names no issue the key does not read: its `issue_id` is null in
   `GET /jobs` and `GET /jobs/{id}`; nor does an issue name such a parent:
   its `parent_issue_id` is null in `GET /issues`, `GET /issues/{id}` and
-  what `PUT /issues/{id}` and `POST /issues/{id}/triage` answer. Work can
+  what `PUT /issues/{id}` and `POST /issues/{id}/triage` answer. Such an
+  issue reads in every way as one whose parent was deleted (the reference is
+  then set null): `GET /issues` lists it among the top-level issues, its
+  default, and the progression does not count it as a side quest. Work can
   cross repositories this way when an issue moves after its job ran. A
   key's own write never changes a parent the key does not read: changing a
   child's status does not recalculate that parent's, and the change is not

@@ -182,7 +182,9 @@ async def test_the_listing_tools_name_no_issue_or_approval_of_another_repository
         if shows_uncovered_issue(repr(body)) or shows_uncovered_approval(repr(body))
     }
     assert shown == {}, f"the tools that name an issue, its work or an approval of {UNCOVERED}: {shown}"
-    assert sorted(i["id"] for i in listed["issues"]) == sorted([ISSUE[COVERED], MIXED]) and listed["total"] == 2, listed
+    # The key's child of an issue it does not read is at its top level, as a child of a deleted issue is.
+    top = sorted([ISSUE[COVERED], MIXED, CHILD_HERE])
+    assert sorted(i["id"] for i in listed["issues"]) == top and listed["total"] == len(top), listed
     assert other == nobody and other["total"] == 0, (
         f"another repository's issues list as a repository's with none: {other}"
     )
@@ -220,10 +222,10 @@ async def test_the_dispatch_bot_files_and_follows_its_own_issues(
     assert filed["repo"] == COVERED and filed["job_id"] == "job-started-here", f"the bot files and starts it: {filed}"
     assert executor.execute.await_count == 1, "one job was started"
     assert read["id"] == filed["id"] and read["children"] == [], read
-    assert sorted(i["id"] for i in listed["issues"]) == sorted([filed["id"], ISSUE[COVERED], MIXED]), (
+    assert sorted(i["id"] for i in listed["issues"]) == sorted([filed["id"], ISSUE[COVERED], MIXED, CHILD_HERE]), (
         f"the bot lists its own repository's issues, the one it filed included, and no other: {listed}"
     )
-    assert listed["total"] == 3, listed
+    assert listed["total"] == 4, listed
     assert own["id"] == ISSUE[COVERED] and own["jobs"] and own["jobs"][0]["job_id"] == JOB[COVERED], own
     assert [q["id"] for q in own_questions] == [INPUT[COVERED]], own_questions
     assert answered["status"] == "answered", answered
@@ -280,8 +282,12 @@ async def test_a_chat_assistant_with_a_key_covering_many_repositories_reads_and_
         if shows_uncovered_issue(repr(body)) or shows_uncovered_approval(repr(body)) or UNCOVERED in repr(body)
     }
     assert shown == {}, f"the chat key reads nothing of {UNCOVERED}: {shown}"
+    repos = {i["id"]: i["repo"] for i in everyone.json()["issues"]}
+    # At the top level: an issue with no parent among the key's repositories, as one whose parent was deleted.
     expected = sorted(
-        i["id"] for i in everyone.json()["issues"] if i["repo"] in covered and i["parent_issue_id"] is None
+        i["id"]
+        for i in everyone.json()["issues"]
+        if i["repo"] in covered and repos.get(i["parent_issue_id"] or "") not in covered
     )
     assert sorted(i["id"] for i in issues["issues"]) == expected and issues["total"] == len(expected), (
         f"the chat key lists every issue of its {CHAT_REPOS} repositories and no other: {issues['total']}"

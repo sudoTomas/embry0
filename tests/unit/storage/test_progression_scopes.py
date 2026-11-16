@@ -455,3 +455,48 @@ async def test_every_fact_event_and_journal_row_of_a_scope_is_a_deployment_of_it
         )
     metrics = {f.split("metric='")[1].split("'")[0] for f in scoped[0]}
     assert metrics == set(FRAGMENTS), f"every fragment selects the scope's rows: {sorted(set(FRAGMENTS) - metrics)}"
+
+
+async def test_a_side_quest_is_an_issue_whose_parent_the_scope_holds(db_with_migrations: DatabasePool) -> None:
+    """In a scope, an issue whose parent is another repository's reads as one whose parent was deleted (the reference
+    set null): the merged job that finished it counts as an issue done and as no side quest, as an orphan's does. Its
+    own repository's child of its own repository's parent is a side quest in the scope and out of it."""
+    db = db_with_migrations
+    at = datetime(2025, 12, 10, 12, tzinfo=UTC)
+    issues = {
+        "q-parent": ("acme/widgets", None),
+        "q-child": ("acme/widgets", "q-parent"),
+        "q-lib-parent": ("acme/lib", None),
+        "q-under-lib": ("acme/widgets", "q-lib-parent"),
+        "q-gone": ("acme/widgets", None),
+        "q-orphan": ("acme/widgets", "q-gone"),
+    }
+    for issue_id, (repo, _parent) in issues.items():
+        await db.execute("INSERT INTO issues (id, title, repo) VALUES ($1, $1, $2)", issue_id, repo)
+    for issue_id, (_repo, parent) in issues.items():
+        if parent:
+            await db.execute("UPDATE issues SET parent_issue_id = $2 WHERE id = $1", issue_id, parent)
+    await db.execute("DELETE FROM issues WHERE id = 'q-gone'")
+    for n, issue_id in enumerate(("q-child", "q-under-lib", "q-orphan")):
+        await db.execute(
+            "INSERT INTO jobs (job_id, repo, task, status, issue_id, pr_url, delivery_state, delivery_state_at, "
+            "created_at, finished_at) VALUES ($1, 'acme/widgets', 't', 'pr_merged', $2, $3, 'merged', $4, $4, $4)",
+            f"job-{issue_id}",
+            issue_id,
+            f"https://github.com/acme/widgets/pull/{90 + n}",
+            at + timedelta(minutes=n),
+        )
+    repo = ProgressionRepository(db)
+    queries = [_Fragment(name, name, {}) for name in ("side_quest", "issue_done")]
+
+    def finished(facts: list[Any], metric: str) -> list[str]:
+        return sorted(str(f.label) for f in facts if f.metric == metric)
+
+    whole = await repo.facts(queries, "UTC")
+    scoped = await repo.facts(queries, "UTC", repos=SCOPE)
+    assert finished(whole, "side_quest") == ["q-child", "q-under-lib"], "the deployment reads both parents: it measures"
+    assert finished(scoped, "issue_done") == ["q-child", "q-orphan", "q-under-lib"], finished(scoped, "issue_done")
+    assert finished(scoped, "side_quest") == ["q-child"], (
+        "in acme/widgets' scope, an issue whose parent is acme/lib's counts as a side quest, which an issue whose "
+        f"parent was deleted does not: {finished(scoped, 'side_quest')}"
+    )
