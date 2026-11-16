@@ -32,6 +32,7 @@ import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import job_secret_values
+from embry0.storage.database import StoredValueTooDeep
 from embry0.workflows.issue_to_pr.nodes._common import job_repository
 from embry0.workflows.verification.config import VerificationConfig, load_verification_config
 from embry0.workflows.verification.gate import GateReport
@@ -103,6 +104,8 @@ async def _qa_app_targets(configurable: dict[str, Any], repo: str) -> tuple[list
 
         cfg = parse_qa_yaml_v2(row["yaml_text"], repo=repo)
         return cfg.managed_app_names(), cfg.deployed_app_names()
+    except StoredValueTooDeep:
+        raise  # verification would see no apps (#527)
     except Exception:
         logger.warning("verify_qa_config_unreadable", repo=repo, exc_info=True)
         return [], []

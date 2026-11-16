@@ -22,6 +22,7 @@ ambiguous. The cast does NOT cause double-encoding; only manual
 ``json.dumps()`` in the parameter list does.
 """
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator, Callable
@@ -265,8 +266,9 @@ class DatabasePool:
         self._min_size = min_size
         self._max_size = max_size
         self.pool: asyncpg.Pool | None = None
-        #: The few connections :meth:`fetch_for_display` reads on (#527), opened when first needed.
+        #: The few connections :meth:`fetch_for_display` reads on (#527), opened when first needed, under the lock.
         self._display_pool: asyncpg.Pool | None = None
+        self._display_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         """Create the connection pool."""
@@ -373,15 +375,16 @@ class DatabasePool:
     async def _display(self) -> asyncpg.Pool:
         if self.pool is None:
             raise RuntimeError("Call connect() first")
-        if self._display_pool is None:
+        async with self._display_lock:  # two first reads at once open one pool, not two
+            if self._display_pool is None:
 
-            async def _init_connection(conn: asyncpg.Connection) -> None:
-                await conn.set_type_codec(
-                    "jsonb", encoder=_jsonb_encoder, decoder=_jsonb_decoder_for_display, schema="pg_catalog"
-                )
+                async def _init_connection(conn: asyncpg.Connection) -> None:
+                    await conn.set_type_codec(
+                        "jsonb", encoder=_jsonb_encoder, decoder=_jsonb_decoder_for_display, schema="pg_catalog"
+                    )
 
-            self._display_pool = await asyncpg.create_pool(self._url, min_size=0, max_size=2, init=_init_connection)
-        return self._display_pool
+                self._display_pool = await asyncpg.create_pool(self._url, min_size=0, max_size=2, init=_init_connection)
+            return self._display_pool
 
     @property
     def _redacted_url(self) -> str:

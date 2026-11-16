@@ -84,3 +84,24 @@ async def test_done_when_raises_rather_than_keeping_its_fallback() -> None:
     assert await current(jobs, "job-1", fallback) == as_list(fallback), (
         "any other failed read keeps the fallback, as before"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_node_that_meets_a_value_too_deep_to_read_fails_the_job_with_the_reason() -> None:
+    """A node's config read raises it (an agent's definition, the model policy, the budget, the preferences): the
+    job fails, as a storage failure, saying why."""
+    ex = _executor()
+    ex._broadcast_event = AsyncMock()  # type: ignore[method-assign]
+    ex._jobs.get = AsyncMock(return_value={"trace_id": None, "repo": "acme/app", "task": "t"})
+
+    async def _stream(input_value, issue_id, job_id, state_sink=None, **kw):  # noqa: ANN001, ANN003, ARG001
+        raise StoredValueTooDeep("agent_definitions")
+
+    ex._execute_workflow_stream = _stream  # type: ignore[assignment]
+    a, b, c, d = _patches(AsyncMock(return_value=PR))
+    with a, b, c, d:
+        await ex._run_workflow("iss-1", "job-1", {"title": "t", "body": "", "repo": "acme/app"})
+    updates = [call.kwargs for call in ex._jobs.update.await_args_list if call.kwargs.get("status")]
+    assert updates[-1]["status"] == "failed", updates[-1]
+    assert updates[-1].get("error_code") == "ERR_STORAGE", f"not a storage failure: {updates[-1]}"
+    assert "in agent_definitions is nested too deep" in str(updates[-1].get("error_message")), updates[-1]

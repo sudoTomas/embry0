@@ -22,6 +22,7 @@ from embry0.orchestration.nodes.agent import (
     DEFAULT_ASK_USER_CAP,
     agent_attempt,
 )
+from embry0.storage.database import StoredValueTooDeep
 from embry0.workflows.issue_to_pr.nodes._common import (
     DECIDE_NOW_MAX_TURNS,
     _extract_ask_user_events,
@@ -199,6 +200,8 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     if templates_repo is not None:
         try:
             template_rows = await templates_repo.list_all()
+        except StoredValueTooDeep:
+            raise  # triage would pick from no templates (#527)
         except Exception:
             logger.warning("triage_template_list_failed", exc_info=True)
             template_rows = []

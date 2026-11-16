@@ -199,3 +199,161 @@ async def test_a_preferences_write_replaces_a_column_too_deep_to_read(client: As
     assert json.loads(before)["unread"]["pr_review"] == await db.fetchval("SELECT $1::text::jsonb::text", stored), (
         "the change record does not keep the old text"
     )
+    revision_id = await db.fetchval(
+        "SELECT id FROM repo_config_revisions WHERE repo = 'acme/widgets' ORDER BY id DESC LIMIT 1"
+    )
+    undone = await client.post(f"/api/v1/repos/acme/widgets/-/history/{revision_id}/undo")
+    assert undone.status_code == 409 and "cannot be put back" in undone.json()["detail"], (
+        f"an undo puts back nothing in its place, silently: {undone.status_code} {undone.text[:300]}"
+    )
+
+
+# ---- the run path: each config read fails the run, never defaults (round 8) ----
+
+
+async def _plant(db: Any, sql: str, text: str) -> None:
+    await db.execute("INSERT INTO repos (repo) VALUES ('acme/widgets') ON CONFLICT DO NOTHING")
+    await db.execute("INSERT INTO repo_preferences (repo) VALUES ('acme/widgets') ON CONFLICT DO NOTHING")
+    await db.execute("INSERT INTO provider_config (id) VALUES ('default') ON CONFLICT DO NOTHING")
+    await db.execute(sql, text)
+
+
+async def test_an_agents_definition_is_not_read_as_the_codes(client: AsyncClient) -> None:
+    """load_agent_definition, as the developer, review, triage, PR-review and generic agent nodes call it."""
+    from embry0.orchestration.nodes.agent import load_agent_definition
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await _plant(db, "UPDATE agent_definitions SET mcp_servers = $1::text::jsonb WHERE type = 'developer'", _doc({}))
+    fallback = {"model": "m", "tools": ["Read", "Write", "Edit", "Bash"]}
+    with pytest.raises(StoredValueTooDeep, match="in agent_definitions"):
+        await load_agent_definition({"configurable": {"db": db}}, "developer", fallback)
+
+
+async def test_the_model_policy_is_not_read_as_none(client: AsyncClient) -> None:
+    from embry0.orchestration.nodes.agent import load_model_policy
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await _plant(db, "UPDATE provider_config SET fallback_models = $1::text::jsonb", _list(["model-1"]))
+    with pytest.raises(StoredValueTooDeep, match="in provider_config"):
+        await load_model_policy({"configurable": {"db": db}})
+
+
+async def test_the_precheck_takes_no_policy_for_none(client: AsyncClient) -> None:
+    from types import SimpleNamespace
+
+    from embry0.services._executor_run import _model_policy_for_precheck
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await _plant(db, "UPDATE provider_config SET fallback_models = $1::text::jsonb", _list(["model-1"]))
+    with pytest.raises(StoredValueTooDeep, match="in provider_config"):
+        await _model_policy_for_precheck(SimpleNamespace(_db=db))  # type: ignore[arg-type]
+
+
+async def test_the_budget_is_not_read_as_the_variables(client: AsyncClient) -> None:
+    """With no snapshot held, the budget is read from the document: one too deep to read is not the variables."""
+    from embry0.orchestration.nodes.agent import load_budget_settings
+
+    app = client.app  # type: ignore[attr-defined]
+    budget = {"budget": {"max_budget_per_job_usd": 2.0}}
+    await _plant(app.state.db, "UPDATE settings_documents SET data = $1::text::jsonb", _doc(budget))
+    with pytest.raises(StoredValueTooDeep, match="in settings_documents"):
+        await load_budget_settings({"configurable": {"db": app.state.db, "embry0_config": app.state.config}})
+
+
+async def test_the_preferences_are_not_read_as_none(client: AsyncClient) -> None:
+    from embry0.orchestration.nodes.agent import _load_repo_preferences
+    from embry0.workflows.pr_review.nodes import _repo_preferences
+
+    app = client.app  # type: ignore[attr-defined]
+    sql = "UPDATE repo_preferences SET pr_review = $1::text::jsonb WHERE repo = 'acme/widgets'"
+    await _plant(app.state.db, sql, _doc({"enabled": True}))
+    configurable = {"repo_preferences_repo": app.state.repo_preferences_repo}
+    with pytest.raises(StoredValueTooDeep, match="in repo_preferences"):
+        await _load_repo_preferences({"repo": "acme/widgets"}, {"configurable": configurable})
+    with pytest.raises(StoredValueTooDeep, match="in repo_preferences"):
+        await _repo_preferences(configurable, "acme/widgets")
+
+
+async def test_a_stacks_container_allowlist_is_not_read_as_none(client: AsyncClient) -> None:
+    from embry0.services.job_log_access import repository_log_containers
+    from embry0.services.watcher_stacks import WatcherStack
+    from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
+
+    app = client.app  # type: ignore[attr-defined]
+    stacks = WatcherStacksRepository(app.state.db)
+    await stacks.upsert(WatcherStack(repo="acme/widgets", logql='{app="x"}'))
+    sql = "UPDATE watcher_stacks SET settings = $1::text::jsonb WHERE repo = 'acme/widgets'"
+    await _plant(app.state.db, sql, _doc({"containers": "app-web"}))
+    with pytest.raises(StoredValueTooDeep, match="in watcher_stacks"):
+        await repository_log_containers("acme/widgets", {"watcher_stacks_repo": stacks}, app.state.config)
+
+
+async def test_an_issue_still_shows_with_a_job_too_deep_to_read(client: AsyncClient) -> None:
+    """GET /issues/{id} reads its jobs as the job list does: the issue and its other jobs still show (round 8)."""
+    app = client.app  # type: ignore[attr-defined]
+    db = app.state.db
+    issue = await client.post("/api/v1/issues", json={"title": "t", "repo": "acme/widgets"})
+    assert issue.status_code in (200, 201), issue.text[:300]
+    issue_id = issue.json()["id"]
+    for job_id in ("job-deep", "job-ok"):
+        await db.execute(
+            "INSERT INTO jobs (job_id, task, repo, status, issue_id) VALUES ($1, 't', 'acme/widgets', 'completed', $2)",
+            job_id,
+            issue_id,
+        )
+    await db.execute("UPDATE jobs SET pipeline_config = $1::text::jsonb WHERE job_id = 'job-deep'", _doc({"y": 2}))
+
+    shown = await client.get(f"/api/v1/issues/{issue_id}")
+    assert shown.status_code == 200, (
+        f"the whole issue fails with one of its jobs: {shown.status_code} {shown.text[:300]}"
+    )
+    jobs = {job["job_id"]: job for job in shown.json()["jobs"]}
+    assert set(jobs) == {"job-deep", "job-ok"}, sorted(jobs)
+    assert jobs["job-deep"]["pipeline_config"] == UNSERVABLE_TEXT, jobs["job-deep"]["pipeline_config"]
+
+
+# ---- a loop over rows leaves the other rows (round 8) ----
+
+
+async def test_one_stack_too_deep_to_read_leaves_the_others_watched(client: AsyncClient) -> None:
+    import structlog
+
+    from embry0.api.app import watched_stacks
+    from embry0.services.watcher_stacks import WatcherStack
+    from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    stacks = WatcherStacksRepository(db)
+    for repo in ("acme/deep", "acme/widgets"):
+        await db.execute("INSERT INTO repos (repo) VALUES ($1) ON CONFLICT DO NOTHING", repo)
+        await stacks.upsert(WatcherStack(repo=repo, logql='{app="x"}'))
+    await db.execute("UPDATE watcher_stacks SET settings = $1::text::jsonb WHERE repo = 'acme/deep'", _doc({}))
+
+    with structlog.testing.capture_logs() as logs:
+        watched = await watched_stacks(stacks)
+    assert [stack.repo for stack in watched] == ["acme/widgets"], "one bad stack leaves every stack unwatched"
+    named = [entry for entry in logs if entry.get("event") == "watcher_stack_unreadable"]
+    assert [entry.get("repo") for entry in named] == ["acme/deep"] and named[0]["log_level"] == "critical", logs
+
+
+async def test_one_organization_too_deep_to_read_leaves_the_others_rediscovered(client: AsyncClient) -> None:
+    import structlog
+
+    from embry0.storage.repositories.organizations import OrganizationsRepository
+    from tests.unit.services.test_org_rediscovery import T0, Clock, FakeRuns, make_loop
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    for owner in ("acme", "beta"):
+        await db.execute(
+            "INSERT INTO organizations (owner, forge, status, settings) VALUES ($1, 'github', 'active', $2::text::jsonb)",
+            owner,
+            json.dumps({"rediscover_hours": 6}),
+        )
+    await db.execute("UPDATE organizations SET settings = $1::text::jsonb WHERE owner = 'acme'", _doc({}))
+    loop = make_loop(OrganizationsRepository(db), FakeRuns(), Clock(T0))  # type: ignore[arg-type]
+
+    with structlog.testing.capture_logs() as logs:
+        await loop.tick()
+    assert loop.started == ["beta"], f"one bad organization stops every rediscovery: {loop.started}"
+    named = [entry for entry in logs if entry.get("event") == "org_rediscovery_unreadable"]
+    assert [entry.get("owner") for entry in named] == ["acme"] and named[0]["log_level"] == "error", logs

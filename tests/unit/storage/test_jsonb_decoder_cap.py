@@ -88,3 +88,20 @@ def test_a_read_that_shows_rows_reads_it_as_a_stand_in_served_as_too_deep_to_sho
         assert served(stand_in) == UNSERVABLE_TEXT, "the stand-in is not served as a document too deep to show"
     assert _jsonb_decoder_for_display('{"a": [1, 2]}') == {"a": [1, 2]}, "a value read whole is read as before"
     assert served(too_deep_to_read("{")) == UNSERVABLE_TEXT
+
+
+async def test_two_first_reads_for_display_open_one_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    opened: list[int] = []
+
+    async def create_pool(*args: object, **kwargs: object) -> object:
+        opened.append(1)
+        await asyncio.sleep(0)
+        return object()
+
+    monkeypatch.setattr(database.asyncpg, "create_pool", create_pool)
+    pool = database.DatabasePool("postgresql://unused")
+    pool.pool = object()  # type: ignore[assignment]
+    first, second = await asyncio.gather(pool._display(), pool._display())
+    assert first is second and len(opened) == 1, f"two first reads opened {len(opened)} pools"

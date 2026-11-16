@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from embry0.services.watcher_stacks import SETTING_KEYS, WatcherStack
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, StoredValueTooDeep
 
 _COLUMNS = "repo, enabled, logql, tracker, tracker_target, settings, created_at, updated_at"
 
@@ -45,6 +45,24 @@ class WatcherStacksRepository:
     async def get(self, repo: str) -> WatcherStack | None:
         row = await self._db.fetchrow(f"SELECT {_COLUMNS} FROM watcher_stacks WHERE repo = $1", repo)
         return _stack(row) if row else None
+
+    async def list_readable(self, *, enabled_only: bool = False) -> tuple[list[WatcherStack], list[str]]:
+        """:meth:`list_all` after it raised ``StoredValueTooDeep`` (#527): each stack read alone, so one row too
+        deep to read leaves the others; and the repositories of those that could not be read."""
+        repos = await self._db.fetch(
+            "SELECT repo FROM watcher_stacks WHERE (NOT $1::boolean OR enabled) ORDER BY repo", enabled_only
+        )
+        stacks: list[WatcherStack] = []
+        unreadable: list[str] = []
+        for row in repos:
+            try:
+                stack = await self.get(str(row["repo"]))
+            except StoredValueTooDeep:
+                unreadable.append(str(row["repo"]))
+                continue
+            if stack is not None:
+                stacks.append(stack)
+        return stacks, unreadable
 
     async def upsert(
         self, stack: WatcherStack, *, check: Callable[[WatcherStack | None], None] | None = None

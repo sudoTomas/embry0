@@ -655,6 +655,8 @@ async def _load_merged_env_vars(self: IssueExecutor, repo_name: str, job_id: str
             if v["value"] != "[DECRYPTION_FAILED]"
         ]
         return env_vars or None
+    except StoredValueTooDeep:
+        raise  # the job would run without its variables (#527)
     except Exception:
         logger.warning("env_merge_failed", repo=repo_name, exc_info=True)
         return None
@@ -671,6 +673,8 @@ async def _agent_definitions_for_precheck(self: IssueExecutor) -> list[dict[str,
             rows = await AgentDefinitionsRepository(db).list_all()
             if rows:
                 return [dict(row) for row in rows if row.get("runs_in_jobs", True)]
+        except StoredValueTooDeep:
+            raise  # the seeds are not the definitions the job runs (#527)
         except Exception:
             logger.warning("llm_precheck_agent_definitions_failed", exc_info=True)
     from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
@@ -683,7 +687,9 @@ async def _model_policy_for_precheck(self: IssueExecutor) -> dict[str, Any] | No
 
     ``load_model_policy`` returns None while the row sets no default and
     disables nothing, which would hide a Grok tier fallback from the sandbox.
-    Disabled ids are carried and ignored by ``providers_for_job``.
+    Disabled ids are carried and ignored by ``providers_for_job``. A read that
+    fails leaves the precheck without a policy, but a row too deep to read
+    (#527) raises: it is not a policy that sets nothing.
     """
     db = getattr(self, "_db", None)
     if db is None:
@@ -692,6 +698,8 @@ async def _model_policy_for_precheck(self: IssueExecutor) -> dict[str, Any] | No
         from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
         cfg = await ProviderConfigRepository(db).get()
+    except StoredValueTooDeep:
+        raise
     except Exception:
         logger.warning("llm_precheck_model_policy_failed", exc_info=True)
         return None
@@ -912,6 +920,8 @@ async def _precheck_llm_accounts(
         if jobs is not None:
             try:
                 job = await jobs.get(job_id)
+            except StoredValueTooDeep:
+                raise  # the job's overrides are unknown, not absent (#527)
             except Exception:
                 logger.warning("llm_precheck_job_fetch_failed", job_id=job_id, exc_info=True)
         overrides = (job or {}).get("pipeline_config") or {}
@@ -1466,6 +1476,8 @@ async def _run_workflow(
         if repo_prefs is not None and issue.get("repo"):
             try:
                 pref = await repo_prefs.get(issue["repo"])
+            except StoredValueTooDeep:
+                raise  # the run would go on without the repository's profile and modes (#527)
             except Exception:
                 logger.warning("repo_prefs_fetch_failed", job_id=job_id, repo=issue["repo"], exc_info=True)
         if (job_row or {}).get("sandbox_profile"):
