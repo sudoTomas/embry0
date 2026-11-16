@@ -301,3 +301,23 @@ def test_a_reply_another_answer_beat_to_the_question_is_already_answered(record_
     assert resp.status_code == 200
     assert resp.json() == {"status": "already_answered"}, f"a reply that lost the question was taken: {resp.json()}"
     app.state.issue_executor.resume_for_issue.assert_not_awaited()
+
+
+def test_a_reply_to_a_question_of_a_job_that_ended_is_not_taken(record_answer_spy):
+    """#521: the question's job was cancelled (its issue closed, then reopened): the reply records nothing."""
+    app, inputs_repo = _answering_app()
+    inputs_repo.get_by_telegram_message = AsyncMock(
+        return_value={"id": "inp-1", "issue_id": "iss-1", "job_id": "job-1", "status": "pending"}
+    )
+    inputs_repo.count_pending_blocking = AsyncMock(return_value=0)
+    app.state.jobs_repo = MagicMock(get=AsyncMock(return_value={"job_id": "job-1", "status": "cancelled"}))
+    client = TestClient(app)
+    resp = client.post(
+        "/api/v1/telegram/callback",
+        json=_reply_update(),
+        headers={"X-Telegram-Bot-Api-Secret-Token": "real-secret"},
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("status") == "job_ended", f"a reply to an ended job's question was taken: {resp.json()}"
+    record_answer_spy.assert_not_awaited()
+    app.state.issue_executor.resume_for_issue.assert_not_awaited()

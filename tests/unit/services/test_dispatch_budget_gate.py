@@ -18,6 +18,8 @@ def _executor(decision=None):
     ex._jobs = MagicMock()
     ex._jobs.update = AsyncMock()
     ex._issues = MagicMock()
+    # #521: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._issues.update = AsyncMock()
     ex._db = None
     ex._audit_log_path = None
@@ -152,6 +154,8 @@ async def test_run_workflow_buckets_on_the_job_dispatcher_not_the_issue_author()
     executor._jobs.get = AsyncMock(return_value={"trace_id": None, "dispatched_by": "octocat"})
     executor._jobs.update = AsyncMock()
     executor._issues = MagicMock()
+    # #521: a job that ends reads its issue before putting it back to open.
+    executor._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     executor._issues.update = AsyncMock()
     executor._db = None
     executor._audit_log_path = None

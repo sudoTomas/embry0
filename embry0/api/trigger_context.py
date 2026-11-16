@@ -80,3 +80,12 @@ async def linear_trigger_context(request: Request, *, actor: str) -> TriggerCont
         auto_retry=bool(getattr(getattr(state, "linear_reconciler", None), "acts", False)),
         actor=actor,
     )
+
+
+async def trigger_labels_to_name(request: Request) -> list[str]:
+    """The trigger labels a message names (#521); none when they cannot be read, which only shortens the message."""
+    try:
+        return await resolve_trigger_labels(request)
+    except Exception:
+        logger.warning("trigger_labels_unreadable_for_a_message", exc_info=True)
+        return []

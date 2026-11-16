@@ -35,7 +35,7 @@ from embry0.trackers import (
     TrackerIssueRef,
     TriggerContext,
     create_tracked_issue,
-    end_answer_waits,
+    end_waits,
     extract_labels,
     start_triage,
 )
@@ -137,9 +137,15 @@ class GitLabSyncService:
             ended: list[str] = []
             if existing is not None:
                 await self._safe_status(issues_repo, existing["id"], "closed")
-                # #518: a job that waits for answers on a closed issue is never resumed; its wait ends here.
-                ended = await end_answer_waits(ctx.issue_executor, existing["id"])
+                # #518, #521: a closed issue's job that waits for answers, or is paused, never goes on; it ends here.
+                ended = await end_waits(ctx.issue_executor, existing["id"])
             return {"status": "accepted", "action": "issue_closed", **({"cancelled_jobs": ended} if ended else {})}
+
+        if action == "reopen" and existing is not None and existing.get("status") in ("closed", "cancelled"):
+            # #521: a reopened GitLab issue reads open again, as a reopened GitHub one does; a close is what made it
+            # read as ended, and refused its jobs.
+            await self._safe_status(issues_repo, existing["id"], "open")
+            existing = {**existing, "status": "open"}
 
         if action not in _DISPATCHABLE_ACTIONS:
             return {"status": "ignored", "reason": f"unhandled action: {action}"}

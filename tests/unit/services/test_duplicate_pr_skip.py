@@ -23,6 +23,8 @@ def _executor() -> tuple[IssueExecutor, MagicMock]:
     ex = IssueExecutor.__new__(IssueExecutor)
     ex._jobs = MagicMock(update=AsyncMock(), get=AsyncMock(return_value={"repo": "acme/widgets", "task": "t"}))
     ex._issues = MagicMock(update=AsyncMock(), update_parent_status=AsyncMock())
+    # #521: a job that ends reads its issue before putting it back to open.
+    ex._issues.get = AsyncMock(return_value={"id": "iss-1", "status": "in_progress"})
     ex._traces = None
     ex._db = None
     ex._audit_log_path = None

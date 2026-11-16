@@ -6,13 +6,13 @@ or the startup pass (``resume_answered_waits``, #504) resumed it; ``resume()``
 could not write the closed issue to ``triaging`` and failed, and
 ``_fail_resume`` wrote the issue back to ``open``. Now the job is cancelled
 instead, with a reason, and a job that ends never reopens a closed or
-cancelled issue; the close itself ends the wait (``end_answer_waits``).
+cancelled issue; the close itself ends the wait (``end_waits``).
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -60,6 +60,13 @@ def _no_checkpoint_or_audit(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(checkpoint, "purge_thread", AsyncMock())
     with patch.object(issue_executor, "emit_audit", new=AsyncMock()):
         yield
+
+
+def _end_waits(executor: IssueExecutor) -> Any:
+    end_waits = getattr(executor, "end_waits", None)
+    if end_waits is None:
+        pytest.fail("nothing ends the waits of an issue that was closed")
+    return end_waits
 
 
 async def _ended(jobs: Any, issues: Any, job_id: str, issue_id: str) -> tuple[str, str, str]:
@@ -117,7 +124,7 @@ async def test_closing_an_issue_cancels_its_job_that_waits_for_answers_and_no_ot
     await jobs.update(running, status="running")
     executor = _cancelling_executor(issues, jobs, db_with_migrations)
 
-    end_waits = getattr(executor, "end_answer_waits", None)
+    end_waits = getattr(executor, "end_waits", None)
     if end_waits is None:
         pytest.fail("nothing ends the answer waits of an issue that was closed")
     ended = await end_waits(issue_id)
@@ -172,12 +179,12 @@ async def test_ending_waits_leaves_a_job_being_resumed_and_an_issue_still_open(d
     stale = [{"job_id": job_id, "issue_id": issue_id, "status": "awaiting_input"}]
     jobs.list_all = AsyncMock(return_value=(stale, 1))  # type: ignore[method-assign]
 
-    assert await executor.end_answer_waits(issue_id) == [], "a job an answer was resuming was cancelled"
+    assert await _end_waits(executor)(issue_id) == [], "a job an answer was resuming was cancelled"
     assert (await jobs.get(job_id) or {})["status"] == "running"
 
     waiting, still_jobs, open_issue, open_job = await _waiting_issue(db_with_migrations)
     other = _cancelling_executor(waiting, still_jobs, db_with_migrations)
-    assert await other.end_answer_waits(open_issue) == [], "the waits of an issue nobody closed were ended"
+    assert await _end_waits(other)(open_issue) == [], "the waits of an issue nobody closed were ended"
     assert (await still_jobs.get(open_job) or {})["status"] == "awaiting_input"
 
 
@@ -188,8 +195,154 @@ async def test_a_wait_whose_cancel_fails_is_given_back_not_left_taken(db_with_mi
     executor.cancel_job = AsyncMock(side_effect=RuntimeError("the sandbox daemon is gone"))  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError):
-        await executor.end_answer_waits(issue_id)
+        await _end_waits(executor)(issue_id)
 
     assert (await jobs.get(job_id) or {})["status"] == "awaiting_input", (
         "a job whose cancel failed was left running with nothing running it"
+    )
+
+
+async def _post(app: Any, url: str, body: dict[str, Any]) -> Any:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        return await client.post(url, json=body, headers=HEADERS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["the job's", "the issue's"])
+async def test_an_answer_to_a_job_that_ended_is_refused_and_says_what_to_do(
+    db_with_migrations: Any, route: str
+) -> None:
+    """#521: the review's case: the issue closed (its waiting job cancelled), then reopened, then the question answered.
+    The answer was taken (200) and did nothing."""
+    issues, jobs, issue_id, job_id, input_id = await _closed_while_waiting(db_with_migrations)
+    executor = _cancelling_executor(issues, jobs, db_with_migrations)
+    # The close cancelled its waiting job (as end_waits does), and the issue was reopened: a new run starts, not this.
+    await db_with_migrations.execute("UPDATE jobs SET status = 'cancelled' WHERE job_id = $1", job_id)
+    await issues.update(issue_id, status="open")
+    app = _app(jobs, IssueInputsRepository(db_with_migrations), executor)
+    app.state.issues_repo = issues
+    url = (
+        f"/api/v1/jobs/{job_id}/inputs/{input_id}/answer"
+        if route == "the job's"
+        else f"/api/v1/issues/{issue_id}/inputs/{input_id}/answer"
+    )
+
+    response = await _post(app, url, {"answer": "monotonic"})
+
+    stored = (await IssueInputsRepository(db_with_migrations).get(input_id) or {}).get("status")
+    assert (response.status_code, stored) == (409, "pending"), (
+        f"an answer to an ended job on {route} route: {response.status_code} {response.text}, the question {stored}"
+    )
+    detail = response.json()["detail"]
+    assert f"Job {job_id} has ended (cancelled)" in detail, detail
+    # Reopening the issue starts nothing on GitHub or GitLab: the message says what does (review of #535).
+    assert "runs a new job" not in detail, f"the refusal promises a run a reopen does not start: {detail}"
+    assert f"POST /api/v1/jobs/{job_id}/run-again" in detail and "re-add the trigger label `embry0`" in detail, detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parked", [False, True], ids=["paused", "parked for its account"])
+async def test_closing_an_issue_cancels_its_paused_job(db_with_migrations: Any, parked: bool) -> None:
+    issues, jobs, issue_id, job_id, _input_id = await _closed_while_waiting(db_with_migrations)
+    await db_with_migrations.execute("UPDATE jobs SET status = 'paused' WHERE job_id = $1", job_id)
+    if parked:
+        await db_with_migrations.execute(
+            """UPDATE jobs SET account_wait = '{"provider": "anthropic", "reason": "usage", "until": null}'::jsonb
+               WHERE job_id = $1""",
+            job_id,
+        )
+    executor = _cancelling_executor(issues, jobs, db_with_migrations)
+
+    ended = await _end_waits(executor)(issue_id)
+
+    job_status, reason, issue_status = await _ended(jobs, issues, job_id, issue_id)
+    assert (ended, job_status, issue_status) == ([job_id], "cancelled", "closed"), (ended, job_status, issue_status)
+    assert "Its issue was closed while it was paused" in reason, reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choice", ["continue_retrying", "merge_as_is"])
+async def test_the_resume_route_refuses_a_paused_job_of_a_closed_issue(db_with_migrations: Any, choice: str) -> None:
+    issues, jobs, issue_id, job_id, _input_id = await _closed_while_waiting(db_with_migrations)
+    await db_with_migrations.execute("UPDATE jobs SET status = 'paused' WHERE job_id = $1", job_id)
+    executor = _cancelling_executor(issues, jobs, db_with_migrations)
+    app = _app(jobs, IssueInputsRepository(db_with_migrations), executor)
+    app.state.issues_repo = issues
+
+    response = await _post(app, f"/api/v1/jobs/{job_id}/resume", {"choice": choice})
+
+    assert response.status_code == 409, f"{choice} on a paused job of a closed issue: {response.status_code}"
+    detail = response.json()["detail"]
+    assert "issue is closed, so the job cannot go on" in detail and "Stop it to release its sandbox" in detail, detail
+    assert "runs a new job" not in detail and f"/api/v1/jobs/{job_id}/run-again" in detail, (
+        f"the refusal does not say what starts a new run: {detail}"
+    )
+    assert executor.schedule_resume.call_count == 0  # type: ignore[attr-defined]
+    assert (await jobs.get(job_id) or {})["status"] == "paused", "a refused resume changed the job"
+
+
+@pytest.mark.asyncio
+async def test_a_paused_job_of_a_closed_issue_can_still_be_stopped(db_with_migrations: Any) -> None:
+    issues, jobs, issue_id, job_id, _input_id = await _closed_while_waiting(db_with_migrations)
+    await db_with_migrations.execute("UPDATE jobs SET status = 'paused' WHERE job_id = $1", job_id)
+    executor = _cancelling_executor(issues, jobs, db_with_migrations)
+    app = _app(jobs, IssueInputsRepository(db_with_migrations), executor)
+    app.state.issues_repo = issues
+
+    response = await _post(app, f"/api/v1/jobs/{job_id}/resume", {"choice": "abandon"})
+
+    assert (response.status_code, response.json().get("status")) == (200, "cancelled"), (
+        f"stopping a paused job of a closed issue did not cancel it: {response.text}"
+    )
+    job_status, _reason, issue_status = await _ended(jobs, issues, job_id, issue_id)
+    assert (job_status, issue_status) == ("cancelled", "closed"), (job_status, issue_status)
+
+
+@pytest.mark.asyncio
+async def test_the_resume_route_refuses_a_parked_job_of_a_closed_issue(db_with_migrations: Any) -> None:
+    """A job parked for its account goes on with "Try now"; not once its issue is closed."""
+    issues, jobs, issue_id, job_id, _input_id = await _closed_while_waiting(db_with_migrations)
+    await db_with_migrations.execute(
+        """UPDATE jobs SET status = 'paused',
+           account_wait = '{"provider": "anthropic", "reason": "usage", "until": null}'::jsonb WHERE job_id = $1""",
+        job_id,
+    )
+    executor = _cancelling_executor(issues, jobs, db_with_migrations)
+    executor.go_on_after_account_wait = MagicMock()  # type: ignore[method-assign]
+    app = _app(jobs, IssueInputsRepository(db_with_migrations), executor)
+    app.state.issues_repo = issues
+
+    response = await _post(app, f"/api/v1/jobs/{job_id}/resume", {"choice": "continue_retrying"})
+
+    assert response.status_code == 409, f"Try now on a parked job of a closed issue: {response.status_code}"
+    executor.go_on_after_account_wait.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_inbound_reply_to_a_question_of_a_job_that_ended_is_not_taken(db_with_migrations: Any) -> None:
+    """The review's case: a GitHub `/answer` to a cancelled job's question was applied (`applied=1 input=answered`)."""
+    import inspect
+
+    from embry0.notifications.inbound_dispatch import apply_inbound_directives
+
+    if "jobs_repo" not in inspect.signature(apply_inbound_directives).parameters:
+        pytest.fail("the inbound dispatcher cannot ask whether a question's job ended")
+    issues, jobs, issue_id, job_id, input_id = await _closed_while_waiting(db_with_migrations)
+    await db_with_migrations.execute("UPDATE jobs SET status = 'cancelled' WHERE job_id = $1", job_id)
+    await issues.update(issue_id, status="open")
+    inputs = IssueInputsRepository(db_with_migrations)
+    resumed = AsyncMock()
+
+    result = await apply_inbound_directives(
+        issue_id=issue_id,
+        directives=[(input_id, "answer", "monotonic")],
+        inputs_repo=inputs,
+        on_all_answered=resumed,
+        answered_by="github:ada",
+        jobs_repo=jobs,
+    )
+
+    stored = (await inputs.get(input_id) or {}).get("status")
+    assert (result.applied, getattr(result, "job_ended", None), stored) == (0, 1, "pending"), (
+        f"an inbound answer to an ended job: {result}, the question {stored}"
     )

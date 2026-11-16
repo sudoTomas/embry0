@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 
 from embry0.api.deps import get_inputs_repo, get_issue_executor
 from embry0.notifications.telegram import edit_message_answered
-from embry0.services.answer_recorder import record_answer
+from embry0.services.answer_recorder import answer_refused_for_its_job, record_answer
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -181,6 +181,11 @@ async def telegram_callback(request: Request) -> Response | dict[str, Any]:
     # on ``asking_node``: a reply-to-message routes to whichever input row
     # owns that ``telegram_message_id`` — triage ``needs_info`` and
     # developer/review ``agent_ask_user`` rows alike.
+    refused = await answer_refused_for_its_job(inp, getattr(request.app.state, "jobs_repo", None))
+    if refused is not None:
+        # #521: the question's job ended unfinished; nothing would read the answer.
+        logger.info("telegram_reply_job_ended", input_id=inp["id"])
+        return {"status": "job_ended", "input_id": inp["id"], "reason": refused}
     recorded = await record_answer(
         inp=inp,
         answer=answer_text,

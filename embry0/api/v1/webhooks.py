@@ -463,6 +463,7 @@ async def _handle_issue_comment(request: Request, payload: dict[str, Any], actio
         answered_by=f"github:{login}",
         record=_record,
         resolve_sequence=_resolve_sequence,
+        jobs_repo=getattr(request.app.state, "jobs_repo", None),
     )
     if result.unresolved_sequence:
         await _reply_use_input_id(request, repo_name, gh_number)
@@ -472,6 +473,7 @@ async def _handle_issue_comment(request: Request, payload: dict[str, Any], actio
         "skipped": result.skipped,
         "unmatched": result.unmatched,
         "already_answered": result.already_answered,
+        "job_ended": result.job_ended,
     }
 
 

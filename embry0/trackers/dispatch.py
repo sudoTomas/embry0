@@ -20,18 +20,19 @@ from embry0.trackers.models import TrackerIssue
 logger = structlog.get_logger(__name__)
 
 
-async def end_answer_waits(executor: Any, issue_id: str) -> list[str]:
-    """When a tracker closes an issue, cancel its jobs that wait for answers (#518): nothing will resume them.
+async def end_waits(executor: Any, issue_id: str) -> list[str]:
+    """When a tracker closes an issue, cancel its waiting jobs (#518, #521): nothing will go on with them.
 
-    Never raises: the close is recorded either way, and a job left waiting is
-    cancelled when an answer or the startup pass reaches it.
+    The jobs that wait for answers and the paused ones. Never raises: the close
+    is recorded either way, and a job left waiting is cancelled when an answer
+    or the startup pass reaches it, and refused by the resume route.
     """
     if executor is None:
         return []
     try:
-        return list(await executor.end_answer_waits(issue_id))
+        return list(await executor.end_waits(issue_id))
     except Exception:
-        logger.warning("answer_waits_end_failed", issue_id=issue_id, exc_info=True)
+        logger.warning("issue_waits_end_failed", issue_id=issue_id, exc_info=True)
         return []
 
 

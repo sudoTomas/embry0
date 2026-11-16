@@ -19,6 +19,7 @@ guard. This module owns only the record-and-echo side effects.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
@@ -26,6 +27,51 @@ import structlog
 from embry0.notifications.dispatcher import notify_answer_cross_channel
 
 logger = structlog.get_logger(__name__)
+
+
+#: The statuses of a job that ended without finishing its work: it never goes on, and nothing reads its answers.
+UNFINISHED_ENDS = frozenset({"cancelled", "failed", "expired", "skipped"})
+
+
+def start_again_says(job_id: str, trigger_labels: Sequence[str] = ()) -> str:
+    """How a person works on a job's issue again once the job cannot go on (#521).
+
+    Reopening the issue on the tracker starts nothing by itself: a new run is
+    the job's "Run again" (on the dashboard, or ``POST
+    /api/v1/jobs/{job_id}/run-again``), or the issue's trigger label removed and
+    added again on an open issue.
+    """
+    labels = " or ".join(f"`{label}`" for label in trigger_labels if label)
+    relabel = f"the trigger label {labels}" if labels else "its trigger label"
+    return (
+        f"to work on it again, run the job again (Run again on the dashboard, or POST /api/v1/jobs/{job_id}/run-again) "
+        f"or remove and re-add {relabel} on its issue, reopened first if it is closed"
+    )
+
+
+def ended_job_takes_no_answer(job: dict[str, Any] | None, trigger_labels: Sequence[str] = ()) -> str | None:
+    """Why an answer to a question of ``job`` is refused, when the job ended unfinished (#521); None otherwise.
+
+    A cancelled, failed, expired or skipped job never goes on, and reopening
+    its issue does not bring it back, so an answer to it would be taken and
+    then do nothing. A completed job's questions still take answers: a
+    person's answer over the orchestrator's own (RAV-1059), or to a question
+    that did not hold the job, reaches the issue's next run.
+    """
+    status = str((job or {}).get("status") or "")
+    if status not in UNFINISHED_ENDS:
+        return None
+    job_id = str((job or {}).get("job_id"))
+    return f"Job {job_id} has ended ({status}), so its questions take no more answers; " + start_again_says(
+        job_id, trigger_labels
+    )
+
+
+async def answer_refused_for_its_job(inp: dict[str, Any], jobs_repo: Any) -> str | None:
+    """For an answer arriving from a tracker or chat reply: why it is refused, when its job ended unfinished (#521)."""
+    if jobs_repo is None or not inp.get("job_id"):
+        return None
+    return ended_job_takes_no_answer(await jobs_repo.get(inp["job_id"]))
 
 
 def answers_context(answered: list[dict[str, Any]]) -> str:

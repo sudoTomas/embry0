@@ -216,7 +216,7 @@ async def _refuse_if_over_budget(
         # Never strand the issue in `triaging` — only `open` dispatches, so a
         # stuck row would swallow every future label trigger.
         try:
-            await self._issues.update(issue_id, status="open")
+            await self._issue_back_to_open(issue_id)
         except (ValueError, StatusTransitionConflict):
             logger.warning("budget_refusal_issue_revert_failed", issue_id=issue_id, exc_info=True)
     return True
@@ -1306,7 +1306,7 @@ async def _handle_interrupt(
             # this used to crash with InvalidIssueStatusTransition because
             # `paused` is a job-only status.
             await self._jobs.update(job_id, status="paused")
-            await self._issues.update(issue_id, status="open")
+            await self._issue_back_to_open(issue_id)
             logger.info("job_paused", job_id=job_id, reason=reason)
             await _announce_paused(self, issue_id, job_id, reason)
             return
@@ -1644,7 +1644,7 @@ async def _run_workflow(
             await self._record_pr_opened(issue_id, job_id, pr_url)
         # No issue, no status change to record (see _handle_workflow_result).
         if issue_id is not None:
-            await self._issues.update(issue_id, status="open")
+            await self._issue_back_to_open(issue_id)
             await self._emit_audit(
                 self._db,
                 "issue.status_changed",
@@ -1814,7 +1814,7 @@ async def _skip_as_duplicate(
         pr_url=str(duplicate["url"]),
     )
     if issue_id:
-        await self._issues.update(issue_id, status="open")
+        await self._issue_back_to_open(issue_id)
         await self._issues.update_parent_status(issue_id)
     await self._emit_audit(
         self._db,
