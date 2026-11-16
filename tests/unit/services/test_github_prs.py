@@ -6,6 +6,7 @@ against the job's KNOWN ticket identifiers — precision lives in the
 matcher, not the scanner.
 """
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
@@ -346,6 +347,8 @@ async def test_ensure_pr_applies_labels_on_found_existing():
         if request.method == "POST" and request.url.path == "/repos/o/r/issues/7/labels":
             labeled.update(_json.loads(request.content))
             return httpx.Response(200, json=[{"name": "embry0"}])
+        if request.method == "GET" and request.url.path == "/repos/o/r/issues/7/comments":
+            return httpx.Response(200, json=[])  # a PR it finds may carry a labels comment to correct (#530)
         raise AssertionError(f"unexpected request {request.method} {request.url}")
 
     url = await ensure_pr_for_branch(
@@ -508,12 +511,22 @@ async def test_ensure_pr_says_what_github_answered_when_it_opens_none():
 # ---- labels that will not go on (#472) ----
 
 
-def _label_handler(*, label_answers: list[int], comment_status: int = 201, existing: bool = False):
+def _label_handler(
+    *,
+    label_answers: list[int],
+    comment_status: int = 201,
+    existing: bool = False,
+    carried: Any = None,
+    on_pr: list[dict] | None = None,
+    edit_status: int = 200,
+):
     """A GitHub that has or opens PR #5, answers each labels call in turn, and records what embry0 sent.
 
-    ``comments`` is every comment embry0 posted, ``on_pr`` the comments the PR holds, ``edits`` every edit.
+    A labels call answered 200 answers with the PR's labels, as GitHub does: the ones asked for, or ``carried``
+    when given. ``comments`` is every comment embry0 posted, ``on_pr`` the comments the PR holds, ``edits``
+    every edit, ``reads`` every read of the PR's comments.
     """
-    seen: dict = {"labels": 0, "comments": [], "on_pr": [], "edits": []}
+    seen: dict = {"labels": 0, "comments": [], "on_pr": list(on_pr or []), "edits": [], "reads": 0}
     pr = {"html_url": "https://github.com/o/r/pull/5", "number": 5}
 
     def handler(request):
@@ -527,8 +540,10 @@ def _label_handler(*, label_answers: list[int], comment_status: int = 201, exist
             seen["labels"] += 1
             if status >= 400:
                 return httpx.Response(status, json={"message": "Resource not accessible by integration"})
-            return httpx.Response(status, json=[])
+            asked = [{"name": name} for name in _json.loads(request.content)["labels"]]
+            return httpx.Response(status, json=asked if carried is None else carried)
         if request.method == "GET" and path == "/repos/o/r/issues/5/comments":
+            seen["reads"] += 1
             return httpx.Response(200, json=list(seen["on_pr"]))
         if request.method == "POST" and path == "/repos/o/r/issues/5/comments":
             body = _json.loads(request.content)["body"]
@@ -539,6 +554,8 @@ def _label_handler(*, label_answers: list[int], comment_status: int = 201, exist
         if request.method == "PATCH" and path.startswith("/repos/o/r/issues/comments/"):
             comment_id, body = int(path.rsplit("/", 1)[1]), _json.loads(request.content)["body"]
             seen["edits"].append(comment_id)
+            if edit_status >= 400:
+                return httpx.Response(edit_status, json={"message": "Server Error"})
             for comment in seen["on_pr"]:
                 if comment["id"] == comment_id:
                     comment["body"] = body
@@ -629,3 +646,97 @@ async def test_a_pr_whose_labels_stay_refused_carries_one_note_however_often_it_
     assert len(seen["comments"]) == 1, f"the same note was posted {len(seen['comments'])} times on one PR"
     assert len(seen["on_pr"]) == 1 and seen["edits"] == [900, 900], (seen["on_pr"], seen["edits"])
     assert seen["on_pr"][0]["body"].startswith("<!-- embry0:labels-missing -->"), seen["on_pr"][0]["body"]
+
+
+# ---- the labels comment once the labels are on (#530) ----
+
+_STALE = {"id": 800, "body": "<!-- embry0:labels-missing -->\n\nembry0 could not add the labels `embry0`"}
+
+
+@pytest.mark.asyncio
+async def test_a_later_outcome_that_puts_the_labels_on_edits_the_comment(no_backoff):
+    """The comment that said the labels were missing does not stay saying so once they are on."""
+    handler, seen = _label_handler(label_answers=[200], existing=True, on_pr=[dict(_STALE)])
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5" and diagnostics == {}, diagnostics
+    assert seen["edits"] == [800], f"the old comment is not corrected: {seen}"
+    body = seen["on_pr"][0]["body"]
+    assert body.startswith("<!-- embry0:labels-missing -->") and "could not" not in body, body
+    assert "`embry0`, `human-merge-only` are on this pull request now" in body, body
+    assert seen["comments"] == [], f"a new comment was posted: {seen['comments']}"
+
+
+@pytest.mark.asyncio
+async def test_a_pr_found_with_its_labels_on_and_no_comment_gets_none(no_backoff):
+    handler, seen = _label_handler(label_answers=[200], existing=True)
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5" and diagnostics == {}, diagnostics
+    assert seen["comments"] == [] and seen["edits"] == [], seen
+
+
+@pytest.mark.asyncio
+async def test_a_pr_it_has_just_opened_is_not_searched_for_a_comment(no_backoff):
+    handler, seen = _label_handler(label_answers=[200])
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5" and diagnostics == {}, diagnostics
+    assert seen["reads"] == 0, f"a PR embry0 has just opened has no comment to look for: {seen}"
+
+
+@pytest.mark.asyncio
+async def test_a_comment_that_cannot_be_corrected_leaves_the_pr_as_it_is(no_backoff):
+    """The labels are on; an edit GitHub refuses costs the job nothing, and the comment stays as it was."""
+    handler, seen = _label_handler(label_answers=[200], existing=True, on_pr=[dict(_STALE)], edit_status=500)
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5", "a comment that cannot be edited costs the job its PR"
+    assert diagnostics == {} and seen["edits"] and seen["on_pr"] == [_STALE], (diagnostics, seen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("carried", "missing"),
+    [([], ["embry0", "human-merge-only"]), ([{"name": "embry0"}], ["human-merge-only"])],
+    ids=["none", "some"],
+)
+async def test_labels_github_answers_200_without_are_missing_too(no_backoff, carried, missing):
+    """GitHub answers with the PR's labels: one it asked for and does not see is missing, as a refused one is."""
+    handler, seen = _label_handler(label_answers=[200], carried=carried)
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5"
+    assert diagnostics.get("labels_missing") == missing, f"labels GitHub left off are not reported: {diagnostics}"
+    assert "200" in diagnostics["labels_error"] and diagnostics["labels_noted"] is True, diagnostics
+    assert len(seen["comments"]) == 1, seen["comments"]
+    note = seen["comments"][0]
+    assert "`human-merge-only`" in note and "only a person should merge it" in note, note
+    assert ("`embry0`" in note) == ("embry0" in missing), f"the note names only the labels that are missing: {note}"
+
+
+@pytest.mark.asyncio
+async def test_a_label_named_in_another_case_is_on(no_backoff):
+    """GitHub matches label names without case: ``Embry0`` on the PR is the ``embry0`` asked for."""
+    carried = [{"name": "Embry0"}, {"name": "Human-Merge-Only"}]
+    handler, seen = _label_handler(label_answers=[200], carried=carried)
+    _url, diagnostics = await _open_labelled(handler)
+    assert diagnostics == {} and seen["comments"] == [], (diagnostics, seen["comments"])
+
+
+@pytest.mark.asyncio
+async def test_an_answer_that_names_no_labels_claims_nothing(no_backoff):
+    """A 200 that is not a list of labels is not read as a refusal, nor said to have put them on."""
+    handler, seen = _label_handler(label_answers=[200], existing=True, carried={"ok": True}, on_pr=[dict(_STALE)])
+    url, diagnostics = await _open_labelled(handler)
+    assert url == "https://github.com/o/r/pull/5" and diagnostics == {}, diagnostics
+    assert seen["edits"] == [] and seen["comments"] == [], f"an answer naming no labels says they are on: {seen}"
+
+
+def test_a_pull_request_and_a_merge_request_read_alike() -> None:
+    """Both forges word the note the same way (#472, #477): one text, two nouns."""
+    from embry0.services.github_prs import LABELS_NOTE_MARKER, labels_missing_note, labels_on_note
+
+    for noun in ("pull request", "merge request"):
+        missing = labels_missing_note(["human-merge-only"], "403 Forbidden", noun=noun)
+        assert missing.startswith(LABELS_NOTE_MARKER), missing
+        assert f"the labels `human-merge-only` to this {noun} (403 Forbidden)." in missing, missing
+        assert "only a person should merge it" in missing, missing
+        assert "only a person" not in labels_missing_note(["embry0"], "403 Forbidden", noun=noun)
+        on = labels_on_note(["embry0", "human-merge-only"], noun=noun)
+        assert on == f"{LABELS_NOTE_MARKER}\n\nThe labels `embry0`, `human-merge-only` are on this {noun} now.", on

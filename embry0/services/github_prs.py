@@ -281,7 +281,7 @@ async def ensure_pr_for_branch(
         created_url = str(created.get("html_url") or "") or None
         logger.info("pr_fallback_created", repo=repo, branch=branch, url=created_url)
         await _labels_or_say_so(
-            client, repo=repo, pr_number=created.get("number"), labels=labels, diagnostics=diagnostics
+            client, repo=repo, pr_number=created.get("number"), labels=labels, diagnostics=diagnostics, opened=True
         )
         return created_url
     except Exception as exc:
@@ -298,16 +298,20 @@ async def _apply_pr_labels(
     repo: str,
     pr_number: Any,
     labels: list[str] | None,
-) -> str | None:
-    """Labels on a PR (a PR is an issue to the labels API).
+) -> tuple[list[str] | None, str | None]:
+    """Labels on a PR (a PR is an issue to the labels API): the labels it still lacks, and what GitHub said.
 
-    None when they are on it, or there is nothing to put on; otherwise what
-    GitHub said, redacted and bounded. The forge client already sends the call
-    again on an answer a retry can change (429, 5xx, a dropped connection);
-    adding labels twice changes nothing, so that is safe here (#472).
+    Nothing missing (``[]``) when they are on it, or there is nothing to put
+    on. GitHub answers with the labels the PR has after the call, so that
+    answer is read back, as GitLab's is (#477): a label it does not name is
+    missing too, whatever the status said. An answer that names no labels
+    says neither, so ``None`` comes back for "missing": nothing claims they
+    are on. The forge client already sends the call again on an answer a
+    retry can change (429, 5xx, a dropped connection); adding labels twice
+    changes nothing, so that is safe here (#472).
     """
-    if not labels or not isinstance(pr_number, int):
-        return None
+    if not labels or not isinstance(pr_number, int) or isinstance(pr_number, bool):
+        return None, None
     from embry0.safety.redaction import redact_bounded
 
     try:
@@ -317,14 +321,51 @@ async def _apply_pr_labels(
             json={"labels": list(labels)},
         )
         resp.raise_for_status()
-        return None
     except Exception as exc:
         logger.warning("pr_label_failed", repo=repo, pr_number=pr_number, labels=labels, error=str(exc))
-        return redact_bounded(forge_said(exc), 300)
+        return list(labels), redact_bounded(forge_said(exc), 300)
+    try:
+        carried = resp.json()
+    except Exception:  # noqa: BLE001 - an answer that is not a list of labels says nothing of them
+        carried = None
+    if not isinstance(carried, list):
+        return None, None
+    # GitHub matches a label's name without case: adding `embry0` to a repository that has `Embry0` puts that on.
+    names = {str(label.get("name") if isinstance(label, dict) else label).casefold() for label in carried}
+    missing = [label for label in labels if label.casefold() not in names]
+    if missing:
+        logger.warning("pr_label_not_applied", repo=repo, pr_number=pr_number, labels=missing)
+        return missing, "GitHub answered 200 and left them off"
+    return [], None
 
 
 #: Marks embry0's one comment on a PR that says its labels did not go on (#472).
 LABELS_NOTE_MARKER = "<!-- embry0:labels-missing -->"
+
+
+def labels_missing_note(missing: list[str], said: str | None, *, noun: str) -> str:
+    """The marked note on a change request (``noun``: "pull request", "merge request") whose labels did not go on.
+
+    It names the labels in ``missing`` and what the forge ``said``; for
+    ``human-merge-only`` it also says why that one matters. Both forges post
+    it, so a pull request and a merge request read alike (#472, #477).
+    """
+    from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
+
+    named = ", ".join(f"`{label}`" for label in missing)
+    body = f"embry0 could not add the labels {named} to this {noun} ({said})."
+    if HUMAN_MERGE_LABEL in missing:
+        body += (
+            f" It should carry `{HUMAN_MERGE_LABEL}`: only a person should merge it, after reviewing it. "
+            "Please add the label by hand."
+        )
+    return f"{LABELS_NOTE_MARKER}\n\n{body}"
+
+
+def labels_on_note(labels: list[str], *, noun: str) -> str:
+    """What the marked note says once a later outcome has put ``labels`` on the change request (#477, #530)."""
+    named = ", ".join(f"`{label}`" for label in labels)
+    return f"{LABELS_NOTE_MARKER}\n\nThe labels {named} are on this {noun} now."
 
 
 async def _labels_or_say_so(
@@ -334,37 +375,42 @@ async def _labels_or_say_so(
     pr_number: Any,
     labels: list[str] | None,
     diagnostics: dict[str, Any] | None,
+    opened: bool = False,
 ) -> None:
     """Put ``labels`` on the PR; when they will not go on, say so on the PR and in ``diagnostics`` (#472).
 
     The PR still counts: it is open and the job has its URL. But a missing
     ``human-merge-only`` is what tells a person, and anything that keys on the
-    label, not to merge it, so the PR gets a comment naming the labels, and
-    ``diagnostics`` gets ``labels_missing`` (the labels), ``labels_error``
-    (what GitHub said) and ``labels_noted`` (whether the comment went on), for
-    the job to record.
+    label, not to merge it, so the PR gets a comment naming the missing
+    labels, and ``diagnostics`` gets ``labels_missing`` (the labels),
+    ``labels_error`` (what GitHub said) and ``labels_noted`` (whether the
+    comment went on), for the job to record.
 
     The comment is one per PR (:data:`LABELS_NOTE_MARKER`): a later outcome
     that finds the same PR open with its labels still refused edits that
-    comment rather than posting another.
+    comment rather than posting another, and one that does put them on edits
+    it to say so (#530), as GitLab's twin does
+    (:func:`embry0.services.gitlab_mrs._labels_or_say_so`). A PR embry0 has
+    just ``opened`` has no comment to edit, so none is looked for.
     """
-    said = await _apply_pr_labels(client, repo=repo, pr_number=pr_number, labels=labels)
-    if said is None or not labels:
+    if not labels:
         return
-    named = ", ".join(f"`{label}`" for label in labels)
-    body = f"embry0 could not add the labels {named} to this pull request ({said})."
-    from embry0.workflows.verification.result import HUMAN_MERGE_LABEL
+    missing, said = await _apply_pr_labels(client, repo=repo, pr_number=pr_number, labels=labels)
+    from embry0.notifications.qa_comment import edit_sticky_comment
 
-    if HUMAN_MERGE_LABEL in labels:
-        body += (
-            f" It should carry `{HUMAN_MERGE_LABEL}`: only a person should merge it, after reviewing it. "
-            "Please add the label by hand."
-        )
-    body = f"{LABELS_NOTE_MARKER}\n\n{body}"
+    if not missing:
+        if missing is not None and not opened:
+            done = labels_on_note(labels, noun="pull request")
+            try:
+                await edit_sticky_comment(
+                    client, repo=repo, issue_number=pr_number, body=done, marker=LABELS_NOTE_MARKER
+                )
+            except Exception as exc:  # noqa: BLE001 - the labels are on; only the old comment stays as it was
+                logger.warning("pr_label_note_edit_failed", repo=repo, pr_number=pr_number, error=str(exc))
+        return
+    body = labels_missing_note(missing, said, noun="pull request")
     noted = False
     try:
-        from embry0.notifications.qa_comment import edit_sticky_comment
-
         if not await edit_sticky_comment(
             client, repo=repo, issue_number=pr_number, body=body, marker=LABELS_NOTE_MARKER
         ):
@@ -377,7 +423,7 @@ async def _labels_or_say_so(
     except Exception as exc:
         logger.warning("pr_label_note_failed", repo=repo, pr_number=pr_number, error=str(exc))
     if diagnostics is not None:
-        diagnostics["labels_missing"] = list(labels)
+        diagnostics["labels_missing"] = missing
         diagnostics["labels_error"] = said
         diagnostics["labels_noted"] = noted
 

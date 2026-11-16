@@ -131,6 +131,7 @@ async def test_labels_gitlab_refuses_are_said_once_on_the_merge_request_and_to_t
     assert diagnostics["labels_missing"] == LABELS and diagnostics["labels_noted"] is True, diagnostics
     assert "403" in diagnostics["labels_error"], diagnostics
     assert "(403 Forbidden)" in note and "403 403" not in note, f"the status is said twice: {note}"
+    assert "to this merge request (" in note, f"the note does not name a merge request: {note}"
 
     again = Forge(existing=True, labels_status=403, notes=[{"id": 30, "body": f"{LABELS_NOTE_MARKER}\n\nold"}])
     await ensure_mr_for_branch(repo=REPO, branch=BRANCH, title="t", body="b", client=again.client(), labels=LABELS)
