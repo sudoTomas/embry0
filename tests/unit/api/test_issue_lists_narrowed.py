@@ -111,7 +111,18 @@ async def test_the_issue_list_pages_and_counts_only_the_key_s_issues(
         await _more_issues(db)
         everyone, everyone_totals = await _pages(app, keys.open, query, 200)
         limited, limited_totals = await _pages(app, keys.limited, query, 1)
-    own = [item for item in everyone if item[1] == COVERED]
+        at_any_level = "parent_issue_id" in query
+        anywhere = everyone if at_any_level else (await _pages(app, keys.open, query + "&parent_issue_id=any", 200))[0]
+        listed = (await call(app, "GET", "/api/v1/issues?limit=200&parent_issue_id=any", keys.open)).json()["issues"]
+    parents = {i["id"]: i["parent_issue_id"] for i in listed}
+    repos = {i["id"]: i["repo"] for i in listed}
+    # The key's own issues; at the top level, those with no parent of its repository: an issue whose parent the key
+    # does not read is at its top level, as an issue whose parent was deleted is.
+    own = [
+        (issue_id, repo)
+        for issue_id, repo in anywhere
+        if repo == COVERED and (at_any_level or repos.get(parents.get(issue_id) or "") != COVERED)
+    ]
     assert any(repo == UNCOVERED for _id, repo in everyone) or query == f"&repo={COVERED}", (
         f"{query}: a key without a list is shown the other repository's issues, so the check measures something"
     )

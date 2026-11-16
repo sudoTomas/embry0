@@ -36,7 +36,10 @@ its parent moves) is shown and followed only so far as the key reads it:
 
 - a job names no such issue: its ``issue_id`` is null to the key
   (:func:`without_hidden_issues`), and an issue names no such parent: its
-  ``parent_issue_id`` is null (:func:`without_hidden_parents`);
+  ``parent_issue_id`` is null (:func:`without_hidden_parents`). Such an issue
+  reads in every way as one whose parent was deleted, the reference set null:
+  the list's top level holds it (``IssuesRepository.list_all``), and the
+  progression of the key's repositories counts it as no side quest;
 - the key's change of an issue's status does not roll up into such a parent
   (:func:`parent_hidden`): the parent's status is not recalculated, and
   nothing is refused, since a refusal would tell the parent exists;

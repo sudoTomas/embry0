@@ -13,6 +13,8 @@ is not; ``None`` keeps every row and an empty list none.
 from __future__ import annotations
 
 import inspect
+import json
+from typing import Any
 
 import pytest
 
@@ -80,11 +82,20 @@ async def test_the_issue_list_holds_only_the_covered_repositories_issues(db_with
     narrowed, total = await issues.list_all(repos=COVERED, top_level_only=True, limit=200)
     every, every_total = await issues.list_all(top_level_only=True, limit=200)
     none, none_total = await issues.list_all(repos=[], top_level_only=True, limit=200)
-    assert sorted(r["id"] for r in narrowed) == ["iss-old", "iss-web"] and total == 2, (
-        f"narrowed to acme/web, the list holds its issue and the one under its old slug, and no other: {narrowed}"
+    # acme/web's children of a parent it does not read (acme/api's, and one of no repository) are at its top level,
+    # as an issue whose parent was deleted is.
+    top = ["iss-api-kid0", "iss-none-kid0", "iss-old", "iss-web"]
+    assert sorted(r["id"] for r in narrowed) == top and total == len(top), (
+        f"narrowed to acme/web, the list holds its issue, the one under its old slug and its children of a parent it "
+        f"does not read, and no other: {narrowed}"
     )
     counts = {r["id"]: (r["children_count"], r["children_closed_count"], r["jobs_count"]) for r in narrowed}
-    assert counts == {"iss-old": (1, 1, 1), "iss-web": (1, 1, 1)}, f"each counts only acme/web's: {counts}"
+    assert counts == {
+        "iss-old": (1, 1, 1),
+        "iss-web": (1, 1, 1),
+        "iss-api-kid0": (0, 0, 0),
+        "iss-none-kid0": (0, 0, 0),
+    }, f"each counts only acme/web's: {counts}"
     assert every_total == len(PARENTS) and {r["jobs_count"] for r in every} == {2}, "unnarrowed, as before"
     assert none == [] and none_total == 0, none
 
@@ -117,3 +128,49 @@ async def test_one_issue_and_its_children_and_questions_are_read_within_the_cove
         "iss-web": "acme/web",
         "iss-none": None,
     }
+
+
+def _nodes(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every node of an ``EXPLAIN (FORMAT JSON)`` plan, depth first."""
+    out = [plan]
+    for child in plan.get("Plans", []):
+        out += _nodes(child)
+    return out
+
+
+def _parent_read(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The scans of the parent the top-level filter reads (``issues p``)."""
+    return [n for n in nodes if n.get("Relation Name") == "issues" and n.get("Alias") == "p"]
+
+
+async def test_a_key_s_top_level_is_an_anti_join_not_a_check_per_row(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The top level of a key's list reads each issue's parent once, joined: Postgres plans an anti-join for it, in the
+    count and in the page, rather than a subplan it runs for every row (on a hundred thousand issues, a page of the
+    dashboard's took half a second that way). An anti-join is the planner's shape for a bare ``NOT EXISTS`` whatever
+    the table holds, so a small table pins it; ``parent_issue_id IS NULL OR`` before it is enough to lose it."""
+    db = db_with_migrations
+    await _seed(db)
+    sent: list[tuple[str, tuple[Any, ...]]] = []
+    for name in ("fetch", "fetchval"):
+        method = getattr(db, name)
+
+        async def recorded(sql: str, *args: Any, _method: Any = method) -> Any:
+            sent.append((sql, args))
+            return await _method(sql, *args)
+
+        monkeypatch.setattr(db, name, recorded)
+    await IssuesRepository(db).list_all(repos=COVERED, top_level_only=True, limit=50)
+    monkeypatch.undo()
+    assert len(sent) == 2, f"the list sends its count and its page: {[sql[:60] for sql, _ in sent]}"
+    for sql, args in sent:
+        (plan,) = json.loads(await db.fetchval("EXPLAIN (FORMAT JSON) " + sql, *args))
+        nodes = _nodes(plan["Plan"])
+        parents = _parent_read(nodes)
+        anti = [n for n in nodes if n.get("Join Type") == "Anti" and _parent_read(_nodes(n))]
+        per_row = [n for n in nodes if n.get("Parent Relationship") == "SubPlan" and _parent_read(_nodes(n))]
+        assert parents, f"the query reads no parent: it measures nothing: {sql[:200]}"
+        assert anti and not per_row, (
+            f"the parent is read in a subplan per row, not an anti-join: {[n.get('Node Type') for n in nodes]}"
+        )

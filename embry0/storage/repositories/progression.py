@@ -450,10 +450,12 @@ FRAGMENTS: dict[str, str] = {
         SELECT f.at, 1, COALESCE(i.title, f.label), f.pr_url, NULL
         FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at, job_id) f
         LEFT JOIN issues i ON i.id = f.issue_id""",
+    # An issue with a parent the read holds: in a scope (scope_ctes), an issue whose parent is another repository's
+    # reads as one whose parent was deleted, a reference set null, so it is no side quest there.
     "side_quest": """
         SELECT f.at, 1, COALESCE(i.title, f.label), f.pr_url, NULL
         FROM (SELECT DISTINCT ON (issue_id) * FROM merged WHERE issue_id IS NOT NULL ORDER BY issue_id, at, job_id) f
-        JOIN issues i ON i.id = f.issue_id WHERE i.parent_issue_id IS NOT NULL""",
+        JOIN issues i ON i.id = f.issue_id WHERE i.parent_issue_id IN (SELECT id FROM issues)""",
     "owner_answer": "SELECT d.created_at, 1, d.repo || ' · ' || d.decision, NULL, NULL FROM proposal_decisions d",
     "proposal_accepted": """
         SELECT d.created_at, 1, d.repo, NULL, NULL FROM proposal_decisions d WHERE d.decision = 'accept'""",
