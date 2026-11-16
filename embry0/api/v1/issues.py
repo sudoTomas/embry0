@@ -117,10 +117,11 @@ ANSWER_REACHES_BEYOND = (
 )
 #: The job statuses deleting an issue cancels.
 _ACTIVE_JOB_STATUSES = ("pending", "running", "awaiting_input", "paused")
-#: Why deleting an issue the key reads is refused when it reaches another repository.
+#: Why deleting an issue the key reads is refused when it reaches another repository. True of a child the delete
+#: cancels and of one already closed or cancelled, which it leaves as it is (#550), and says nothing of which.
 DELETE_REACHES_BEYOND = (
-    "the issue has a child issue or an active job in a repository the key does not cover, which deleting it "
-    "would cancel"
+    "the issue has a child issue or an active job in a repository the key does not cover, and deleting an issue "
+    "acts on its children and their active jobs"
 )
 
 
@@ -394,18 +395,20 @@ async def delete_issue(
         await executor.cancel_job(j["job_id"], actor=actor)
 
     # One statement for the issue and its children, each by the status it has then: one closed or cancelled keeps it.
-    await issues.cancel_cancellable(all_issue_ids)
+    cancelled = await issues.cancel_cancellable(all_issue_ids)
 
+    # An audit row for each issue the delete cancelled, and none for one it left as it was.
     config = request.app.state.config
     db = request.app.state.db
-    await emit_audit(
-        db,
-        "issue.cancelled",
-        actor=actor,
-        details={"issue_id": issue_id},
-        audit_log_path=config.audit_log_path,
-        issue_id=issue_id,
-    )
+    for cancelled_id in cancelled:
+        await emit_audit(
+            db,
+            "issue.cancelled",
+            actor=actor,
+            details={"issue_id": cancelled_id},
+            audit_log_path=config.audit_log_path,
+            issue_id=cancelled_id,
+        )
 
 
 # ---------------------------------------------------------------------------

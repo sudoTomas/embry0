@@ -412,6 +412,22 @@ def test_a_restricted_key_cannot_delete_its_issue_with_a_child_in_another_reposi
     assert not app.state.issue_executor.cancel_job.await_count, "a job was cancelled anyway"
 
 
+@pytest.mark.parametrize("status", ["open", "closed", "archived"])
+def test_a_child_in_another_repository_is_refused_before_its_status_is_looked_at(app, status: str) -> None:
+    """#550: the delete checks every issue's status before writing, and refuses 409 naming an issue whose status no
+    transition cancels. That check comes after the reach check, so a child of a repository the key does not cover
+    is refused as such, whatever its status, and the refusal names neither the child nor its status."""
+    child = {**_issue_row("iss-other"), "id": "iss-child", "parent_issue_id": "iss-allowed", "status": status}
+    app.state.issues_repo.get_children = AsyncMock(return_value=[child])
+    response = _call(app, LIMITED_TOKEN, "DELETE", "/api/v1/issues/{issue}", None, "allowed")
+    assert _refused(response), f"a child on {OTHER} in status {status!r} is refused for its repository: {response.text}"
+    assert "iss-child" not in response.text and status not in response.text.replace("not_allowed", ""), (
+        f"the refusal names neither the hidden child nor its status: {response.text}"
+    )
+    assert not app.state.issues_repo.cancel_cancellable.await_count, "an issue was cancelled anyway"
+    assert not app.state.issue_executor.cancel_job.await_count, "a job was cancelled anyway"
+
+
 @pytest.mark.parametrize(("label", "method", "template", "allowed_body", "other_body"), STACK_ACTIONS)
 def test_a_restricted_key_acting_on_another_repository_s_stack_gets_an_unwatched_stack_s_answer(
     app, label, method, template, allowed_body, other_body

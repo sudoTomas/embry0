@@ -131,3 +131,27 @@ async def test_an_issue_closed_while_the_delete_cancels_its_jobs_stays_closed(ap
     assert await _statuses(api_client, [issue, child]) == {issue: "cancelled", child: "closed"}, (
         "an issue closed once the delete had read it keeps its status"
     )
+
+
+async def _cancelled_rows(api_client: Any) -> list[str]:
+    rows = await api_client.app.state.db.fetch(
+        "SELECT issue_id FROM audit_log WHERE action = 'issue.cancelled' ORDER BY issue_id"
+    )
+    return [str(r["issue_id"]) for r in rows]
+
+
+async def test_the_audit_names_each_issue_the_delete_cancelled_and_no_other(api_client: Any) -> None:
+    """One `issue.cancelled` row for each issue the delete cancelled: none for a child it left closed or cancelled,
+    none for a closed issue, and none for a delete repeated on an issue already cancelled."""
+    issue = await _issue(api_client)
+    children = await _children(api_client, issue, ["open", "closed", "cancelled", "in_progress"])
+    closed = await _issue(api_client)
+    await api_client.put(f"/api/v1/issues/{closed}", json={"status": "closed"})
+
+    for target in (issue, closed, issue):
+        deleted = await _delete(api_client, target)
+        assert deleted.status_code == 204, deleted.text
+
+    cancelled = sorted([issue, *(c for c, status in children.items() if status in ("open", "in_progress"))])
+    rows = await _cancelled_rows(api_client)
+    assert rows == cancelled, f"an audit row for each issue cancelled, once, and for no other: {rows}"
