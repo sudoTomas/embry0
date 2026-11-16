@@ -167,8 +167,9 @@ PER_PAGE = 100
 #: How many times in a row the call a read stands at may fail before the read moves past it.
 MAX_FAILURES = 3
 
-#: The furthest page among comments that share one update a stored place may name: a million comments at 100 a
-#: page. Those pages are not counted against the page cap (#538), so this only bounds a row edited by hand.
+#: The furthest page among comments that share one update a read asks for, and a stored place may name: a million
+#: comments at 100 a page. Those pages are not counted against the page cap (#538); a read that reaches this one stops
+#: there, cut short (``slop_meter_tied_pages_stopped``).
 MAX_TIED_PAGE = 10_000
 
 
@@ -345,6 +346,7 @@ class EventReader:
         self._stage = 0  # 0, 1: the listings; 2: pulls; 3: reviews; 4: logins; 5: done
         self._next: int | None = None  # the listing's next page, by number
         self._since: datetime | None = None  # the cursor a comment listing's first page was asked for with
+        self._ids: set[int | str] = set()  # the comment ids the listing has read this run
         self._pages = 0
         self._pulls: list[tuple[datetime, int]] = []
         self._found = 0
@@ -447,6 +449,7 @@ class EventReader:
     def _advance(self) -> None:
         self._stage += 1
         self._next, self._pages = None, 0
+        self._ids = set()
 
     def _answered(self, path: str, response: Any) -> bool:
         """Whether ``path`` was answered 200.
@@ -502,12 +505,16 @@ class EventReader:
         params: dict[str, Any] = {"sort": "updated", "direction": "asc"}
         if self._since is not None:
             params["since"] = _iso(self._since)
+        asked = self._next
         items, go_on, _ended = await self._page(budget, f"/repos/{self._repo}/{name}", params)
         self.batch.events += _rows(items, kind, prefix, "created_at")
         stamps = [t for t in (_at(i.get("updated_at")) for i in items if isinstance(i, dict)) if t]
         current: datetime | None = getattr(self.batch, cursor)
         if stamps:
             setattr(self.batch, cursor, max([*stamps, *([current] if current else [])]))
+        ids = {i["id"] for i in items if isinstance(i, dict) and isinstance(i.get("id"), int | str)}
+        fresh = bool(ids - self._ids)
+        self._ids |= ids
         moved = bool(stamps) and (self._since is None or max(stamps) > self._since)
         if moved:
             # The page cap counts the pages that move the cursor. One whose comments all have the update it was
@@ -517,6 +524,20 @@ class EventReader:
             if go_on and self._pages >= self._max_pages:
                 self.batch.more = True
                 go_on = False
+        elif go_on and ((asked is not None and not fresh) or (self._next is not None and self._next > MAX_TIED_PAGE)):
+            # The pages that do not move the cursor have two bounds of their own, so that no forge answer spends
+            # every call a run has on them: a page asked for by its number that brings no comment this read has not
+            # seen (the same page again, an empty one, comments with no update), and the furthest page a read asks
+            # for. The read is cut short there, and the next pass reads on from the cursor.
+            logger.warning(
+                "slop_meter_tied_pages_stopped",
+                repo=self._repo,
+                listing=name,
+                page=asked or 1,
+                reason="past the page bound" if fresh else "no comment not read already",
+            )
+            self.batch.more = True
+            go_on = False
         if not go_on:
             self._advance()
         elif moved:
