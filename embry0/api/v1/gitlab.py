@@ -8,6 +8,7 @@ tree; the fan-out is for several such accounts.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -16,6 +17,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from embry0.api.forge_listings import PastDeadline, nobody_answered, read_each
 from embry0.api.repo_allowlist import key_covers, restricted_key_name
 from embry0.api.v1.credentials import discovery_entries
 from embry0.execution.gitlab_client import GitLabClient
@@ -101,7 +103,7 @@ async def list_discoverable_projects(
         return DiscoverableProjectsResponse(projects=[], cached=False, configured=False, failed=[])
 
     if restricted:
-        by_path, failed = await _projects_for_entries(own, config)
+        by_path, failed, _complete = await _projects_for_entries(own, config)
         listing: dict[str, Any] = {"by_path": by_path, "failed": failed}
         cached = False
     else:
@@ -109,8 +111,11 @@ async def list_discoverable_projects(
         cached = not refresh and bool(_CACHE["by_path"]) and now - _CACHE["at"] < _CACHE_TTL_SECONDS
         if not cached:
             entries = await discovery_entries(request, "gitlab")
-            by_path, failed = await _projects_for_entries(entries, config)
-            _CACHE["at"] = time.monotonic()
+            by_path, failed, complete = await _projects_for_entries(entries, config)
+            # An answer missing an account that could not be reached, or ran past a deadline, is served once and not
+            # kept: the next read asks every account again. Stamped as read forever ago, since a monotonic clock can
+            # itself be younger than the cache's lifetime (a machine just started), so 0.0 would read as fresh.
+            _CACHE["at"] = time.monotonic() if complete else -math.inf
             _CACHE["by_path"] = by_path
             _CACHE["failed"] = failed
         listing = _CACHE
@@ -136,44 +141,66 @@ async def list_discoverable_projects(
 
 async def _projects_for_entries(
     entries: list[ForgeCredentialEntry], config: Any
-) -> tuple[dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]], list[str]]:
-    """One client per entry. The entry is the token — no resolver.
+) -> tuple[dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]], list[str], bool]:
+    """One client per entry. The entry is the token — no resolver. Returns the projects by path, the labels whose
+    listings raised, and whether the answer is complete (as the GitHub fan-out's: false when an account could not be
+    reached or ran past a deadline, so the answer is not cached).
 
-    First path wins. A listing that raises is recorded by label and skipped.
-    Raise only when every entry raised, matching the GitHub discovery route.
+    First path wins. A listing that raises is recorded by label and skipped,
+    whether GitLab refused it (an HTTP status), never answered (a timeout, a
+    refused connection) or was not done by the listing's deadline: the
+    accounts are read concurrently, within one deadline
+    (:func:`embry0.api.forge_listings.read_each`, #340). Raise only when every
+    entry raised, matching the GitHub discovery route: 502 either way (#568).
     ``strict=True`` makes a non-200 raise; the default paginator would return
     the pages it already had and the dead token would look like an empty list.
     """
     if not entries:
-        return {}, []
+        return {}, [], True
 
     ca_pem = load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or ""))
     gitlab_url = str(getattr(config, "gitlab_url", "") or "")
     by_path: dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]] = {}
     failed: list[str] = []
-    last_error: httpx.HTTPStatusError | None = None
+    refused: list[int] = []
+    unreachable = 0
+    cause: Exception | None = None
     succeeded = False
-    for entry in entries:
-        try:
-            client = GitLabClient(
-                default_token=entry.token, gitlab_url=gitlab_url, ca_pem=ca_pem, owner_env_tokens=False
-            )
-            raw_projects = await client.paginate(
-                "/projects",
-                params={"membership": "true", "order_by": "last_activity_at", "simple": "false"},
-                per_page=100,
-                max_pages=_MAX_PAGES,
-                strict=True,
-            )
-        except httpx.HTTPStatusError as exc:
+
+    # Each entry's own token, chosen for no owner: a listing's.
+    clients = [
+        GitLabClient(default_token=entry.token, gitlab_url=gitlab_url, ca_pem=ca_pem, owner_env_tokens=False)
+        for entry in entries
+    ]
+
+    async def read(client: GitLabClient) -> list[Any]:
+        projects: list[Any] = await client.paginate(
+            "/projects",
+            params={"membership": "true", "order_by": "last_activity_at", "simple": "false"},
+            per_page=100,
+            max_pages=_MAX_PAGES,
+            strict=True,
+        )
+        return projects
+
+    # In the order of the entries, so the first entry still wins a project two can see.
+    for entry, result in zip(entries, await read_each(clients, read), strict=True):
+        if isinstance(result, (httpx.HTTPStatusError, httpx.RequestError, PastDeadline)):
+            status = result.response.status_code if isinstance(result, httpx.HTTPStatusError) else None
+            # The exception's class, not its text: the text can carry the request's URL.
             logger.warning(
-                "gitlab_projects_fetch_failed",
-                status=exc.response.status_code,
-                label=entry.label,
+                "gitlab_projects_fetch_failed", status=status, error=type(result).__name__, label=entry.label
             )
             failed.append(entry.label)
-            last_error = exc
+            if status is not None:
+                refused.append(status)
+            else:
+                unreachable += 1
+            cause = result
             continue
+        if isinstance(result, BaseException):
+            raise result
+        raw_projects = result
         succeeded = True
         shown = entry.without_token()
         for raw in raw_projects:
@@ -184,6 +211,5 @@ async def _projects_for_entries(
                 by_path[path] = (shown, raw)
 
     if not succeeded:
-        status = last_error.response.status_code if last_error else 400
-        raise HTTPException(status_code=status, detail=f"GitLab API returned {status}") from last_error
-    return by_path, failed
+        raise HTTPException(status_code=502, detail=nobody_answered("GitLab", refused, unreachable)) from cause
+    return by_path, failed, unreachable == 0

@@ -1,11 +1,14 @@
 """Tests for /api/v1/github/repos."""
 
+import asyncio
 import os
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 
 from embry0.api.app import create_app
 from embry0.api.v1 import github as github_module
@@ -95,8 +98,10 @@ async def test_list_repos_returns_repos_from_github(app_with_token):
 
 
 @pytest.mark.asyncio
-async def test_list_repos_propagates_github_error(app_with_token):
-    """A non-2xx from GitHub should surface as the same status code to the caller."""
+async def test_list_repos_answers_502_naming_github_s_status_when_it_refuses_every_account(app_with_token):
+    """#568: GitHub's status was passed on as embry0's own, so every token expired answered 401, which the dashboard
+    takes for a bad embry0 key and answers with the sign-in prompt. GitHub refusing every account is a 502 that
+    names GitHub's status."""
     import httpx
 
     mock_resp = MagicMock()
@@ -116,8 +121,9 @@ async def test_list_repos_propagates_github_error(app_with_token):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/v1/github/repos")
 
-    assert resp.status_code == 401
-    assert "401" in resp.json()["detail"]
+    assert (resp.status_code, resp.json()["detail"]) == (502, "GitHub API returned 401 for every account"), (
+        f"GitHub refusing every account is answered as an upstream failure, not the caller's: {resp.status_code}"
+    )
 
 
 def _repo(full_name: str) -> dict:
@@ -150,6 +156,10 @@ class _FakeResponse:
         return self._payload
 
 
+#: The answer of an account that never answers.
+_HANG = object()
+
+
 class _FakeClient:
     """Maps Authorization header -> canned response, mimicking httpx.AsyncClient.
 
@@ -174,6 +184,11 @@ class _FakeClient:
 
     async def get(self, url, params=None):
         value = self.responses_by_token[self._token]
+        if isinstance(value, BaseException):
+            raise value
+        if value is _HANG:
+            # An account that never answers; the listing's deadline cancels it.
+            await asyncio.Event().wait()
         if isinstance(value, list):
             resp = value[min(self._page, len(value) - 1)]
             self._page += 1
@@ -440,3 +455,180 @@ async def test_one_failing_credential_is_skipped_and_reported_by_label(app_with_
     assert "ghp_alice_placeholder" not in resp.text
     assert "ghp_revoked_placeholder" not in str(github_module._DISCOVERY_CACHE)
     assert "ghp_alice_placeholder" not in str(github_module._DISCOVERY_CACHE)
+
+
+async def _answer(app, path: str) -> httpx.Response:
+    """What a caller is answered: an exception the app does not handle is its 500, not raised into the test."""
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        return await http.get(path)
+
+
+_UNREACHABLE = {
+    "refused": httpx.ConnectError("connection refused"),
+    "timeout": httpx.ReadTimeout("timed out"),
+}
+
+
+@pytest.mark.parametrize("error", list(_UNREACHABLE), ids=list(_UNREACHABLE))
+@pytest.mark.asyncio
+async def test_an_account_github_never_answers_is_reported_by_label(app_with_registry, monkeypatch, error):
+    """#340: one account's listing that got no answer (a refused connection, a timeout) failed the whole request
+    with a 500; it is reported like one GitHub refused, by label, and the other accounts' repositories are listed."""
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "alice", "ghp_alice_placeholder")
+    await _add_github_credential(app_with_registry, "offline", "ghp_offline_placeholder")
+    _FakeClient.responses_by_token = {
+        "ghp_alice_placeholder": _FakeResponse([_repo("acme/widgets")]),
+        "ghp_offline_placeholder": _UNREACHABLE[error],
+    }
+    with capture_logs() as logs:
+        resp = await _answer(app_with_registry, "/api/v1/github/discoverable-repos")
+    assert resp.status_code == 200, f"one account's {error} fails the whole listing: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert body["failed"] == ["offline"], f"the account that could not be listed is named: {body['failed']}"
+    assert [r["full_name"] for r in body["repos"]] == ["acme/widgets"], body["repos"]
+    (logged,) = [e for e in logs if e["event"] == "github_repos_fetch_failed"]
+    assert (logged["label"], logged["status"], logged["error"]) == (
+        "offline",
+        None,
+        type(_UNREACHABLE[error]).__name__,
+    ), logged
+
+
+@pytest.mark.asyncio
+async def test_no_account_github_answers_is_a_502(app_with_registry, monkeypatch):
+    """Every account unreachable: nothing to list, and GitHub's own status is not there to pass on."""
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "offline", "ghp_offline_placeholder")
+    _FakeClient.responses_by_token = {"ghp_offline_placeholder": httpx.ConnectError("connection refused")}
+    resp = await _answer(app_with_registry, "/api/v1/github/discoverable-repos")
+    assert (resp.status_code, resp.json().get("detail")) == (502, "GitHub could not be reached"), (
+        f"no account reachable answers 502: {resp.status_code} {resp.text}"
+    )
+
+
+def _short_deadline(monkeypatch) -> None:
+    """The listing's deadline, a fraction of a second here. A tree without one has nothing to shorten, and the test
+    then shows that it waits on the hanging accounts."""
+    try:
+        import embry0.api.forge_listings as forge_listings
+    except ImportError:
+        return
+    monkeypatch.setattr(forge_listings, "DEADLINE_SECONDS", 0.2)
+
+
+@pytest.mark.asyncio
+async def test_hanging_accounts_end_at_the_deadline_and_are_reported_by_label(app_with_registry, monkeypatch):
+    """#340 review: the accounts were read one after another, each request with a 30 s timeout over up to five
+    pages, so four hanging accounts held the request two minutes, past a proxy's limit, and the person got a
+    gateway timeout instead of the accounts that answered. They are read at once, within one deadline."""
+    _short_deadline(monkeypatch)
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "alice", "ghp_alice_placeholder")
+    for n in range(4):
+        await _add_github_credential(app_with_registry, f"slow-{n}", f"ghp_slow{n}_placeholder")
+    _FakeClient.responses_by_token = {
+        "ghp_alice_placeholder": _FakeResponse([_repo("acme/widgets")]),
+        **{f"ghp_slow{n}_placeholder": _HANG for n in range(4)},
+    }
+    started = time.monotonic()
+    try:
+        with capture_logs() as logs:
+            resp = await asyncio.wait_for(_answer(app_with_registry, "/api/v1/github/discoverable-repos"), timeout=5)
+    except TimeoutError:
+        pytest.fail("the listing waited on the hanging accounts past 5 s instead of its deadline")
+    took = time.monotonic() - started
+    assert resp.status_code == 200 and took < 3, f"answered at the deadline: {resp.status_code} after {took:.2f}s"
+    body = resp.json()
+    assert sorted(body["failed"]) == [f"slow-{n}" for n in range(4)], f"each hanging account is named: {body}"
+    assert [r["full_name"] for r in body["repos"]] == ["acme/widgets"], body["repos"]
+    errors = {e["label"]: e["error"] for e in logs if e["event"] == "github_repos_fetch_failed"}
+    assert errors == {f"slow-{n}": "PastDeadline" for n in range(4)}, errors
+
+
+def _short_account_deadline(monkeypatch) -> None:
+    """Each account's own deadline, and the listing's, a fraction of a second here."""
+    try:
+        import embry0.api.forge_listings as forge_listings
+    except ImportError:
+        return
+    monkeypatch.setattr(forge_listings, "DEADLINE_SECONDS", 2.0)
+    monkeypatch.setattr(forge_listings, "ACCOUNT_SECONDS", 0.1, raising=False)
+    monkeypatch.setattr(forge_listings, "CONCURRENCY", 4)
+
+
+@pytest.mark.asyncio
+async def test_good_accounts_behind_hanging_ones_are_still_listed(app_with_registry, monkeypatch):
+    """#340 review: four hanging accounts listed first held all four slots until the listing's deadline, so the four
+    good accounts behind them never started, and the answer was a 502 that no account could be reached."""
+    _short_account_deadline(monkeypatch)
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    # Discovery reads the registry's credentials in the order of their labels: the hanging ones first.
+    for n in range(4):
+        await _add_github_credential(app_with_registry, f"a-slow-{n}", f"ghp_slow{n}_placeholder")
+    for n in range(4):
+        await _add_github_credential(app_with_registry, f"b-good-{n}", f"ghp_good{n}_placeholder")
+    _FakeClient.responses_by_token = {
+        **{f"ghp_slow{n}_placeholder": _HANG for n in range(4)},
+        **{f"ghp_good{n}_placeholder": _FakeResponse([_repo(f"acme/app-{n}")]) for n in range(4)},
+    }
+    try:
+        resp = await asyncio.wait_for(_answer(app_with_registry, "/api/v1/github/discoverable-repos"), timeout=10)
+    except TimeoutError:
+        pytest.fail("the listing waited on the hanging accounts past 10 s")
+    assert resp.status_code == 200, f"the good accounts behind hanging ones: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert [r["full_name"] for r in body["repos"]] == [f"acme/app-{n}" for n in range(4)], body
+    assert body["failed"] == [f"a-slow-{n}" for n in range(4)], body["failed"]
+
+
+@pytest.mark.asyncio
+async def test_a_mix_of_refused_and_unreachable_accounts_is_worded_as_such(app_with_registry, monkeypatch):
+    """#340 review: one account refused and one unreachable was reported as GitHub returning 401 for every account."""
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "revoked", "ghp_revoked_placeholder")
+    await _add_github_credential(app_with_registry, "offline", "ghp_offline_placeholder")
+    _FakeClient.responses_by_token = {
+        "ghp_revoked_placeholder": _FakeResponse({"message": "Bad credentials"}, status_code=401),
+        "ghp_offline_placeholder": httpx.ConnectError("connection refused"),
+    }
+    resp = await _answer(app_with_registry, "/api/v1/github/discoverable-repos")
+    assert (resp.status_code, resp.json().get("detail")) == (
+        502,
+        "GitHub listed no account: refused 1 (401) and could not be reached for 1",
+    ), f"the 502 says what GitHub did with each account, counted: {resp.text}"
+
+
+@pytest.mark.asyncio
+async def test_an_answer_missing_an_unreachable_account_is_not_kept(app_with_registry, monkeypatch):
+    """#340 review: an answer without an account that could not be reached was cached for five minutes, so the
+    account stayed missing after it came back. It is served once; the next read asks every account again. On the
+    monotonic clock of a machine started less than five minutes ago, as a CI runner is, so "read at 0.0" is not
+    taken for "read long ago"."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(github_module, "time", SimpleNamespace(monotonic=lambda: 10.0))
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "alice", "ghp_alice_placeholder")
+    await _add_github_credential(app_with_registry, "offline", "ghp_offline_placeholder")
+    _FakeClient.responses_by_token = {
+        "ghp_alice_placeholder": _FakeResponse([_repo("acme/widgets")]),
+        "ghp_offline_placeholder": httpx.ConnectError("connection refused"),
+    }
+    first = await _answer(app_with_registry, "/api/v1/github/discoverable-repos")
+    assert first.status_code == 200 and first.json()["failed"] == ["offline"], first.text
+    _FakeClient.responses_by_token["ghp_offline_placeholder"] = _FakeResponse([_repo("acme/gadgets")])
+    second = await _answer(app_with_registry, "/api/v1/github/discoverable-repos")
+    body = second.json()
+    assert (body["cached"], body["failed"], sorted(r["full_name"] for r in body["repos"])) == (
+        False,
+        [],
+        ["acme/gadgets", "acme/widgets"],
+    ), f"the next read asks the account that was missing: {body}"

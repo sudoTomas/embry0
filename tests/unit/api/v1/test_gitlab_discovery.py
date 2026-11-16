@@ -48,7 +48,8 @@ def _app(*, gitlab_token: str = "glpat-x", registered: list[str] | None = None):
 
 
 def _client(app):
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    # An exception the app does not handle is answered as the 500 a caller gets, not raised into the test.
+    return AsyncClient(transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test")
 
 
 async def test_reports_unconfigured_without_a_token():
@@ -167,13 +168,15 @@ async def test_membership_filter_is_requested(monkeypatch):
 
 
 async def test_transport_failure_surfaces_rather_than_lying(monkeypatch):
+    """No account reachable: an error, not an empty list (#340 made it a 502 rather than an unhandled 500)."""
+
     async def boom(self, path, **kwargs):
         raise httpx.ConnectError("down")
 
     monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", boom)
     async with _client(_app()) as c:
-        with pytest.raises(httpx.ConnectError):
-            await c.get("/api/v1/gitlab/discoverable-projects")
+        resp = await c.get("/api/v1/gitlab/discoverable-projects")
+    assert (resp.status_code, resp.json().get("detail")) == (502, "GitLab could not be reached"), resp.text
 
 
 async def _add_gitlab_credential(app, label: str, secret: str) -> None:
@@ -281,3 +284,115 @@ async def test_one_failing_gitlab_credential_is_reported_by_label(monkeypatch):
     assert "glpat-alice-placeholder" not in resp.text
     assert "glpat-revoked-placeholder" not in str(gitlab_mod._CACHE)
     assert "glpat-alice-placeholder" not in str(gitlab_mod._CACHE)
+
+
+async def test_a_gitlab_account_that_never_answers_is_reported_by_label(monkeypatch):
+    """#340, the GitLab listing alike: one account's transport error failed every account's listing."""
+
+    async def fake_paginate(self, path, **kwargs):
+        if self._default_token == "glpat-offline-placeholder":
+            raise httpx.ReadTimeout("timed out")
+        return [_project("acme/widgets")]
+
+    monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", fake_paginate)
+    app = _with_registry(_app(gitlab_token=""))
+    await _add_gitlab_credential(app, "alice", "glpat-alice-placeholder")
+    await _add_gitlab_credential(app, "offline", "glpat-offline-placeholder")
+    resolver = MagicMock()
+    resolver.has_forge_credential = AsyncMock(return_value=True)
+    app.state.credential_resolver = resolver
+    async with _client(app) as c:
+        resp = await c.get("/api/v1/gitlab/discoverable-projects")
+    assert resp.status_code == 200, f"one account's timeout fails the whole listing: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert body["failed"] == ["offline"], f"the account that could not be listed is named: {body['failed']}"
+    assert [p["full_name"] for p in body["projects"]] == ["acme/widgets"], body["projects"]
+
+
+async def test_gitlab_refusing_every_account_is_a_502_naming_its_status(monkeypatch):
+    """#568, GitLab alike: its 401 was answered as embry0's own, a bad embry0 key to the dashboard."""
+
+    async def refused(self, path, **kwargs):
+        request = httpx.Request("GET", "https://gitlab.example.com/api/v4/projects")
+        raise httpx.HTTPStatusError("401", request=request, response=httpx.Response(401, request=request))
+
+    monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", refused)
+    async with _client(_app()) as c:
+        resp = await c.get("/api/v1/gitlab/discoverable-projects")
+    assert (resp.status_code, resp.json().get("detail")) == (502, "GitLab API returned 401 for every account"), (
+        f"GitLab refusing every account is answered as an upstream failure, not the caller's: {resp.text}"
+    )
+
+
+def _short_deadline(monkeypatch) -> None:
+    """The listing's deadline, a fraction of a second here. A tree without one has nothing to shorten, and the test
+    then shows that it waits on the hanging accounts."""
+    try:
+        import embry0.api.forge_listings as forge_listings
+    except ImportError:
+        return
+    monkeypatch.setattr(forge_listings, "DEADLINE_SECONDS", 0.2)
+
+
+async def test_hanging_gitlab_accounts_end_at_the_deadline(monkeypatch):
+    """#340 review, GitLab alike: the accounts are read at once, within one deadline."""
+    import asyncio
+    import time
+
+    async def fake_paginate(self, path, **kwargs):
+        if self._default_token.startswith("glpat-slow"):
+            await asyncio.Event().wait()
+        return [_project("acme/widgets")]
+
+    _short_deadline(monkeypatch)
+    monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", fake_paginate)
+    app = _with_registry(_app(gitlab_token=""))
+    await _add_gitlab_credential(app, "alice", "glpat-alice-placeholder")
+    for n in range(4):
+        await _add_gitlab_credential(app, f"slow-{n}", f"glpat-slow{n}-placeholder")
+    resolver = MagicMock()
+    resolver.has_forge_credential = AsyncMock(return_value=True)
+    app.state.credential_resolver = resolver
+    started = time.monotonic()
+    try:
+        async with _client(app) as c:
+            resp = await asyncio.wait_for(c.get("/api/v1/gitlab/discoverable-projects"), timeout=5)
+    except TimeoutError:
+        pytest.fail("the listing waited on the hanging accounts past 5 s instead of its deadline")
+    took = time.monotonic() - started
+    assert resp.status_code == 200 and took < 3, f"answered at the deadline: {resp.status_code} after {took:.2f}s"
+    body = resp.json()
+    assert sorted(body["failed"]) == [f"slow-{n}" for n in range(4)], f"each hanging account is named: {body}"
+    assert [p["full_name"] for p in body["projects"]] == ["acme/widgets"], body["projects"]
+
+
+async def test_a_gitlab_answer_missing_an_unreachable_account_is_not_kept(monkeypatch):
+    """#340 review, GitLab alike: an answer without an account that could not be reached is served once, not kept,
+    on the monotonic clock of a machine started seconds ago too."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(gitlab_mod, "time", SimpleNamespace(monotonic=lambda: 10.0))
+    down = {"glpat-offline-placeholder"}
+
+    async def fake_paginate(self, path, **kwargs):
+        if self._default_token in down:
+            raise httpx.ConnectError("connection refused")
+        return [_project("acme/widgets" if self._default_token == "glpat-alice-placeholder" else "acme/gadgets")]
+
+    monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", fake_paginate)
+    app = _with_registry(_app(gitlab_token=""))
+    await _add_gitlab_credential(app, "alice", "glpat-alice-placeholder")
+    await _add_gitlab_credential(app, "offline", "glpat-offline-placeholder")
+    resolver = MagicMock()
+    resolver.has_forge_credential = AsyncMock(return_value=True)
+    app.state.credential_resolver = resolver
+    async with _client(app) as c:
+        first = (await c.get("/api/v1/gitlab/discoverable-projects")).json()
+        down.clear()
+        second = (await c.get("/api/v1/gitlab/discoverable-projects")).json()
+    assert first["failed"] == ["offline"], first
+    assert (second["cached"], second["failed"], sorted(p["full_name"] for p in second["projects"])) == (
+        False,
+        [],
+        ["acme/gadgets", "acme/widgets"],
+    ), f"the next read asks the account that was missing: {second}"
