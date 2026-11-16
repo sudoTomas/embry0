@@ -508,6 +508,11 @@ async def get_effective_settings(
         hidden.append(repo_scope)
     if org_scope is not None and (repo_scope is None or hidden) and await _hidden(request, org_scope):
         hidden.append(org_scope)
+    # The budget policy's read comes first: a key its import has not taken yet makes it try the import again, and
+    # the snapshot read after it holds what that import wrote. Read the other way round, the first read after a
+    # failed boot import showed the document from before it, a key at its default while the loops read the imported
+    # value (#339).
+    not_imported = await _not_imported(request, None if org_scope in hidden else org_scope)
     snapshot = await store.snapshot()
     if hidden:
         snapshot = _without_layers(snapshot, hidden)
@@ -522,7 +527,7 @@ async def get_effective_settings(
         request.app.state.config,
         owner=org_scope.name if org_scope is not None and repo_scope is None else None,
         repo=repo_scope.name if repo_scope is not None else None,
-        not_imported=await _not_imported(request, None if org_scope in hidden else org_scope),
+        not_imported=not_imported,
     )
     shown, deployment = await actor_shown(request), await deployment_actor_shown(request)
     for section in view["sections"]:

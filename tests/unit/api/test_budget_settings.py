@@ -701,6 +701,31 @@ def _budget_keys(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {k["key"]: k for k in next(s for s in view["sections"] if s["name"] == "budget")["keys"]}
 
 
+async def test_the_first_effective_read_shows_the_import_it_starts(app: Any, client: AsyncClient) -> None:
+    """#339: with the boot's import not done (it failed, or a key was held), the first read of the effective view
+    tries it again, and answered from the document as it was before that import: the daily cap at its default and
+    its source "default", while the gate already read the imported 42. Only the next read showed 42."""
+    from embry0.services.budget_policy import BudgetPolicy
+    from embry0.settings.earlier import EARLIER_SOURCES
+
+    config = _config(DAILY_BUDGET_CAP_USD="42")
+    app.state.budget_policy = BudgetPolicy(
+        app.state.settings, config, earlier=EARLIER_SOURCES, moved=org_service.MOVED_SETTINGS
+    )
+
+    first = await client.get("/api/v1/config/settings/effective", headers=_as(OPERATOR))
+    assert first.status_code == 200, first.text
+    second = await client.get("/api/v1/config/settings/effective", headers=_as(OPERATOR))
+    shown = [
+        (keys["daily_cap_usd"]["value"], keys["daily_cap_usd"]["source"])
+        for keys in (_budget_keys(first.json()), _budget_keys(second.json()))
+    ]
+    assert shown == [(42.0, "bootstrap"), (42.0, "bootstrap")], (
+        f"the first read shows the value the import it started wrote, as the next does: {shown}"
+    )
+    assert (await app.state.budget_policy.settings()).daily_cap_usd == 42.0, "the gate reads the imported cap"
+
+
 async def test_while_the_import_is_pending_the_effective_view_shows_the_caps_enforced(
     app: Any, client: AsyncClient, db_with_migrations: DatabasePool
 ) -> None:
