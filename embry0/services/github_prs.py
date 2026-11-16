@@ -349,11 +349,25 @@ async def _open_pr_into(
         if isinstance(into, dict) and into.get("ref") not in (None, base):
             continue
         if isinstance(head, dict) and (
-            head.get("ref") not in (None, branch) or head.get("label") not in (None, f"{owner}:{branch}")
+            head.get("ref") not in (None, branch) or not _from(head.get("label"), owner, branch)
         ):
             continue
         return pr
     return None
+
+
+def _from(label: Any, owner: str, branch: str) -> bool:
+    """Whether a pull request's ``head.label`` (``<login>:<ref>``) names ``branch`` of ``owner``, or names nothing.
+
+    The login is compared without case, as GitHub matches it: a repository
+    stored as ``acme/widgets`` is GitHub's ``Acme``, whose labels carry the
+    login's own case. The ref is compared exactly: git refs are
+    case-sensitive.
+    """
+    if label is None:
+        return True
+    login, colon, ref = str(label).partition(":")
+    return bool(colon) and login.casefold() == owner.casefold() and ref == branch
 
 
 async def _apply_pr_labels(

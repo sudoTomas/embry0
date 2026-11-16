@@ -988,3 +988,61 @@ async def test_the_lookup_takes_only_an_open_pr_from_the_branch(no_backoff):
     )
     assert url == "https://github.com/o/r/pull/9", "a closed PR, or one from another head, is taken for the job's"
     assert seen["creates"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_slug_whose_owner_case_differs_from_github_s_still_finds_its_pr(no_backoff):
+    """GitHub's label carries the login in its own case; the slug as stored may not. The ref is still exact."""
+    seen: dict = {"creates": 0}
+
+    def handler(request):
+        if request.method == "GET" and request.url.path == "/repos/O/r/pulls":
+            return httpx.Response(
+                200,
+                json=[
+                    # Branch ``B`` is not branch ``b``: one PR says so by its ref, the other by its label.
+                    {
+                        "html_url": "https://github.com/o/r/pull/12",
+                        "number": 12,
+                        "state": "open",
+                        "base": {"ref": "main"},
+                        "head": {"ref": "B"},
+                    },
+                    {
+                        "html_url": "https://github.com/o/r/pull/13",
+                        "number": 13,
+                        "state": "open",
+                        "base": {"ref": "main"},
+                        "head": {"label": "o:B"},
+                    },
+                    {
+                        "html_url": "https://github.com/o/r/pull/9",
+                        "number": 9,
+                        "state": "open",
+                        "base": {"ref": "main"},
+                        "head": {"ref": "b", "label": "o:b"},
+                    },
+                ],
+            )
+        if request.method == "POST" and request.url.path == "/repos/O/r/pulls":
+            seen["creates"] += 1
+            return httpx.Response(422, json=_EXISTS)
+        if request.method == "POST" and request.url.path.endswith("/labels"):
+            return httpx.Response(200, json=[{"name": n} for n in _json.loads(request.content)["labels"]])
+        if request.method == "GET" and request.url.path.endswith("/comments"):
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="O/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+        diagnostics=diagnostics,
+    )
+    assert url == "https://github.com/o/r/pull/9", f"the slug's own PR is passed over: {url} {diagnostics}"
+    assert seen["creates"] == 0, "a create was sent for a PR that is open"
