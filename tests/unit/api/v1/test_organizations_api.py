@@ -638,7 +638,19 @@ def _forge_unreachable(monkeypatch: pytest.MonkeyPatch, how: str) -> list[str]:
 
     monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
     monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    _no_waiting(monkeypatch)
     return asked
+
+
+def _no_waiting(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The forge client's retries without their waits: each backoff is recorded by its reason, not slept."""
+    backoffs: list[str] = []
+
+    async def backoff(self: Any, attempt: int, response: Any, *, method: str, path: str, reason: str) -> None:
+        backoffs.append(reason)
+
+    monkeypatch.setattr(forge_client.ForgeClient, "_backoff", backoff)
+    return backoffs
 
 
 async def _answer(app: Any, path: str, body: dict[str, Any] | None = None) -> httpx.Response:
@@ -706,3 +718,173 @@ async def test_registering_with_a_probe_github_never_answers_is_a_502_and_stores
     assert resp.status_code == 502, f"a registration whose probe GitHub never answered: {resp.status_code} {resp.text}"
     assert resp.json()["detail"] == "GitHub could not be reached"
     assert app.state.organizations_repo.orgs == {}, "an owner whose probe got no answer was registered"
+
+
+# ---- a forge that answers with an outage (#571) ----------------------------------------
+
+
+def _forge_answers(monkeypatch: pytest.MonkeyPatch, status: int) -> tuple[list[str], list[str]]:
+    """The real probe, the forge answering who the token is with 200 and every other request with ``status``, as
+    during an outage, a proxy in front of a restarting GitLab, or a secondary rate limit. Answers the paths it was
+    asked, in order, and the client's backoffs."""
+    asked: list[str] = []
+    real_client = httpx.AsyncClient
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        asked.append(path)
+        if path.endswith("/user"):
+            return httpx.Response(200, json={"login": "acme-bot", "username": "acme-bot"})
+        return httpx.Response(status, json={"message": "unavailable"})
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(answer), **kwargs)
+
+    monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
+    monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    return asked, _no_waiting(monkeypatch)
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504, 429])
+@pytest.mark.asyncio
+async def test_a_probe_github_answers_with_an_outage_is_a_502_naming_it(
+    app: Any, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """#571: one attempt a request, and any status but 200 read as an answer: "acme is not visible", "cannot list
+    repositories", for a token that can see both."""
+    asked, backoffs = _forge_answers(monkeypatch, status)
+    with capture_logs() as logs:
+        resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    assert resp.status_code == 502, f"a probe GitHub answered {status}: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == f"GitHub could not answer ({status})"
+    assert asked.count("/orgs/acme") == 3 and backoffs == [f"status_{status}"] * 2, (
+        f"the client retried by its policy, three attempts, before the probe gave up: {asked}, {backoffs}"
+    )
+    (logged,) = [e for e in logs if e["event"] == "organization_probe_unreachable"]
+    assert (logged["owner"], logged["forge"], logged["error"], logged["status"]) == (
+        "acme",
+        "github",
+        "ForgeOutage",
+        status,
+    ), logged
+
+
+@pytest.mark.asyncio
+async def test_a_probe_gitlab_answers_with_an_outage_is_a_502_naming_it(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app.state.config.gitlab_token = "glpat-placeholder"
+    _forge_answers(monkeypatch, 502)
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme", "forge": "gitlab"})
+    assert resp.status_code == 502, f"a probe GitLab answered 502: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitLab could not answer (502)"
+
+
+@pytest.mark.asyncio
+async def test_a_reprobe_github_answers_with_an_outage_keeps_what_was_stored(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The issue's sequence: a re-probe during a 503 rewrote stored access to "not visible", and the organization
+    webhook install, which reads the stored ``hooks``, was then refused."""
+    async with _client(app) as client:
+        assert (await client.post("/api/v1/orgs", json={"owner": "acme"})).status_code == 201
+    org = app.state.organizations_repo.orgs["acme"]
+    stored, count = dict(org.access), org.repo_count
+    assert (stored["read"], stored["hooks"], stored["owner_kind"]) == (True, True, "organization"), stored
+    _forge_answers(monkeypatch, 503)
+    resp = await _answer(app, "/api/v1/orgs/acme/probe")
+    assert resp.status_code == 502, f"a re-probe GitHub answered 503: {resp.status_code} {resp.text}"
+    assert (org.access, org.repo_count) == (stored, count), "a re-probe that got an outage rewrote the stored access"
+
+
+@pytest.mark.asyncio
+async def test_registering_with_a_probe_github_answers_with_an_outage_stores_nothing(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forge_answers(monkeypatch, 429)
+    resp = await _answer(app, "/api/v1/orgs", {"owner": "acme"})
+    assert resp.status_code == 502, f"a registration whose probe GitHub rate-limited: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitHub could not answer (429)"
+    assert app.state.organizations_repo.orgs == {}, "an owner whose probe got an outage was registered"
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+@pytest.mark.asyncio
+async def test_a_refusal_is_still_an_answer_about_access(
+    app: Any, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A 401, 403 or 404 says what the token may do: the probe reads it, once, and answers what it found."""
+    asked, backoffs = _forge_answers(monkeypatch, status)
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    assert resp.status_code == 200, f"a probe GitHub answered {status}: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert (body["read"], body["owner_kind"]) == (False, None), body
+    assert "acme is not visible" in body["detail"] and backoffs == [], (body, backoffs)
+
+
+#: Each request a probe makes, and the forge's answers when all is well: the outage is put on one of them alone.
+_GITHUB_OK: dict[str, httpx.Response] = {
+    "/user": httpx.Response(200, json={"login": "acme-bot"}),
+    "/orgs/acme": httpx.Response(200, json={"public_repos": 3}),
+    "/orgs/acme/repos": httpx.Response(200, json=[{"full_name": "acme/app"}]),
+    "/repos/acme/app/hooks": httpx.Response(200, json=[]),
+}
+_GITLAB_OK: dict[str, httpx.Response] = {
+    "/api/v4/user": httpx.Response(200, json={"username": "acme-bot"}),
+    "/api/v4/groups/acme": httpx.Response(200, json={"id": 1}),
+    "/api/v4/groups/acme/projects": httpx.Response(200, json=[{"path_with_namespace": "acme/app"}]),
+}
+
+
+def _one_request_in_an_outage(monkeypatch: pytest.MonkeyPatch, ok: dict[str, httpx.Response], down: str) -> None:
+    """The forge answering every probe request as ``ok`` does, but ``down`` with a 503, every attempt."""
+    real_client = httpx.AsyncClient
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == down:
+            return httpx.Response(503)
+        known = ok.get(path)
+        return httpx.Response(known.status_code, content=known.content) if known else httpx.Response(404)
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(answer), **kwargs)
+
+    monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
+    monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    _no_waiting(monkeypatch)
+
+
+@pytest.mark.parametrize(
+    ("forge", "down"),
+    [
+        ("github", "/user"),
+        ("github", "/orgs/acme"),
+        ("github", "/users/acme"),
+        ("github", "/orgs/acme/repos"),
+        ("github", "/repos/acme/app/hooks"),
+        ("gitlab", "/api/v4/user"),
+        ("gitlab", "/api/v4/groups/acme"),
+        ("gitlab", "/api/v4/groups/acme/projects"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_outage_on_any_one_of_a_probe_s_requests_is_a_502(
+    app: Any, monkeypatch: pytest.MonkeyPatch, forge: str, down: str
+) -> None:
+    """Every request a probe makes reads an outage as one, not only the first: the rest answering is no answer
+    about what the request in the outage would have said."""
+    ok = dict(_GITHUB_OK if forge == "github" else _GITLAB_OK)
+    if down == "/users/acme":
+        # Asked only when the owner is not an organization.
+        ok.pop("/orgs/acme")
+        ok["/users/acme/repos"] = ok.pop("/orgs/acme/repos")
+    if forge == "gitlab":
+        app.state.config.gitlab_token = "glpat-placeholder"
+        app.state.config.gitlab_url = "https://gitlab.example.com"
+    _one_request_in_an_outage(monkeypatch, ok, down)
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme", "forge": forge})
+    name = "GitLab" if forge == "gitlab" else "GitHub"
+    assert (resp.status_code, resp.json().get("detail")) == (502, f"{name} could not answer (503)"), (
+        f"{down} in an outage, the rest answering: {resp.status_code} {resp.text}"
+    )

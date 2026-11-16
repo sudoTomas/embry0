@@ -335,6 +335,25 @@ class _Client(Protocol):
     async def get(self, path: str, **kwargs: Any) -> Any: ...
 
 
+class ForgeOutage(Exception):
+    """The forge answered one of a probe's requests with a server error (5xx) or a rate limit (429), after the
+    client's own retries: that says the forge could not answer, not what the token may do. The probe stops there,
+    and nothing is stored or registered from it (#571). A 401, 403 or 404 is an answer, and is read as one."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"the forge answered {status}")
+        self.status = status
+
+
+async def _ask(client: _Client, path: str, **kwargs: Any) -> Any:
+    """``client.get``, raising :class:`ForgeOutage` for an answer that is an outage rather than about access."""
+    response = await client.get(path, **kwargs)
+    status = getattr(response, "status_code", 200)
+    if status == 429 or status >= 500:
+        raise ForgeOutage(status)
+    return response
+
+
 def _json(resp: Any) -> Any:
     try:
         return resp.json()
@@ -365,24 +384,26 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     """Read, hook-admin and identity for ``owner`` with ``token``, by calling GitHub.
 
     Push is not probed here: the only honest probe writes a ref, so it is a
-    separate, explicit action.
+    separate, explicit action. The client retries a transient failure by its
+    own policy; one that persists raises (a transport error, or
+    :class:`ForgeOutage`) rather than being read as no access.
     """
     if client is None:
         from embry0.execution.github_client import GitHubClient
 
-        client = GitHubClient(default_token=token, max_attempts=1, owner_env_tokens=False, token_owner=owner)
+        client = GitHubClient(default_token=token, owner_env_tokens=False, token_owner=owner)
 
-    me = await client.get("/user")
+    me = await _ask(client, "/user")
     identity = str((_json(me) or {}).get("login") or "") or None if me.status_code == 200 else None
 
     kind: str | None = None
     repo_count: int | None = None
-    org = await client.get(f"/orgs/{quote(owner, safe='')}")
+    org = await _ask(client, f"/orgs/{quote(owner, safe='')}")
     if org.status_code == 200:
         kind = "organization"
         repo_count = _count(_json(org))
     else:
-        user = await client.get(f"/users/{quote(owner, safe='')}")
+        user = await _ask(client, f"/users/{quote(owner, safe='')}")
         if user.status_code == 200:
             kind = "user"
             repo_count = _count(_json(user))
@@ -390,7 +411,7 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     list_path = (
         f"/orgs/{quote(owner, safe='')}/repos" if kind == "organization" else f"/users/{quote(owner, safe='')}/repos"
     )
-    listing = await client.get(list_path, params={"per_page": 1, "type": "all"})
+    listing = await _ask(client, list_path, params={"per_page": 1, "type": "all"})
     repos = _json(listing) if listing.status_code == 200 else None
     read = isinstance(repos, list)
     sample = str(repos[0].get("full_name") or "") or None if read and repos and isinstance(repos[0], dict) else None
@@ -398,7 +419,7 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     hooks: bool | None = None
     # Only the owner's own repository: a user's listing can hold one they are a member of, which this token is not for.
     if sample and sample.lower().startswith(owner.lower() + "/"):
-        hooks_resp = await client.get(f"/repos/{sample}/hooks")
+        hooks_resp = await _ask(client, f"/repos/{sample}/hooks")
         hooks = hooks_resp.status_code == 200
 
     parts = [
@@ -427,7 +448,8 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
 async def probe_gitlab(
     owner: str, token: str, *, gitlab_url: str, ca_pem: Any = None, client: _Client | None = None
 ) -> AccessProbe:
-    """Read and identity for a GitLab group with ``token``. Hooks are not probed in this release."""
+    """Read and identity for a GitLab group with ``token``. Hooks are not probed in this release. Transient failures
+    as :func:`probe_github`'s."""
     if client is None:
         from embry0.execution.gitlab_client import GitLabClient
 
@@ -435,17 +457,16 @@ async def probe_gitlab(
             default_token=token,
             gitlab_url=gitlab_url,
             ca_pem=ca_pem,
-            max_attempts=1,
             owner_env_tokens=False,
             token_owner=owner,
         )
 
-    me = await client.get("/user")
+    me = await _ask(client, "/user")
     identity = str((_json(me) or {}).get("username") or "") or None if me.status_code == 200 else None
-    group = await client.get(f"/groups/{quote(owner, safe='')}")
+    group = await _ask(client, f"/groups/{quote(owner, safe='')}")
     kind = "group" if group.status_code == 200 else None
-    listing = await client.get(
-        f"/groups/{quote(owner, safe='')}/projects", params={"per_page": 1, "include_subgroups": "true"}
+    listing = await _ask(
+        client, f"/groups/{quote(owner, safe='')}/projects", params={"per_page": 1, "include_subgroups": "true"}
     )
     projects = _json(listing) if listing.status_code == 200 else None
     read = isinstance(projects, list)

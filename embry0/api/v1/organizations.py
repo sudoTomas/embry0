@@ -169,7 +169,9 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
     A forge that never answers (a refused connection, a failed name lookup, a
     timeout) is a 502 naming it (#379): the caller is told the forge could not
     be reached, which a 500 does not say and a probe result would only guess
-    at.
+    at. So is one that answers with an outage (a 5xx, a 429) once the client's
+    retries are spent (#571): that is not an answer about access either, and
+    read as one it stored "not visible" over what an earlier probe found.
     """
     config = getattr(request.app.state, "config", None)
     try:
@@ -183,17 +185,20 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
                 ca_pem=load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or "")),
             )
         return await org_service.probe_github(owner, token)
-    except httpx.RequestError as exc:
+    except (httpx.RequestError, org_service.ForgeOutage) as exc:
         name = "GitLab" if forge == "gitlab" else "GitHub"
+        status = exc.status if isinstance(exc, org_service.ForgeOutage) else None
         # Classes, not text: the text can carry the request's URL.
         logger.warning(
             "organization_probe_unreachable",
             owner=owner,
             forge=forge,
             error=type(exc).__name__,
+            status=status,
             cause=_root_cause(exc),
         )
-        raise HTTPException(status_code=502, detail=f"{name} could not be reached") from exc
+        detail = f"{name} could not be reached" if status is None else f"{name} could not answer ({status})"
+        raise HTTPException(status_code=502, detail=detail) from exc
 
 
 def _root_cause(exc: BaseException) -> str | None:
