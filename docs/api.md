@@ -28,6 +28,12 @@ curl http://localhost:8200/api/v1/issues -H "X-Requested-With: XMLHttpRequest"
 # Get issue with children and jobs
 curl http://localhost:8200/api/v1/issues/{issue_id} -H "X-Requested-With: XMLHttpRequest"
 
+# Delete an issue: 204. Its active jobs, and its direct children's, are cancelled, and so are the
+# issue and those children, except any already closed or cancelled, which keep their status.
+# Every one of them is checked first: only a status no transition can cancel (one written outside
+# embry0) answers 409, with nothing changed.
+curl -X DELETE http://localhost:8200/api/v1/issues/{issue_id} -H "X-Requested-With: XMLHttpRequest"
+
 # Answer a triage question
 curl -X POST http://localhost:8200/api/v1/issues/{issue_id}/inputs/{input_id}/answer \
   -H "Content-Type: application/json" \
