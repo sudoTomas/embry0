@@ -176,7 +176,8 @@ async def upsert_sticky_comment(
     duplicates are not touched (caller can reconcile separately).
 
     Returns the comment id (int) of the comment created or updated. Raises
-    httpx.HTTPStatusError on GitHub API failure.
+    httpx.HTTPStatusError on GitHub API failure, the read of the comments
+    included: a read GitHub refuses posts nothing (#536).
 
     Endpoints:
       - GET  /repos/{repo}/issues/{issue_number}/comments  (paginated)
@@ -264,11 +265,23 @@ async def _find_sticky_comment_id(
     Pagination is the shared Link-header walk now; this module used to be the
     only place in the codebase that paginated at all, via a hand-rolled page
     counter with a 20-page stop (#158).
+
+    The pages are read in order, and the walk stops at the first that holds
+    the marker: a page past it is never read, so its failure changes nothing.
+    A page GitHub refuses before the marker is found raises
+    ``httpx.HTTPStatusError``, as GitLab's ``_note_with`` does: a read that
+    failed is not "no comment", and taking it for one posted a second marked
+    comment beside the first (#536). Twenty pages read with no marker is None.
     """
-    items = await client.paginate(
-        f"/repos/{repo}/issues/{issue_number}/comments", repo=repo, per_page=100, max_pages=20
-    )
-    for item in items:
-        if marker in (item.get("body") or ""):
-            return int(item["id"])
+    next_path: str | None = f"/repos/{repo}/issues/{issue_number}/comments"
+    for page in range(20):
+        if not next_path:
+            break
+        resp = await client.get(next_path, repo=repo, params={"per_page": 100} if page == 0 else None)
+        resp.raise_for_status()
+        body = resp.json()
+        for item in body if isinstance(body, list) else []:
+            if isinstance(item, dict) and marker in (item.get("body") or ""):
+                return int(item["id"])
+        next_path = resp.links.get("next", {}).get("url")
     return None
