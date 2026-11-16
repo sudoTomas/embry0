@@ -130,13 +130,12 @@ async def test_a_place_stored_before_the_page_was_kept_goes_on_from_the_cursor()
     "stored",
     [
         {"stage": 2, "pages": 2, "tied_page": 3},
-        {"stage": 0, "pages": 1, "tied_page": 3},
-        {"stage": 0, "pages": 10, "tied_page": 11},
         {"stage": 0, "pages": 2, "tied_page": 1},
+        {"stage": 0, "pages": 2, "tied_page": 10_001},
         {"stage": 0, "pages": 2, "tied_page": True},
         {"stage": 0, "pages": 2, "tied_page": "3"},
     ],
-    ids=["pull-listing", "past-the-pages-read", "past-the-cap", "first-page", "bool", "text"],
+    ids=["pull-listing", "first-page", "past-the-bound", "bool", "text"],
 )
 def test_a_page_no_reader_could_have_stored_is_no_place(stored: dict[str, Any]) -> None:
     assert ReaderPlace.from_json(stored, **CAPS) is None, stored
@@ -149,3 +148,100 @@ def test_the_pull_request_listings_place_keeps_its_next_page_and_no_tied_one() -
     place = reader.place
     assert place is not None and (place.next_page, place.tied_page) == (2, None), place
     assert ReaderPlace.from_json(place.to_json(), **CAPS) == place, "the pull request listing's place does not load"
+
+
+def test_a_page_among_tied_comments_past_the_page_cap_is_a_place() -> None:
+    """Pages among comments that share one update are not counted against the cap (#538), so a place may name one
+    past it, and past the pages it counted."""
+    for stored in ({"stage": 0, "pages": 1, "tied_page": 3}, {"stage": 1, "pages": 10, "tied_page": 11}):
+        place = ReaderPlace.from_json(stored, **CAPS)
+        assert place is not None and place.tied_page == stored["tied_page"], (
+            f"a place among tied comments past the pages it counted is refused, so the read starts over: {stored}"
+        )
+
+
+@pytest.mark.parametrize("pages", [1, 2])
+@pytest.mark.parametrize("calls", [1, 3, 100])
+async def test_a_block_of_comments_with_one_update_longer_than_the_page_cap_is_read_through(
+    calls: int, pages: int
+) -> None:
+    """#538: nine comments at one second, two a page, a page cap of 2. The cap cut the block at its second page
+    every pass, and the next pass asked for its first pages again: `read 4 of 9; more=True` for good. A cap of 1
+    counts the first page from the cursor, which moves it to that second; the next pass reads the block through."""
+    read: set[int] = set()
+    cursor, place, more = START, None, True
+    caps = {**CAPS, "max_pages": pages}
+    forge = Comments({i: 1 for i in range(1, TIED + 1)})
+    for _run_number in range(20):
+        reader = EventReader(
+            forge,
+            REPO,
+            comments_since=cursor,
+            review_comments_since=None,
+            reviews_since=None,
+            place=ReaderPlace.from_json(place, **caps),
+            # Their authors are known, so no login lookup (a cap of 0 here) marks the read as cut short.
+            known_logins=[f"user{i}" for i in range(1, TIED + 1)],
+            **caps,
+        )
+        await _run(reader, calls)
+        read |= {int(e[0].split(":")[1]) for e in reader.batch.events}
+        cursor = reader.batch.comments_since or cursor
+        place = None if reader.place is None else reader.place.to_json()
+        more = reader.batch.more
+    assert read == set(range(1, TIED + 1)), f"page cap {pages}, {calls} call(s) a run: read {len(read)} of {TIED}"
+    assert more is False, "the listing still says it was cut at the page cap, so the repository is never scored"
+
+
+async def test_the_page_cap_still_counts_the_pages_that_move_the_cursor() -> None:
+    """Six comments, each its own update: the cap of 2 cuts the listing after two pages, as before (the second asked
+    from the cursor the first moved, so comment 2 again)."""
+    reader = EventReader(
+        Comments({i: i for i in range(1, 7)}),
+        REPO,
+        comments_since=START,
+        review_comments_since=None,
+        reviews_since=None,
+        **{**CAPS, "max_pages": 2},
+    )
+    await _run(reader, 100)
+    read = {int(e[0].split(":")[1]) for e in reader.batch.events}
+    assert (reader.batch.more, read) == (True, {1, 2, 3}), f"the cap no longer cuts a listing that moves: {read}"
+
+
+async def test_the_repository_of_such_a_block_is_scored_once_it_is_read() -> None:
+    """The loop: a read the page cap cut short waits for the next pass (#465); this one ends, and is scored."""
+    from tests.unit.services.slop_meter.test_events_cut_short import Counting, _meter_loop
+
+    store = Counting()
+    loop = _meter_loop(Comments({i: 1 for i in range(1, TIED + 1)}), store, event_pages=2)
+    backlogs = [await loop.tick() for _ in range(4)]
+    assert store.scored >= 1 and backlogs[-1] is False, (
+        f"a block of comments with one update longer than the page cap: backlog {backlogs}, scored {store.scored}"
+    )
+
+
+async def test_a_block_many_times_the_page_cap_is_read_one_call_a_run() -> None:
+    """Fifteen comments at one second, eight pages, a cap of 2 and one call a run: the place each run stores must
+    still load (its pages counted stay within the cap), or every run would start the block over."""
+    tied = 15
+    read: set[int] = set()
+    cursor, place = START, None
+    caps = {**CAPS, "max_pages": 2}
+    forge = Comments({i: 1 for i in range(1, tied + 1)})
+    for _run_number in range(40):
+        reader = EventReader(
+            forge,
+            REPO,
+            comments_since=cursor,
+            review_comments_since=None,
+            reviews_since=None,
+            place=ReaderPlace.from_json(place, **caps),
+            known_logins=[f"user{i}" for i in range(1, tied + 1)],
+            **caps,
+        )
+        await _run(reader, 1)
+        read |= {int(e[0].split(":")[1]) for e in reader.batch.events}
+        cursor = reader.batch.comments_since or cursor
+        place = None if reader.place is None else reader.place.to_json()
+    assert read == set(range(1, tied + 1)), f"one call a run, 40 runs: read {len(read)} of {tied} ({sorted(read)})"
