@@ -409,12 +409,8 @@ async def delete_issue(
             "under it first. Nothing was changed.",
         )
     all_issue_ids = [issue_id] + [str(d["id"]) for d in descendants]
-    active = [
-        j
-        for iid in all_issue_ids
-        for j in (await jobs.list_all(issue_id=iid, limit=100, offset=0))[0]
-        if j["status"] in _ACTIVE_JOB_STATUSES
-    ]
+    # Every active job of every one of them, unpaged: an issue can have had more jobs than a page holds.
+    active = await jobs.in_statuses_for_issues(all_issue_ids, _ACTIVE_JOB_STATUSES)
     await enforce_reach(
         request,
         str(existing.get("repo")),
@@ -444,9 +440,12 @@ async def delete_issue(
     for j in active:
         await executor.cancel_job(j["job_id"], actor=actor)
 
-    # One statement for the issue and every issue under it, each by the status it has then: one closed or cancelled
-    # keeps it.
-    cancelled = await issues.cancel_cancellable(all_issue_ids)
+    # One statement for the issue and every issue still under it that was checked above, each by the status it has
+    # then (one closed or cancelled keeps it), and for a key with a list only in the repositories it covers: the jobs'
+    # cancels take a while, and an issue can move out from under the issue, or to another repository, meanwhile.
+    cancelled = await issues.cancel_subtree(
+        issue_id, all_issue_ids, max_depth=MAX_DELETE_DEPTH, repos=covered_slugs(request)
+    )
 
     # An audit row for each issue the delete cancelled, and none for one it left as it was.
     config = request.app.state.config

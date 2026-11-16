@@ -389,6 +389,22 @@ class JobsRepository:
         )
         return [dict(r) for r in rows], int(total or 0)
 
+    async def in_statuses_for_issues(
+        self, issue_ids: Collection[str], statuses: Collection[str]
+    ) -> list[dict[str, Any]]:
+        """Every job of the issues ``issue_ids`` whose status is one of ``statuses``, oldest first, with no page: a
+        delete must reach-check and cancel each active job of every issue it acts on, however many jobs an issue
+        has had (#563)."""
+        if not issue_ids or not statuses:
+            return []
+        rows = await self._db.fetch(
+            "SELECT * FROM jobs WHERE issue_id = ANY($1::text[]) AND status = ANY($2::text[]) "
+            "ORDER BY created_at, job_id",
+            sorted(set(issue_ids)),
+            sorted(set(statuses)),
+        )
+        return [dict(r) for r in rows]
+
     async def newest_per_repo(
         self,
         repos: Collection[str],

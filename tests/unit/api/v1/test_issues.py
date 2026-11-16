@@ -322,9 +322,9 @@ def _delete_issue_repos(job_rows, order, child_status="open"):
     async def _issue_update(issue_id, **kw):
         order.append(("issue", issue_id, kw.get("status")))
 
-    async def _cancel_cancellable(issue_ids):
-        order.append(("cancel_issues", list(issue_ids)))
-        return list(issue_ids)
+    async def _cancel_subtree(root, checked, **_kwargs):
+        order.append(("cancel_issues", list(checked)))
+        return list(checked)
 
     issues = MagicMock(
         get=AsyncMock(return_value={"id": "iss-1", "status": "in_progress"}),
@@ -332,10 +332,13 @@ def _delete_issue_repos(job_rows, order, child_status="open"):
             return_value=([{"id": "iss-child", "repo": None, "status": child_status, "depth": 1}], False)
         ),
         update=AsyncMock(side_effect=_issue_update),
-        cancel_cancellable=AsyncMock(side_effect=_cancel_cancellable),
+        cancel_subtree=AsyncMock(side_effect=_cancel_subtree),
     )
     jobs = MagicMock(
         list_all=AsyncMock(side_effect=lambda issue_id, **kw: (job_rows.get(issue_id, []), 0)),
+        in_statuses_for_issues=AsyncMock(
+            side_effect=lambda ids, statuses: [j for i in ids for j in job_rows.get(i, []) if j["status"] in statuses]
+        ),
         update=AsyncMock(),
     )
     return issues, jobs
