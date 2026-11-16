@@ -11,10 +11,14 @@ aside), and what cannot be matched that way is refused, with a reason.
 
 from __future__ import annotations
 
+import functools
+import gc
 import importlib
+import math
 import random
 import re
 import time
+from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
@@ -337,17 +341,61 @@ _AT_THE_BOUNDS = [
 ]
 
 
+#: How many times as long the long line of a growth check is as the short one.
+LONGER = 16
+#: How much more one line :data:`LONGER` times as long may cost than :data:`LONGER` short lines: about 1 when the time
+#: is linear in the line, about :data:`LONGER` when it is quadratic. Measured at most 1.5 on the patterns at the bounds
+#: and 11 to 17 on a quadratic one (:func:`test_the_growth_check_tells_a_quadratic_matcher_from_a_linear_one`).
+GROWTH = 4.0
+
+
+def _cpu_seconds(work: Callable[[str], object], line: str, times: int) -> float:
+    """The least, over three runs, of this thread's CPU time for ``work(line)`` run ``times`` times, the garbage
+    collector held: the work's own cost. The host's other processes take the CPU, not this thread's clock, and a
+    collection of the whole process's heap is not the pattern's work."""
+    collecting = gc.isenabled()
+    gc.disable()
+    try:
+        best = math.inf
+        for _ in range(3):
+            started = time.thread_time()
+            for _ in range(times):
+                work(line)
+            best = min(best, time.thread_time() - started)
+        return best
+    finally:
+        if collecting:
+            gc.enable()
+
+
+def _growth(work: Callable[[str], object], line: str) -> float:
+    """What ``work`` costs on ``line`` over what it costs on :data:`LONGER` lines of its first ``len(line) / LONGER``
+    characters, the same characters in all: about 1 when its time is linear in the line, about :data:`LONGER` when
+    quadratic. Both times are taken on the same thread, so the speed of the host divides out."""
+    short = line[: len(line) // LONGER]
+    return _cpu_seconds(work, line, 1) / _cpu_seconds(work, short, LONGER)
+
+
 @pytest.mark.parametrize("pattern", _AT_THE_BOUNDS)
-def test_a_pattern_at_the_bounds_masks_a_line_of_4096_characters_quickly(pattern: str) -> None:
-    """Measured at most about 15 ms each; the bound leaves a slow machine thirty times that."""
+def test_a_pattern_at_the_bounds_masks_a_line_in_time_linear_in_it(pattern: str) -> None:
     compiled = _engine().compile_linear(pattern)
     rng = random.Random(4096)
     for alphabet in ("ab" * 10 + "c", "a\u00e9" * 5 + "b\u4e2d \n", "abcdefghij0123456789_ "):
-        line = "".join(rng.choice(alphabet) for _ in range(4096))
-        started = time.perf_counter()
-        compiled.sub("<m>", line)
-        took = time.perf_counter() - started
-        assert took < 0.5, f"{pattern!r} took {took:.2f}s on a line of 4,096 characters"
+        line = "".join(rng.choice(alphabet) for _ in range(1024 * LONGER))
+        growth = _growth(functools.partial(compiled.sub, "<m>"), line)
+        assert growth < GROWTH, (
+            f"{pattern!r} cost {growth:.1f} times as much on one line of {len(line):,} characters as on {LONGER} of "
+            f"{len(line) // LONGER:,}: its time grows faster than the line"
+        )
+
+
+def test_the_growth_check_tells_a_quadratic_matcher_from_a_linear_one() -> None:
+    """What the check above reads, on one pattern and a line of a's: ``re`` tries ``a*b`` from every position and
+    reads to the end of the line each time, the engine reads the line once."""
+    line = "a" * (512 * LONGER)
+    assert _growth(functools.partial(re.sub, r"a*b", "<m>"), line) > GROWTH, "a quadratic matcher passed as linear"
+    compiled = _engine().compile_linear(r"a*b")
+    assert _growth(functools.partial(compiled.sub, "<m>"), line) < GROWTH, "and the engine did not"
 
 
 # ---- searching a text ------------------------------------------------------------
