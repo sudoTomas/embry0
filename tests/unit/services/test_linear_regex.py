@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 
+from embry0.services.log_signatures import MASKED_TEXT_MAX_CHARS
+
 
 def _engine() -> ModuleType:
     try:
@@ -341,12 +343,23 @@ _AT_THE_BOUNDS = [
 ]
 
 
-#: How many times as long the long line of a growth check is as the short one.
+#: The line the checks below measure: as long as the text a mask reads, a line's first characters
+#: (``embry0/services/log_signatures.py``). On a longer line RE2's DFA runs out of its memory and its cost per character
+#: steps up, in a regime no mask reaches, by a different amount from one run to the next.
+LINE = MASKED_TEXT_MAX_CHARS
+#: How many times as long the line of a growth check is as its short lines.
 LONGER = 16
-#: How much more one line :data:`LONGER` times as long may cost than :data:`LONGER` short lines: about 1 when the time
-#: is linear in the line, about :data:`LONGER` when it is quadratic. Measured at most 1.5 on the patterns at the bounds
-#: and 11 to 17 on a quadratic one (:func:`test_the_growth_check_tells_a_quadratic_matcher_from_a_linear_one`).
-GROWTH = 4.0
+#: How much more the line may cost than :data:`LONGER` lines of its first sixteenth: about 1 when the time is linear in
+#: the line, about :data:`LONGER` when it is quadratic. Measured at most 2.5 on the patterns at the bounds, 12 to 15 on
+#: a quadratic one (:func:`test_the_growth_check_tells_a_quadratic_matcher_from_a_linear_one`).
+GROWTH = 5.0
+#: A pass of Python's ``re`` over the line, replacing each lower-case letter: linear, in C, what a mask's cost is
+#: measured against.
+_REFERENCE = re.compile(r"[a-z]")
+#: How many times :data:`_REFERENCE`'s pass a mask may cost on the line: measured at most 94 on the patterns at the
+#: bounds, and from 1,950 on for an engine doing 40 times their work
+#: (:func:`test_the_cost_check_tells_forty_times_the_work_from_the_engine_s`).
+COST = 400.0
 
 
 def _cpu_seconds(work: Callable[[str], object], line: str, times: int) -> float:
@@ -376,26 +389,62 @@ def _growth(work: Callable[[str], object], line: str) -> float:
     return _cpu_seconds(work, line, 1) / _cpu_seconds(work, short, LONGER)
 
 
+def _cost(work: Callable[[str], object], line: str) -> float:
+    """What ``work`` costs on ``line`` over :data:`_REFERENCE`'s pass over it, both on the same thread: how much work
+    it does, whatever the speed of the host."""
+    return _cpu_seconds(work, line, 1) / _cpu_seconds(functools.partial(_REFERENCE.sub, "<m>"), line, 1)
+
+
+def _lines() -> list[str]:
+    """A line of :data:`LINE` characters from each of three alphabets: a few letters, so a match on most characters;
+    non-ASCII letters, a space and a newline; letters, digits and an underscore."""
+    rng = random.Random(4096)
+    alphabets = ("ab" * 10 + "c", "a\u00e9" * 5 + "b\u4e2d \n", "abcdefghij0123456789_ ")
+    return ["".join(rng.choice(alphabet) for _ in range(LINE)) for alphabet in alphabets]
+
+
 @pytest.mark.parametrize("pattern", _AT_THE_BOUNDS)
 def test_a_pattern_at_the_bounds_masks_a_line_in_time_linear_in_it(pattern: str) -> None:
-    compiled = _engine().compile_linear(pattern)
-    rng = random.Random(4096)
-    for alphabet in ("ab" * 10 + "c", "a\u00e9" * 5 + "b\u4e2d \n", "abcdefghij0123456789_ "):
-        line = "".join(rng.choice(alphabet) for _ in range(1024 * LONGER))
-        growth = _growth(functools.partial(compiled.sub, "<m>"), line)
+    work = functools.partial(_engine().compile_linear(pattern).sub, "<m>")
+    for line in _lines():
+        growth = _growth(work, line)
         assert growth < GROWTH, (
             f"{pattern!r} cost {growth:.1f} times as much on one line of {len(line):,} characters as on {LONGER} of "
             f"{len(line) // LONGER:,}: its time grows faster than the line"
         )
 
 
+@pytest.mark.parametrize("pattern", _AT_THE_BOUNDS)
+def test_a_pattern_at_the_bounds_masks_a_line_at_a_bounded_cost(pattern: str) -> None:
+    work = functools.partial(_engine().compile_linear(pattern).sub, "<m>")
+    for line in _lines():
+        cost = _cost(work, line)
+        assert cost < COST, (
+            f"{pattern!r} cost {cost:.0f} times a pass of re over the same {len(line):,} characters, at most {COST:.0f}"
+        )
+
+
 def test_the_growth_check_tells_a_quadratic_matcher_from_a_linear_one() -> None:
-    """What the check above reads, on one pattern and a line of a's: ``re`` tries ``a*b`` from every position and
+    """What the growth check reads, on one pattern and a line of a's: ``re`` tries ``a*b`` from every position and
     reads to the end of the line each time, the engine reads the line once."""
-    line = "a" * (512 * LONGER)
+    line = "a" * LINE
     assert _growth(functools.partial(re.sub, r"a*b", "<m>"), line) > GROWTH, "a quadratic matcher passed as linear"
     compiled = _engine().compile_linear(r"a*b")
     assert _growth(functools.partial(compiled.sub, "<m>"), line) < GROWTH, "and the engine did not"
+
+
+def test_the_cost_check_tells_forty_times_the_work_from_the_engine_s() -> None:
+    """What the cost check reads, on a pattern that matches every character: the engine, and a matcher that does the
+    engine's work forty times over, as one that went linearly slower would."""
+    compiled = _engine().compile_linear(".")
+
+    def forty(text: str) -> None:
+        for _ in range(40):
+            compiled.sub("<m>", text)
+
+    line = _lines()[0]
+    assert _cost(forty, line) > COST, "forty times the engine's work passed"
+    assert _cost(functools.partial(compiled.sub, "<m>"), line) < COST, "and the engine did not"
 
 
 # ---- searching a text ------------------------------------------------------------
