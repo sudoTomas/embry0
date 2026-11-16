@@ -147,6 +147,29 @@ def format_open_prs_block(open_prs: list[dict[str, Any]], max_entries: int = 20)
     return "\n".join(lines)
 
 
+class DefaultBranchUnread(Exception):
+    """The forge did not say which branch is a repository's default (#546); the message says what it answered."""
+
+
+async def _repo_default_branch(client: GitHubClient, repo: str) -> str:
+    """The repository's default branch, as GitHub reads it now. Raises :class:`DefaultBranchUnread` when it does not.
+
+    No guess stands in for it (#546): a pull request into a guessed ``main``
+    on a repository whose default is another branch is another pull request,
+    or a create GitHub refuses, and the job would say neither.
+    """
+    try:
+        resp = await client.get(f"/repos/{repo}", repo=repo)
+        resp.raise_for_status()
+        record = resp.json()
+    except Exception as exc:
+        raise DefaultBranchUnread(forge_said(exc)) from exc
+    branch = record.get("default_branch") if isinstance(record, dict) else None
+    if not isinstance(branch, str) or not branch:
+        raise DefaultBranchUnread("GitHub named no default branch")
+    return branch
+
+
 def forge_said(exc: BaseException) -> str:
     """What a forge answered, for a person: its status and message when it sent one, else the error itself."""
     response = getattr(exc, "response", None)
@@ -213,7 +236,9 @@ async def ensure_pr_for_branch(
 
     ``target_branch`` (Spec 1A §3.7) is the job's resolved base branch; when
     given it is used verbatim instead of re-reading the repo record, so the
-    PR targets the same branch the clone fetched.
+    PR targets the same branch the clone fetched. Without it the repository's
+    default is read, and when GitHub will not say what it is, no PR is opened
+    and ``change_request_error`` says why (#546): never one into a guess.
 
     ``diagnostics``, when given, receives ``change_request_error``: why no PR
     came of it, in words a person reads (#459). The return stays None.
@@ -249,7 +274,7 @@ async def ensure_pr_for_branch(
     client = GitHubClient(default_token=github_token, http_client=http_client, credential_resolver=credential_resolver)
     try:
         # The base comes first: the job's PR is the branch's open PR into it, not one into another base (#545).
-        base = target_branch or await client.get_repo_default_branch(repo)
+        base = target_branch or await _repo_default_branch(client, repo)
         if branch == base:
             # Nothing to merge into itself — the repo's default happens to be
             # the branch the developer pushed.
@@ -295,6 +320,15 @@ async def ensure_pr_for_branch(
             client, repo=repo, pr_number=created.get("number"), labels=labels, diagnostics=diagnostics, opened=True
         )
         return created_url
+    except DefaultBranchUnread as exc:
+        # Without the base, a pull request would go into a guess (#546): none is opened, and the job says why,
+        # as for any pull request that could not be opened (#459).
+        logger.warning("pr_fallback_default_branch_unread", repo=repo, branch=branch, error=str(exc))
+        _why(
+            f"embry0 could not read the default branch of {repo} from GitHub ({exc}), "
+            "so it opened no pull request into a guessed branch"
+        )
+        return None
     except Exception as exc:
         # GitHubClient owns the httpx lifecycle: it closes a client it created
         # and leaves an injected one alone, so there is no `finally` here.

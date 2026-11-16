@@ -25,6 +25,7 @@ from typing import Any
 import structlog
 
 from embry0.execution.gitlab_client import GitLabClient
+from embry0.services.github_prs import DefaultBranchUnread
 
 logger = structlog.get_logger(__name__)
 
@@ -67,18 +68,27 @@ async def _open_mr_for_branch(
 
 
 async def default_branch_for(client: GitLabClient, repo: str) -> str:
-    """Project's default branch, falling back to ``main``.
+    """Project's default branch. Raises :class:`DefaultBranchUnread` when GitLab does not say what it is (#546).
 
     Read rather than assumed: `acme/widgets/shop` defaults to
     ``develop``, and targeting a branch that does not exist fails the
-    create with a message that does not obviously say so.
+    create with a message that does not obviously say so. No guess stands
+    in for it either: a merge request into a guessed ``main`` is another
+    merge request, or a create GitLab refuses, and the job would say
+    neither.
     """
-    project = await client.get_project(repo)
-    if project:
-        branch = project.get("default_branch")
-        if isinstance(branch, str) and branch:
-            return branch
-    return "main"
+    from embry0.services.github_prs import forge_said
+
+    try:
+        resp = await client.get(client.project_path(repo), repo=repo)
+        resp.raise_for_status()
+        project = resp.json()
+    except Exception as exc:
+        raise DefaultBranchUnread(forge_said(exc)) from exc
+    branch = project.get("default_branch") if isinstance(project, dict) else None
+    if not isinstance(branch, str) or not branch:
+        raise DefaultBranchUnread("GitLab named no default branch")
+    return branch
 
 
 async def ensure_mr_for_branch(
@@ -106,7 +116,9 @@ async def ensure_mr_for_branch(
     round trip could only disagree with the branch the clone actually
     fetched. Without it the project's own default is read, as before, and
     read before the lookup: the merge request found is then the one the
-    create would have opened, into that default.
+    create would have opened, into that default. When GitLab will not say
+    what it is, no merge request is opened and ``change_request_error``
+    says why (#546): never one into a guess.
 
     ``diagnostics``, when given, receives ``change_request_error``: why no
     merge request came of it, in words a person reads (#459).
@@ -185,6 +197,15 @@ async def ensure_mr_for_branch(
             body=resp.text[:200],
         )
         _why(f"GitLab refused it: {resp.status_code} {resp.text[:200]}")
+        return None
+    except DefaultBranchUnread as exc:
+        # Without the target, a merge request would go into a guess (#546): none is opened, and the job says why,
+        # as for any merge request that could not be opened (#459).
+        logger.warning("mr_fallback_default_branch_unread", repo=repo, branch=branch, error=str(exc))
+        _why(
+            f"embry0 could not read the default branch of {repo} from GitLab ({exc}), "
+            "so it opened no merge request into a guessed branch"
+        )
         return None
     except Exception as exc:
         logger.warning("mr_fallback_failed", repo=repo, branch=branch, error=str(exc))

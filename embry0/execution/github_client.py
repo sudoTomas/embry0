@@ -105,33 +105,15 @@ class GitHubClient(ForgeClient):
         """Repository record, or None when it is missing or not visible.
 
         The raw read, with no fallback of its own — the GitHub counterpart of
-        ``GitLabClient.get_project``. A caller that must tell "the repo says
-        main" apart from "the call failed" (``services.base_branch.
-        _forge_default``, Spec 1A §3.8) cannot use
-        :meth:`get_repo_default_branch`, whose whole contract is to answer
-        ``"main"`` either way.
+        ``GitLabClient.get_project``. No method here guesses a default
+        branch: one that answered ``"main"`` when the call failed made a
+        failure look like a real answer (Spec 1A §3.8, #546).
         """
         resp = await self.get(f"/repos/{repo}", repo=repo)
         if resp.status_code != 200:
             return None
         body = resp.json()
         return body if isinstance(body, dict) else None
-
-    async def get_repo_default_branch(self, repo: str) -> str:
-        """The repo's default branch, falling back to ``main``.
-
-        The GitLab counterpart is ``services.gitlab_mrs.default_branch_for``;
-        both exist because targeting a branch that does not exist fails the
-        MR/PR create with a message that does not obviously say so. Never
-        raises — a 404, a rate limit or a network blip yields the historical
-        assumption rather than killing the caller.
-        """
-        try:
-            record = await self.get_repo(repo)
-        except Exception:
-            return "main"
-        branch = (record or {}).get("default_branch")
-        return str(branch) if isinstance(branch, str) and branch else "main"
 
     # -- pull requests (the merge-approval loop, #319 phase 2) -------------
 

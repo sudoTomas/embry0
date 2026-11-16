@@ -261,29 +261,6 @@ async def test_paginate_sets_per_page():
     assert seen["per_page"] == "50"
 
 
-async def test_get_repo_default_branch_reads_the_repo_record():
-    def handler(request):
-        assert request.url.path == "/repos/o/r"
-        return httpx.Response(200, json={"default_branch": "develop"})
-
-    client = GitHubClient(
-        default_token="ghp-x",
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
-    assert await client.get_repo_default_branch("o/r") == "develop"
-
-
-async def test_get_repo_default_branch_falls_back_to_main_on_error():
-    def handler(request):
-        return httpx.Response(404, json={})
-
-    client = GitHubClient(
-        default_token="ghp-x",
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
-    assert await client.get_repo_default_branch("o/r") == "main"
-
-
 async def test_get_repo_returns_none_instead_of_guessing_main():
     """The raw read the base-branch resolver needs: it must be able to tell
     "the repo says main" from "the call failed" (Spec 1A §3.8)."""
