@@ -5,11 +5,11 @@ none, reads and is acted on as an issue that does not exist, and the lists
 leave it out (:mod:`embry0.api.issue_allowlist`).
 """
 
-from typing import Any
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict
 
 from embry0.api.deps import (
     get_github_sync,
@@ -204,15 +204,26 @@ TOP_LEVEL = "__top_level__"
 ANY_PARENT = "any"
 
 
+def _no_nul(value: str | None) -> str | None:
+    if value is not None and "\x00" in value:
+        raise ValueError("must not contain a NUL byte")
+    return value
+
+
+#: A free-text filter the list sends to Postgres, whose text cannot hold a NUL byte: one is refused 422 here, where
+#: the query is read, rather than failing the statement with a 500.
+FilterText = Annotated[str | None, AfterValidator(_no_nul)]
+
+
 @router.get("/issues")
 async def list_issues(
     request: Request,
-    status: str | None = None,
-    priority: str | None = None,
-    repo: str | None = None,
-    labels: str | None = None,
-    search: str | None = None,
-    parent_issue_id: str | None = TOP_LEVEL,
+    status: FilterText = None,
+    priority: FilterText = None,
+    repo: FilterText = None,
+    labels: FilterText = None,
+    search: FilterText = None,
+    parent_issue_id: FilterText = TOP_LEVEL,
     sort: str = "created_at",
     order: str = "desc",
     limit: int = Query(default=50, ge=1, le=200),

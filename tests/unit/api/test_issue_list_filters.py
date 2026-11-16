@@ -127,3 +127,16 @@ async def test_a_parent_the_key_does_not_read_has_no_children_it_lists(
     assert differs is None, f"a parent the key does not read lists as one that does not exist: {differs}"
     assert own == ({CHILD[COVERED]}, 1), f"the key lists its own issue's children: {own}"
     assert mixed == (set(), 0), f"the key lists no child of a repository it does not cover: {mixed}"
+
+
+@pytest.mark.parametrize("name", ["status", "priority", "repo", "labels", "search", "parent_issue_id"])
+@pytest.mark.parametrize("value", ["%00", "a%00b"], ids=["nul", "nul-inside"])
+async def test_a_nul_byte_in_a_filter_is_refused_422(
+    name: str, value: str, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Postgres text cannot hold a NUL byte: a filter carrying one failed the statement, a 500 for every caller
+    (``labels`` and the others on main, ``parent_issue_id`` once it reached the query), and is refused 422 instead."""
+    async with issue_reads_app(db_with_migrations, monkeypatch) as (app, keys, _values):
+        response = await call(app, "GET", f"/api/v1/issues?{name}={value}", keys.open)
+    assert response.status_code == 422, f"?{name}={value} is the caller's to correct: {response.status_code}"
+    assert "NUL" in response.text and name in response.text, f"the refusal names the filter and why: {response.text}"
