@@ -946,3 +946,45 @@ async def test_a_first_lookup_github_refuses_opens_nothing(no_backoff):
     )
     assert url is None and seen["creates"] == 0, (url, seen)
     assert "403 Resource not accessible by integration" in diagnostics.get("change_request_error", ""), diagnostics
+
+
+@pytest.mark.asyncio
+async def test_the_lookup_takes_only_an_open_pr_from_the_branch(no_backoff):
+    """GitHub's filters ask for it already; a listed PR that is closed or from another head is still passed over."""
+    closed = dict(
+        _INTO_RELEASE, number=10, html_url="https://github.com/o/r/pull/10", base={"ref": "main"}, state="closed"
+    )
+    other_head = dict(
+        _INTO_RELEASE,
+        number=11,
+        html_url="https://github.com/o/r/pull/11",
+        base={"ref": "main"},
+        head={"ref": "other"},
+    )
+    fork = dict(
+        _INTO_RELEASE,
+        number=12,
+        html_url="https://github.com/o/r/pull/12",
+        base={"ref": "main"},
+        head={"ref": "b", "label": "someone:b"},
+    )
+    mine = dict(
+        _INTO_RELEASE,
+        number=9,
+        html_url="https://github.com/o/r/pull/9",
+        base={"ref": "main"},
+        state="open",
+        head={"ref": "b", "label": "o:b"},
+    )
+    handler, seen = _first_lookup_handler(listed=[closed, other_head, fork, mine])
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+    )
+    assert url == "https://github.com/o/r/pull/9", "a closed PR, or one from another head, is taken for the job's"
+    assert seen["creates"] == []

@@ -339,10 +339,20 @@ async def _open_pr_into(
     if not isinstance(found, list):
         return None
     for pr in found:
-        into = pr.get("base") if isinstance(pr, dict) else None
-        # Belt and braces: a pull request that names another base is not the job's, filter or none.
-        if isinstance(pr, dict) and (not isinstance(into, dict) or into.get("ref") in (None, base)):
-            return pr
+        if not isinstance(pr, dict):
+            continue
+        into, head = pr.get("base"), pr.get("head")
+        # Belt and braces: GitHub's filters already ask for an open pull request from the branch into ``base``;
+        # one that says otherwise is not the job's, filter or none.
+        if pr.get("state") not in (None, "open"):
+            continue
+        if isinstance(into, dict) and into.get("ref") not in (None, base):
+            continue
+        if isinstance(head, dict) and (
+            head.get("ref") not in (None, branch) or head.get("label") not in (None, f"{owner}:{branch}")
+        ):
+            continue
+        return pr
     return None
 
 
