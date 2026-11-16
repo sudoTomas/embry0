@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from typing import Any
 
 import pytest
@@ -143,15 +144,26 @@ def _parent_read(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [n for n in nodes if n.get("Relation Name") == "issues" and n.get("Alias") == "p"]
 
 
-async def test_a_key_s_top_level_is_an_anti_join_not_a_check_per_row(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The top level of a key's list reads each issue's parent once, joined: Postgres plans an anti-join for it, in the
-    count and in the page, rather than a subplan it runs for every row (on a hundred thousand issues, a page of the
-    dashboard's took half a second that way). An anti-join is the planner's shape for a bare ``NOT EXISTS`` whatever
-    the table holds, so a small table pins it; ``parent_issue_id IS NULL OR`` before it is enough to lose it."""
-    db = db_with_migrations
-    await _seed(db)
+#: The join types of an anti-join. Postgres 16 also hashes the outer side: a hash join's "Right Anti" (#574).
+ANTI_JOINS = frozenset({"Anti", "Right Anti"})
+
+
+def _shape(plan: dict[str, Any]) -> list[tuple[str, str | None, str | None]]:
+    """Each node's type, join type and relationship to its parent: what an assertion about a plan prints."""
+    return [(n["Node Type"], n.get("Join Type"), n.get("Parent Relationship")) for n in _nodes(plan)]
+
+
+def _parent_joined(plan: dict[str, Any]) -> bool:
+    """Whether ``plan`` reads the parent in an anti-join of any form (hash, merge or nested loop; ``Anti`` or ``Right
+    Anti``) and in no subplan, which a scan runs for its rows one at a time, or hashed, again on every execution."""
+    nodes = _nodes(plan)
+    anti = [n for n in nodes if n.get("Join Type") in ANTI_JOINS and _parent_read(_nodes(n))]
+    subplan = [n for n in nodes if n.get("Parent Relationship") == "SubPlan" and _parent_read(_nodes(n))]
+    return bool(anti) and not subplan
+
+
+async def _queries(db: DatabasePool, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, tuple[Any, ...]]]:
+    """The count and the page ``list_all`` sends for a key covering :data:`COVERED`, with their arguments."""
     sent: list[tuple[str, tuple[Any, ...]]] = []
     for name in ("fetch", "fetchval"):
         method = getattr(db, name)
@@ -164,13 +176,123 @@ async def test_a_key_s_top_level_is_an_anti_join_not_a_check_per_row(
     await IssuesRepository(db).list_all(repos=COVERED, top_level_only=True, limit=50)
     monkeypatch.undo()
     assert len(sent) == 2, f"the list sends its count and its page: {[sql[:60] for sql, _ in sent]}"
-    for sql, args in sent:
-        (plan,) = json.loads(await db.fetchval("EXPLAIN (FORMAT JSON) " + sql, *args))
-        nodes = _nodes(plan["Plan"])
-        parents = _parent_read(nodes)
-        anti = [n for n in nodes if n.get("Join Type") == "Anti" and _parent_read(_nodes(n))]
-        per_row = [n for n in nodes if n.get("Parent Relationship") == "SubPlan" and _parent_read(_nodes(n))]
-        assert parents, f"the query reads no parent: it measures nothing: {sql[:200]}"
-        assert anti and not per_row, (
-            f"the parent is read in a subplan per row, not an anti-join: {[n.get('Node Type') for n in nodes]}"
-        )
+    for sql, _args in sent:
+        assert " issues p " in sql, f"the query reads no parent: it measures nothing: {sql[:200]}"
+    return sent
+
+
+async def _plan(conn: Any, sql: str, args: tuple[Any, ...]) -> dict[str, Any]:
+    (explained,) = json.loads(await conn.fetchval("EXPLAIN (FORMAT JSON) " + sql, *args))
+    plan: dict[str, Any] = explained["Plan"]
+    return plan
+
+
+async def test_a_key_s_top_level_is_an_anti_join_not_a_check_per_row(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The top level of a key's list reads each issue's parent once, joined: Postgres plans an anti-join for it, in the
+    count and in the page, rather than a subplan it runs for every row (on a hundred thousand issues, a page of the
+    dashboard's took half a second that way). An anti-join is the planner's shape for a bare ``NOT EXISTS`` whatever
+    the table holds, so a small table pins it; ``parent_issue_id IS NULL OR`` before it is enough to lose it. Which
+    side of a hash join the planner hashes follows the table's statistics, so either is an anti-join here."""
+    db = db_with_migrations
+    await _seed(db)
+    for sql, args in await _queries(db, monkeypatch):
+        plan = await _plan(db, sql, args)
+        assert _parent_read(_nodes(plan)), f"the query reads no parent: it measures nothing: {sql[:200]}"
+        assert _parent_joined(plan), f"the parent is read in a subplan, not an anti-join: {_shape(plan)}"
+
+
+#: The planner settings that leave Postgres one way to join, and the rows beyond the seed that make it pick the side
+#: of a hash join: (acme/web parents, children of them). A hash join hashes the parents (Anti) when a few parents have
+#: many children, the children's column then a poor key to hash; with few children it hashes the issues it lists
+#: (Right Anti). Each pair sits well inside its side: 3 to 300 parents gave Right Anti up to 300 children and Anti from
+#: 3,000.
+FORCED: dict[tuple[str, str], tuple[dict[str, str], tuple[int, int]]] = {
+    ("Nested Loop", "Anti"): ({"enable_hashjoin": "off", "enable_mergejoin": "off"}, (30, 30)),
+    ("Merge Join", "Anti"): ({"enable_hashjoin": "off", "enable_nestloop": "off"}, (30, 30)),
+    ("Hash Join", "Anti"): ({"enable_nestloop": "off", "enable_mergejoin": "off"}, (30, 3000)),
+    ("Hash Join", "Right Anti"): ({"enable_nestloop": "off", "enable_mergejoin": "off"}, (30, 30)),
+}
+
+#: The clause of a key's top level, and what it was before #560 made it a bare ``NOT EXISTS``: a subplan.
+_TOP_LEVEL = re.compile(r"NOT EXISTS \(SELECT 1 FROM issues p WHERE .*?::text\[\]\)\)", re.DOTALL)
+
+
+@pytest.mark.parametrize("shape", list(FORCED), ids=[" ".join(shape) for shape in FORCED])
+async def test_every_anti_join_postgres_can_plan_is_accepted_and_a_subplan_never(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch, shape: tuple[str, str]
+) -> None:
+    """Each form of anti-join, forced (the other joins off, and rows that make a hash join hash the outer side, the
+    Right Anti join Postgres 16 plans), is one the plan test accepts, in the count and in the page; and the query with
+    ``parent_issue_id IS NULL OR`` before the ``NOT EXISTS``, under the same settings, is refused: a subplan, hashed or
+    run per row, which no setting turns into a join."""
+    db = db_with_migrations
+    await _seed(db)
+    settings, (parents, children) = FORCED[shape]
+    await db.execute(
+        "INSERT INTO issues (id, title, repo) SELECT 'iss-more-' || g, 't', 'acme/web' FROM generate_series(1, $1) g",
+        parents,
+    )
+    await db.execute(
+        "INSERT INTO issues (id, title, repo, parent_issue_id) "
+        "SELECT 'iss-more-kid-' || g, 't', 'acme/web', 'iss-more-' || (1 + g % $2) FROM generate_series(1, $1) g",
+        children,
+        parents,
+    )
+    await db.execute("ANALYZE issues")
+    queries = await _queries(db, monkeypatch)
+    async with db.transaction() as conn:
+        for name, value in settings.items():
+            await conn.execute(f"SET LOCAL {name} = {value}")
+        (count_sql, count_args), _page = queries
+        count = await _plan(conn, count_sql, count_args)
+        joins = [(n["Node Type"], n.get("Join Type")) for n in _nodes(count) if _parent_read(_nodes(n))]
+        assert shape in joins, f"the settings did not force {shape}, so this case measures nothing: {_shape(count)}"
+        for sql, args in queries:
+            plan = await _plan(conn, sql, args)
+            assert _parent_joined(plan), f"{shape}: an anti-join is refused: {_shape(plan)}"
+            with_or, found = _TOP_LEVEL.subn(lambda m: f"(i.parent_issue_id IS NULL OR {m.group(0)})", sql)
+            assert found == 1, f"the top level's clause is not where it was: {sql[:300]}"
+            refused = await _plan(conn, with_or, args)
+            assert not _parent_joined(refused), f"{shape}: a subplan is accepted: {_shape(refused)}"
+
+
+def _join(node_type: str, join_type: str) -> dict[str, Any]:
+    scan = {"Node Type": "Seq Scan", "Relation Name": "issues", "Alias": "p", "Parent Relationship": "Inner"}
+    other = {"Node Type": "Seq Scan", "Relation Name": "issues", "Alias": "i", "Parent Relationship": "Outer"}
+    if node_type == "Hash Join":
+        scan = {"Node Type": "Hash", "Parent Relationship": "Inner", "Plans": [scan]}
+    return {
+        "Node Type": "Aggregate",
+        "Plans": [{"Node Type": node_type, "Join Type": join_type, "Plans": [other, scan]}],
+    }
+
+
+def _subplan(filter_text: str) -> dict[str, Any]:
+    scan = {"Node Type": "Seq Scan", "Relation Name": "issues", "Alias": "p", "Parent Relationship": "SubPlan"}
+    outer = {"Node Type": "Seq Scan", "Relation Name": "issues", "Alias": "i", "Filter": filter_text, "Plans": [scan]}
+    return {"Node Type": "Aggregate", "Plans": [outer]}
+
+
+@pytest.mark.parametrize(
+    ("plan", "accepted"),
+    [
+        *(
+            (_join(node, join), True)
+            for node in ("Hash Join", "Merge Join", "Nested Loop")
+            for join in ("Anti", "Right Anti")
+        ),
+        (_join("Hash Join", "Inner"), False),
+        (_subplan("(NOT (SubPlan 1))"), False),
+        (_subplan("(NOT (hashed SubPlan 2))"), False),
+    ],
+    ids=[
+        *(f"{node} {join}" for node in ("Hash Join", "Merge Join", "Nested Loop") for join in ("Anti", "Right Anti")),
+        "an inner join",
+        "a subplan per row",
+        "a hashed subplan",
+    ],
+)
+def test_the_plan_check_accepts_any_anti_join_and_no_subplan(plan: dict[str, Any], accepted: bool) -> None:
+    assert _parent_joined(plan) is accepted, _shape(plan)
