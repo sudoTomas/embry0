@@ -113,6 +113,24 @@ VALID_ISSUE_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+class InvalidIssueTransition(ValueError):
+    """A status change :data:`VALID_ISSUE_TRANSITIONS` does not allow from the issue's status: the caller's to
+    correct, so the API answers it 409 with :attr:`detail` (#352)."""
+
+    def __init__(self, current: str, requested: str, allowed: Collection[str]) -> None:
+        self.current, self.requested, self.allowed = current, requested, sorted(str(a) for a in allowed)
+        super().__init__(f"Invalid issue status transition: {current} -> {requested}. Allowed: {self.allowed}")
+
+    @property
+    def detail(self) -> str:
+        """What the change asked for and what the issue's status allows, for whoever asked."""
+        allowed = ", ".join(self.allowed) or "no other status"
+        return (
+            f"The issue is {self.current} and cannot change to {self.requested}; "
+            f"from {self.current} it can change to: {allowed}."
+        )
+
+
 class IssuesRepository:
     """CRUD operations for the issues table."""
 
@@ -308,7 +326,8 @@ class IssuesRepository:
         When a status transition is requested, uses a compare-and-swap UPDATE
         (WHERE status=$expected RETURNING id) to eliminate the read-then-write
         race. Raises StatusTransitionConflict if no row is updated (another
-        writer changed the status concurrently).
+        writer changed the status concurrently), and InvalidIssueTransition,
+        writing nothing, for a change the issue's status does not allow.
         """
         if issue_id is None:
             return
@@ -345,9 +364,7 @@ class IssuesRepository:
                         requested=new_status,
                         allowed=sorted(allowed),
                     )
-                    raise ValueError(
-                        f"Invalid issue status transition: {current_status} -> {new_status}. Allowed: {sorted(allowed)}"
-                    )
+                    raise InvalidIssueTransition(current_status, new_status, allowed)
 
         # Build SET clause — updated_at is always refreshed.
         sets: list[str] = ["updated_at = NOW()"]

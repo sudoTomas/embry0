@@ -40,7 +40,7 @@ from embry0.services.answer_recorder import answers_context, ended_job_takes_no_
 from embry0.services.issue_executor import IssueExecutor
 from embry0.services.run_with import RunWith
 from embry0.storage.repositories.issue_inputs import IssueInputsRepository
-from embry0.storage.repositories.issues import IssuesRepository
+from embry0.storage.repositories.issues import InvalidIssueTransition, IssuesRepository
 from embry0.storage.repositories.jobs import JobsRepository, job_repository
 from embry0.storage.repositories.repos import UnregisteredRepoError
 from embry0.trackers import github_number_of
@@ -283,7 +283,11 @@ async def update_issue(
     if "repo" in updates:
         await enforce_repo_allowlist(request, updates["repo"], action="move an issue")
     if updates:
-        await issues.update(issue_id, **updates)
+        try:
+            await issues.update(issue_id, **updates)
+        except InvalidIssueTransition as exc:
+            # The issue's status is the caller's to see; the change it asked for is not one that status allows (#352).
+            raise HTTPException(status_code=409, detail=exc.detail) from None
 
     config = request.app.state.config
     db = request.app.state.db

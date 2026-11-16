@@ -200,6 +200,27 @@ async def test_update_issue_notification_channels(api_client):
     assert get_r.json()["notification_channels"] == ["dashboard", "telegram"]
 
 
+@pytest.mark.asyncio
+async def test_a_status_change_the_issue_does_not_allow_answers_409_naming_the_allowed_ones(api_client):
+    """#352: a cancelled issue can only be reopened; asking to close it answered 500, its message lost."""
+    create_r = await api_client.post(
+        "/api/v1/issues", json={"repo": "owner/repo", "title": "T", "body": "...", "auto_triage": False}
+    )
+    assert create_r.status_code == 201, create_r.text
+    iid = create_r.json()["id"]
+    cancel_r = await api_client.put(f"/api/v1/issues/{iid}", json={"status": "cancelled"})
+    assert cancel_r.status_code == 200, cancel_r.text
+
+    refused = await api_client.put(f"/api/v1/issues/{iid}", json={"status": "closed", "title": "Changed"})
+
+    assert refused.status_code == 409, f"a status change the issue does not allow is the caller's: {refused.text}"
+    assert refused.json()["detail"] == (
+        "The issue is cancelled and cannot change to closed; from cancelled it can change to: open."
+    ), refused.text
+    after = (await api_client.get(f"/api/v1/issues/{iid}")).json()
+    assert (after["status"], after["title"]) == ("cancelled", "T"), f"a refused change writes nothing: {after}"
+
+
 # ---------------------------------------------------------------------------
 # #284: POST /issues with auto_triage reports what happened to the dispatch.
 # A 201 used to look identical whether a job started or execute() raised.
