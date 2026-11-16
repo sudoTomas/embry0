@@ -29,7 +29,11 @@ import embry0
 from embry0.orchestration.state import JobState
 from tests.fixtures.sandbox_git_local import reads_branch_tip
 from tests.unit.workflows.appended_updates import echoes, graph_nodes
-from tests.unit.workflows.test_developer_branch_verification import _dirty_tree_docker, _make_state, _turn_cap_result
+from tests.unit.workflows.test_developer_branch_verification import (
+    _dirty_tree_docker,
+    _make_state,
+    _turn_cap_mid_change,
+)
 from tests.unit.workflows.test_done_when_check import _UNMET, LIST, _dev_state, _result, _with
 
 EARLIER = "an earlier error, stored once"
@@ -245,7 +249,7 @@ async def test_the_branch_missing_pause_adds_its_entry_alone() -> None:
 async def test_the_unfinished_run_pause_adds_its_entries_alone() -> None:
     docker, _calls = _dirty_tree_docker()
     # run_agent_node adds the run's own error to its update, as it does for every run that errors.
-    run = {**_turn_cap_result(), "errors": ["developer: Reached maximum number of turns (50)"]}
+    run = {**_turn_cap_mid_change(), "errors": ["developer: Reached maximum number of turns (50)"]}
     command = await _developer(run, docker)
     assert command.update["current_stage"] == "dev_run_unfinished"
     errors = command.update["errors"]

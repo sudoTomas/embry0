@@ -333,7 +333,8 @@ async def test_developer_does_not_rescue_when_there_is_nothing_to_push():
 _BRANCH = "embry0/iss-abc12345-test-task"
 
 
-def _turn_cap_result(output: str = "mid-stride when the cap hit") -> dict:
+def _turn_cap_mid_change(output: str = "mid-stride when the cap hit") -> dict:
+    """A developer run its turn cap stopped mid-change: 50 turns, $2.17 spent, the work not yet committed."""
     return {
         "agent_outputs": [
             {
@@ -393,7 +394,7 @@ async def test_turn_cap_death_commits_and_pushes_the_uncommitted_work():
     docker, calls = _dirty_tree_docker()
 
     with (
-        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=_turn_cap_result())),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=_turn_cap_mid_change())),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         cmd = await developer_node(
@@ -485,7 +486,7 @@ async def test_turn_cap_with_committed_work_still_just_pushes_and_advances():
     docker.build_exec_cmd = MagicMock(side_effect=lambda cid, cmd, **_kw: ["docker", "exec", cid, *cmd])
 
     with (
-        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=_turn_cap_result())),
+        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=_turn_cap_mid_change())),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         cmd = await developer_node(
@@ -591,7 +592,8 @@ class _NoOriginHeadDocker:
         return ""
 
 
-def _turn_cap_result(output: str = "committed the work"):
+def _turn_cap_after_commit(output: str = "committed the work") -> dict:
+    """A developer run its turn cap stopped after it committed: the rescue only has to push (no origin/HEAD)."""
     return {
         "agent_outputs": [
             {
@@ -616,7 +618,9 @@ async def test_rescue_push_works_when_the_clone_has_no_origin_head():
     docker = _NoOriginHeadDocker(unpushed="3")
 
     with (
-        patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=_turn_cap_result())),
+        patch(
+            "embry0.workflows.issue_to_pr.nodes.run_agent_node", new=AsyncMock(return_value=_turn_cap_after_commit())
+        ),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
         cmd = await developer_node(
@@ -645,7 +649,7 @@ async def test_branch_never_created_fails_cleanly_and_says_so():
     with (
         patch(
             "embry0.workflows.issue_to_pr.nodes.run_agent_node",
-            new=AsyncMock(return_value=_turn_cap_result(output="I could not work out what to change")),
+            new=AsyncMock(return_value=_turn_cap_after_commit(output="I could not work out what to change")),
         ),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _: None),
     ):
