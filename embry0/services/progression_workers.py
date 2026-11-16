@@ -256,7 +256,13 @@ class FoldWorkers:
                 lane.put_nowait(slot)
 
             def done(finished: Future[T], release: Callable[[Future[T]], None] = release) -> None:
-                loop.call_soon_threadsafe(release, finished)
+                """In the executor's thread. The loop may have closed meanwhile (a shutdown, a caller's loop that
+                ended): then there is no lane left to give the process back to."""
+                try:
+                    loop.call_soon_threadsafe(release, finished)
+                except RuntimeError:
+                    if not loop.is_closed():
+                        raise
 
             future.add_done_callback(done)
             try:
