@@ -44,7 +44,6 @@ from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
-from embry0.safety.part_read import refuse_part_read
 from embry0.services.run_with import RunWith, apply_run_with, models_with, run_with_of
 from embry0.storage.repositories.jobs import job_repository
 
@@ -270,7 +269,6 @@ async def run_again(job_id: str, request: Request, body: RunAgainBody | None = N
         )
     repo = str(job.get("repo") or "")
     run_with = await checked_run_with(request, body.run_with if body else None, repo) if repo else None
-    refuse_part_read(job.get("pipeline_config"), "the job's pipeline_config")
     old_config = _json_field(job.get("pipeline_config"))
     # What the old job's config carries for the caller (embry0.api.carried_config), before a new choice replaces it:
     # the model and key it ran with are checked again for the caller.

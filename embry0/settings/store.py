@@ -50,7 +50,6 @@ from typing import Any, Final, cast
 import asyncpg
 import structlog
 
-from embry0.safety.part_read import PartReadError, holds_part_read, refuse_part_read
 from embry0.settings.document import (
     Change,
     Checked,
@@ -72,7 +71,7 @@ from embry0.settings.registry import DOCUMENT_KEYS, MANAGED_BY_KEY, SCHEMA_VERSI
 from embry0.settings.scope import DEPLOYMENT, Scope, ScopeError, current, organization_of, stored_rows
 from embry0.settings.write_context import WriteContext, WriteReads, deployment_context, deployment_reads
 from embry0.storage import repo_renames
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, StoredValueTooDeep
 from embry0.storage.repositories.config_revisions import ConfigRevisionsRepository, RevisionSource
 from embry0.storage.repositories.settings_documents import SettingsDocumentsRepository, token_of_rows
 
@@ -286,10 +285,6 @@ def build_snapshot(
 ) -> Snapshot:
     """A snapshot of ``rows`` (``SettingsDocumentsRepository.all``), each layer under its stored scope string."""
     deployment = next((row for row in rows if row["scope"] == DEPLOYMENT), None)
-    # A document read only in part (#527) has lost its keys past the cut: read as it is, each would be its
-    # default. It is refused instead, loudly; a whole-document PUT replaces it (SettingsStore.edit).
-    if deployment is not None:
-        refuse_part_read(deployment["data"], "the deployment's settings document")
     data: dict[str, Any] = dict(deployment["data"]) if deployment is not None else {}
     generation = int(deployment["generation"]) if deployment is not None else 0
     sections = read_sections(catalog, data)
@@ -317,7 +312,6 @@ def build_snapshot(
             if log:
                 logger.warning("settings_layer_scope_unknown", scope=str(row["scope"]))
             continue
-        refuse_part_read(row["data"], f"the settings document at {stored}")
         values = dict(row["data"] or {})
         layers[str(stored)] = values
         if log:
@@ -446,8 +440,8 @@ class Draft:
     #: Why, as the revision records it, when the block learns it only once it has read the document;
     #: None keeps the reason :meth:`SettingsStore.edit` was given.
     reason: str | None = None
-    #: The stored values were read only in part (#527): ``data`` is empty, and only a whole document replaces it.
-    part_read: bool = False
+    #: The stored values are too deep to read (#527): ``data`` is empty, and only a whole document replaces them.
+    unread: bool = False
 
     def replace(self, yaml_text: str, data: dict[str, Any], schema_version: int) -> None:
         self.yaml_text, self.data, self.schema_version = yaml_text, data, schema_version
@@ -514,11 +508,14 @@ def _matches(expected: int | Collection[int] | None, generation: int) -> bool:
 
 
 def _document(row: Mapping[str, Any]) -> dict[str, Any]:
-    # Values read only in part (#527) are never written back: the revision keeps the text, which is whole.
-    if holds_part_read(row["data"]):
-        return {"yaml_text": row["yaml_text"], "data": {}, "schema_version": row["schema_version"]}
-    """The part of a row a revision keeps, before and after."""
-    return {"yaml_text": row["yaml_text"], "data": row["data"], "schema_version": row["schema_version"]}
+    """The part of a row a revision keeps, before and after.
+
+    Values the codec does not read (#527) are kept as their stored text, ``data_text``, beside empty ``data``.
+    """
+    document = {"yaml_text": row["yaml_text"], "data": row["data"], "schema_version": row["schema_version"]}
+    if row.get("data_text") is not None:
+        document["data_text"] = row["data_text"]
+    return document
 
 
 def _empty(scope: Scope) -> dict[str, Any]:
@@ -658,19 +655,22 @@ class SettingsStore:
             await self._documents.hold(conn, str(current(scope)))
             stored = await self._stored(scope, conn)
             key = str(stored)
-            row = await self._documents.lock(conn, key)
-            part_read = holds_part_read(row["data"])
+            try:
+                row = await self._documents.lock(conn, key)
+            except StoredValueTooDeep:
+                # Stored values the codec does not read (#527): only a whole document replaces them, read as text.
+                row = await self._documents.lock(conn, key, data_as_text=True)
             draft = Draft(
                 conn=conn,
                 yaml_text=row["yaml_text"],
-                data={} if part_read else dict(row["data"]),
+                data=dict(row["data"]),
                 schema_version=int(row["schema_version"]),
                 bootstrapped=list(row["bootstrapped_keys"]),
                 generation=int(row["generation"]),
                 updated_by=str(row["updated_by"]),
                 scope=scope,
                 stored=stored,
-                part_read=part_read,
+                unread=row.get("data_text") is not None,
             )
             yield draft
             if draft.dirty:
@@ -855,16 +855,15 @@ class SettingsStore:
     ) -> SaveResult:
         """Store what ``propose`` makes of the locked document, when its text changes.
 
-        A document whose values were read only in part (#527) is replaced only by a ``whole`` one: changing
-        some keys of it would keep values nobody can read.
+        A document whose values are too deep to read (#527) is replaced only by a ``whole`` one: changing some
+        keys of it would keep values nobody can read.
         """
         async with self.edit(actor=actor, source=source, reason=reason, scope=scope) as draft:
             if not _matches(if_generation, draft.generation):
                 raise GenerationMismatch(draft.generation)
-            if draft.part_read and not whole:
-                raise PartReadError(
-                    f"the settings document at {draft.stored} is stored nested too deep and too long to read whole, "
-                    "so it was read only in part (#527); replace the whole document (PUT) instead of changing keys"
+            if draft.unread and not whole:
+                raise StoredValueTooDeep(
+                    f"the settings document at {draft.stored}", then="replace the whole document (PUT)"
                 )
             before = draft.data
             inherited = await self._inherited_now(draft.conn, scope)

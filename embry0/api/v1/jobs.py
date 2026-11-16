@@ -23,6 +23,7 @@ from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.safety.redaction import job_secret_values, redact_event
 from embry0.services.answer_recorder import answers_context, ended_job_takes_no_answer, record_answer, start_again_says
 from embry0.services.run_with import RunWith, apply_run_with
+from embry0.storage.database import StoredValueTooDeep
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
 
@@ -300,6 +301,7 @@ async def list_jobs(
         offset=offset,
         exclude_dispatched_by=excluded,
         repos=covered_slugs(request),
+        for_display=True,
     )
     # Nor does it name an issue the key does not read.
     await without_hidden_issues(request, rows)
@@ -372,7 +374,11 @@ def _job_not_found() -> HTTPException:
 
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str, request: Request, jobs: JobsRepository = Depends(get_jobs_repo)) -> dict[str, Any]:
-    job = await jobs.get(job_id)
+    try:
+        job = await jobs.get(job_id)
+    except StoredValueTooDeep:
+        # The row holds a value too deep to read (#527): shown with it as a stand-in, served as too deep to show.
+        job = await jobs.get_for_display(job_id)
     if not job:
         raise _job_not_found()
     await hide_job_unless_covered(request, job, _job_not_found())

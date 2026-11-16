@@ -11,7 +11,7 @@ from typing import Any
 
 import structlog
 
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, StoredValueTooDeep, read_jsonb_text
 from embry0.storage.repositories.repo_config_revisions import RepoConfigRevisionsRepository, RevisionSource
 
 logger = structlog.get_logger(__name__)
@@ -51,12 +51,39 @@ def _db_value(column: str, value: Any) -> Any:
     return value
 
 
-def preferences_snapshot(row: Mapping[str, Any]) -> dict[str, Any]:
+def preferences_snapshot(row: Mapping[str, Any], unread: Mapping[str, str] | None = None) -> dict[str, Any]:
     """A row as its revision stores it: every column but updated_at.
 
     The rest is text or JSONB already decoded, so it is JSON-safe as it is.
+    ``unread`` holds the stored text of a JSONB column too deep to read
+    (#527): the revision keeps it, as ``unread``, beside the column's None.
     """
-    return {k: v for k, v in row.items() if k != "updated_at"}
+    snapshot = {k: v for k, v in row.items() if k != "updated_at"}
+    if unread:
+        snapshot["unread"] = dict(unread)
+    return snapshot
+
+
+async def _locked(conn: Any, repo: str) -> tuple[Any, dict[str, str]]:
+    """The repository's row, locked, and the stored text of each JSONB column too deep to read (#527), that
+    column None in the row. A row read whole has none."""
+    try:
+        return await conn.fetchrow(f"SELECT {_COLUMNS} FROM repo_preferences WHERE repo = $1 FOR UPDATE", repo), {}
+    except StoredValueTooDeep:
+        pass
+    columns = ", ".join(f"{c}::text AS {c}" if c in _CASTS else c for c in _COLUMNS.split(", "))
+    row = await conn.fetchrow(f"SELECT {columns} FROM repo_preferences WHERE repo = $1 FOR UPDATE", repo)
+    if row is None:
+        return None, {}
+    old = dict(row)
+    unread: dict[str, str] = {}
+    for column in _CASTS:
+        text = old[column]
+        try:
+            old[column] = read_jsonb_text(text) if text is not None else None
+        except StoredValueTooDeep:
+            old[column], unread[column] = None, text
+    return old, unread
 
 
 class RepoPreferencesRepository:
@@ -108,7 +135,14 @@ class RepoPreferencesRepository:
         placeholders = [f"${i}{_CASTS.get(c, '')}" for i, c in enumerate(cols, start=2)]
         assignments = [f"{c} = EXCLUDED.{c}" for c in cols] + ["updated_at = NOW()"]
         async with self._db.transaction() as conn:
-            old = await conn.fetchrow(f"SELECT {_COLUMNS} FROM repo_preferences WHERE repo = $1 FOR UPDATE", repo)
+            old, unread = await _locked(conn, repo)
+            kept = sorted(set(unread) - set(cols))
+            if kept:
+                # A stored value too deep to read (#527) is replaced, never kept beside new values: the write
+                # would keep what nobody can read, and the row could not be read back.
+                raise StoredValueTooDeep(
+                    f"repo_preferences.{kept[0]} of {repo}", then=f"replace {', '.join(kept)} in the same write"
+                )
             row = await conn.fetchrow(
                 f"INSERT INTO repo_preferences (repo{''.join(', ' + c for c in cols)}) "
                 f"VALUES ($1{''.join(', ' + p for p in placeholders)}) "
@@ -118,7 +152,7 @@ class RepoPreferencesRepository:
                 *values,
             )
             assert row is not None
-            before = preferences_snapshot(old) if old else None
+            before = preferences_snapshot(old, unread) if old else None
             after = preferences_snapshot(row)
             revision_id: int | None = None
             if before != after:
@@ -143,7 +177,7 @@ class RepoPreferencesRepository:
         """Remove the row and record it, pr_review and verification
         included. Returns the revision id, or None when there was no row."""
         async with self._db.transaction() as conn:
-            old = await conn.fetchrow(f"SELECT {_COLUMNS} FROM repo_preferences WHERE repo = $1 FOR UPDATE", repo)
+            old, unread = await _locked(conn, repo)
             if old is None:
                 return None
             await conn.execute("DELETE FROM repo_preferences WHERE repo = $1", repo)
@@ -151,7 +185,7 @@ class RepoPreferencesRepository:
                 conn,
                 repo=repo,
                 surface="preferences",
-                before=preferences_snapshot(old),
+                before=preferences_snapshot(old, unread),
                 after=None,
                 actor=actor,
                 source=source,

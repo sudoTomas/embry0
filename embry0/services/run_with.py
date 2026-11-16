@@ -100,10 +100,7 @@ def job_pins_reader(jobs: Any) -> JobPins:
     """:data:`JobPins` over the jobs repository: a job that does not exist pins nothing."""
 
     async def read(job_id: str) -> Mapping[str, str]:
-        from embry0.safety.part_read import refuse_part_read
-
         job = await jobs.get(job_id)
-        refuse_part_read((job or {}).get("pipeline_config"), f"job {job_id}'s pipeline_config")
         return pins_of((job or {}).get("pipeline_config"))
 
     return read

@@ -3150,11 +3150,11 @@ def create_app(
             content={"detail": "Job or issue status has already changed; retry if needed."},
         )
 
-    from embry0.safety.part_read import PartReadError
+    from embry0.storage.database import StoredValueTooDeep
 
-    @app.exception_handler(PartReadError)
-    async def part_read_handler(request: Request, exc: PartReadError) -> JSONResponse:
-        # A stored value read only in part (#527) that a reader refused: say which, and that it must be stored again.
+    @app.exception_handler(StoredValueTooDeep)
+    async def stored_value_too_deep_handler(request: Request, exc: StoredValueTooDeep) -> JSONResponse:
+        # A stored JSONB value the codec does not read (#527): say so, and that it must be replaced.
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     from fastapi.exceptions import RequestValidationError

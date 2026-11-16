@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from embry0.safety.error_codes import ErrorCode
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, StoredValueTooDeep
 from embry0.storage.repositories.gate_refusal import gate_refusal_sql
 from embry0.storage.schemas import JobStatus
 
@@ -273,6 +273,13 @@ class JobsRepository:
             return None
         return dict(row)
 
+    async def get_for_display(self, job_id: str) -> dict[str, Any] | None:
+        """:meth:`get`, for a read that only shows the job (its detail) after :meth:`get` raised
+        ``StoredValueTooDeep``: a JSONB value too deep to read (#527) is a stand-in, served as a document too
+        deep to show. Nothing that acts on a job reads it this way."""
+        row = await self._db.fetchrow_for_display("SELECT * FROM jobs WHERE job_id = $1", job_id)
+        return dict(row) if row is not None else None
+
     async def repositories_of(self, job_ids: Collection[str]) -> dict[str, str | None]:
         """The repository each job in ``job_ids`` that exists works on (:func:`job_repository_sql`), None for a job
         with no repository. A job that does not exist is absent."""
@@ -343,11 +350,15 @@ class JobsRepository:
         pipeline_template: str | None = None,
         exclude_dispatched_by: list[str] | None = None,
         repos: Sequence[str] | None = None,
+        for_display: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """List jobs with optional filters. Returns (rows, total_count).
 
         ``repos`` (lower-cased slugs) keeps only the jobs working on those repositories, by
         :func:`job_repository_sql`, before the page is cut and the total counted; None keeps every job.
+
+        ``for_display`` is for a read that only shows the rows (the job list): a page holding a JSONB value too
+        deep to read (#527) is read again with that value as a stand-in, so the other jobs still list.
         """
         conditions: list[str] = []
         args: list[Any] = []
@@ -383,10 +394,13 @@ class JobsRepository:
         total = await self._db.fetchval(f"SELECT COUNT(*) FROM jobs {where}", *args)
 
         args.extend([limit, offset])
-        rows = await self._db.fetch(
-            f"SELECT * FROM jobs {where} ORDER BY created_at DESC, job_id DESC LIMIT ${idx} OFFSET ${idx + 1}",
-            *args,
-        )
+        query = f"SELECT * FROM jobs {where} ORDER BY created_at DESC, job_id DESC LIMIT ${idx} OFFSET ${idx + 1}"
+        try:
+            rows = await self._db.fetch(query, *args)
+        except StoredValueTooDeep:
+            if not for_display:
+                raise
+            rows = await self._db.fetch_for_display(query, *args)
         return [dict(r) for r in rows], int(total or 0)
 
     async def in_statuses_for_issues(
