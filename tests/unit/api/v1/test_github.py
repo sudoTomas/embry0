@@ -608,7 +608,12 @@ async def test_a_mix_of_refused_and_unreachable_accounts_is_worded_as_such(app_w
 @pytest.mark.asyncio
 async def test_an_answer_missing_an_unreachable_account_is_not_kept(app_with_registry, monkeypatch):
     """#340 review: an answer without an account that could not be reached was cached for five minutes, so the
-    account stayed missing after it came back. It is served once; the next read asks every account again."""
+    account stayed missing after it came back. It is served once; the next read asks every account again. On the
+    monotonic clock of a machine started less than five minutes ago, as a CI runner is, so "read at 0.0" is not
+    taken for "read long ago"."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(github_module, "time", SimpleNamespace(monotonic=lambda: 10.0))
     monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
     app_with_registry.state.config.github_token = ""
     await _add_github_credential(app_with_registry, "alice", "ghp_alice_placeholder")

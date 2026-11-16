@@ -8,6 +8,7 @@ tree; the fan-out is for several such accounts.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -112,8 +113,9 @@ async def list_discoverable_projects(
             entries = await discovery_entries(request, "gitlab")
             by_path, failed, complete = await _projects_for_entries(entries, config)
             # An answer missing an account that could not be reached, or ran past a deadline, is served once and not
-            # kept: the next read asks every account again.
-            _CACHE["at"] = time.monotonic() if complete else 0.0
+            # kept: the next read asks every account again. Stamped as read forever ago, since a monotonic clock can
+            # itself be younger than the cache's lifetime (a machine just started), so 0.0 would read as fresh.
+            _CACHE["at"] = time.monotonic() if complete else -math.inf
             _CACHE["by_path"] = by_path
             _CACHE["failed"] = failed
         listing = _CACHE

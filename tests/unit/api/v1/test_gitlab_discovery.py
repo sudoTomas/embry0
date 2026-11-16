@@ -367,7 +367,11 @@ async def test_hanging_gitlab_accounts_end_at_the_deadline(monkeypatch):
 
 
 async def test_a_gitlab_answer_missing_an_unreachable_account_is_not_kept(monkeypatch):
-    """#340 review, GitLab alike: an answer without an account that could not be reached is served once, not kept."""
+    """#340 review, GitLab alike: an answer without an account that could not be reached is served once, not kept,
+    on the monotonic clock of a machine started seconds ago too."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(gitlab_mod, "time", SimpleNamespace(monotonic=lambda: 10.0))
     down = {"glpat-offline-placeholder"}
 
     async def fake_paginate(self, path, **kwargs):
