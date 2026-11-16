@@ -122,12 +122,16 @@ ANSWER_REACHES_BEYOND = (
 )
 #: The job statuses deleting an issue cancels.
 _ACTIVE_JOB_STATUSES = ("pending", "running", "awaiting_input", "paused")
-#: Why deleting an issue the key reads is refused when it reaches another repository. True of a child the delete
+#: Why deleting an issue the key reads is refused when it reaches another repository. True of a descendant the delete
 #: cancels and of one already closed or cancelled, which it leaves as it is (#550), and says nothing of which.
 DELETE_REACHES_BEYOND = (
-    "the issue has a child issue or an active job in a repository the key does not cover, and deleting an issue "
-    "acts on its children and their active jobs"
+    "the issue has a descendant issue or an active job in a repository the key does not cover, and deleting an "
+    "issue acts on every issue under it and their active jobs"
 )
+#: How far a delete walks under the issue (#563): levels, and issues. Past either it changes nothing (409), so it never
+#: acts on part of a subtree as if it were the whole of it.
+MAX_DELETE_DEPTH = 10
+MAX_DELETE_DESCENDANTS = 200
 
 
 # ---------------------------------------------------------------------------
@@ -383,27 +387,45 @@ async def delete_issue(
         raise _issue_not_found()
     await hide_unless_covered(request, existing.get("repo"), _issue_not_found(), action="delete an issue")
 
-    children = await issues.get_children(issue_id)
-    all_issue_ids = [issue_id] + [c["id"] for c in children]
+    # #563: the whole subtree, not only the children, so no grandchild stays open under a cancelled child.
+    descendants, beyond = await issues.descendants(
+        issue_id, max_depth=MAX_DELETE_DEPTH, max_count=MAX_DELETE_DESCENDANTS
+    )
+    # Everything this cancels, every issue under it and their active jobs included, is checked before any write. The
+    # issue is the key's; a descendant or a job elsewhere is refused without naming where. The issues read first, so a
+    # key is refused for one it cannot read before it is told how large the subtree is.
+    await enforce_reach(
+        request,
+        str(existing.get("repo")),
+        [d.get("repo") for d in descendants],
+        action="delete an issue",
+        reason=DELETE_REACHES_BEYOND,
+    )
+    if beyond:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The issue was not deleted: it has more than {MAX_DELETE_DESCENDANTS} issues under it, or nests "
+            f"them more than {MAX_DELETE_DEPTH} levels deep, more than one delete acts on. Delete the issues deepest "
+            "under it first. Nothing was changed.",
+        )
+    all_issue_ids = [issue_id] + [str(d["id"]) for d in descendants]
     active = [
         j
         for iid in all_issue_ids
         for j in (await jobs.list_all(issue_id=iid, limit=100, offset=0))[0]
         if j["status"] in _ACTIVE_JOB_STATUSES
     ]
-    # Everything this cancels, the children and their active jobs included, is checked before any write. The issue
-    # is the key's; a child or a job elsewhere is refused without naming where.
     await enforce_reach(
         request,
         str(existing.get("repo")),
-        [*(c.get("repo") for c in children), *(job_repository(j) for j in active)],
+        [job_repository(j) for j in active],
         action="delete an issue",
         reason=DELETE_REACHES_BEYOND,
     )
     # #550: and so is every issue it writes. One closed or cancelled already keeps its status, and every other status
     # may be cancelled; only one the transitions do not know (a row written by hand, or by another release) is
     # refused, before anything is cancelled or written, so a delete either completes or changes nothing.
-    for issue in (existing, *children):
+    for issue in (existing, *descendants):
         status = str(issue.get("status"))
         if status not in ENDED_ISSUE_STATUSES and status not in CANCELLABLE_ISSUE_STATUSES:
             raise HTTPException(
@@ -422,7 +444,8 @@ async def delete_issue(
     for j in active:
         await executor.cancel_job(j["job_id"], actor=actor)
 
-    # One statement for the issue and its children, each by the status it has then: one closed or cancelled keeps it.
+    # One statement for the issue and every issue under it, each by the status it has then: one closed or cancelled
+    # keeps it.
     cancelled = await issues.cancel_cancellable(all_issue_ids)
 
     # An audit row for each issue the delete cancelled, and none for one it left as it was.

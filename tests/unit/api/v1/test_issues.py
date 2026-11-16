@@ -328,7 +328,9 @@ def _delete_issue_repos(job_rows, order, child_status="open"):
 
     issues = MagicMock(
         get=AsyncMock(return_value={"id": "iss-1", "status": "in_progress"}),
-        get_children=AsyncMock(return_value=[{"id": "iss-child", "status": child_status}]),
+        descendants=AsyncMock(
+            return_value=([{"id": "iss-child", "repo": None, "status": child_status, "depth": 1}], False)
+        ),
         update=AsyncMock(side_effect=_issue_update),
         cancel_cancellable=AsyncMock(side_effect=_cancel_cancellable),
     )
@@ -445,6 +447,34 @@ async def test_delete_refuses_a_status_no_transition_cancels_before_cancelling_a
         f"a child no transition cancels refuses the delete: {refused}, after {order}"
     )
     assert "iss-child" in refused.detail and "'archived'" in refused.detail, refused.detail
+    assert order == [] and not executor.cancel_job.await_count, (
+        f"a refused delete cancels no job and writes no issue: {order}, {executor.cancel_job.await_args_list}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_subtree_past_the_bounds_is_refused_before_any_job_is_cancelled(monkeypatch):
+    """#563: past the walk's bounds the delete changes nothing, its jobs included."""
+    from fastapi import HTTPException
+
+    import embry0.api.v1.issues as issues_mod
+
+    monkeypatch.setattr(issues_mod, "emit_audit", AsyncMock())
+    monkeypatch.setattr(issues_mod, "_actor", lambda request: "tester")
+    order: list[tuple] = []
+    issues, jobs = _delete_issue_repos({"iss-1": [{"job_id": "job-running", "status": "running"}]}, order)
+    issues.descendants = AsyncMock(
+        return_value=([{"id": "iss-child", "repo": None, "status": "open", "depth": 1}], True)
+    )
+    executor = MagicMock(cancel_job=AsyncMock())
+
+    refused: HTTPException | None = None
+    try:
+        await issues_mod.delete_issue("iss-1", _delete_issue_request(executor), issues=issues, jobs=jobs)
+    except HTTPException as exc:
+        refused = exc
+
+    assert refused is not None and refused.status_code == 409, f"a subtree past the bounds is refused: {refused}"
     assert order == [] and not executor.cancel_job.await_count, (
         f"a refused delete cancels no job and writes no issue: {order}, {executor.cancel_job.await_args_list}"
     )

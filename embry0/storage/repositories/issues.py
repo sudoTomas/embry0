@@ -535,6 +535,36 @@ class IssuesRepository:
         logger.info("issues_cancelled", issue_ids=cancelled)
         return cancelled
 
+    async def descendants(self, issue_id: str, *, max_depth: int, max_count: int) -> tuple[list[dict[str, Any]], bool]:
+        """Every issue under ``issue_id``, children, their children and so on, as ``id``, ``repo``, ``status`` and
+        ``depth`` (1 for a child), in one statement; and whether the subtree goes past the bounds: deeper than
+        ``max_depth`` levels or more than ``max_count`` issues. Past them the rows are cut, and the caller must not
+        act on them as the whole subtree. A cycle in ``parent_issue_id`` (only a row written by hand makes one) is not
+        followed back into an issue already on its path, the root included."""
+        rows = await self._db.fetch(
+            """
+            WITH RECURSIVE tree(id, repo, status, depth, path) AS (
+                SELECT i.id, i.repo, i.status, 1, ARRAY[$1::text, i.id]
+                FROM issues i WHERE i.parent_issue_id = $1 AND i.id <> $1
+              UNION ALL
+                SELECT i.id, i.repo, i.status, t.depth + 1, t.path || i.id
+                FROM issues i JOIN tree t ON i.parent_issue_id = t.id
+                WHERE t.depth <= $2 AND NOT i.id = ANY(t.path)
+            )
+            SELECT id, repo, status, depth FROM tree LIMIT $3
+            """,
+            issue_id,
+            max_depth,
+            max_count + 1,
+        )
+        found = [dict(r) for r in rows]
+        beyond = len(found) > max_count or any(r["depth"] > max_depth for r in found)
+        # An issue reached twice (two paths to it, which only a hand-written row makes) is one issue.
+        unique: dict[str, dict[str, Any]] = {}
+        for row in found:
+            unique.setdefault(str(row["id"]), row)
+        return list(unique.values())[:max_count], beyond
+
     async def get_children(self, parent_issue_id: str, *, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
         """Fetch all direct children of an issue. ``repos`` (lower-cased slugs) keeps only the children of those
         repositories, and counts only their children and jobs; None keeps every child."""
