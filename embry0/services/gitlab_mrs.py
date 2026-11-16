@@ -29,24 +29,40 @@ from embry0.execution.gitlab_client import GitLabClient
 logger = structlog.get_logger(__name__)
 
 
-async def find_open_mr_for_branch(client: GitLabClient, repo: str, branch: str) -> str | None:
-    """URL of an open MR whose source branch is ``branch``, if one exists."""
-    found = await _open_mr_for_branch(client, repo, branch)
+async def find_open_mr_for_branch(
+    client: GitLabClient, repo: str, branch: str, target_branch: str | None = None
+) -> str | None:
+    """URL of an open MR whose source branch is ``branch``, into ``target_branch`` when given, if one exists."""
+    found = await _open_mr_for_branch(client, repo, branch, target_branch)
     return None if found is None else str(found.get("web_url") or "") or None
 
 
-async def _open_mr_for_branch(client: GitLabClient, repo: str, branch: str) -> dict[str, Any] | None:
-    """The open MR whose source branch is ``branch``, as GitLab lists it, if one exists."""
-    resp = await client.get(
-        client.project_path(repo, "/merge_requests"),
-        repo=repo,
-        params={"state": "opened", "source_branch": branch},
-    )
+async def _open_mr_for_branch(
+    client: GitLabClient, repo: str, branch: str, target: str | None
+) -> dict[str, Any] | None:
+    """The open MR from ``branch`` into ``target``, as GitLab lists it, if one exists.
+
+    A branch can have open merge requests into more than one branch (one
+    into ``release`` beside the job's into ``main``), so the target is part
+    of the question (#524): GitLab is asked for it (``target_branch``), and a
+    listed merge request that names another target is passed over all the
+    same. ``None`` asks for any target.
+    """
+    params = {"state": "opened", "source_branch": branch}
+    if target is not None:
+        params["target_branch"] = target
+    resp = await client.get(client.project_path(repo, "/merge_requests"), repo=repo, params=params)
     if resp.status_code != 200:
         return None
     body = resp.json()
-    if isinstance(body, list) and body and isinstance(body[0], dict):
-        return body[0]
+    if not isinstance(body, list):
+        return None
+    for mr in body:
+        if not isinstance(mr, dict):
+            continue
+        into = mr.get("target_branch")
+        if target is None or into is None or into == target:
+            return mr
     return None
 
 
@@ -81,12 +97,16 @@ async def ensure_mr_for_branch(
     Checks for an existing open MR on the same source branch first — a
     developer that opened one but failed to report the URL must not produce a
     duplicate, and GitLab would 409 the create anyway; the lookup recovers the
-    URL instead.
+    URL instead. Only a merge request into the target counts, before the
+    create and after a 409 alike: one from the branch into another branch is
+    not the job's (#524).
 
     ``target_branch`` (Spec 1A §3.7) is the job's resolved base branch. When
     given it is used verbatim: the resolver already answered, and a second
     round trip could only disagree with the branch the clone actually
-    fetched. Without it the project's own default is read, as before.
+    fetched. Without it the project's own default is read, as before, and
+    read before the lookup: the merge request found is then the one the
+    create would have opened, into that default.
 
     ``diagnostics``, when given, receives ``change_request_error``: why no
     merge request came of it, in words a person reads (#459).
@@ -112,13 +132,6 @@ async def ensure_mr_for_branch(
         return None
 
     try:
-        found = await _open_mr_for_branch(client, repo, branch)
-        existing = None if found is None else str(found.get("web_url") or "") or None
-        if found is not None and existing:
-            logger.info("mr_fallback_found_existing", repo=repo, branch=branch, url=existing)
-            await _labels_or_say_so(client, repo=repo, iid=found.get("iid"), labels=labels, diagnostics=diagnostics)
-            return existing
-
         target = target_branch or await default_branch_for(client, repo)
         if branch == target:
             # Nothing to merge into itself; also guards a repo whose default
@@ -126,6 +139,13 @@ async def ensure_mr_for_branch(
             logger.info("mr_fallback_skipped_same_branch", repo=repo, branch=branch)
             _why(f"the branch {branch!r} is the project's default branch, so there is nothing to merge")
             return None
+
+        found = await _open_mr_for_branch(client, repo, branch, target)
+        existing = None if found is None else str(found.get("web_url") or "") or None
+        if found is not None and existing:
+            logger.info("mr_fallback_found_existing", repo=repo, branch=branch, target=target, url=existing)
+            await _labels_or_say_so(client, repo=repo, iid=found.get("iid"), labels=labels, diagnostics=diagnostics)
+            return existing
 
         resp = await client.post(
             client.project_path(repo, "/merge_requests"),
@@ -150,10 +170,10 @@ async def ensure_mr_for_branch(
 
         # 409 means someone created it between our lookup and our create.
         if resp.status_code == 409:
-            again = await _open_mr_for_branch(client, repo, branch)
+            again = await _open_mr_for_branch(client, repo, branch, target)
             recovered = None if again is None else str(again.get("web_url") or "") or None
             if again is not None and recovered:
-                logger.info("mr_fallback_recovered_after_conflict", repo=repo, branch=branch)
+                logger.info("mr_fallback_recovered_after_conflict", repo=repo, branch=branch, target=target)
                 await _labels_or_say_so(client, repo=repo, iid=again.get("iid"), labels=labels, diagnostics=diagnostics)
                 return recovered
 
