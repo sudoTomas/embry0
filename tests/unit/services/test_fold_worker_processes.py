@@ -11,11 +11,20 @@ Each test runs plain functions in real worker processes:
   fails with ``FoldTimeout``, a stopped process included;
 - a worker exits when the process that started it is killed;
 - the pool is sized to the cgroup's CPU quota, not the host's count.
+
+A loaded host can take seconds to start a worker process, so no test measures
+how long that took. A computation that must still be running is a
+:class:`_Hold`, which keeps its process until the test lets it go; a time
+limit is short only for the computation meant to run past it, on a process
+already started, and must end it within :data:`PROMPTLY`; and every other wait
+for what must happen is bounded by :data:`WITHIN`, a bound for a hang, not a
+measure of speed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import signal
@@ -23,9 +32,10 @@ import subprocess
 import sys
 import textwrap
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
+from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
@@ -37,14 +47,89 @@ pytestmark = pytest.mark.asyncio
 
 ONE, TWO = Scope.of(["acme/one"]), Scope.of(["acme/two"])
 
+#: Seconds a test waits for what must happen before it fails: a bound for a hang, never a measure of speed.
+WITHIN = 60.0
+#: The workers' read limit here: past :data:`WITHIN`, so a computation that never answers fails on the test's bound,
+#: with the test's message, and no computation runs into it on a loaded host.
+LONG = 2 * WITHIN
+#: A time limit meant to run out: only the computation that should run past it gets it (:func:`_limit`).
+SHORT = 1.0
+#: How soon after its start a computation under :data:`SHORT` must fail: room for a loaded host, and short of the
+#: limit made many times longer, so the limit itself is pinned. Only computations on processes already started run in
+#: it: no process start, the one thing load stretches to seconds, falls inside the window (:func:`_past_its_limit`).
+PROMPTLY = WITHIN / 4
+
 
 @pytest.fixture
 async def workers() -> AsyncIterator[FoldWorkers]:
-    found = FoldWorkers("postgresql://unused/unused", processes=4, json_logs=False, read_limit=2.0)
+    found = FoldWorkers("postgresql://unused/unused", processes=4, json_logs=False, read_limit=LONG)
     try:
         yield found
     finally:
         await found.aclose(timeout=5)
+
+
+async def _soon[T](work: Awaitable[T], failure: str) -> T:
+    """``work``'s answer, or a failure saying ``failure`` when it has none within :data:`WITHIN`. Its own
+    :class:`FoldTimeout` goes through to the caller."""
+    try:
+        return await asyncio.wait_for(work, WITHIN)
+    except TimeoutError as exc:
+        raise AssertionError(failure) from exc
+
+
+async def _past_its_limit(workers: FoldWorkers, kind: str, work: Callable[[], Awaitable[Any]], failure: str) -> None:
+    """``work()``, with ``kind``'s limit at :data:`SHORT`, fails with :class:`FoldTimeout` within :data:`PROMPTLY` of
+    its start, or the test fails saying ``failure``."""
+    with _limit(workers, kind), pytest.raises(FoldTimeout):
+        try:
+            await asyncio.wait_for(work(), PROMPTLY)
+        except TimeoutError as exc:
+            raise AssertionError(f"{failure}: no FoldTimeout within {PROMPTLY:.0f}s of a {SHORT:.0f}s limit") from exc
+
+
+@contextlib.contextmanager
+def _limit(workers: FoldWorkers, kind: str) -> Iterator[None]:
+    """``kind``'s time limit at :data:`SHORT` meanwhile, for the computation meant to run past it; the others keep
+    their own, which leaves them all the time a loaded host takes to start a process."""
+    before = workers._limits[kind]  # noqa: SLF001
+    workers._limits[kind] = SHORT  # noqa: SLF001
+    try:
+        yield
+    finally:
+        workers._limits[kind] = before  # noqa: SLF001
+
+
+def hold(held: str, gate: str) -> int:
+    """In a worker: write its pid to ``held``, then keep its process until ``gate`` exists; answer the pid."""
+    Path(f"{held}.part").write_text(str(os.getpid()))
+    os.replace(f"{held}.part", held)
+    while not os.path.exists(gate):
+        time.sleep(0.01)
+    return os.getpid()
+
+
+class _Hold:
+    """A computation that keeps its worker process until the test lets it go: running, whatever the clock says."""
+
+    def __init__(self, tmp_path: Path, name: str) -> None:
+        self._held, self._gate = tmp_path / f"{name}.held", tmp_path / f"{name}.gate"
+
+    def run(self, workers: FoldWorkers, scope: Scope, kind: str = "read") -> Coroutine[Any, Any, int]:
+        return workers._run(scope, kind, hold, str(self._held), str(self._gate))  # noqa: SLF001
+
+    async def pid(self) -> int:
+        """The pid of the process it holds, once it holds one."""
+
+        async def held() -> int:
+            while not self._held.exists():
+                await asyncio.sleep(0.01)
+            return int(self._held.read_text())
+
+        return await _soon(held(), f"no process took {self._held.stem}'s computation")
+
+    def release(self) -> None:
+        self._gate.touch()
 
 
 def crash_once(flag: str) -> int:
@@ -65,9 +150,9 @@ def _alive(pid: int) -> bool:
     return state not in {"Z", "X"}
 
 
-def _gone(pid: int, within: float = 5.0) -> bool:
-    """Whether ``pid`` is gone by ``within`` seconds from now: a killed process takes a moment to go."""
-    deadline = time.monotonic() + within
+def _gone(pid: int) -> bool:
+    """Whether ``pid`` is gone within :data:`WITHIN` seconds: a killed process takes a moment to go."""
+    deadline = time.monotonic() + WITHIN
     while _alive(pid):
         if time.monotonic() > deadline:
             return False
@@ -75,20 +160,29 @@ def _gone(pid: int, within: float = 5.0) -> bool:
     return True
 
 
-async def test_the_sets_never_take_the_deployment_s_process(workers: FoldWorkers) -> None:
-    """Both processes of the sets busy, one of them for a caller that left: a set waits, the deployment runs."""
-    await asyncio.gather(*(workers._run(scope, "read", time.sleep, 0.2) for scope in (ONE, TWO, EVERY)))  # noqa: SLF001
-    left = asyncio.create_task(workers._run(ONE, "read", time.sleep, 1.5))  # noqa: SLF001
-    busy = asyncio.create_task(workers._run(TWO, "read", time.sleep, 1.5))  # noqa: SLF001
-    await asyncio.sleep(0.5)
-    left.cancel()
-    started = time.monotonic()
-    waiting = asyncio.create_task(workers._run(ONE, "read", os.getpid))  # noqa: SLF001
-    deployment = await asyncio.wait_for(workers._run(EVERY, "read", os.getpid), 10)  # noqa: SLF001
-    assert time.monotonic() - started < 1.0, "the deployment's computation waited for the sets'"
-    await waiting
-    assert time.monotonic() - started > 0.8, "a set's computation took a process whose caller had left mid-fold"
-    await busy
+async def test_the_sets_never_take_the_deployment_s_process(workers: FoldWorkers, tmp_path: Path) -> None:
+    """Both processes of the sets held, one of them for a caller that left: a set waits, the deployment runs."""
+    left_hold, busy_hold = _Hold(tmp_path, "left"), _Hold(tmp_path, "busy")
+    left = asyncio.create_task(left_hold.run(workers, ONE))
+    busy = asyncio.create_task(busy_hold.run(workers, TWO))
+    try:
+        held = {await left_hold.pid(), await busy_hold.pid()}
+        left.cancel()
+        waiting = asyncio.create_task(workers._run(ONE, "read", os.getpid))  # noqa: SLF001
+        deployment = await _soon(
+            workers._run(EVERY, "read", os.getpid),  # noqa: SLF001
+            "the deployment's computation waited for the sets'",
+        )
+        assert deployment not in held, "the deployment ran in a process of the sets'"
+        assert not waiting.done(), "a set's computation ran while both the sets' processes were held"
+        busy_hold.release()
+        freed = await _soon(busy, "the set's computation never finished")
+        assert (
+            await _soon(waiting, "a set's computation waited for a process whose caller had left mid-fold") == freed
+        ), "it took the process freed, not the one still folding for a caller that had left"
+    finally:
+        left_hold.release()
+        busy_hold.release()
     assert deployment not in {p.pid for slot in workers._slots[1:] for p in slot.processes()}  # noqa: SLF001
     assert workers._slots[1].processes() == [], "nothing but a deployment's build takes the builds' process"  # noqa: SLF001
 
@@ -97,49 +191,59 @@ async def test_a_computation_that_kills_its_process_runs_again_once_and_fails_al
     workers: FoldWorkers, tmp_path: Path
 ) -> None:
     flag = tmp_path / "flag"
-    again = await workers._run(ONE, "read", crash_once, str(flag))  # noqa: SLF001
+    again = await _soon(workers._run(ONE, "read", crash_once, str(flag)), "it never ran again")  # noqa: SLF001
     killed = int(flag.read_text())
     assert again != killed and _alive(again) and _gone(killed), "it ran again on a live process"
 
-    others = [
-        asyncio.create_task(workers._run(scope, "read", time.sleep, 1.0))  # noqa: SLF001
-        for scope in (TWO, EVERY)
-    ]
-    await asyncio.sleep(0.2)
-    with capture_logs() as logs, pytest.raises(BrokenProcessPool):
-        await workers._run(ONE, "read", os._exit, 1)  # noqa: SLF001
-    assert [(e["event"], e["scope"]) for e in logs if e["event"].startswith("progression_fold")] == [
-        ("progression_fold_worker_lost", ONE.key),
-        ("progression_fold_crashed_twice", ONE.key),
-    ], "run once more, then failed, each logged with its scope"
-    assert await asyncio.gather(*others) == [None, None], "the computations in flight beside it finished"
-    assert isinstance(await workers._run(ONE, "read", os.getpid), int), "and its lane serves the next"  # noqa: SLF001
-
-
-async def test_a_computation_past_its_limit_loses_its_process() -> None:
-    """One process for the sets, so the next computation shows whether it was replaced."""
-    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=2.0)
+    holds = [_Hold(tmp_path, "two"), _Hold(tmp_path, "every")]
+    others = [asyncio.create_task(each.run(workers, scope)) for each, scope in zip(holds, (TWO, EVERY), strict=True)]
     try:
-        await _past_its_limit(workers)
+        beside = [await each.pid() for each in holds]
+        with capture_logs() as logs, pytest.raises(BrokenProcessPool):
+            await _soon(workers._run(ONE, "read", os._exit, 1), "it never failed")  # noqa: SLF001
+        assert [(e["event"], e["scope"]) for e in logs if e["event"].startswith("progression_fold")] == [
+            ("progression_fold_worker_lost", ONE.key),
+            ("progression_fold_crashed_twice", ONE.key),
+        ], "run once more, then failed, each logged with its scope"
+        assert all(_alive(pid) for pid in beside) and not any(other.done() for other in others), (
+            "the computations in flight beside it went on"
+        )
+    finally:
+        for each in holds:
+            each.release()
+    assert await _soon(asyncio.gather(*others), "they never finished") == beside, "and finished where they ran"
+    assert isinstance(await _soon(workers._run(ONE, "read", os.getpid), "its lane is stuck"), int), (  # noqa: SLF001
+        "and its lane serves the next"
+    )
+
+
+async def test_a_computation_past_its_limit_loses_its_process(tmp_path: Path) -> None:
+    """One process for the sets, so the next computation shows whether it was replaced."""
+    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=LONG)
+    try:
+        await _losing_its_process(workers, _Hold(tmp_path, "never"))
     finally:
         await workers.aclose(timeout=5)
 
 
-async def _past_its_limit(workers: FoldWorkers) -> None:
-    pid = await workers._run(ONE, "read", os.getpid)  # noqa: SLF001
-    started = time.monotonic()
-    with pytest.raises(FoldTimeout):
-        await asyncio.wait_for(workers._run(ONE, "read", time.sleep, 30), 20)  # noqa: SLF001
-    assert time.monotonic() - started < 6, "the limit is two seconds"
-    after = await workers._run(ONE, "read", os.getpid)  # noqa: SLF001
-    assert after != pid and _gone(pid), "the process past its limit was killed and replaced"
+async def _losing_its_process(workers: FoldWorkers, never: _Hold) -> None:
+    pid = await _soon(workers._run(ONE, "read", os.getpid), "the first computation never ran")  # noqa: SLF001
+    # On the process just started; its gate never opens: only the limit ends it.
+    await _past_its_limit(workers, "read", lambda: never.run(workers, ONE), "a computation ran past its limit")
+    assert _gone(pid), "the process past its limit was killed"
+    after = await _soon(workers._run(ONE, "read", os.getpid), "its lane is stuck")  # noqa: SLF001
+    assert after != pid, "and replaced"
 
     # A stopped process answers nothing: the same, and its lane is free again after it.
     os.kill(after, signal.SIGSTOP)
-    with pytest.raises(FoldTimeout):
-        await asyncio.wait_for(workers._run(TWO, "read", os.getpid), 20)  # noqa: SLF001
+    await _past_its_limit(
+        workers,
+        "read",
+        lambda: workers._run(TWO, "read", os.getpid),  # noqa: SLF001
+        "a stopped process held its computation past its limit",
+    )
     assert _gone(after), "the stopped process was killed"
-    assert await workers._run(ONE, "read", os.getpid) not in {pid, after}, "and replaced"  # noqa: SLF001
+    assert await _soon(workers._run(ONE, "read", os.getpid), "its lane is stuck") not in {pid, after}, "and replaced"  # noqa: SLF001
 
 
 async def test_a_worker_exits_when_the_process_that_started_it_is_killed(tmp_path: Path) -> None:
@@ -163,22 +267,24 @@ async def test_a_worker_exits_when_the_process_that_started_it_is_killed(tmp_pat
         text=True,
         env={**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)},
     )
+    worker: int | None = None
     try:
         assert parent.stdout is not None
-        worker = int(parent.stdout.readline())
+        worker = int(await _soon(asyncio.to_thread(parent.stdout.readline), "the parent's computation never ran"))
         assert _alive(worker)
         parent.kill()
-        parent.wait(10)
-        deadline = time.monotonic() + 10
-        while _alive(worker) and time.monotonic() < deadline:
-            await asyncio.sleep(0.2)
-        assert not _alive(worker), "the worker outlived the process that started it"
+        parent.wait(WITHIN)
+        assert _gone(worker), "the worker outlived the process that started it"
     finally:
         if parent.poll() is None:
             parent.kill()
-            parent.wait(10)
+            parent.wait(WITHIN)
         if parent.stdout is not None:
             parent.stdout.close()
+        # A worker that outlived it, when this test fails, is not left running.
+        if worker is not None and _alive(worker):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(worker, signal.SIGKILL)
 
 
 def _cgroup(root: Path, files: dict[str, str]) -> Path:
@@ -209,19 +315,25 @@ async def test_the_cpus_are_the_cgroup_s_quota_not_the_host_s(tmp_path: Path) ->
     assert [fold_processes(4, cpus) for cpus in (48.0, 4.0, 3.5, 2.0, 1.0)] == [4, 3, 3, 3, 3]
 
 
-async def test_a_read_that_waits_past_its_limit_for_a_process_fails() -> None:
-    """A read's limit counts its wait: with the sets' one process busy with a long write, a set's read fails at its
-    limit instead of waiting for it."""
-    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=1.0)
+async def test_a_read_that_waits_past_its_limit_for_a_process_fails(tmp_path: Path) -> None:
+    """A read's limit counts its wait: with the sets' one process held by a write, a set's read fails at its limit
+    instead of waiting for it."""
+    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, read_limit=LONG)
+    writing = _Hold(tmp_path, "write")
     try:
-        write = asyncio.create_task(workers._run(ONE, "write", time.sleep, 4))  # noqa: SLF001
-        await asyncio.sleep(0.5)
-        started = time.monotonic()
-        with pytest.raises(FoldTimeout):
-            await asyncio.wait_for(workers._run(TWO, "read", os.getpid), 10)  # noqa: SLF001
-        assert time.monotonic() - started < 3, "it failed at its limit, not when the write was done"
-        await write
+        write = asyncio.create_task(writing.run(workers, ONE, "write"))
+        await writing.pid()
+        await _past_its_limit(
+            workers,
+            "read",
+            lambda: workers._run(TWO, "read", os.getpid),  # noqa: SLF001
+            "the read waited for the write past its limit",
+        )
+        assert not write.done(), "it failed at its limit, not when the write was done"
+        writing.release()
+        await _soon(write, "the write never finished")
     finally:
+        writing.release()
         await workers.aclose(timeout=5)
 
 
@@ -237,25 +349,30 @@ async def test_a_read_fails_before_the_dashboard_stops_waiting_for_it() -> None:
 
 async def test_a_write_past_its_limit_fails_as_one_and_is_not_run_again() -> None:
     """A write that runs past its limit is no crash: it fails with ``FoldTimeout`` once, not again on a new process."""
-    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, write_limit=1.0)
+    workers = FoldWorkers("postgresql://unused/unused", processes=3, json_logs=False, write_limit=SHORT)
     try:
-        started = time.monotonic()
+        # A process that took longer than the limit to start is the same write past its limit.
         with capture_logs() as logs, pytest.raises(FoldTimeout):
-            await asyncio.wait_for(workers._run(ONE, "write", time.sleep, 30), 20)  # noqa: SLF001
-        assert time.monotonic() - started < 5, "it failed at its limit, once"
-        assert [e["event"] for e in logs if e["event"].startswith("progression_fold")] == ["progression_fold_timed_out"]
+            await _soon(workers._run(ONE, "write", time.sleep, 10 * WITHIN), "a write ran past its limit")  # noqa: SLF001
+        assert [e["event"] for e in logs if e["event"].startswith("progression_fold")] == [
+            "progression_fold_timed_out"
+        ], "it failed at its limit, once"
     finally:
         await workers.aclose(timeout=5)
 
 
-async def test_a_build_of_the_deployment_s_rollup_never_holds_up_its_reads(workers: FoldWorkers) -> None:
-    """The deployment's builds have a process of their own: a long one leaves its reads, and the sets', theirs."""
-    build = asyncio.create_task(workers._run(EVERY, "write", time.sleep, 3))  # noqa: SLF001
-    await asyncio.sleep(0.5)
-    started = time.monotonic()
-    read = await asyncio.wait_for(workers._run(EVERY, "read", os.getpid), 10)  # noqa: SLF001
-    sets = await asyncio.wait_for(workers._run(ONE, "read", os.getpid), 10)  # noqa: SLF001
-    assert time.monotonic() - started < 2, "the deployment's read and a set's waited for the build"
-    built = [p.pid for p in workers._slots[1].processes()]  # noqa: SLF001
-    assert built and read not in built and sets not in built, "the build ran in the builds' process alone"
-    await build
+async def test_a_build_of_the_deployment_s_rollup_never_holds_up_its_reads(
+    workers: FoldWorkers, tmp_path: Path
+) -> None:
+    """The deployment's builds have a process of their own: one held leaves its reads, and the sets', theirs."""
+    building = _Hold(tmp_path, "build")
+    build = asyncio.create_task(building.run(workers, EVERY, "write"))
+    try:
+        builder = await building.pid()
+        read = await _soon(workers._run(EVERY, "read", os.getpid), "the deployment's read waited for the build")  # noqa: SLF001
+        sets = await _soon(workers._run(ONE, "read", os.getpid), "a set's read waited for the build")  # noqa: SLF001
+        assert not build.done() and builder not in {read, sets}, "they ran beside the build, not in its process"
+        assert [p.pid for p in workers._slots[1].processes()] == [builder], "the build ran in the builds' process"  # noqa: SLF001
+    finally:
+        building.release()
+    assert await _soon(build, "the build never finished") == builder
