@@ -12,6 +12,7 @@ import asyncio
 import json
 from typing import Any, cast
 
+import httpx
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -163,17 +164,50 @@ def _owner_name(raw: str) -> str:
 
 
 async def probe_access(request: Request, owner: str, forge: str, token: str) -> AccessProbe:
-    config = getattr(request.app.state, "config", None)
-    if forge == "gitlab":
-        from embry0.execution.tls import load_ca_pem
+    """Ask the forge what ``token`` can do at ``owner``.
 
-        return await org_service.probe_gitlab(
-            owner,
-            token,
-            gitlab_url=str(getattr(config, "gitlab_url", "") or ""),
-            ca_pem=load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or "")),
+    A forge that never answers (a refused connection, a failed name lookup, a
+    timeout) is a 502 naming it (#379): the caller is told the forge could not
+    be reached, which a 500 does not say and a probe result would only guess
+    at.
+    """
+    config = getattr(request.app.state, "config", None)
+    try:
+        if forge == "gitlab":
+            from embry0.execution.tls import load_ca_pem
+
+            return await org_service.probe_gitlab(
+                owner,
+                token,
+                gitlab_url=str(getattr(config, "gitlab_url", "") or ""),
+                ca_pem=load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or "")),
+            )
+        return await org_service.probe_github(owner, token)
+    except httpx.RequestError as exc:
+        name = "GitLab" if forge == "gitlab" else "GitHub"
+        # Classes, not text: the text can carry the request's URL.
+        logger.warning(
+            "organization_probe_unreachable",
+            owner=owner,
+            forge=forge,
+            error=type(exc).__name__,
+            cause=_root_cause(exc),
         )
-    return await org_service.probe_github(owner, token)
+        raise HTTPException(status_code=502, detail=f"{name} could not be reached") from exc
+
+
+def _root_cause(exc: BaseException) -> str | None:
+    """The class of the error at the bottom of ``exc``'s chain, through its causes and contexts: what failed under the
+    client (``ConnectionRefusedError``, ``gaierror`` for a name that does not resolve, ``SSLError``), or None when
+    ``exc`` has nothing under it."""
+    seen = {id(exc)}
+    root: BaseException | None = None
+    under = exc.__cause__ or exc.__context__
+    while under is not None and id(under) not in seen:
+        seen.add(id(under))
+        root = under
+        under = under.__cause__ or under.__context__
+    return type(root).__name__ if root is not None else None
 
 
 def _split_moved(settings: dict[str, Any]) -> dict[str, Any]:

@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import socket
+from collections.abc import Callable, Sequence
 from typing import Any
 
+import httpcore
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 
 from embry0.api.app import create_app
 from embry0.api.v1 import organizations as organizations_api
 from embry0.config import Embry0Config
+from embry0.execution import forge_client
 from embry0.services.org_discovery import Discovery, RepoFacts
 from embry0.services.organizations import FORGES, STATUSES, AccessProbe, Organization
 
@@ -575,3 +580,129 @@ async def test_the_schedule_starts_the_discover_endpoints_own_run(app: Any, monk
     assert [(a, actor, d) for a, actor, d in audits if a == "organization.discover"] == [
         ("organization.discover", ACTOR, {"owner": "acme", "run_id": newest["id"]})
     ]
+
+
+# ---- a forge that never answers (#379) ----------------------------------------
+
+#: The real probe, taken before the fixture stands a fake in for it.
+_REAL_PROBE = organizations_api.probe_access
+
+
+def _raised_as_httpx_does(
+    error: httpx.RequestError, transport: Exception, os_error: BaseException
+) -> httpx.RequestError:
+    """``error`` as httpx raises it: caused by the transport's error (httpcore's), which was raised while handling
+    what the OS said."""
+    error.__cause__ = transport
+    transport.__context__ = os_error
+    return error
+
+
+#: Each way a forge goes unanswered: the error the client raises, built as httpx raises it.
+_UNREACHABLE: dict[str, Callable[[], httpx.RequestError]] = {
+    "refused": lambda: _raised_as_httpx_does(
+        httpx.ConnectError("All connection attempts failed"),
+        httpcore.ConnectError("All connection attempts failed"),
+        _caused(OSError("All connection attempts failed"), ConnectionRefusedError(111, "Connection refused")),
+    ),
+    "unresolved": lambda: _raised_as_httpx_does(
+        httpx.ConnectError("[Errno -2] Name or service not known"),
+        httpcore.ConnectError("[Errno -2] Name or service not known"),
+        socket.gaierror(-2, "Name or service not known"),
+    ),
+    "timeout": lambda: _raised_as_httpx_does(
+        httpx.ReadTimeout("timed out"), httpcore.ReadTimeout("timed out"), TimeoutError("timed out")
+    ),
+}
+#: The class each one's chain ends in: what failed under the client.
+_ROOT = {"refused": "ConnectionRefusedError", "unresolved": "gaierror", "timeout": "TimeoutError"}
+
+
+def _caused(error: BaseException, cause: BaseException) -> BaseException:
+    error.__cause__ = cause
+    return error
+
+
+def _forge_unreachable(monkeypatch: pytest.MonkeyPatch, how: str) -> list[str]:
+    """The real probe, with every request the forge clients send failing at the transport as ``how`` says, as with
+    the forge down. Answers the URLs it was asked for, so a test can show the probe asked at all."""
+    asked: list[str] = []
+    real_client = httpx.AsyncClient
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        raise _UNREACHABLE[how]()
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(unreachable), **kwargs)
+
+    monkeypatch.setattr(forge_client.httpx, "AsyncClient", client)
+    monkeypatch.setattr(organizations_api, "probe_access", _REAL_PROBE)
+    return asked
+
+
+async def _answer(app: Any, path: str, body: dict[str, Any] | None = None) -> httpx.Response:
+    """What a caller is answered: an exception the app does not handle is its 500, not raised into the test."""
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers={"X-Requested-With": "XMLHttpRequest"}
+    ) as client:
+        return await client.post(path, json=body)
+
+
+@pytest.mark.parametrize("error", list(_UNREACHABLE), ids=list(_UNREACHABLE))
+@pytest.mark.asyncio
+async def test_a_probe_github_never_answers_is_a_502_naming_it(
+    app: Any, monkeypatch: pytest.MonkeyPatch, error: str
+) -> None:
+    asked = _forge_unreachable(monkeypatch, error)
+    with capture_logs() as logs:
+        resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme"})
+    assert asked, "the probe never asked GitHub"
+    assert resp.status_code == 502, f"a probe GitHub never answered ({error}): {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitHub could not be reached"
+    (logged,) = [e for e in logs if e["event"] == "organization_probe_unreachable"]
+    assert (logged["owner"], logged["forge"], logged["error"], logged["cause"]) == (
+        "acme",
+        "github",
+        type(_UNREACHABLE[error]()).__name__,
+        _ROOT[error],
+    ), f"logged with the client's error and the class of what failed under it: {logged}"
+
+
+@pytest.mark.asyncio
+async def test_a_probe_gitlab_never_answers_is_a_502_naming_it(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    app.state.config.gitlab_token = "glpat-placeholder"
+    asked = _forge_unreachable(monkeypatch, "refused")
+    resp = await _answer(app, "/api/v1/orgs/probe", {"owner": "acme", "forge": "gitlab"})
+    assert asked, "the probe never asked GitLab"
+    assert resp.status_code == 502, f"a probe GitLab never answered: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitLab could not be reached"
+
+
+@pytest.mark.asyncio
+async def test_a_reprobe_github_never_answers_is_a_502_and_keeps_what_was_stored(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with _client(app) as client:
+        # Registered with the stand-in probe: what a probe that got answers stored.
+        assert (await client.post("/api/v1/orgs", json={"owner": "acme"})).status_code == 201
+    org = app.state.organizations_repo.orgs["acme"]
+    stored, count = dict(org.access), org.repo_count
+    assert (stored["read"], stored["hooks"], stored["owner_kind"], count) == (True, True, "organization", 12), stored
+    _forge_unreachable(monkeypatch, "timeout")
+    resp = await _answer(app, "/api/v1/orgs/acme/probe")
+    assert resp.status_code == 502, f"a re-probe GitHub never answered: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitHub could not be reached"
+    assert (org.access, org.repo_count) == (stored, count), "a re-probe that got no answer rewrote the stored access"
+
+
+@pytest.mark.asyncio
+async def test_registering_with_a_probe_github_never_answers_is_a_502_and_stores_nothing(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forge_unreachable(monkeypatch, "unresolved")
+    resp = await _answer(app, "/api/v1/orgs", {"owner": "acme"})
+    assert resp.status_code == 502, f"a registration whose probe GitHub never answered: {resp.status_code} {resp.text}"
+    assert resp.json()["detail"] == "GitHub could not be reached"
+    assert app.state.organizations_repo.orgs == {}, "an owner whose probe got no answer was registered"
