@@ -235,6 +235,7 @@ class IssuesRepository:
         labels: str | None = None,
         search: str | None = None,
         top_level_only: bool = False,
+        parent_issue_id: str | None = None,
         sort: str = "created_at",
         order: str = "desc",
         limit: int = 50,
@@ -244,7 +245,8 @@ class IssuesRepository:
         """List issues with optional filters. Returns (rows, total_count).
 
         ``repos`` (lower-cased slugs) keeps only the issues of those repositories, before the page is cut and the
-        total counted, and counts only their children and jobs; None keeps every issue.
+        total counted, and counts only their children and jobs; None keeps every issue. ``labels`` is one label an
+        issue carries; ``parent_issue_id`` keeps that issue's children (#350, #351).
         """
         conditions: list[str] = []
         args: list[Any] = []
@@ -269,8 +271,10 @@ class IssuesRepository:
             args.append(repo)
             idx += 1
         if labels:
+            # The pool's jsonb codec encodes the list: a string of JSON would be encoded again, as a JSON string that
+            # no array contains (#350), and a label with a quote in it would change the JSON.
             conditions.append(f"i.labels @> ${idx}::jsonb")
-            args.append(f'["{labels}"]')
+            args.append([labels])
             idx += 1
         if search:
             conditions.append(f"(i.title ILIKE ${idx} OR i.body ILIKE ${idx})")
@@ -279,6 +283,10 @@ class IssuesRepository:
             idx += 1
         if top_level_only:
             conditions.append("i.parent_issue_id IS NULL")
+        if parent_issue_id is not None:
+            conditions.append(f"i.parent_issue_id = ${idx}")
+            args.append(parent_issue_id)
+            idx += 1
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
