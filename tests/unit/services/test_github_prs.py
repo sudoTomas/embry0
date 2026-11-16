@@ -838,3 +838,111 @@ async def test_a_raced_pr_github_will_not_list_is_said_as_the_422(no_backoff):
     assert "422 Validation Failed (A pull request already exists" in diagnostics.get("change_request_error", ""), (
         diagnostics
     )
+
+
+# ---- the first lookup asks for the job's base (#545) ----
+
+
+def _first_lookup_handler(*, listed: list[dict], default_branch: str = "main"):
+    """A GitHub whose open PRs from the branch are ``listed`` (the stand-in ignores the base filter, so a
+    PR into another base is listed too) and whose create opens #8."""
+    seen: dict = {"order": [], "lookups": [], "creates": []}
+
+    def handler(request):
+        path = request.url.path
+        if request.method == "GET" and path == "/repos/o/r":
+            seen["order"].append("repo")
+            return httpx.Response(200, json={"default_branch": default_branch})
+        if request.method == "GET" and path == "/repos/o/r/pulls":
+            seen["order"].append("lookup")
+            seen["lookups"].append(dict(request.url.params))
+            return httpx.Response(200, json=listed)
+        if request.method == "POST" and path == "/repos/o/r/pulls":
+            seen["creates"].append(_json.loads(request.content))
+            return httpx.Response(201, json={"html_url": "https://github.com/o/r/pull/8", "number": 8})
+        if request.method == "POST" and path.endswith("/labels"):
+            return httpx.Response(200, json=[{"name": n} for n in _json.loads(request.content)["labels"]])
+        if request.method == "GET" and path.endswith("/comments"):
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    return handler, seen
+
+
+_INTO_RELEASE = {"html_url": "https://github.com/o/r/pull/7", "number": 7, "base": {"ref": "release"}}
+
+
+@pytest.mark.asyncio
+async def test_the_first_lookup_takes_no_pr_into_another_base(no_backoff):
+    """A job targeting ``main`` whose branch has an open PR into ``release`` opens its own, into ``main``."""
+    handler, seen = _first_lookup_handler(listed=[_INTO_RELEASE])
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+    )
+    assert url == "https://github.com/o/r/pull/8", "the job adopted a PR into another base"
+    assert seen["lookups"][0] == {"state": "open", "head": "o:b", "base": "main"}, (
+        f"the first lookup does not ask for the PR into the job's base: {seen['lookups']}"
+    )
+    assert [c["base"] for c in seen["creates"]] == ["main"], seen["creates"]
+
+
+@pytest.mark.asyncio
+async def test_the_first_lookup_finds_the_pr_into_the_jobs_base(no_backoff):
+    into_main = dict(_INTO_RELEASE, number=9, html_url="https://github.com/o/r/pull/9", base={"ref": "main"})
+    handler, seen = _first_lookup_handler(listed=[_INTO_RELEASE, into_main])
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+    )
+    assert url == "https://github.com/o/r/pull/9", "the PR into the job's base is passed over"
+    assert seen["creates"] == [], "a duplicate was opened"
+
+
+@pytest.mark.asyncio
+async def test_without_a_target_the_default_branch_is_read_before_the_lookup(no_backoff):
+    handler, seen = _first_lookup_handler(listed=[_INTO_RELEASE], default_branch="trunk")
+    url = await ensure_pr_for_branch(
+        repo="o/r", branch="b", title="t", body="b", github_token="tok", http_client=_client(handler)
+    )
+    assert url == "https://github.com/o/r/pull/8"
+    assert seen["order"][:2] == ["repo", "lookup"], f"the lookup ran before the base was known: {seen['order']}"
+    assert seen["lookups"][0].get("base") == "trunk", seen["lookups"]
+    assert [c["base"] for c in seen["creates"]] == ["trunk"], seen["creates"]
+
+
+@pytest.mark.asyncio
+async def test_a_first_lookup_github_refuses_opens_nothing(no_backoff):
+    """A failed read is not "none open": no create, and the job says why, as before."""
+    seen: dict = {"creates": 0}
+
+    def handler(request):
+        if request.method == "GET" and request.url.path == "/repos/o/r/pulls":
+            return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+        if request.method == "POST":
+            seen["creates"] += 1
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+        diagnostics=diagnostics,
+    )
+    assert url is None and seen["creates"] == 0, (url, seen)
+    assert "403 Resource not accessible by integration" in diagnostics.get("change_request_error", ""), diagnostics

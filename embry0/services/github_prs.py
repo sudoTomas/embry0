@@ -194,10 +194,12 @@ async def ensure_pr_for_branch(
     completion; the orchestrator holds the token natively, so the fallback
     never depends on sandbox turns.
 
-    Checks for an existing open PR with the same head first — a developer
-    that opened the PR but failed to report ``pr_url`` must not produce a
-    duplicate (GitHub would 422 the create anyway; the lookup recovers the
-    URL instead). A PR opened between that lookup and the create gets that
+    Checks for an existing open PR from the same head into the base first —
+    a developer that opened the PR but failed to report ``pr_url`` must not
+    produce a duplicate (GitHub would 422 the create anyway; the lookup
+    recovers the URL instead). The base is resolved before that lookup, and a
+    PR from the branch into another base is not the job's (#545), as on
+    GitLab (#524). A PR opened between that lookup and the create gets that
     422, "A pull request already exists": the branch's open PR into the base
     is looked up again and is the job's, labelled like any other, as GitLab's
     opener does after a 409 (#525). NEVER raises: any failure logs and
@@ -246,26 +248,7 @@ async def ensure_pr_for_branch(
     owner = repo.split("/")[0]
     client = GitHubClient(default_token=github_token, http_client=http_client, credential_resolver=credential_resolver)
     try:
-        resp = await client.get(
-            f"/repos/{repo}/pulls",
-            repo=repo,
-            params={"state": "open", "head": f"{owner}:{branch}"},
-        )
-        resp.raise_for_status()
-        existing = resp.json()
-        if isinstance(existing, list) and existing:
-            url = str((existing[0] or {}).get("html_url") or "")
-            if url:
-                logger.info("pr_fallback_found_existing", repo=repo, branch=branch, url=url)
-                await _labels_or_say_so(
-                    client,
-                    repo=repo,
-                    pr_number=(existing[0] or {}).get("number"),
-                    labels=labels,
-                    diagnostics=diagnostics,
-                )
-                return url
-
+        # The base comes first: the job's PR is the branch's open PR into it, not one into another base (#545).
         base = target_branch or await client.get_repo_default_branch(repo)
         if branch == base:
             # Nothing to merge into itself — the repo's default happens to be
@@ -273,6 +256,15 @@ async def ensure_pr_for_branch(
             logger.info("pr_fallback_skipped_same_branch", repo=repo, branch=branch)
             _why(f"the branch {branch!r} is the repository's default branch, so there is nothing to merge")
             return None
+
+        existing = await _open_pr_into(client, repo=repo, owner=owner, branch=branch, base=base)
+        url = str((existing or {}).get("html_url") or "")
+        if existing is not None and url:
+            logger.info("pr_fallback_found_existing", repo=repo, branch=branch, base=base, url=url)
+            await _labels_or_say_so(
+                client, repo=repo, pr_number=existing.get("number"), labels=labels, diagnostics=diagnostics
+            )
+            return url
 
         create = await client.post(
             f"/repos/{repo}/pulls",
@@ -282,7 +274,12 @@ async def ensure_pr_for_branch(
         if create.status_code == 422 and _says_already_exists(create):
             # Opened between the lookup and the create (the developer, a person, another outcome of the job):
             # GitHub keys that 422 on head and base, so the one it means is the branch's open PR into ``base``.
-            again = await _open_pr_into(client, repo=repo, owner=owner, branch=branch, base=base)
+            try:
+                again = await _open_pr_into(client, repo=repo, owner=owner, branch=branch, base=base)
+            except Exception as exc:
+                # The create's 422 says why there is no PR; that is what the job records.
+                logger.warning("pr_fallback_relookup_failed", repo=repo, branch=branch, base=base, error=str(exc))
+                again = None
             recovered = str((again or {}).get("html_url") or "") or None
             if again is not None and recovered:
                 logger.info("pr_fallback_recovered_after_conflict", repo=repo, branch=branch, base=base, url=recovered)
@@ -326,22 +323,19 @@ def _says_already_exists(resp: httpx.Response) -> bool:
 async def _open_pr_into(
     client: GitHubClient, *, repo: str, owner: str, branch: str, base: str
 ) -> dict[str, Any] | None:
-    """The open pull request from ``branch`` into ``base``, or None, also when GitHub will not say (#525).
+    """The open pull request from ``branch`` into ``base``, or None (#525, #545).
 
     ``base`` is a filter of GitHub's own: the branch may have an open pull
-    request into another base, and that one is not the job's.
+    request into another base, and that one is not the job's. Raises when
+    GitHub will not answer, so a failed read is never taken for "none open".
     """
-    try:
-        resp = await client.get(
-            f"/repos/{repo}/pulls",
-            repo=repo,
-            params={"state": "open", "head": f"{owner}:{branch}", "base": base},
-        )
-        resp.raise_for_status()
-        found = resp.json()
-    except Exception as exc:
-        logger.warning("pr_fallback_relookup_failed", repo=repo, branch=branch, base=base, error=str(exc))
-        return None
+    resp = await client.get(
+        f"/repos/{repo}/pulls",
+        repo=repo,
+        params={"state": "open", "head": f"{owner}:{branch}", "base": base},
+    )
+    resp.raise_for_status()
+    found = resp.json()
     if not isinstance(found, list):
         return None
     for pr in found:
