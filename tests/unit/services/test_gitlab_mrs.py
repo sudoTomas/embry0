@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from embry0.execution.gitlab_client import GitLabClient
+from embry0.services.github_prs import DefaultBranchUnread
 from embry0.services.gitlab_mrs import (
     default_branch_for,
     ensure_mr_for_branch,
@@ -32,11 +33,42 @@ async def test_default_branch_is_read_not_assumed():
     assert await default_branch_for(_client(handler), REPO) == "FBT_Source"
 
 
-async def test_default_branch_falls_back_to_main():
-    def handler(request):
-        return httpx.Response(404, json={})
+@pytest.mark.parametrize(
+    ("answer", "said"),
+    [
+        (httpx.Response(404, json={"message": "404 Project Not Found"}), "404 Project Not Found"),
+        (httpx.Response(200, json={"id": 1}), "GitLab named no default branch"),
+    ],
+    ids=["refused", "unnamed"],
+)
+async def test_a_default_branch_gitlab_does_not_name_is_not_guessed(answer: httpx.Response, said: str):
+    """#546: no ``main`` stands in for it; the caller is told what GitLab answered."""
 
-    assert await default_branch_for(_client(handler), REPO) == "main"
+    def handler(request):
+        return answer
+
+    with pytest.raises(DefaultBranchUnread, match=said):
+        await default_branch_for(_client(handler), REPO)
+
+
+async def test_without_a_target_an_unread_default_branch_opens_no_merge_request():
+    """#546, as for any merge request that cannot be opened (#459): none is opened, and the job says why."""
+    calls: list[tuple[str, str]] = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        if request.url.path.endswith("/merge_requests"):
+            return httpx.Response(200, json=[]) if request.method == "GET" else httpx.Response(201, json={})
+        return httpx.Response(404, json={"message": "404 Project Not Found"})
+
+    diagnostics: dict = {}
+    url = await ensure_mr_for_branch(
+        repo=REPO, branch=BRANCH, title="t", body="b", client=_client(handler), diagnostics=diagnostics
+    )
+    assert url is None
+    assert not [c for c in calls if c[1].endswith("/merge_requests")], f"a merge request into a guess: {calls}"
+    said = diagnostics.get("change_request_error", "")
+    assert f"could not read the default branch of {REPO} from GitLab (404 Project Not Found)" in said, diagnostics
 
 
 async def test_existing_open_mr_is_reused_not_duplicated():
@@ -48,7 +80,9 @@ async def test_existing_open_mr_is_reused_not_duplicated():
             return httpx.Response(201, json={"web_url": "https://gitlab.com/new"})
         return httpx.Response(200, json=[{"web_url": "https://gitlab.com/existing/-/merge_requests/3"}])
 
-    url = await ensure_mr_for_branch(repo=REPO, branch=BRANCH, title="t", body="b", client=_client(handler))
+    url = await ensure_mr_for_branch(
+        repo=REPO, branch=BRANCH, title="t", body="b", client=_client(handler), target_branch="main"
+    )
     assert url == "https://gitlab.com/existing/-/merge_requests/3"
     assert posted["n"] == 0
 

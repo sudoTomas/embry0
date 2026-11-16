@@ -170,15 +170,15 @@ async def _forge_default(
     """The forge project's own default branch, or None when unavailable.
 
     Deliberately the RAW project reads (``GitLabClient.get_project`` /
-    ``GitHubClient.get_repo``) rather than the ``default_branch_for`` /
-    ``get_repo_default_branch`` wrappers those two forges keep for the MR/PR
-    create path. Both wrappers answer the literal ``"main"`` when the call
-    fails, which is indistinguishable here from a project that really does
-    default to ``main`` — so ``resolve_base_branch`` logged ``source="forge"``
-    for a guess, and that guess became the clone fetch ref, the review diff
-    base and the MR target for the whole job (Spec 1A §3.8). None means "the
-    forge did not answer", and the caller falls through to its own fallback
-    with an honest ``source="fallback"``.
+    ``GitHubClient.get_repo``). The wrappers the MR/PR create path used to
+    keep answered the literal ``"main"`` when the call failed, which is
+    indistinguishable here from a project that really does default to
+    ``main`` — so ``resolve_base_branch`` logged ``source="forge"`` for a
+    guess, and that guess became the clone fetch ref, the review diff base
+    and the MR target for the whole job (Spec 1A §3.8). Those openers now
+    open nothing instead (#546). None means "the forge did not answer", and
+    the caller falls through to its own fallback with an honest
+    ``source="fallback"``.
     """
     try:
         if forge == "gitlab" and gitlab_client is not None:

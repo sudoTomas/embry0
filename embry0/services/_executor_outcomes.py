@@ -261,10 +261,10 @@ async def _base_branch_for_change_request(self: IssueExecutor, repo: str, result
     resume carried it over from its checkpoint (#482, ``_RESUME_CARRIED_KEYS``).
     A checkpoint whose init left it empty still arrives without the key — and
     an absent value would reach the forge helpers as ``target_branch=None``,
-    whose GitHub side then resolves its own base through
-    ``get_repo_default_branch``, which answers "main" on
-    a 404, a rate limit or a network blip. On a repo whose integration branch
-    is not main that is a silently wrong target (§3.8). So re-resolve it here
+    which then read the repository's own default, and open nothing when the
+    forge will not say it (#546); they once answered "main" on a 404, a rate
+    limit or a network blip, a silently wrong target on a repo whose
+    integration branch is not main (§3.8). So re-resolve it here
     through the same resolver ``init_node`` used: it honours the repo
     preference first and logs which step answered. Never returns empty.
     """

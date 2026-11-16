@@ -265,6 +265,7 @@ async def test_ensure_pr_returns_existing_pr_without_creating():
         body="b",
         github_token="tok",
         http_client=_client(handler),
+        target_branch="main",
     )
     assert url == "https://github.com/o/r/pull/7"
 
@@ -359,6 +360,7 @@ async def test_ensure_pr_applies_labels_on_found_existing():
         labels=["embry0"],
         github_token="tok",
         http_client=_client(handler),
+        target_branch="main",
     )
     assert url == "https://github.com/o/r/pull/7"
     assert labeled == {"labels": ["embry0"]}
@@ -384,6 +386,7 @@ async def test_ensure_pr_label_failure_does_not_fail_the_pr():
         labels=["embry0"],
         github_token="tok",
         http_client=_client(handler),
+        target_branch="main",
     )
     assert url == "https://github.com/o/r/pull/7"
 
@@ -404,6 +407,7 @@ async def test_ensure_pr_without_labels_skips_the_labels_api():
         body="b",
         github_token="tok",
         http_client=_client(handler),
+        target_branch="main",
     )
     assert url == "https://github.com/o/r/pull/7"
 
@@ -1046,3 +1050,44 @@ async def test_a_slug_whose_owner_case_differs_from_github_s_still_finds_its_pr(
     )
     assert url == "https://github.com/o/r/pull/9", f"the slug's own PR is passed over: {url} {diagnostics}"
     assert seen["creates"] == 0, "a create was sent for a PR that is open"
+
+
+# ---- no target, and a default branch GitHub does not name (#546) ----
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "record", "said"),
+    [
+        (404, {"message": "Not Found"}, "404 Not Found"),
+        (200, {"name": "r"}, "GitHub named no default branch"),
+    ],
+    ids=["refused", "unnamed"],
+)
+async def test_without_a_target_an_unread_default_branch_opens_no_pr(no_backoff, status, record, said):
+    """No ``main`` stands in for the default (#546): no PR is looked up or opened, and the job says why (#459)."""
+    calls: list[tuple[str, str]] = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/repos/o/r":
+            return httpx.Response(status, json=record)
+        if request.url.path == "/repos/o/r/pulls":
+            return httpx.Response(200, json=[]) if request.method == "GET" else httpx.Response(201, json={})
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        diagnostics=diagnostics,
+    )
+    assert url is None
+    assert calls == [("GET", "/repos/o/r")], f"a PR was looked up or opened against a guess: {calls}"
+    assert f"could not read the default branch of o/r from GitHub ({said})" in diagnostics.get(
+        "change_request_error", ""
+    ), diagnostics

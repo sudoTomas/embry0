@@ -108,11 +108,10 @@ async def test_gitlab_missing_project_falls_back_to_main():
 
 
 async def test_gitlab_lookup_error_falls_back_to_main_rather_than_raising():
-    """Unlike GitHubClient.get_repo_default_branch, the GitLab path
-    (gitlab_mrs.default_branch_for -> GitLabClient.get_project) has no
-    internal try/except: a transport error propagates all the way out of
-    the client, and _forge_default is the only thing standing between it
-    and the caller."""
+    """The GitLab path (GitLabClient.get_project) has no internal
+    try/except: a transport error propagates all the way out of the
+    client, and _forge_default is the only thing standing between it and
+    the caller."""
 
     def handler(request):
         raise httpx.ConnectError("gitlab unreachable")
@@ -139,17 +138,17 @@ async def _source_of(**kwargs) -> tuple[str, str]:
 
 
 async def test_github_404_is_reported_as_a_fallback_not_as_the_forges_answer():
-    """Spec 1A §3.8. get_repo_default_branch answers the literal "main" on a
-    404, a rate limit or a network blip, so routing through it made every
-    failure look like a real answer — and that guess became the clone fetch
-    ref, the review diff base and the MR target for the whole job."""
+    """Spec 1A §3.8. A wrapper that answered the literal "main" on a 404, a
+    rate limit or a network blip made every failure look like a real answer
+    — and that guess became the clone fetch ref, the review diff base and
+    the MR target for the whole job."""
     branch, source = await _source_of(repo="o/r", forge="github", github_client=_github(None))
     assert (branch, source) == ("main", "fallback")
 
 
 async def test_gitlab_404_is_reported_as_a_fallback_not_as_the_forges_answer():
-    """Identical on GitLab: gitlab_mrs.default_branch_for has the same
-    "main"-on-failure contract, kept for the MR create path."""
+    """Identical on GitLab: the resolver reads the project itself, and
+    says when it fell back."""
     branch, source = await _source_of(repo=REPO, forge="gitlab", gitlab_client=_gitlab(None))
     assert (branch, source) == ("main", "fallback")
 
