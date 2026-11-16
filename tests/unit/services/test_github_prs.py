@@ -740,3 +740,309 @@ def test_a_pull_request_and_a_merge_request_read_alike() -> None:
         assert "only a person" not in labels_missing_note(["embry0"], "403 Forbidden", noun=noun)
         on = labels_on_note(["embry0", "human-merge-only"], noun=noun)
         assert on == f"{LABELS_NOTE_MARKER}\n\nThe labels `embry0`, `human-merge-only` are on this {noun} now.", on
+
+
+# ---- a pull request opened between the lookup and the create (#525) ----
+
+_EXISTS = {
+    "message": "Validation Failed",
+    "errors": [{"resource": "PullRequest", "code": "custom", "message": "A pull request already exists for o:b."}],
+}
+
+
+def _race_handler(*, create: tuple[int, dict], again: list[dict] | None = None, again_status: int = 200):
+    """A GitHub with no open PR for the branch at the lookup, whose create answers ``create``, and whose
+    next lookup finds ``again`` (as GitHub would, base filter or not: the stand-in ignores it)."""
+    seen: dict = {"lookups": [], "labels": [], "creates": 0}
+
+    def handler(request):
+        path = request.url.path
+        if request.method == "GET" and path == "/repos/o/r/pulls":
+            seen["lookups"].append(dict(request.url.params))
+            if len(seen["lookups"]) == 1:
+                return httpx.Response(200, json=[])
+            return httpx.Response(again_status, json=(again or []) if again_status == 200 else {"message": "boom"})
+        if request.method == "POST" and path == "/repos/o/r/pulls":
+            seen["creates"] += 1
+            return httpx.Response(create[0], json=create[1])
+        if request.method == "POST" and path.startswith("/repos/o/r/issues/") and path.endswith("/labels"):
+            seen["labels"].append((path, _json.loads(request.content)["labels"]))
+            return httpx.Response(200, json=[{"name": n} for n in _json.loads(request.content)["labels"]])
+        if request.method == "GET" and path.endswith("/comments"):
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    return handler, seen
+
+
+async def _open_raced(handler) -> tuple[str | None, dict]:
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        labels=["embry0", "human-merge-only"],
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+        diagnostics=diagnostics,
+    )
+    return url, diagnostics
+
+
+_RACED = {"html_url": "https://github.com/o/r/pull/7", "number": 7, "base": {"ref": "main"}}
+
+
+@pytest.mark.asyncio
+async def test_a_pr_opened_between_the_lookup_and_the_create_is_the_jobs(no_backoff):
+    """GitHub's 422 "already exists" means the PR is open now: find it, label it, and return it."""
+    handler, seen = _race_handler(create=(422, _EXISTS), again=[_RACED])
+    url, diagnostics = await _open_raced(handler)
+    assert url == "https://github.com/o/r/pull/7", f"the job loses the PR its branch has: {diagnostics}"
+    assert "change_request_error" not in diagnostics and "labels_missing" not in diagnostics, diagnostics
+    assert seen["labels"] == [("/repos/o/r/issues/7/labels", ["embry0", "human-merge-only"])], seen["labels"]
+    assert seen["creates"] == 1, f"the create was sent {seen['creates']} times"
+    assert seen["lookups"][1] == {"state": "open", "head": "o:b", "base": "main"}, (
+        f"the second lookup does not ask for the PR into the job's base: {seen['lookups']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_pr_into_another_base_is_not_taken_for_the_raced_one(no_backoff):
+    into_release = dict(_RACED, base={"ref": "release"})
+    handler, _seen = _race_handler(create=(422, _EXISTS), again=[into_release])
+    url, diagnostics = await _open_raced(handler)
+    assert url is None, "a PR into another base is not the job's"
+    assert "already exists" in diagnostics.get("change_request_error", ""), diagnostics
+
+
+@pytest.mark.asyncio
+async def test_another_422_is_a_refusal_as_before(no_backoff):
+    """No commits between the branches is not a race: nothing is looked up again, and the job says why."""
+    no_commits = {
+        "message": "Validation Failed",
+        "errors": [{"resource": "PullRequest", "code": "custom", "message": "No commits between main and b"}],
+    }
+    handler, seen = _race_handler(create=(422, no_commits), again=[_RACED])
+    url, diagnostics = await _open_raced(handler)
+    assert url is None and len(seen["lookups"]) == 1, (url, seen["lookups"])
+    assert "No commits between main and b" in diagnostics.get("change_request_error", ""), diagnostics
+
+
+@pytest.mark.asyncio
+async def test_a_raced_pr_github_will_not_list_is_said_as_the_422(no_backoff):
+    handler, seen = _race_handler(create=(422, _EXISTS), again_status=502)
+    url, diagnostics = await _open_raced(handler)
+    assert url is None and len(seen["lookups"]) >= 2, (url, seen["lookups"])
+    assert "422 Validation Failed (A pull request already exists" in diagnostics.get("change_request_error", ""), (
+        diagnostics
+    )
+
+
+# ---- the first lookup asks for the job's base (#545) ----
+
+
+def _first_lookup_handler(*, listed: list[dict], default_branch: str = "main"):
+    """A GitHub whose open PRs from the branch are ``listed`` (the stand-in ignores the base filter, so a
+    PR into another base is listed too) and whose create opens #8."""
+    seen: dict = {"order": [], "lookups": [], "creates": []}
+
+    def handler(request):
+        path = request.url.path
+        if request.method == "GET" and path == "/repos/o/r":
+            seen["order"].append("repo")
+            return httpx.Response(200, json={"default_branch": default_branch})
+        if request.method == "GET" and path == "/repos/o/r/pulls":
+            seen["order"].append("lookup")
+            seen["lookups"].append(dict(request.url.params))
+            return httpx.Response(200, json=listed)
+        if request.method == "POST" and path == "/repos/o/r/pulls":
+            seen["creates"].append(_json.loads(request.content))
+            return httpx.Response(201, json={"html_url": "https://github.com/o/r/pull/8", "number": 8})
+        if request.method == "POST" and path.endswith("/labels"):
+            return httpx.Response(200, json=[{"name": n} for n in _json.loads(request.content)["labels"]])
+        if request.method == "GET" and path.endswith("/comments"):
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    return handler, seen
+
+
+_INTO_RELEASE = {"html_url": "https://github.com/o/r/pull/7", "number": 7, "base": {"ref": "release"}}
+
+
+@pytest.mark.asyncio
+async def test_the_first_lookup_takes_no_pr_into_another_base(no_backoff):
+    """A job targeting ``main`` whose branch has an open PR into ``release`` opens its own, into ``main``."""
+    handler, seen = _first_lookup_handler(listed=[_INTO_RELEASE])
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+    )
+    assert url == "https://github.com/o/r/pull/8", "the job adopted a PR into another base"
+    assert seen["lookups"][0] == {"state": "open", "head": "o:b", "base": "main"}, (
+        f"the first lookup does not ask for the PR into the job's base: {seen['lookups']}"
+    )
+    assert [c["base"] for c in seen["creates"]] == ["main"], seen["creates"]
+
+
+@pytest.mark.asyncio
+async def test_the_first_lookup_finds_the_pr_into_the_jobs_base(no_backoff):
+    into_main = dict(_INTO_RELEASE, number=9, html_url="https://github.com/o/r/pull/9", base={"ref": "main"})
+    handler, seen = _first_lookup_handler(listed=[_INTO_RELEASE, into_main])
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+    )
+    assert url == "https://github.com/o/r/pull/9", "the PR into the job's base is passed over"
+    assert seen["creates"] == [], "a duplicate was opened"
+
+
+@pytest.mark.asyncio
+async def test_without_a_target_the_default_branch_is_read_before_the_lookup(no_backoff):
+    handler, seen = _first_lookup_handler(listed=[_INTO_RELEASE], default_branch="trunk")
+    url = await ensure_pr_for_branch(
+        repo="o/r", branch="b", title="t", body="b", github_token="tok", http_client=_client(handler)
+    )
+    assert url == "https://github.com/o/r/pull/8"
+    assert seen["order"][:2] == ["repo", "lookup"], f"the lookup ran before the base was known: {seen['order']}"
+    assert seen["lookups"][0].get("base") == "trunk", seen["lookups"]
+    assert [c["base"] for c in seen["creates"]] == ["trunk"], seen["creates"]
+
+
+@pytest.mark.asyncio
+async def test_a_first_lookup_github_refuses_opens_nothing(no_backoff):
+    """A failed read is not "none open": no create, and the job says why, as before."""
+    seen: dict = {"creates": 0}
+
+    def handler(request):
+        if request.method == "GET" and request.url.path == "/repos/o/r/pulls":
+            return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+        if request.method == "POST":
+            seen["creates"] += 1
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+        diagnostics=diagnostics,
+    )
+    assert url is None and seen["creates"] == 0, (url, seen)
+    assert "403 Resource not accessible by integration" in diagnostics.get("change_request_error", ""), diagnostics
+
+
+@pytest.mark.asyncio
+async def test_the_lookup_takes_only_an_open_pr_from_the_branch(no_backoff):
+    """GitHub's filters ask for it already; a listed PR that is closed or from another head is still passed over."""
+    closed = dict(
+        _INTO_RELEASE, number=10, html_url="https://github.com/o/r/pull/10", base={"ref": "main"}, state="closed"
+    )
+    other_head = dict(
+        _INTO_RELEASE,
+        number=11,
+        html_url="https://github.com/o/r/pull/11",
+        base={"ref": "main"},
+        head={"ref": "other"},
+    )
+    fork = dict(
+        _INTO_RELEASE,
+        number=12,
+        html_url="https://github.com/o/r/pull/12",
+        base={"ref": "main"},
+        head={"ref": "b", "label": "someone:b"},
+    )
+    mine = dict(
+        _INTO_RELEASE,
+        number=9,
+        html_url="https://github.com/o/r/pull/9",
+        base={"ref": "main"},
+        state="open",
+        head={"ref": "b", "label": "o:b"},
+    )
+    handler, seen = _first_lookup_handler(listed=[closed, other_head, fork, mine])
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+    )
+    assert url == "https://github.com/o/r/pull/9", "a closed PR, or one from another head, is taken for the job's"
+    assert seen["creates"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_slug_whose_owner_case_differs_from_github_s_still_finds_its_pr(no_backoff):
+    """GitHub's label carries the login in its own case; the slug as stored may not. The ref is still exact."""
+    seen: dict = {"creates": 0}
+
+    def handler(request):
+        if request.method == "GET" and request.url.path == "/repos/O/r/pulls":
+            return httpx.Response(
+                200,
+                json=[
+                    # Branch ``B`` is not branch ``b``: one PR says so by its ref, the other by its label.
+                    {
+                        "html_url": "https://github.com/o/r/pull/12",
+                        "number": 12,
+                        "state": "open",
+                        "base": {"ref": "main"},
+                        "head": {"ref": "B"},
+                    },
+                    {
+                        "html_url": "https://github.com/o/r/pull/13",
+                        "number": 13,
+                        "state": "open",
+                        "base": {"ref": "main"},
+                        "head": {"label": "o:B"},
+                    },
+                    {
+                        "html_url": "https://github.com/o/r/pull/9",
+                        "number": 9,
+                        "state": "open",
+                        "base": {"ref": "main"},
+                        "head": {"ref": "b", "label": "o:b"},
+                    },
+                ],
+            )
+        if request.method == "POST" and request.url.path == "/repos/O/r/pulls":
+            seen["creates"] += 1
+            return httpx.Response(422, json=_EXISTS)
+        if request.method == "POST" and request.url.path.endswith("/labels"):
+            return httpx.Response(200, json=[{"name": n} for n in _json.loads(request.content)["labels"]])
+        if request.method == "GET" and request.url.path.endswith("/comments"):
+            return httpx.Response(200, json=[])
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="O/r",
+        branch="b",
+        title="t",
+        body="b",
+        github_token="tok",
+        http_client=_client(handler),
+        target_branch="main",
+        diagnostics=diagnostics,
+    )
+    assert url == "https://github.com/o/r/pull/9", f"the slug's own PR is passed over: {url} {diagnostics}"
+    assert seen["creates"] == 0, "a create was sent for a PR that is open"
