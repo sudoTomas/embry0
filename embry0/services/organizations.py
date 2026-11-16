@@ -338,13 +338,29 @@ class _Client(Protocol):
 
 
 class ForgeOutage(Exception):
-    """The forge answered one of a probe's requests with a server error (5xx) or a rate limit (429), after the
-    client's own retries: that says the forge could not answer, not what the token may do. The probe stops there,
-    and nothing is stored or registered from it (#571). A 401, 403 or 404 is an answer, and is read as one."""
+    """The forge answered one of a probe's requests with a server error (5xx) or a rate limit (a 429, or a 4xx
+    carrying a rate-limit signal), after the client's own retries or when it asked to wait past the probe's deadline:
+    that says the forge could not answer, not what the token may do. The probe stops there, and nothing is stored or
+    registered from it (#571). A 401, a 404, or a 403 with no rate-limit signal is an answer, and is read as one.
 
-    def __init__(self, status: int) -> None:
+    ``rate_limited`` tells a rate limit from a server error; ``wait`` is the wait the forge advertised, in seconds,
+    or None when it named none."""
+
+    def __init__(self, status: int, *, rate_limited: bool = False, wait: float | None = None) -> None:
         super().__init__(f"the forge answered {status}")
-        self.status = status
+        self.status, self.rate_limited, self.wait = status, rate_limited, wait
+
+
+def _outage(response: Any) -> ForgeOutage | None:
+    """The :class:`ForgeOutage` ``response`` is, or None for an answer about access."""
+    from embry0.execution.forge_client import rate_limited, retry_after_seconds
+
+    status = getattr(response, "status_code", 200)
+    limited = status == 429 or (400 <= status < 500 and hasattr(response, "headers") and rate_limited(response))
+    if not limited and status < 500:
+        return None
+    wait = retry_after_seconds(response) if hasattr(response, "headers") else None
+    return ForgeOutage(status, rate_limited=limited, wait=wait if wait else None)
 
 
 class ProbeOutOfTime(Exception):
@@ -370,12 +386,18 @@ class _ProbeTime:
     def left(self) -> float:
         return max(0.0, self._end - self._clock())
 
-    async def sleep(self, delay: float) -> None:
-        """The client's wait before a retry. One longer than what is left of the deadline (a ``Retry-After`` or a
-        rate-limit reset further out) ends the probe at once: waiting less than the forge asked would only be
-        refused again."""
-        if delay >= self.left():
+    async def before_wait(self, response: Any, advertised: float | None, delay: float) -> None:
+        """Before the client waits to retry: a wait at least as long as what is left of the deadline (a
+        ``Retry-After`` or a rate-limit reset further out) ends the probe at once, as the outage it is, rather than
+        waiting less than the forge asked, which would only be refused again."""
+        if max(delay, advertised or 0.0) < self.left():
+            return
+        if response is None:
             raise ProbeOutOfTime()
+        raise _outage(response) or ForgeOutage(getattr(response, "status_code", 0), wait=advertised)
+
+    async def sleep(self, delay: float) -> None:
+        """The client's wait before a retry, on the probe's clock."""
         await self._wait(delay)
 
 
@@ -393,13 +415,10 @@ async def _ask(client: _Client, path: str, **kwargs: Any) -> Any:
     """``client.get``, raising :class:`ForgeOutage` for an answer that is an outage rather than about access: a 5xx,
     a 429, or a 4xx carrying a rate-limit signal (GitHub's primary and secondary rate limits come back as 403;
     :func:`embry0.execution.forge_client.rate_limited`)."""
-    from embry0.execution.forge_client import rate_limited
-
     response = await client.get(path, **kwargs)
-    status = getattr(response, "status_code", 200)
-    limited = 400 <= status < 500 and hasattr(response, "headers") and rate_limited(response)
-    if status == 429 or status >= 500 or limited:
-        raise ForgeOutage(status)
+    outage = _outage(response)
+    if outage is not None:
+        raise outage
     return response
 
 
@@ -441,7 +460,13 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     if client is None:
         from embry0.execution.github_client import GitHubClient
 
-        client = GitHubClient(default_token=token, owner_env_tokens=False, token_owner=owner, sleep=probe_time.sleep)
+        client = GitHubClient(
+            default_token=token,
+            owner_env_tokens=False,
+            token_owner=owner,
+            sleep=probe_time.sleep,
+            before_wait=probe_time.before_wait,
+        )
     return await _within(probe_time, _probe_github(owner, client))
 
 
@@ -514,6 +539,7 @@ async def probe_gitlab(
             owner_env_tokens=False,
             token_owner=owner,
             sleep=probe_time.sleep,
+            before_wait=probe_time.before_wait,
         )
     return await _within(probe_time, _probe_gitlab(owner, client))
 

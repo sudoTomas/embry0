@@ -175,6 +175,7 @@ class ForgeClient:
         base_url: str = "",
         max_attempts: int = 3,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        before_wait: Callable[[httpx.Response | None, float | None, float], Awaitable[None]] | None = None,
         verify: ssl.SSLContext | bool | str = True,
         credential_resolver: CredentialResolver | None = None,
         owner_env_tokens: bool = True,
@@ -188,7 +189,12 @@ class ForgeClient:
 
         ``token_owner`` is the owner such a token was chosen for (an organization's): a call naming a repository
         outside it is refused (:class:`ChosenTokenRefused`), since the token is that owner's to use, and with no
-        ``token_owner`` (a credential being verified, a listing's own token) every call naming one is."""
+        ``token_owner`` (a credential being verified, a listing's own token) every call naming one is.
+
+        ``before_wait`` is awaited before each wait for a retry with the response being retried (None after a
+        transport error), the wait the forge advertised (``Retry-After``, a rate-limit reset; uncapped, None when
+        it named none) and the wait about to be slept; one that raises ends the request with its exception. A
+        caller with a deadline of its own uses it to stop rather than wait (the organization probe, #571)."""
         self._default_token = default_token or ""
         self._owner_env_tokens = owner_env_tokens
         self._token_owner = token_owner.strip("/").lower() if token_owner else None
@@ -197,6 +203,7 @@ class ForgeClient:
         self._base_url = base_url.rstrip("/")
         self._max_attempts = max(1, max_attempts)
         self._sleep = sleep
+        self._before_wait = before_wait
         # Spec 1A §3.2: a self-managed forge behind a private CA needs a
         # context carrying that CA. Only used for the per-request client — a
         # caller-supplied ``http_client`` owns its own TLS configuration.
@@ -324,6 +331,8 @@ class ForgeClient:
         advertised = retry_after_seconds(response) if response is not None else None
         delay = advertised if advertised is not None else float(2 ** (attempt - 1))
         delay = min(delay, MAX_BACKOFF_SECONDS)
+        if self._before_wait is not None:
+            await self._before_wait(response, advertised, delay)
         logger.warning(
             "forge_request_retry",
             forge=self.forge,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from typing import Any, cast
 
 import httpx
@@ -189,22 +190,27 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
         return await org_service.probe_github(owner, token)
     except (httpx.RequestError, org_service.ForgeOutage, org_service.ProbeOutOfTime) as exc:
         name = "GitLab" if forge == "gitlab" else "GitHub"
-        status = exc.status if isinstance(exc, org_service.ForgeOutage) else None
+        outage = exc if isinstance(exc, org_service.ForgeOutage) else None
         # Classes, not text: the text can carry the request's URL.
         logger.warning(
             "organization_probe_unreachable",
             owner=owner,
             forge=forge,
             error=type(exc).__name__,
-            status=status,
+            status=outage.status if outage else None,
+            rate_limited=outage.rate_limited if outage else None,
+            wait=outage.wait if outage else None,
             cause=_root_cause(exc),
         )
-        if isinstance(exc, org_service.ProbeOutOfTime):
+        if outage is not None:
+            what = "rate limited the probe" if outage.rate_limited else "could not answer"
+            detail = f"{name} {what} ({outage.status})"
+            if outage.wait:
+                detail += f": it asks to wait {math.ceil(outage.wait)} s"
+        elif isinstance(exc, org_service.ProbeOutOfTime):
             detail = f"{name} did not answer within {org_service.PROBE_SECONDS:g} seconds"
-        elif status is None:
-            detail = f"{name} could not be reached"
         else:
-            detail = f"{name} could not answer ({status})"
+            detail = f"{name} could not be reached"
         raise HTTPException(status_code=502, detail=detail) from exc
 
 
