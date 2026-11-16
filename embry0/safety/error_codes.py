@@ -75,7 +75,7 @@ class ErrorCode(StrEnum):
 
     # spec 2026-09-29 — credential registry
     CREDENTIAL_MISSING = "ERR_CREDENTIAL_MISSING"  # no binding, no pool member and no env value for the role/provider; raised before a sandbox exists
-    CREDENTIAL_UNAVAILABLE = "ERR_CREDENTIAL_UNAVAILABLE"  # a pinned binding's credential is disabled or quarantined; the job must not bill another account
+    CREDENTIAL_UNAVAILABLE = "ERR_CREDENTIAL_UNAVAILABLE"  # a pinned binding's credential, or the key chosen for the job, is disabled, quarantined or cannot be read, or the registry could not be read at a step that may pin one; the job must not bill another account
     PROVIDER_RATE_LIMITED = (
         "ERR_PROVIDER_RATE_LIMITED"  # the account that served the job was rate-limited; CredentialHealth quarantines it
     )

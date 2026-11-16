@@ -91,6 +91,15 @@ class BindingValidationError(ValueError):
     """A binding's role, scope, kind, provider or pinned flag is inconsistent."""
 
 
+def pin_allowed(role: str, scope_kind: str) -> bool:
+    """Whether a binding of ``role`` at ``scope_kind`` may be pinned: an LLM binding at repo or owner scope.
+
+    The resolver reads the same rule: a registry error before it has read
+    every scope that may hold a pin fails the resolution instead of going on.
+    """
+    return role == "llm" and scope_kind in ("repo", "owner")
+
+
 def new_credential_id() -> str:
     return "cred-" + secrets.token_hex(6)
 
@@ -459,7 +468,7 @@ class CredentialsRepository:
                 raise BindingValidationError(
                     f"role '{role}' needs a credential of kind {sorted(KIND_FOR_ROLE[role])}, got '{cred['kind']}'"
                 )
-            if pinned and not (role == "llm" and scope_kind in ("repo", "owner")):
+            if pinned and not pin_allowed(role, scope_kind):
                 raise BindingValidationError("pinned is only valid on llm bindings at repo or owner scope")
             if role == "forge" and owner_forge and cred["provider"] != owner_forge:
                 raise BindingValidationError(
