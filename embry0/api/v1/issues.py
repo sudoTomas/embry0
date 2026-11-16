@@ -42,10 +42,14 @@ from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.helpers import emit_audit
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.answer_recorder import answers_context, ended_job_takes_no_answer, record_answer
-from embry0.services.issue_executor import IssueExecutor
+from embry0.services.issue_executor import ENDED_ISSUE_STATUSES, IssueExecutor
 from embry0.services.run_with import RunWith
 from embry0.storage.repositories.issue_inputs import IssueInputsRepository
-from embry0.storage.repositories.issues import InvalidIssueTransition, IssuesRepository
+from embry0.storage.repositories.issues import (
+    CANCELLABLE_ISSUE_STATUSES,
+    InvalidIssueTransition,
+    IssuesRepository,
+)
 from embry0.storage.repositories.jobs import JobsRepository, job_repository
 from embry0.storage.repositories.repos import UnregisteredRepoError
 from embry0.trackers import github_number_of
@@ -118,10 +122,11 @@ ANSWER_REACHES_BEYOND = (
 )
 #: The job statuses deleting an issue cancels.
 _ACTIVE_JOB_STATUSES = ("pending", "running", "awaiting_input", "paused")
-#: Why deleting an issue the key reads is refused when it reaches another repository.
+#: Why deleting an issue the key reads is refused when it reaches another repository. True of a child the delete
+#: cancels and of one already closed or cancelled, which it leaves as it is (#550), and says nothing of which.
 DELETE_REACHES_BEYOND = (
-    "the issue has a child issue or an active job in a repository the key does not cover, which deleting it "
-    "would cancel"
+    "the issue has a child issue or an active job in a repository the key does not cover, and deleting an issue "
+    "acts on its children and their active jobs"
 )
 
 
@@ -395,6 +400,17 @@ async def delete_issue(
         action="delete an issue",
         reason=DELETE_REACHES_BEYOND,
     )
+    # #550: and so is every issue it writes. One closed or cancelled already keeps its status, and every other status
+    # may be cancelled; only one the transitions do not know (a row written by hand, or by another release) is
+    # refused, before anything is cancelled or written, so a delete either completes or changes nothing.
+    for issue in (existing, *children):
+        status = str(issue.get("status"))
+        if status not in ENDED_ISSUE_STATUSES and status not in CANCELLABLE_ISSUE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The issue was not deleted: issue {issue['id']} has the status '{status}', which a delete "
+                "cannot cancel. Nothing was changed.",
+            )
 
     # #449: stop every active job through the executor, as POST
     # /jobs/{id}/cancel does — it cancels the task, destroys the sandbox and
@@ -406,20 +422,21 @@ async def delete_issue(
     for j in active:
         await executor.cancel_job(j["job_id"], actor=actor)
 
-    for child in children:
-        await issues.update(child["id"], status="cancelled")
-    await issues.update(issue_id, status="cancelled")
+    # One statement for the issue and its children, each by the status it has then: one closed or cancelled keeps it.
+    cancelled = await issues.cancel_cancellable(all_issue_ids)
 
+    # An audit row for each issue the delete cancelled, and none for one it left as it was.
     config = request.app.state.config
     db = request.app.state.db
-    await emit_audit(
-        db,
-        "issue.cancelled",
-        actor=actor,
-        details={"issue_id": issue_id},
-        audit_log_path=config.audit_log_path,
-        issue_id=issue_id,
-    )
+    for cancelled_id in cancelled:
+        await emit_audit(
+            db,
+            "issue.cancelled",
+            actor=actor,
+            details={"issue_id": cancelled_id},
+            audit_log_path=config.audit_log_path,
+            issue_id=cancelled_id,
+        )
 
 
 # ---------------------------------------------------------------------------

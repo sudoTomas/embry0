@@ -112,6 +112,11 @@ VALID_ISSUE_TRANSITIONS: dict[str, set[str]] = {
     },
 }
 
+#: The statuses an issue may be cancelled from: every one but ``closed`` and ``cancelled``.
+CANCELLABLE_ISSUE_STATUSES = frozenset(
+    str(status) for status, allowed in VALID_ISSUE_TRANSITIONS.items() if IssueStatus.CANCELLED in allowed
+)
+
 
 class InvalidIssueTransition(ValueError):
     """A status change :data:`VALID_ISSUE_TRANSITIONS` does not allow from the issue's status: the caller's to
@@ -510,6 +515,25 @@ class IssuesRepository:
                 f"SELECT i.id, i.tracker_key FROM issues i WHERE {stale}", tracker, older_than_minutes
             )
         return [dict(r) for r in rows]
+
+    async def cancel_cancellable(self, issue_ids: Collection[str]) -> list[str]:
+        """Cancel, in one statement, each issue in ``issue_ids`` whose status may change to ``cancelled``
+        (:data:`CANCELLABLE_ISSUE_STATUSES`); every other keeps its status. Returns the ids it cancelled.
+
+        A delete's write (#550): the status each issue has when it runs decides, so an issue closed since the caller
+        read it stays closed; and being one statement, it writes all of them or, failing, none.
+        """
+        if not issue_ids:
+            return []
+        rows = await self._db.fetch(
+            "UPDATE issues SET status = 'cancelled', updated_at = NOW() "
+            "WHERE id = ANY($1::text[]) AND status = ANY($2::text[]) RETURNING id",
+            sorted(set(issue_ids)),
+            sorted(CANCELLABLE_ISSUE_STATUSES),
+        )
+        cancelled = sorted(str(r["id"]) for r in rows)
+        logger.info("issues_cancelled", issue_ids=cancelled)
+        return cancelled
 
     async def get_children(self, parent_issue_id: str, *, repos: Sequence[str] | None = None) -> list[dict[str, Any]]:
         """Fetch all direct children of an issue. ``repos`` (lower-cased slugs) keeps only the children of those

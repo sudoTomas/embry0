@@ -318,14 +318,19 @@ def _delete_issue_request(executor):
     return request
 
 
-def _delete_issue_repos(job_rows, order):
+def _delete_issue_repos(job_rows, order, child_status="open"):
     async def _issue_update(issue_id, **kw):
         order.append(("issue", issue_id, kw.get("status")))
 
+    async def _cancel_cancellable(issue_ids):
+        order.append(("cancel_issues", list(issue_ids)))
+        return list(issue_ids)
+
     issues = MagicMock(
         get=AsyncMock(return_value={"id": "iss-1", "status": "in_progress"}),
-        get_children=AsyncMock(return_value=[{"id": "iss-child"}]),
+        get_children=AsyncMock(return_value=[{"id": "iss-child", "status": child_status}]),
         update=AsyncMock(side_effect=_issue_update),
+        cancel_cancellable=AsyncMock(side_effect=_cancel_cancellable),
     )
     jobs = MagicMock(
         list_all=AsyncMock(side_effect=lambda issue_id, **kw: (job_rows.get(issue_id, []), 0)),
@@ -361,8 +366,8 @@ async def test_delete_issue_cancels_every_active_job_through_the_executor(monkey
     )
     assert all(e[2] == "tester" for e in order if e[0] == "cancel_job")
     jobs.update.assert_not_awaited()
-    # cancel_job reopens the job's issue, so the issues are cancelled last.
-    assert order[-2:] == [("issue", "iss-child", "cancelled"), ("issue", "iss-1", "cancelled")], order
+    # cancel_job reopens the job's issue, so the issues are cancelled last, in one write.
+    assert order[-1] == ("cancel_issues", ["iss-1", "iss-child"]), order
 
 
 @pytest.mark.asyncio
@@ -411,4 +416,35 @@ async def test_delete_issue_stops_a_running_job_task_and_its_sandbox(monkeypatch
     assert task.cancelled(), "the running job's workflow task was left running"
     executor._sandbox.destroy.assert_awaited_once_with("sandbox-job-1")
     jobs.update.assert_any_await("job-1", status="cancelled")
-    assert order[-1] == ("issue", "iss-1", "cancelled"), order
+    assert order[-1] == ("cancel_issues", ["iss-1", "iss-child"]), order
+
+
+@pytest.mark.asyncio
+async def test_delete_refuses_a_status_no_transition_cancels_before_cancelling_any_job(monkeypatch):
+    """#550: a child in a status the transitions do not know is refused 409 before any job is cancelled or any issue
+    written; on main the jobs were cancelled first, and the delete then failed on that child."""
+    from fastapi import HTTPException
+
+    import embry0.api.v1.issues as issues_mod
+
+    monkeypatch.setattr(issues_mod, "emit_audit", AsyncMock())
+    monkeypatch.setattr(issues_mod, "_actor", lambda request: "tester")
+    order: list[tuple] = []
+    issues, jobs = _delete_issue_repos(
+        {"iss-1": [{"job_id": "job-running", "status": "running"}]}, order, child_status="archived"
+    )
+    executor = MagicMock(cancel_job=AsyncMock())
+
+    refused: HTTPException | None = None
+    try:
+        await issues_mod.delete_issue("iss-1", _delete_issue_request(executor), issues=issues, jobs=jobs)
+    except HTTPException as exc:
+        refused = exc
+
+    assert refused is not None and refused.status_code == 409, (
+        f"a child no transition cancels refuses the delete: {refused}, after {order}"
+    )
+    assert "iss-child" in refused.detail and "'archived'" in refused.detail, refused.detail
+    assert order == [] and not executor.cancel_job.await_count, (
+        f"a refused delete cancels no job and writes no issue: {order}, {executor.cancel_job.await_args_list}"
+    )

@@ -31,6 +31,12 @@ curl http://localhost:8200/api/v1/issues -H "X-Requested-With: XMLHttpRequest"
 # Get issue with children and jobs
 curl http://localhost:8200/api/v1/issues/{issue_id} -H "X-Requested-With: XMLHttpRequest"
 
+# Delete an issue: 204. Its active jobs, and its direct children's, are cancelled, and so are the
+# issue and those children, except any already closed or cancelled, which keep their status.
+# Every one of them is checked first: only a status no transition can cancel (one written outside
+# embry0) answers 409, with nothing changed.
+curl -X DELETE http://localhost:8200/api/v1/issues/{issue_id} -H "X-Requested-With: XMLHttpRequest"
+
 # Answer a triage question
 curl -X POST http://localhost:8200/api/v1/issues/{issue_id}/inputs/{input_id}/answer \
   -H "Content-Type: application/json" \
@@ -1128,10 +1134,10 @@ organization:
   `PUT /issues/{id}` moving an issue to another repository (the new one).
   Acting on another repository's issue answers as acting on an issue that
   does not exist (below). `DELETE /issues/{id}` on an issue the key covers
-  is refused when it would also cancel a child issue, or an active job, of
-  a repository the key does not cover; the refusal names the issue's own
-  repository and says why, never the other one, which the log line and the
-  audit row name;
+  is refused when the issue has a child issue, or an active job, of a
+  repository the key does not cover, whatever that child's status; the
+  refusal names the issue's own repository and says why, never the other
+  one, which the log line and the audit row name;
 - a write on the key's own item that would start work in a repository the
   key does not cover, refused the same way, naming only the item's own
   repository: `POST /cases/{id}/accept` on a finding whose retry runs on an
@@ -1321,10 +1327,11 @@ Everything below narrows to the repositories the key covers:
   (`POST /jobs/{id}/resume`, `/cancel`) keeps the link the job was made
   with, and its answer names no issue. Deleting an issue the key reads
   tells it one thing it does not otherwise read: the delete is refused,
-  naming only the issue's own repository, when it would cancel a child
-  issue or an active job of a repository the key does not cover. The MCP
-  `issue_list`, `issue_get`, `job_get`, `job_list`, `job_inputs` and
-  `job_answer` tools read through these routes, so they are narrowed too.
+  naming only the issue's own repository, when the issue has a child issue
+  or an active job of a repository the key does not cover, before the
+  delete looks at that child's status. The MCP `issue_list`, `issue_get`,
+  `job_get`, `job_list`, `job_inputs` and `job_answer` tools read through
+  these routes, so they are narrowed too.
   A key with an allowlist cannot create an issue with no repository, so it
   never reads one.
 - Healing cases. A case belongs to the repository it is filed on, its
