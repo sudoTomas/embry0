@@ -22,10 +22,8 @@ VERSION = 150
 JOBS, RUNS = 4000, 40000
 
 
-def test_the_job_repository_index_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_148.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must add the index on a job's repository"
+def test_the_job_repository_index_migration_is_listed_once() -> None:
+    """Being the last entry passed on to tests/unit/storage/test_migration_151.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

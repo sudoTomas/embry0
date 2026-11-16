@@ -137,6 +137,7 @@ async def test_a_model_account_a_job_may_run_with_reads_to_a_key_with_an_allowli
     )
 
 
+@pytest.mark.changes_schema
 async def test_the_host_s_credential_and_the_environment_s_name_nothing_to_a_key_with_an_allowlist(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -233,7 +234,9 @@ async def test_the_host_s_credential_and_the_environment_s_name_nothing_to_a_key
             for name, token in readers
         }
         # A pinned host credential that is disabled stops the forge's resolution. The API pins only a model account
-        # of a repository or an owner; the resolver still honours a pin stored on any binding.
+        # of a repository or an owner, and since migration 151 the table refuses any other pin; the resolver still
+        # honours one, as a table before it could hold.
+        await db.execute("ALTER TABLE credential_bindings DROP CONSTRAINT credential_bindings_pinned_check")
         await db.execute("UPDATE credential_bindings SET pinned = true WHERE credential_id = $1", host["id"])
         unavailable = {
             name: (

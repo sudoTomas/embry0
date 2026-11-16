@@ -106,6 +106,9 @@ async def _bind(
 
 async def _cases(db: DatabasePool) -> dict[str, tuple[str, str]]:
     """Each case: (the text the resolver before #445 stored, the text it writes now), made by resolving for real."""
+    # Some texts are of forge accounts pinned at a host or a repository, which the table held until migration 151
+    # unpinned them and refused any more: the bindings are stored as those releases could.
+    await db.execute("ALTER TABLE credential_bindings DROP CONSTRAINT IF EXISTS credential_bindings_pinned_check")
     secrets = FernetSecretsProvider(secret_key="tests-secret-key")
     other = FernetSecretsProvider(secret_key="another-key")
     # A model account that found nothing: the owner's disabled (its label has a parenthesis and a semicolon), the

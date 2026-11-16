@@ -44,7 +44,7 @@ Scope values are normalized on write by the API and the repository, and the reso
 - **repo**: the exact path, lowercased.
 - **host**: lowercased, and it must equal the forge's host (`github.com`, or the `GITLAB_URL` host); anything else is a 422.
 
-A bound credential that is `disabled` or `quarantined`, or whose secret cannot be decrypted, is skipped and the next step is tried. A **pinned** binding is not skipped: the job fails with `ERR_CREDENTIAL_UNAVAILABLE` instead of using another account. Pinning is accepted only on LLM bindings at repo or owner scope, so a forge-token binding is never pinned. When nothing matches, not even the environment, resolution fails with `ERR_CREDENTIAL_MISSING`.
+A bound credential that is `disabled` or `quarantined`, or whose secret cannot be decrypted, is skipped and the next step is tried. A **pinned** binding is not skipped: the job fails with `ERR_CREDENTIAL_UNAVAILABLE` instead of using another account. Pinning is accepted only on LLM bindings at repo or owner scope, so a forge-token binding is never pinned. The table holds the same rule (`credential_bindings_pinned_check`): an upgrade unpins any other binding stored pinned before it, logging each and the count (`migration_message`). When nothing matches, not even the environment, resolution fails with `ERR_CREDENTIAL_MISSING`.
 
 One binding per scope, role and provider. `acme/widgets` bound to the credential `alice` and `github:acme` bound to `acme-bot` means `acme/widgets` pushes as `alice` and every other `acme` repo as `acme-bot`.
 

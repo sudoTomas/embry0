@@ -94,8 +94,10 @@ class BindingValidationError(ValueError):
 def pin_allowed(role: str, scope_kind: str) -> bool:
     """Whether a binding of ``role`` at ``scope_kind`` may be pinned: an LLM binding at repo or owner scope.
 
-    The resolver reads the same rule: a registry error before it has read
-    every scope that may hold a pin fails the resolution instead of going on.
+    The table holds the same rule (``credential_bindings_pinned_check``,
+    migration 151), and the resolver reads it: a registry error before it has
+    read every scope that may hold a pin fails the resolution instead of
+    going on.
     """
     return role == "llm" and scope_kind in ("repo", "owner")
 

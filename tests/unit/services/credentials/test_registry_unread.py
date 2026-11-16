@@ -20,6 +20,7 @@ import structlog
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.credentials import resolver as resolver_module
 from embry0.services.credentials.resolver import CredentialResolver, CredentialUnavailableError
+from embry0.storage.database import StoredValueTooDeep
 from tests.unit.services.credentials.test_resolve_llm import LlmRepo, _row
 from tests.unit.services.credentials.test_resolver import FakeSecrets, _cfg
 from tests.unit.services.credentials.test_resolver import _row as _forge_row
@@ -148,7 +149,7 @@ CHOSEN = _row("chosen", "tok-chosen", provider="xai", kind="llm_api_key")
 
 
 class Ledger(LlmRepo):
-    """A registry whose reads of rows by id, or of a job's uses, can fail."""
+    """A registry whose reads of rows by id, or of a job's uses, can fail (``get_fails`` the exception, or True)."""
 
     def __init__(self, table=None, *, get_fails=False, uses_fail=False):
         super().__init__(table)
@@ -156,6 +157,8 @@ class Ledger(LlmRepo):
         self.uses_fail = uses_fail
 
     async def get(self, credential_id):
+        if isinstance(self.get_fails, Exception):
+            raise self.get_fails
         if self.get_fails:
             raise RuntimeError("db down")
         return await super().get(credential_id)
@@ -180,6 +183,14 @@ async def test_a_chosen_key_that_cannot_be_read_fails_the_job():
     with pytest.raises(CredentialUnavailableError) as raised:
         await r.resolve_llm_for_job("acme/app", ["xai"], job_id="job-1")
     assert str(raised.value) == f"the key chosen for this job ({CHOSEN['id']}) could not be read: RuntimeError"
+
+
+async def test_a_chosen_key_too_deep_to_read_fails_as_a_stored_value_does():
+    """A row too deep to read is no outage (#527): it fails the job as every run-path read of one does."""
+    repo = Ledger({("global", "", "llm", "xai"): [POOL]}, get_fails=StoredValueTooDeep("credentials"))
+    r = _with_pins(repo, {"job-1": {"xai": CHOSEN["id"]}})
+    with pytest.raises(StoredValueTooDeep):
+        await r.resolve_llm_for_job("acme/app", ["xai"], job_id="job-1")
 
 
 async def test_a_derived_sandbox_runs_on_the_job_s_chosen_key_when_its_uses_cannot_be_read():
@@ -219,3 +230,15 @@ async def test_a_key_chosen_for_the_derived_sandbox_itself_outranks_the_job_s():
     r = _with_pins(repo, {"job-1": {"xai": CHOSEN["id"]}, "job-1__bootstrap": {"xai": own["id"]}})
     got = await r.resolve_llm_for_job("acme/app", ["xai"], job_id="job-1__bootstrap", parent_job_id="job-1")
     assert got["xai"].id == own["id"]
+
+
+async def test_pins_that_cannot_be_read_fail_naming_only_the_error_s_kind():
+    """The job's error is read by whoever reads the job: it names the error's class, not the registry's own text."""
+
+    async def job_pins(job_id):
+        raise RuntimeError("connection to 10.0.0.5:5432 refused for role embry0")
+
+    r = CredentialResolver(Ledger(), FakeSecrets(), _cfg(), environ=dict(ENV), job_pins=job_pins)
+    with pytest.raises(CredentialUnavailableError) as raised:
+        await r.resolve_llm("acme/app", "xai", job_id="job-1")
+    assert str(raised.value) == "the key chosen for job job-1 could not be read: RuntimeError", str(raised.value)

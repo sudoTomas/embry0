@@ -414,8 +414,9 @@ class CredentialResolver:
         except Exception as exc:  # noqa: BLE001 — env serves on, unless a step left unread may pin
             logger.warning("credential_registry_error", repo=repo, forge=forge, error=str(exc)[:200])
             trace.append(f"registry error: {type(exc).__name__}")
-            # The store pins no forge binding (pin_allowed), so the environment serves on here; were one pinnable,
-            # a step left unread would fail the resolution as the model accounts' walk does.
+            # No forge binding is pinned (pin_allowed, the table's credential_bindings_pinned_check), so the
+            # environment serves on here; were one pinnable, a step left unread would fail the resolution as the
+            # model accounts' walk does.
             if any(pin_allowed("forge", kind) for kind, _ in steps[reached:]):
                 raise _registry_unread(repo, forge, trace, _shows_why(repo)) from exc
 
@@ -646,7 +647,9 @@ class CredentialResolver:
         try:
             pins = await self._job_pins(job_id)
         except Exception as exc:
-            raise CredentialUnavailableError(f"the key chosen for job {job_id} could not be read: {exc}") from exc
+            raise CredentialUnavailableError(
+                f"the key chosen for job {job_id} could not be read: {type(exc).__name__}"
+            ) from exc
         pinned = pins.get(provider)
         return str(pinned) if pinned else None
 

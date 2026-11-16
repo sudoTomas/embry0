@@ -468,7 +468,7 @@ async def test_a_lost_connection_before_start_fails_the_job_from_pending(client:
 # ---- a pinned credential too deep to read is not the deployment's (round 9) ----
 
 
-async def _pinned_credential(db: Any, *, kind: str, provider: str, host: str, role: str) -> Any:
+async def _pinned_credential(db: Any, *, kind: str, provider: str, host: str, role: str, pinned: bool = True) -> Any:
     from embry0.storage.encryption import FernetSecretsProvider
 
     secrets = FernetSecretsProvider(secret_key="test-secret-key")
@@ -485,24 +485,29 @@ async def _pinned_credential(db: Any, *, kind: str, provider: str, host: str, ro
     )
     await db.execute(
         "INSERT INTO credential_bindings (scope_kind, scope_value, role, provider, credential_id, created_by, pinned) "
-        "VALUES ('repo', 'acme/widgets', $1, $2, 'cred-0001', 'someone', true)",
+        "VALUES ('repo', 'acme/widgets', $1, $2, 'cred-0001', 'someone', $3)",
         role,
         provider,
+        pinned,
     )
     await db.execute("UPDATE credentials SET metadata = $1::text::jsonb WHERE id = 'cred-0001'", _doc({}))
     return secrets
 
 
-async def test_a_pinned_forge_credential_too_deep_to_read_fails_rather_than_taking_the_environments(
+async def test_a_forge_credential_too_deep_to_read_fails_rather_than_taking_the_environments(
     client: AsyncClient,
 ) -> None:
+    """No forge binding is pinned (the table's credential_bindings_pinned_check): a bound one too deep to read is
+    unknown, not absent, all the same."""
     from types import SimpleNamespace
 
     from embry0.services.credentials.resolver import CredentialResolver
     from embry0.storage.repositories.credentials import CredentialsRepository
 
     db = client.app.state.db  # type: ignore[attr-defined]
-    secrets = await _pinned_credential(db, kind="forge_token", provider="github", host="github.com", role="forge")
+    secrets = await _pinned_credential(
+        db, kind="forge_token", provider="github", host="github.com", role="forge", pinned=False
+    )
     resolver = CredentialResolver(
         CredentialsRepository(db),
         secrets,
