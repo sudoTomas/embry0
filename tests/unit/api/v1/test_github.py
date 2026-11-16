@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 
 from embry0.api.app import create_app
 from embry0.api.v1 import github as github_module
@@ -174,6 +175,8 @@ class _FakeClient:
 
     async def get(self, url, params=None):
         value = self.responses_by_token[self._token]
+        if isinstance(value, BaseException):
+            raise value
         if isinstance(value, list):
             resp = value[min(self._page, len(value) - 1)]
             self._page += 1
@@ -440,3 +443,56 @@ async def test_one_failing_credential_is_skipped_and_reported_by_label(app_with_
     assert "ghp_alice_placeholder" not in resp.text
     assert "ghp_revoked_placeholder" not in str(github_module._DISCOVERY_CACHE)
     assert "ghp_alice_placeholder" not in str(github_module._DISCOVERY_CACHE)
+
+
+async def _answer(app, path: str) -> httpx.Response:
+    """What a caller is answered: an exception the app does not handle is its 500, not raised into the test."""
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        return await http.get(path)
+
+
+_UNREACHABLE = {
+    "refused": httpx.ConnectError("connection refused"),
+    "timeout": httpx.ReadTimeout("timed out"),
+}
+
+
+@pytest.mark.parametrize("error", list(_UNREACHABLE), ids=list(_UNREACHABLE))
+@pytest.mark.asyncio
+async def test_an_account_github_never_answers_is_reported_by_label(app_with_registry, monkeypatch, error):
+    """#340: one account's listing that got no answer (a refused connection, a timeout) failed the whole request
+    with a 500; it is reported like one GitHub refused, by label, and the other accounts' repositories are listed."""
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "alice", "ghp_alice_placeholder")
+    await _add_github_credential(app_with_registry, "offline", "ghp_offline_placeholder")
+    _FakeClient.responses_by_token = {
+        "ghp_alice_placeholder": _FakeResponse([_repo("acme/widgets")]),
+        "ghp_offline_placeholder": _UNREACHABLE[error],
+    }
+    with capture_logs() as logs:
+        resp = await _answer(app_with_registry, "/api/v1/github/discoverable-repos")
+    assert resp.status_code == 200, f"one account's {error} fails the whole listing: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert body["failed"] == ["offline"], f"the account that could not be listed is named: {body['failed']}"
+    assert [r["full_name"] for r in body["repos"]] == ["acme/widgets"], body["repos"]
+    (logged,) = [e for e in logs if e["event"] == "github_repos_fetch_failed"]
+    assert (logged["label"], logged["status"], logged["error"]) == (
+        "offline",
+        None,
+        type(_UNREACHABLE[error]).__name__,
+    ), logged
+
+
+@pytest.mark.asyncio
+async def test_no_account_github_answers_is_a_502(app_with_registry, monkeypatch):
+    """Every account unreachable: nothing to list, and GitHub's own status is not there to pass on."""
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "offline", "ghp_offline_placeholder")
+    _FakeClient.responses_by_token = {"ghp_offline_placeholder": httpx.ConnectError("connection refused")}
+    resp = await _answer(app_with_registry, "/api/v1/github/discoverable-repos")
+    assert (resp.status_code, resp.json().get("detail")) == (502, "GitHub could not be reached"), (
+        f"no account reachable answers 502: {resp.status_code} {resp.text}"
+    )

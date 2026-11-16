@@ -152,8 +152,11 @@ async def _fetch_all_repo_entries(
     labels whose listings raised.
 
     One failing credential (e.g. an expired PAT) must not hide the repos the
-    others can see — log it, record its label, and continue. Raise only when
-    nothing succeeded. An empty entry list is "nothing is configured".
+    others can see — log it, record its label, and continue. That holds for a
+    listing GitHub refused (an HTTP status) and for one that never got an
+    answer (a timeout, a refused connection: #340). Raise only when nothing
+    succeeded: with GitHub's status when it answered one, else 502. An empty
+    entry list is "nothing is configured".
     """
     if not entries:
         raise HTTPException(status_code=400, detail="No GitHub token configured")
@@ -162,19 +165,26 @@ async def _fetch_all_repo_entries(
     truncated_env_keys: list[str] = []
     failed: list[str] = []
     last_error: httpx.HTTPStatusError | None = None
+    unreachable: httpx.RequestError | None = None
     succeeded = False
     for entry in entries:
         try:
             raw, truncated = await _fetch_repos_for_token(entry.key, entry.token, per_page=per_page, sort=sort)
-        except httpx.HTTPStatusError as exc:
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            # The exception's class, not its text: the text can carry the request's URL.
             logger.warning(
                 "github_repos_fetch_failed",
-                status=exc.response.status_code,
+                status=status,
+                error=type(exc).__name__,
                 env_key=entry.key,
                 label=entry.label,
             )
             failed.append(entry.label)
-            last_error = exc
+            if isinstance(exc, httpx.HTTPStatusError):
+                last_error = exc
+            else:
+                unreachable = exc
             continue
         succeeded = True
         if truncated:
@@ -184,6 +194,8 @@ async def _fetch_all_repo_entries(
             by_name.setdefault(r["full_name"], (shown, r))
 
     if not succeeded:
+        if last_error is None and unreachable is not None:
+            raise HTTPException(status_code=502, detail="GitHub could not be reached") from unreachable
         status = last_error.response.status_code if last_error else 400
         raise HTTPException(status_code=status, detail=f"GitHub API returned {status}") from last_error
 

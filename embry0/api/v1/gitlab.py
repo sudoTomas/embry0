@@ -139,8 +139,11 @@ async def _projects_for_entries(
 ) -> tuple[dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]], list[str]]:
     """One client per entry. The entry is the token — no resolver.
 
-    First path wins. A listing that raises is recorded by label and skipped.
-    Raise only when every entry raised, matching the GitHub discovery route.
+    First path wins. A listing that raises is recorded by label and skipped,
+    whether GitLab refused it (an HTTP status) or never answered (a timeout,
+    a refused connection: #340). Raise only when every entry raised, matching
+    the GitHub discovery route: with GitLab's status when it answered one,
+    else 502.
     ``strict=True`` makes a non-200 raise; the default paginator would return
     the pages it already had and the dead token would look like an empty list.
     """
@@ -152,6 +155,7 @@ async def _projects_for_entries(
     by_path: dict[str, tuple[ForgeCredentialEntry, dict[str, Any]]] = {}
     failed: list[str] = []
     last_error: httpx.HTTPStatusError | None = None
+    unreachable: httpx.RequestError | None = None
     succeeded = False
     for entry in entries:
         try:
@@ -165,14 +169,15 @@ async def _projects_for_entries(
                 max_pages=_MAX_PAGES,
                 strict=True,
             )
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "gitlab_projects_fetch_failed",
-                status=exc.response.status_code,
-                label=entry.label,
-            )
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            # The exception's class, not its text: the text can carry the request's URL.
+            logger.warning("gitlab_projects_fetch_failed", status=status, error=type(exc).__name__, label=entry.label)
             failed.append(entry.label)
-            last_error = exc
+            if isinstance(exc, httpx.HTTPStatusError):
+                last_error = exc
+            else:
+                unreachable = exc
             continue
         succeeded = True
         shown = entry.without_token()
@@ -184,6 +189,8 @@ async def _projects_for_entries(
                 by_path[path] = (shown, raw)
 
     if not succeeded:
+        if last_error is None and unreachable is not None:
+            raise HTTPException(status_code=502, detail="GitLab could not be reached") from unreachable
         status = last_error.response.status_code if last_error else 400
         raise HTTPException(status_code=status, detail=f"GitLab API returned {status}") from last_error
     return by_path, failed
