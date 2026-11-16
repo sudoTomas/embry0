@@ -589,6 +589,8 @@ class _OutageForge(FakeForge):
     async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
         if self.created is not None:
             self.posts.append((path, json))
+            if isinstance(self.created, Exception):
+                raise self.created
             return self.created
         return await super().post(path, json=json, **kwargs)
 
@@ -613,11 +615,14 @@ async def test_a_hook_action_during_an_outage_fails_naming_it(forge: _OutageForg
     assert [(r.repo, r.outcome, r.detail) for r in results] == [("acme/widgets", "failed", detail)], results
 
 
+@pytest.mark.parametrize("on", ["listing", "create"])
 @pytest.mark.asyncio
-async def test_a_hook_action_github_never_answers_fails_naming_it() -> None:
+async def test_a_hook_action_github_never_answers_fails_naming_it(on: str) -> None:
     import httpx
 
-    results = await run_action(
-        context(forge_client=_OutageForge(listing=httpx.ConnectError("connection refused"))), "hook", ["acme/widgets"]
+    refused = httpx.ConnectError("connection refused")
+    forge = _OutageForge(listing=refused) if on == "listing" else _OutageForge(created=refused)
+    results = await run_action(context(forge_client=forge), "hook", ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [("failed", "GitHub could not be reached")], (
+        f"GitHub not reached on the {on}: {results}"
     )
-    assert [(r.outcome, r.detail) for r in results] == [("failed", "GitHub could not be reached")], results

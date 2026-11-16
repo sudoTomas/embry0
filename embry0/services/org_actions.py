@@ -200,15 +200,18 @@ async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: b
         return ActionResult(repo, "already", f"a webhook already posts to {origin}")
     if dry_run:
         return ActionResult(repo, "done", f"would create a webhook posting to {ctx.webhook_url}")
-    created = await ctx.forge_client.post(
-        f"/repos/{repo}/hooks",
-        json={
-            "name": "web",
-            "active": True,
-            "events": list(GITHUB_HOOK_EVENTS),
-            "config": {"url": ctx.webhook_url, "content_type": "json", "secret": ctx.webhook_secret},
-        },
-    )
+    try:
+        created = await ctx.forge_client.post(
+            f"/repos/{repo}/hooks",
+            json={
+                "name": "web",
+                "active": True,
+                "events": list(GITHUB_HOOK_EVENTS),
+                "config": {"url": ctx.webhook_url, "content_type": "json", "secret": ctx.webhook_secret},
+            },
+        )
+    except httpx.RequestError:
+        return ActionResult(repo, "failed", "GitHub could not be reached")
     outage = outage_of(created)
     if outage is not None:
         return ActionResult(repo, "failed", outage.says("GitHub", what="the request"))
