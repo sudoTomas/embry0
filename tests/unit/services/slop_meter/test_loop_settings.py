@@ -285,7 +285,12 @@ def _calls(forges: Mapping[str, Any]) -> dict[str, int]:
     return {name: len(forge.calls) for name, forge in forges.items()}
 
 
-async def test_an_organization_s_budget_narrows_only_its_own_share_of_a_credential() -> None:
+async def test_an_organization_s_budget_narrows_only_its_own_share_of_a_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit.services.slop_meter.test_loop import _pages_of_two
+
+    _pages_of_two(monkeypatch)
     acme, globex = "acme/app", "globex/app"
     records, order = fakes._history(2)
 
