@@ -1091,3 +1091,40 @@ async def test_without_a_target_an_unread_default_branch_opens_no_pr(no_backoff,
     assert f"could not read the default branch of o/r from GitHub ({said})" in diagnostics.get(
         "change_request_error", ""
     ), diagnostics
+
+
+@pytest.mark.asyncio
+async def test_a_refused_comments_read_posts_no_second_labels_comment(no_backoff):
+    """#536: the PR carries the labels comment, GitHub refuses its labels and every read of its comments."""
+    calls: list[tuple[str, str]] = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        path = request.url.path
+        if request.method == "GET" and path == "/repos/o/r/pulls":
+            return httpx.Response(200, json=[{"number": 7, "html_url": "https://github.com/o/r/pull/7"}])
+        if request.method == "POST" and path == "/repos/o/r/issues/7/labels":
+            return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+        if request.method == "GET" and path == "/repos/o/r/issues/7/comments":
+            return httpx.Response(502, json={"message": "Bad Gateway"})
+        if request.method == "POST" and path == "/repos/o/r/issues/7/comments":
+            return httpx.Response(201, json={"id": 31})
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    diagnostics: dict = {}
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="embry0/iss-abc-fix",
+        title="t",
+        body="b",
+        github_token="tok",
+        target_branch="main",
+        labels=["embry0", "human-merge-only"],
+        diagnostics=diagnostics,
+        http_client=_client(handler),
+    )
+    assert url == "https://github.com/o/r/pull/7"
+    posted = [c for c in calls if c == ("POST", "/repos/o/r/issues/7/comments")]
+    assert posted == [], f"a second labels comment was posted beside the one GitHub would not show: {calls}"
+    assert diagnostics.get("labels_noted") is False, diagnostics
+    assert diagnostics.get("labels_missing") == ["embry0", "human-merge-only"], diagnostics

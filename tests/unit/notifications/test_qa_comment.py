@@ -10,6 +10,7 @@ import pytest
 from embry0.execution.github_client import GitHubClient
 from embry0.notifications.qa_comment import (
     COMMENT_MARKER,
+    edit_sticky_comment,
     render_qa_comment,
     upsert_sticky_comment,
 )
@@ -330,3 +331,93 @@ async def test_upsert_uses_the_per_owner_token(monkeypatch):
         client=_client(handler),
     )
     assert seen["auth"] == "Bearer tok-org"
+
+
+# ---- a comments read GitHub refuses is not "no comment" (#536) ----
+
+
+def _refusing(seen: dict):
+    """A GitHub whose every read of the comments answers 502 (the PR already carries the marked comment)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.setdefault("calls", []).append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(502, json={"message": "Bad Gateway"})
+        return httpx.Response(201, json={"id": 99})
+
+    return handler
+
+
+def _no_sleep_client(handler) -> GitHubClient:
+    from unittest.mock import AsyncMock
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return GitHubClient(default_token="tok", http_client=http, sleep=AsyncMock())
+
+
+async def test_a_refused_read_posts_no_second_comment():
+    seen: dict = {}
+    with pytest.raises(httpx.HTTPStatusError):
+        await upsert_sticky_comment(
+            github_token="tok", repo="org/repo", issue_number=42, body="b", client=_no_sleep_client(_refusing(seen))
+        )
+    posted = [c for c in seen["calls"] if c[0] != "GET"]
+    assert posted == [], f"a refused read was taken for no comment: {seen['calls']}"
+
+
+async def test_a_refused_read_is_not_said_to_find_no_comment():
+    """``edit_sticky_comment`` answers False only when there is no marked comment; a refused read raises."""
+    seen: dict = {}
+    with pytest.raises(httpx.HTTPStatusError):
+        await edit_sticky_comment(
+            _no_sleep_client(_refusing(seen)), repo="org/repo", issue_number=42, body="b", marker=COMMENT_MARKER
+        )
+    assert [c for c in seen["calls"] if c[0] != "GET"] == []
+
+
+async def test_a_marker_before_a_refused_page_is_still_the_comment_edited():
+    """The marker on page 1, page 2 refused: page 2 is never needed, so the comment is edited, not refused."""
+    seen: dict = {"calls": []}
+    marked = {"id": 7, "body": f"{COMMENT_MARKER}\nold"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        seen["calls"].append((request.method, page))
+        if request.method == "GET" and page == 1:
+            link = f'<https://api.github.com{request.url.path}?page=2>; rel="next"'
+            return httpx.Response(200, json=[{"id": 1, "body": "other"}, marked], headers={"Link": link})
+        if request.method == "GET":
+            return httpx.Response(502, json={"message": "Bad Gateway"})
+        if request.method == "PATCH":
+            seen["patched"] = request.url.path
+            return httpx.Response(200, json={"id": 7})
+        raise AssertionError(f"unexpected {request.method} {request.url}")
+
+    comment_id = await upsert_sticky_comment(
+        github_token="tok", repo="org/repo", issue_number=42, body="new", client=_no_sleep_client(handler)
+    )
+    assert comment_id == 7, "the marked comment on page 1 is not the one edited"
+    assert seen.get("patched") == "/repos/org/repo/issues/comments/7", seen
+    assert [c for c in seen["calls"] if c == ("GET", 2)] == [], "a page past the marker was read"
+    assert [c for c in seen["calls"] if c[0] == "POST"] == [], "a second comment was posted"
+
+
+async def test_a_refused_page_before_the_marker_raises():
+    """The marker on page 2, page 2 refused: it cannot be known whether a comment exists, so nothing is posted."""
+    seen: dict = {"calls": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        seen["calls"].append((request.method, page))
+        if request.method == "GET" and page == 1:
+            link = f'<https://api.github.com{request.url.path}?page=2>; rel="next"'
+            return httpx.Response(200, json=[{"id": 1, "body": "other"}], headers={"Link": link})
+        if request.method == "GET":
+            return httpx.Response(502, json={"message": "Bad Gateway"})
+        return httpx.Response(201, json={"id": 99})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await upsert_sticky_comment(
+            github_token="tok", repo="org/repo", issue_number=42, body="new", client=_no_sleep_client(handler)
+        )
+    assert [c for c in seen["calls"] if c[0] != "GET"] == [], seen["calls"]
