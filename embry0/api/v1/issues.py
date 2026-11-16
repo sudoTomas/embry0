@@ -444,8 +444,28 @@ async def delete_issue(
     # then (one closed or cancelled keeps it), and for a key with a list only in the repositories it covers: the jobs'
     # cancels take a while, and an issue can move out from under the issue, or to another repository, meanwhile.
     cancelled = await issues.cancel_subtree(
-        issue_id, all_issue_ids, max_depth=MAX_DELETE_DEPTH, repos=covered_slugs(request)
+        issue_id,
+        all_issue_ids,
+        max_depth=MAX_DELETE_DEPTH,
+        max_count=MAX_DELETE_DESCENDANTS,
+        repos=covered_slugs(request),
     )
+    # An issue the check found cancellable but the write left (it moved out from under the issue, or to a repository
+    # the key does not cover, or was closed, while the jobs were cancelled): the 204 says nothing of it, so the log
+    # does, for whoever finds it open with its jobs cancelled.
+    written = set(cancelled)
+    left = sorted(
+        str(i["id"])
+        for i in (existing, *descendants)
+        if str(i.get("status")) in CANCELLABLE_ISSUE_STATUSES and str(i["id"]) not in written
+    )
+    if left:
+        logger.warning(
+            "issue_delete_left_issues",
+            issue_id=issue_id,
+            left=left,
+            hint="checked, then moved out from under the issue, to another repository, or closed before the write",
+        )
 
     # An audit row for each issue the delete cancelled, and none for one it left as it was.
     config = request.app.state.config

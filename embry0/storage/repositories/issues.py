@@ -517,15 +517,22 @@ class IssuesRepository:
         return [dict(r) for r in rows]
 
     async def cancel_subtree(
-        self, root: str, checked: Collection[str], *, max_depth: int, repos: Sequence[str] | None = None
+        self,
+        root: str,
+        checked: Collection[str],
+        *,
+        max_depth: int,
+        max_count: int,
+        repos: Sequence[str] | None = None,
     ) -> list[str]:
         """Cancel, in one statement, each issue of ``checked`` that is still ``root`` or under it, whose status may
         change to ``cancelled`` (:data:`CANCELLABLE_ISSUE_STATUSES`) and, with ``repos`` (lower-cased slugs), whose
         repository is one of them; every other keeps its status. Returns the ids it cancelled.
 
         A delete's write (#550, #563). The delete checks the subtree, then cancels its jobs, which takes a while,
-        then writes: the statement walks the subtree again from ``root`` (``max_depth`` levels, not following a
-        cycle), so an issue moved out from under it meanwhile is not written; it writes only issues the delete
+        then writes: the statement walks the subtree again from ``root`` (``max_depth`` levels and ``max_count``
+        issues under it, as the check read it, not following a cycle), so an issue moved out from under it meanwhile
+        is not written; it writes only issues the delete
         checked, so one moved in is not either; ``repos`` keeps a key with a repository allowlist from writing an
         issue that moved to a repository it does not cover. The status each issue has when it runs decides, so an
         issue closed since the caller read it stays closed; and being one statement, it writes all of them or,
@@ -543,7 +550,7 @@ class IssuesRepository:
                 WHERE t.depth < $2 AND NOT i.id = ANY(t.path)
             )
             UPDATE issues SET status = 'cancelled', updated_at = NOW()
-            WHERE id IN (SELECT id FROM tree) AND id = ANY($3::text[]) AND status = ANY($4::text[])
+            WHERE id IN (SELECT id FROM tree LIMIT $6) AND id = ANY($3::text[]) AND status = ANY($4::text[])
               AND ($5::text[] IS NULL OR lower(repo) = ANY($5::text[]))
             RETURNING id
             """,
@@ -552,6 +559,7 @@ class IssuesRepository:
             sorted(set(checked)),
             sorted(CANCELLABLE_ISSUE_STATUSES),
             _repos_arg(repos),
+            max_count + 1,
         )
         cancelled = sorted(str(r["id"]) for r in rows)
         logger.info("issues_cancelled", issue_ids=cancelled)

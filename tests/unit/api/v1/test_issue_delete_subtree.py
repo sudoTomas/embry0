@@ -15,6 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from structlog.testing import capture_logs
 
 import embry0.api.v1.issues as issues_api
 
@@ -179,7 +180,7 @@ async def test_an_issue_moved_out_from_under_the_issue_meanwhile_is_not_cancelle
     another issue meanwhile is no longer this delete's: the write walks the subtree again and leaves it."""
     root = await _issue(api_client)
     elsewhere = await _issue(api_client)
-    await _under(api_client, {"kid": (root, "open"), "grandkid": ("kid", "open")})
+    await _under(api_client, {"kid": (root, "open"), "grandkid": ("kid", "open"), "done": (root, "closed")})
     await _job(api_client, "job-of-the-root", root, "running")
     db = api_client.app.state.db
 
@@ -188,12 +189,17 @@ async def test_an_issue_moved_out_from_under_the_issue_meanwhile_is_not_cancelle
 
     api_client.app.state.issue_executor = MagicMock(cancel_job=AsyncMock(side_effect=cancel_and_move))
 
-    deleted = await _delete(api_client, root)
+    with capture_logs() as logs:
+        deleted = await _delete(api_client, root)
 
     assert deleted.status_code == 204, deleted.text
-    after = await _statuses(api_client, [root, "kid", "grandkid", elsewhere])
-    assert after == {root: "cancelled", "kid": "open", "grandkid": "open", elsewhere: "open"}, (
+    after = await _statuses(api_client, [root, "kid", "grandkid", "done", elsewhere])
+    assert after == {root: "cancelled", "kid": "open", "grandkid": "open", "done": "closed", elsewhere: "open"}, (
         f"an issue moved under another issue while the jobs were cancelled is left as it is, its own under it: {after}"
+    )
+    left = [(e["issue_id"], e["left"]) for e in logs if e["event"] == "issue_delete_left_issues"]
+    assert left == [(root, ["grandkid", "kid"])], (
+        f"the issues the delete checked and left are logged, not the one it left closed on purpose: {left}"
     )
 
 
@@ -271,3 +277,18 @@ async def test_an_issue_put_under_the_issue_meanwhile_is_not_cancelled(api_clien
     assert after == {root: "cancelled", "kid": "cancelled", "newcomer": "open"}, (
         f"an issue put under the issue after the checks is not written: {after}"
     )
+
+
+async def test_the_write_walks_no_more_issues_than_the_check_did(api_client: Any) -> None:
+    """The cancel statement walks the subtree again with the check's count bound too: a subtree that grew during the
+    jobs' cancels is walked no further than the issue and ``max_count`` issues under it."""
+    from embry0.storage.repositories.issues import IssuesRepository
+
+    root = await _issue(api_client)
+    kids = {f"kid-{n}": (root, "open") for n in range(4)}
+    await _under(api_client, kids)
+    issues = IssuesRepository(api_client.app.state.db)
+
+    cancelled = await issues.cancel_subtree(root, [root, *kids], max_depth=10, max_count=1)
+
+    assert len(cancelled) <= 2, f"the issue and at most one issue under it are walked: {cancelled}"
