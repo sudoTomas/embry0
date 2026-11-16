@@ -143,6 +143,7 @@ def app() -> Any:
     executor.cancel_job = AsyncMock()
     state.issue_executor = executor
     jobs.list_all = AsyncMock(return_value=([], 0))
+    jobs.in_statuses_for_issues = AsyncMock(return_value=[])
 
     issues = MagicMock()
     issues.get = AsyncMock(side_effect=_read_issue)
@@ -153,7 +154,8 @@ def app() -> Any:
     issues.update = AsyncMock()
     issues.update_parent_status = AsyncMock()
     issues.get_children = AsyncMock(return_value=[])
-    issues.cancel_cancellable = AsyncMock(side_effect=lambda issue_ids: list(issue_ids))
+    issues.descendants = AsyncMock(return_value=([], False))
+    issues.cancel_subtree = AsyncMock(side_effect=lambda root, checked, **_kw: list(checked))
     state.issues_repo = issues
     state.github_sync = None
 
@@ -359,7 +361,7 @@ def _assert_refusal_logged_and_nothing_done(app: Any, label: str, logs: list[dic
     assert not state.issue_executor.schedule_resume.call_count, f"{label}: a job was resumed anyway"
     assert not state.issue_executor.cancel_job.await_count, f"{label}: a job was cancelled anyway"
     assert not state.issues_repo.update.await_count, f"{label}: an issue was changed anyway"
-    assert not state.issues_repo.cancel_cancellable.await_count, f"{label}: an issue was cancelled anyway"
+    assert not state.issues_repo.cancel_subtree.await_count, f"{label}: an issue was cancelled anyway"
     assert not state.issues_repo.create.await_count, f"{label}: an issue was created anyway"
     assert not state.merge_approvals.decide.await_count, f"{label}: a merge was decided anyway"
     assert not state.watcher_services[OTHER].run_once.await_count, f"{label}: the watcher ran anyway"
@@ -401,14 +403,14 @@ def test_a_restricted_key_cannot_move_its_issue_to_another_repository(app) -> No
 
 def test_a_restricted_key_cannot_delete_its_issue_with_a_child_in_another_repository(app) -> None:
     child = {**_issue_row("iss-other"), "id": "iss-child", "parent_issue_id": "iss-allowed"}
-    app.state.issues_repo.get_children = AsyncMock(return_value=[child])
+    app.state.issues_repo.descendants = AsyncMock(return_value=([{**child, "depth": 1}], False))
     with capture_logs() as logs:
         response = _call(app, LIMITED_TOKEN, "DELETE", "/api/v1/issues/{issue}", None, "allowed")
     assert _refused(response), f"a child issue on {OTHER} was cancelled through its parent: {response.text}"
     assert OTHER not in response.text, f"the refusal names the issue's own repository, not the child's: {response.text}"
     assert [e["repo"] for e in logs if e["event"] == "api_key_repo_refused"] == [OTHER], "the log names the child's"
     assert not app.state.issues_repo.update.await_count, "an issue was cancelled anyway"
-    assert not app.state.issues_repo.cancel_cancellable.await_count, "an issue was cancelled anyway"
+    assert not app.state.issues_repo.cancel_subtree.await_count, "an issue was cancelled anyway"
     assert not app.state.issue_executor.cancel_job.await_count, "a job was cancelled anyway"
 
 
@@ -418,13 +420,30 @@ def test_a_child_in_another_repository_is_refused_before_its_status_is_looked_at
     transition cancels. That check comes after the reach check, so a child of a repository the key does not cover
     is refused as such, whatever its status, and the refusal names neither the child nor its status."""
     child = {**_issue_row("iss-other"), "id": "iss-child", "parent_issue_id": "iss-allowed", "status": status}
-    app.state.issues_repo.get_children = AsyncMock(return_value=[child])
+    app.state.issues_repo.descendants = AsyncMock(return_value=([{**child, "depth": 1}], False))
     response = _call(app, LIMITED_TOKEN, "DELETE", "/api/v1/issues/{issue}", None, "allowed")
     assert _refused(response), f"a child on {OTHER} in status {status!r} is refused for its repository: {response.text}"
     assert "iss-child" not in response.text and status not in response.text.replace("not_allowed", ""), (
         f"the refusal names neither the hidden child nor its status: {response.text}"
     )
-    assert not app.state.issues_repo.cancel_cancellable.await_count, "an issue was cancelled anyway"
+    assert not app.state.issues_repo.cancel_subtree.await_count, "an issue was cancelled anyway"
+    assert not app.state.issue_executor.cancel_job.await_count, "a job was cancelled anyway"
+
+
+@pytest.mark.parametrize("beyond", [False, True], ids=["within-the-bounds", "past-them"])
+def test_a_grandchild_in_another_repository_is_refused_as_a_child_is(app, beyond: bool) -> None:
+    """#563: the delete acts on the whole subtree, so the reach check does too. A grandchild of a repository the key
+    does not cover is refused as a child would be, naming neither it nor its repository; and before the subtree's
+    size is looked at, so the key is not told how large a subtree it cannot read is."""
+    child = {**_issue_row("iss-allowed"), "id": "iss-child", "parent_issue_id": "iss-allowed", "depth": 1}
+    grandchild = {**_issue_row("iss-other"), "id": "iss-grandchild", "parent_issue_id": "iss-child", "depth": 2}
+    app.state.issues_repo.descendants = AsyncMock(return_value=([child, grandchild], beyond))
+    response = _call(app, LIMITED_TOKEN, "DELETE", "/api/v1/issues/{issue}", None, "allowed")
+    assert _refused(response), (
+        f"a grandchild on {OTHER} is refused for its repository: {response.status_code} {response.text}"
+    )
+    assert "iss-grandchild" not in response.text and OTHER not in response.text, response.text
+    assert not app.state.issues_repo.cancel_subtree.await_count, "an issue was cancelled anyway"
     assert not app.state.issue_executor.cancel_job.await_count, "a job was cancelled anyway"
 
 
