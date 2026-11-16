@@ -89,6 +89,13 @@ StateLookup = Callable[[str], Awaitable[dict[str, Any]]]
 Progress = Callable[[int, int], Awaitable[None]]
 
 
+def _outage(resp: Any) -> bool:
+    """Whether ``resp`` is an outage rather than an answer (:func:`embry0.services.organizations.outage_of`)."""
+    from embry0.services.organizations import outage_of
+
+    return outage_of(resp) is not None
+
+
 def _json(resp: Any) -> Any:
     try:
         return resp.json()
@@ -294,7 +301,14 @@ async def scan_repository(
         text = _decode_content(_json(env)) if env.status_code == 200 else None
         detail["env_keys"] = env_keys(text) if text else []
     hooks_resp = await client.get(f"/repos/{full}/hooks")
-    if hooks_resp.status_code == 200:
+    if _outage(hooks_resp):
+        # An outage says nothing of what the credential may see (#579): unknown, which no need reads as a missing
+        # permission, rather than "hooks not visible".
+        detail["hooks_visible"] = None
+        detail["hook_count"] = None
+        detail["hook_hosts"] = []
+        detail["hook_present"] = None
+    elif hooks_resp.status_code == 200:
         hooks = _json(hooks_resp)
         hook_list = [h for h in hooks if isinstance(h, dict)] if isinstance(hooks, list) else []
         detail["hooks_visible"] = True

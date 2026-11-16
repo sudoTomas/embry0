@@ -440,3 +440,17 @@ async def test_a_direct_read_that_fails_or_says_nothing_is_unknown() -> None:
         await confirm_gone(FakeForge({"/repos/acme/web": _Resp(200, ["not", "a", "record"])}, []), "acme/web") is None
     )
     assert await confirm_gone(FakeForge({"/repos/acme/web": _Resp(200, {"full_name": ""})}, []), "acme/web") is None
+
+
+@pytest.mark.parametrize("status", [500, 503, 429])
+@pytest.mark.asyncio
+async def test_an_outage_reading_the_hooks_is_unknown_not_hidden(status: int) -> None:
+    """#579, discovery alike: a hook listing the forge answered with an outage recorded "hooks not visible", which
+    the needs list then reported as access to grant."""
+    f = forge_with_sites()
+    f.routes["/repos/acme/site/hooks"] = _Resp(status)
+    seen = await scan_repository(f, "acme", SITE, hook_origins=("https://hooks.example.net",))
+    hooks = {k: seen.facts[k] for k in ("hooks_visible", "hook_count", "hook_present")}
+    assert hooks == {"hooks_visible": None, "hook_count": None, "hook_present": None}, (
+        f"an outage ({status}) is unknown, not a hidden listing: {hooks}"
+    )
