@@ -307,3 +307,60 @@ async def test_a_gitlab_account_that_never_answers_is_reported_by_label(monkeypa
     body = resp.json()
     assert body["failed"] == ["offline"], f"the account that could not be listed is named: {body['failed']}"
     assert [p["full_name"] for p in body["projects"]] == ["acme/widgets"], body["projects"]
+
+
+async def test_gitlab_refusing_every_account_is_a_502_naming_its_status(monkeypatch):
+    """#568, GitLab alike: its 401 was answered as embry0's own, a bad embry0 key to the dashboard."""
+
+    async def refused(self, path, **kwargs):
+        request = httpx.Request("GET", "https://gitlab.example.com/api/v4/projects")
+        raise httpx.HTTPStatusError("401", request=request, response=httpx.Response(401, request=request))
+
+    monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", refused)
+    async with _client(_app()) as c:
+        resp = await c.get("/api/v1/gitlab/discoverable-projects")
+    assert (resp.status_code, resp.json().get("detail")) == (502, "GitLab API returned 401 for every account"), (
+        f"GitLab refusing every account is answered as an upstream failure, not the caller's: {resp.text}"
+    )
+
+
+def _short_deadline(monkeypatch) -> None:
+    """The listing's deadline, a fraction of a second here. A tree without one has nothing to shorten, and the test
+    then shows that it waits on the hanging accounts."""
+    try:
+        import embry0.api.forge_listings as forge_listings
+    except ImportError:
+        return
+    monkeypatch.setattr(forge_listings, "DEADLINE_SECONDS", 0.2)
+
+
+async def test_hanging_gitlab_accounts_end_at_the_deadline(monkeypatch):
+    """#340 review, GitLab alike: the accounts are read at once, within one deadline."""
+    import asyncio
+    import time
+
+    async def fake_paginate(self, path, **kwargs):
+        if self._default_token.startswith("glpat-slow"):
+            await asyncio.Event().wait()
+        return [_project("acme/widgets")]
+
+    _short_deadline(monkeypatch)
+    monkeypatch.setattr("embry0.execution.forge_client.ForgeClient.paginate", fake_paginate)
+    app = _with_registry(_app(gitlab_token=""))
+    await _add_gitlab_credential(app, "alice", "glpat-alice-placeholder")
+    for n in range(4):
+        await _add_gitlab_credential(app, f"slow-{n}", f"glpat-slow{n}-placeholder")
+    resolver = MagicMock()
+    resolver.has_forge_credential = AsyncMock(return_value=True)
+    app.state.credential_resolver = resolver
+    started = time.monotonic()
+    try:
+        async with _client(app) as c:
+            resp = await asyncio.wait_for(c.get("/api/v1/gitlab/discoverable-projects"), timeout=5)
+    except TimeoutError:
+        pytest.fail("the listing waited on the hanging accounts past 5 s instead of its deadline")
+    took = time.monotonic() - started
+    assert resp.status_code == 200 and took < 3, f"answered at the deadline: {resp.status_code} after {took:.2f}s"
+    body = resp.json()
+    assert sorted(body["failed"]) == [f"slow-{n}" for n in range(4)], f"each hanging account is named: {body}"
+    assert [p["full_name"] for p in body["projects"]] == ["acme/widgets"], body["projects"]

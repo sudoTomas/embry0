@@ -1,6 +1,8 @@
 """Tests for /api/v1/github/repos."""
 
+import asyncio
 import os
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -96,8 +98,10 @@ async def test_list_repos_returns_repos_from_github(app_with_token):
 
 
 @pytest.mark.asyncio
-async def test_list_repos_propagates_github_error(app_with_token):
-    """A non-2xx from GitHub should surface as the same status code to the caller."""
+async def test_list_repos_answers_502_naming_github_s_status_when_it_refuses_every_account(app_with_token):
+    """#568: GitHub's status was passed on as embry0's own, so every token expired answered 401, which the dashboard
+    takes for a bad embry0 key and answers with the sign-in prompt. GitHub refusing every account is a 502 that
+    names GitHub's status."""
     import httpx
 
     mock_resp = MagicMock()
@@ -117,8 +121,9 @@ async def test_list_repos_propagates_github_error(app_with_token):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/v1/github/repos")
 
-    assert resp.status_code == 401
-    assert "401" in resp.json()["detail"]
+    assert (resp.status_code, resp.json()["detail"]) == (502, "GitHub API returned 401 for every account"), (
+        f"GitHub refusing every account is answered as an upstream failure, not the caller's: {resp.status_code}"
+    )
 
 
 def _repo(full_name: str) -> dict:
@@ -151,6 +156,10 @@ class _FakeResponse:
         return self._payload
 
 
+#: The answer of an account that never answers.
+_HANG = object()
+
+
 class _FakeClient:
     """Maps Authorization header -> canned response, mimicking httpx.AsyncClient.
 
@@ -177,6 +186,9 @@ class _FakeClient:
         value = self.responses_by_token[self._token]
         if isinstance(value, BaseException):
             raise value
+        if value is _HANG:
+            # An account that never answers; the listing's deadline cancels it.
+            await asyncio.Event().wait()
         if isinstance(value, list):
             resp = value[min(self._page, len(value) - 1)]
             self._page += 1
@@ -496,3 +508,43 @@ async def test_no_account_github_answers_is_a_502(app_with_registry, monkeypatch
     assert (resp.status_code, resp.json().get("detail")) == (502, "GitHub could not be reached"), (
         f"no account reachable answers 502: {resp.status_code} {resp.text}"
     )
+
+
+def _short_deadline(monkeypatch) -> None:
+    """The listing's deadline, a fraction of a second here. A tree without one has nothing to shorten, and the test
+    then shows that it waits on the hanging accounts."""
+    try:
+        import embry0.api.forge_listings as forge_listings
+    except ImportError:
+        return
+    monkeypatch.setattr(forge_listings, "DEADLINE_SECONDS", 0.2)
+
+
+@pytest.mark.asyncio
+async def test_hanging_accounts_end_at_the_deadline_and_are_reported_by_label(app_with_registry, monkeypatch):
+    """#340 review: the accounts were read one after another, each request with a 30 s timeout over up to five
+    pages, so four hanging accounts held the request two minutes, past a proxy's limit, and the person got a
+    gateway timeout instead of the accounts that answered. They are read at once, within one deadline."""
+    _short_deadline(monkeypatch)
+    monkeypatch.setattr(github_module.httpx, "AsyncClient", _FakeClient)
+    app_with_registry.state.config.github_token = ""
+    await _add_github_credential(app_with_registry, "alice", "ghp_alice_placeholder")
+    for n in range(4):
+        await _add_github_credential(app_with_registry, f"slow-{n}", f"ghp_slow{n}_placeholder")
+    _FakeClient.responses_by_token = {
+        "ghp_alice_placeholder": _FakeResponse([_repo("acme/widgets")]),
+        **{f"ghp_slow{n}_placeholder": _HANG for n in range(4)},
+    }
+    started = time.monotonic()
+    try:
+        with capture_logs() as logs:
+            resp = await asyncio.wait_for(_answer(app_with_registry, "/api/v1/github/discoverable-repos"), timeout=5)
+    except TimeoutError:
+        pytest.fail("the listing waited on the hanging accounts past 5 s instead of its deadline")
+    took = time.monotonic() - started
+    assert resp.status_code == 200 and took < 3, f"answered at the deadline: {resp.status_code} after {took:.2f}s"
+    body = resp.json()
+    assert sorted(body["failed"]) == [f"slow-{n}" for n in range(4)], f"each hanging account is named: {body}"
+    assert [r["full_name"] for r in body["repos"]] == ["acme/widgets"], body["repos"]
+    errors = {e["label"]: e["error"] for e in logs if e["event"] == "github_repos_fetch_failed"}
+    assert errors == {f"slow-{n}": "PastDeadline" for n in range(4)}, errors

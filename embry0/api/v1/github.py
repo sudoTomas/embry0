@@ -23,6 +23,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from embry0.api.forge_listings import PastDeadline, read_each
 from embry0.api.repo_allowlist import key_covers, restricted_key_name
 from embry0.api.v1.credentials import discovery_entries
 from embry0.execution.github_client import GitHubClient
@@ -153,10 +154,13 @@ async def _fetch_all_repo_entries(
 
     One failing credential (e.g. an expired PAT) must not hide the repos the
     others can see — log it, record its label, and continue. That holds for a
-    listing GitHub refused (an HTTP status) and for one that never got an
-    answer (a timeout, a refused connection: #340). Raise only when nothing
-    succeeded: with GitHub's status when it answered one, else 502. An empty
-    entry list is "nothing is configured".
+    listing GitHub refused (an HTTP status), one that never got an answer (a
+    timeout, a refused connection) and one not done by the listing's deadline:
+    the accounts are read concurrently, within one deadline
+    (:func:`embry0.api.forge_listings.read_each`, #340). Raise only when
+    nothing succeeded, 502 either way: GitHub refusing every account is not
+    the caller's credentials failing, and a 401 would read as a bad embry0
+    key (#568). An empty entry list is "nothing is configured".
     """
     if not entries:
         raise HTTPException(status_code=400, detail="No GitHub token configured")
@@ -165,27 +169,33 @@ async def _fetch_all_repo_entries(
     truncated_env_keys: list[str] = []
     failed: list[str] = []
     last_error: httpx.HTTPStatusError | None = None
-    unreachable: httpx.RequestError | None = None
+    unreachable: Exception | None = None
     succeeded = False
-    for entry in entries:
-        try:
-            raw, truncated = await _fetch_repos_for_token(entry.key, entry.token, per_page=per_page, sort=sort)
-        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+
+    async def read(entry: ForgeCredentialEntry) -> tuple[list[dict[str, Any]], bool]:
+        return await _fetch_repos_for_token(entry.key, entry.token, per_page=per_page, sort=sort)
+
+    # In the order of the entries, so the first entry still wins a repository two can see.
+    for entry, result in zip(entries, await read_each(entries, read), strict=True):
+        if isinstance(result, (httpx.HTTPStatusError, httpx.RequestError, PastDeadline)):
+            status = result.response.status_code if isinstance(result, httpx.HTTPStatusError) else None
             # The exception's class, not its text: the text can carry the request's URL.
             logger.warning(
                 "github_repos_fetch_failed",
                 status=status,
-                error=type(exc).__name__,
+                error=type(result).__name__,
                 env_key=entry.key,
                 label=entry.label,
             )
             failed.append(entry.label)
-            if isinstance(exc, httpx.HTTPStatusError):
-                last_error = exc
+            if isinstance(result, httpx.HTTPStatusError):
+                last_error = result
             else:
-                unreachable = exc
+                unreachable = result
             continue
+        if isinstance(result, BaseException):
+            raise result
+        raw, truncated = result
         succeeded = True
         if truncated:
             truncated_env_keys.append(entry.key)
@@ -194,10 +204,12 @@ async def _fetch_all_repo_entries(
             by_name.setdefault(r["full_name"], (shown, r))
 
     if not succeeded:
-        if last_error is None and unreachable is not None:
-            raise HTTPException(status_code=502, detail="GitHub could not be reached") from unreachable
-        status = last_error.response.status_code if last_error else 400
-        raise HTTPException(status_code=status, detail=f"GitHub API returned {status}") from last_error
+        if last_error is not None:
+            status = last_error.response.status_code
+            raise HTTPException(
+                status_code=502, detail=f"GitHub API returned {status} for every account"
+            ) from last_error
+        raise HTTPException(status_code=502, detail="GitHub could not be reached") from unreachable
 
     return by_name, truncated_env_keys, failed
 
