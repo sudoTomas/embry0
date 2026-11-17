@@ -702,12 +702,20 @@ async def test_no_comment_is_left_out_across_blocks_departures_and_runs() -> Non
 
 
 @pytest.mark.usefixtures("hundred_a_page")
-async def test_a_place_lost_deep_in_a_block_steps_back_rather_than_starting_over() -> None:
-    """A thousand at one second; 150 of the comments read deleted after run 7, more than a page goes back. The read
-    steps back a page from where it stood (no anchor there: they moved up 150), then twice as far, finds the newest
-    anchor, and goes on from it: three calls, not a reading of the block again from its first page."""
+@pytest.mark.parametrize(
+    ("after_run", "deleted", "back"), [(7, 150, [100, 200]), (9, 350, [100, 200, 400])], ids=["150", "350"]
+)
+async def test_a_place_lost_deep_in_a_block_steps_back_rather_than_starting_over(
+    after_run: int, deleted: int, back: list[int]
+) -> None:
+    """A thousand at one second; 150 (or 350) of the comments read deleted after run 7 (or 9), more than a page goes
+    back. The read steps back a page from where it stood (no anchor there: they moved up), then twice as far as the
+    last step, and so on, finds the newest anchor, and goes on from it: a few calls, not a reading of the block again
+    from its first page. With 350 gone, a step one page further each time would look at 300 back before 400."""
     forge = Block(1000)
-    read, logs = await _over_runs(forge, calls=1, runs=20, after=_once(7, _gone(*range(1, 151), edit=False)))
+    read, logs = await _over_runs(
+        forge, calls=1, runs=20, after=_once(after_run, _gone(*range(1, deleted + 1), edit=False))
+    )
     assert not sorted(set(forge.updated) - read), f"comments never read: {sorted(set(forge.updated) - read)[:8]}"
     steps = [
         (e["event"].removeprefix("slop_meter_tied_block_"), e["read"], e.get("to"))
@@ -715,12 +723,12 @@ async def test_a_place_lost_deep_in_a_block_steps_back_rather_than_starting_over
         if "block" in e["event"]
     ]
     stood = steps[0][1] if steps else 0
-    assert stood > 300 and steps == [("stepped_back", stood, stood - 100), ("stepped_back", stood, stood - 200)], (
-        f"one page back, then two, from where the read stood: {steps}"
+    assert stood > back[-1] and steps == [("stepped_back", stood, stood - b) for b in back], (
+        f"one page back, then twice as far each time, from where the read stood: {steps}"
     )
     unchanged = Block(1000)
     await _over_runs(unchanged, calls=1, runs=20)
-    assert forge.calls <= unchanged.calls + 2, (
+    assert forge.calls <= unchanged.calls + len(back), (
         f"{forge.calls} calls, against {unchanged.calls} with nothing deleted: the loss cost more than its steps back"
     )
 
