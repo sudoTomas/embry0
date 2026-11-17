@@ -238,7 +238,10 @@ class ReaderPlace:
     reader finds the newest anchor on it: an edit or a deletion between two
     pages moves every later comment of the block up, and a page that started
     where the last one ended would leave out the ones that moved onto it
-    (#557). A place stored with a page number (``tied_page``, before #557)
+    (#557). An anchor counts only while it still has the block's update. With
+    none on the page, the read steps back a page, then twice as far, and so
+    on, back to the block's first comment at worst, until a page holds one:
+    ``tied_back`` is how far back it stepped. A place stored with a page number (``tied_page``, before #557)
     starts the block again from the cursor. The page cap counts the pages that
     move the cursor, and these do not (#538), so a block of such comments
     longer than the cap is read through rather than cut at the same page every
@@ -256,6 +259,7 @@ class ReaderPlace:
     failures: int = 0
     tied_offset: int | None = None
     tied_anchors: tuple[int | str, ...] = ()
+    tied_back: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -270,6 +274,7 @@ class ReaderPlace:
             "failures": self.failures,
             "tied_offset": self.tied_offset,
             "tied_anchors": list(self.tied_anchors),
+            "tied_back": self.tied_back,
         }
 
     @classmethod
@@ -305,12 +310,17 @@ class ReaderPlace:
             pages = _whole(data.get("pages", 0), 0, 2 * max_pages)
             tied_offset = data.get("tied_offset")
             anchors = data.get("tied_anchors") or []
+            back = data.get("tied_back", 0)
             if tied_offset is not None:
                 # A comment listing among comments that share one update: those pages are not counted against the
                 # page cap (#538), so any number of them read, within a bound only a hand-edited row could pass.
                 tied_offset = _whole(tied_offset, 1, max_tied_offset())
+                # Stepping back from where the read stood, which was within that bound too.
+                back = _whole(back, 0, max_tied_offset() - tied_offset)
                 if stage > 1:
                     return None
+            elif back != 0:
+                return None
             if (
                 not isinstance(anchors, list)
                 or len(anchors) > TIED_ANCHORS
@@ -335,6 +345,7 @@ class ReaderPlace:
                 failures=_whole(data.get("failures", 0), 0, MAX_FAILURES - 1),
                 tied_offset=tied_offset,
                 tied_anchors=tuple(anchors),
+                tied_back=back,
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -401,10 +412,11 @@ class EventReader:
         self._next: int | None = None  # the listing's next page, by number
         self._since: datetime | None = None  # the cursor a comment listing's first page was asked for with
         self._ids: set[int | str] = set()  # the comment ids the listing has read this run
-        # Among comments that share the update a listing was asked from: how many of them it read, and the ids of
-        # the last few (tied_window); None when its next page is a first page from the cursor.
-        self._tied: tuple[int, tuple[int | str, ...]] | None = None
-        self._restarted = False  # whether the listing started such a block over this run
+        # Among comments that share the update a listing was asked from: how many of them it read, the ids of the last
+        # few (tied_window), and how far back from there it stepped to find them again (_step_back); None when its
+        # next page is a first page from the cursor.
+        self._tied: tuple[int, tuple[int | str, ...], int] | None = None
+        self._restarted = False  # whether the listing lost its place in such a block this run
         self._pages = 0
         self._pulls: list[tuple[datetime, int]] = []
         self._found = 0
@@ -419,7 +431,7 @@ class EventReader:
             if place.stage <= 1 and place.tied_offset is not None:
                 # Among comments that share the cursor's update, it goes on where it was, from that update, as it
                 # would have in one run (#526, #557).
-                self._tied = (place.tied_offset, place.tied_anchors)
+                self._tied = (place.tied_offset, place.tied_anchors, place.tied_back)
                 self._since = getattr(self.batch, _LISTINGS[place.stage][3])
             self._pulls = list(place.pulls)
             self._found = place.found
@@ -459,6 +471,7 @@ class EventReader:
             # How far into the comments that share its cursor's update a comment listing read.
             tied_offset=self._tied[0] if listing and self._tied else None,
             tied_anchors=self._tied[1] if listing and self._tied else (),
+            tied_back=self._tied[2] if listing and self._tied else 0,
         )
 
     @property
@@ -577,7 +590,7 @@ class EventReader:
         if self._since is not None:
             params["since"] = _iso(self._since)
         window = tied_window(tied[0]) if tied is not None else None
-        items, go_on, _ended = await self._page(
+        items, go_on, ended = await self._page(
             budget, f"/repos/{self._repo}/{name}", params, window=None if window is None else window[:2]
         )
         # Whether there is a next page is all the listing reads of the link: its next page is chosen here.
@@ -589,14 +602,25 @@ class EventReader:
         if tied is not None and window is not None:
             # The page starts on comments read already: what follows the newest anchor still on it is new. An edit or
             # a deletion since the last page moved the comments after it up, and they are still on the page (#557).
-            places = [listed_ids.index(anchor) for anchor in tied[1] if anchor in listed_ids]
+            # An anchor counts only while it has the block's update: one edited since has moved to the end of the
+            # listing, maybe onto this very page, and the comments of the block before it there were not read.
+            places = [
+                n
+                for n, item in enumerate(listed)
+                if item.get("id") in tied[1] and _at(item.get("updated_at")) == self._since
+            ]
             if places:
                 new = listed[max(places) + 1 :]
-            elif 0 < window[2] < tied[0]:
+            elif 0 < window[2] < tied[0] and (go_on or ended):
                 # No anchor on a page that starts on read comments past the block's first one: more left the block
                 # than the page goes back, or the anchors themselves did, so where the read stands is unknown.
                 lost = True
         self.batch.events += _rows(new, kind, prefix, "created_at")
+        if lost and tied is not None:
+            # Whatever this page holds, the comments before it may not all have been read: the cursor does not move
+            # past them, nor does the listing end here, though the page may reach past the block or the listing.
+            self._step_back(name, tied)
+            return
         stamps = [t for t in (_at(i.get("updated_at")) for i in listed) if t]
         current: datetime | None = getattr(self.batch, cursor)
         if stamps:
@@ -628,32 +652,52 @@ class EventReader:
             stop = None
             if tied is not None and not fresh:
                 stop = "no comment not read already"
-            elif lost and self._restarted:
-                stop = "lost its place twice"
             elif reached > max_tied_offset():
                 stop = "past the page bound"
             if stop is not None:
-                logger.warning(
-                    "slop_meter_tied_pages_stopped",
-                    repo=self._repo,
-                    listing=name,
-                    page=window[0] if window is not None else 1,
-                    reason=stop,
-                )
-                self.batch.more = True
+                self._stop_tied(name, window[0] if window is not None else 1, stop)
                 go_on = False
-            elif lost:
-                # Read the block again from its first comment: whatever moved is on a page asked for from there, and a
-                # comment read twice is stored once.
-                logger.info(
-                    "slop_meter_tied_block_restarted", repo=self._repo, listing=name, read=tied[0] if tied else 0
-                )
-                self._restarted = True
-                self._tied = None
             else:
-                self._tied = (reached, tuple(i for i in listed_ids[-TIED_ANCHORS:] if isinstance(i, int | str)))
+                self._tied = (reached, tuple(i for i in listed_ids[-TIED_ANCHORS:] if isinstance(i, int | str)), 0)
         if not go_on:
             self._advance()
+
+    def _stop_tied(self, name: str, page: int, reason: str) -> None:
+        """End a listing among comments that share one update here, cut short: the next pass reads on from its
+        cursor."""
+        logger.warning("slop_meter_tied_pages_stopped", repo=self._repo, listing=name, page=page, reason=reason)
+        self.batch.more = True
+
+    def _step_back(self, name: str, tied: tuple[int, tuple[int | str, ...], int]) -> None:
+        """Where the read stood in a block is lost (no anchor on the page): ask next for a page further back, one
+        page back from where it stood, then twice as far as the last step, and so on, until one holds an anchor; at
+        the block's first comment at worst, from which nothing can have been left out. Each such page is one call,
+        so a loss deep into a long block costs a few of them rather than reading it again from its start, and
+        whatever moved is on a page asked for from there. A comment read twice is stored once.
+
+        A loss is bounded too, so that no forge answer spends a run's calls on it (#552): the steps back end at the
+        block's first comment, and a second loss in one run, once the place was found again, ends the listing, cut
+        short."""
+        offset, anchors, back = tied
+        if not back:
+            if self._restarted:
+                self._stop_tied(name, tied_window(offset)[0], "lost its place twice")
+                self._advance()
+                return
+            self._restarted = True
+        # The comments seen since the loss are what count as seen: the pages from the place found again on bring
+        # comments seen before it, which are not the same page answered again.
+        self._ids = set()
+        stood = offset + back
+        back = PER_PAGE if not back else 2 * back
+        if stood - back <= 0:
+            logger.info("slop_meter_tied_block_restarted", repo=self._repo, listing=name, read=stood)
+            self._tied = None
+        else:
+            logger.info(
+                "slop_meter_tied_block_stepped_back", repo=self._repo, listing=name, read=stood, to=stood - back
+            )
+            self._tied = (stood - back, anchors, back)
 
     async def _pulls_page(self, budget: ApiBudget | ShareBudget) -> None:
         """One page of the pull requests updated since the reviews cursor, newest first.

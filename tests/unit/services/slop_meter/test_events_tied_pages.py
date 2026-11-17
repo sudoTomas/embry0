@@ -167,6 +167,11 @@ async def test_a_place_stored_before_the_offset_was_kept_goes_on_from_the_cursor
         {"stage": 0, "pages": 2, "tied_offset": 3, "tied_anchors": [True]},
         {"stage": 0, "pages": 2, "tied_offset": 3, "tied_anchors": "1"},
         {"stage": 0, "pages": 2, "tied_anchors": [1]},
+        {"stage": 0, "pages": 2, "tied_offset": 3, "tied_back": -5},
+        {"stage": 0, "pages": 2, "tied_offset": 3, "tied_back": True},
+        {"stage": 0, "pages": 2, "tied_offset": 3, "tied_back": "5"},
+        {"stage": 0, "pages": 2, "tied_offset": 3, "tied_back": 10_000 * PAGE},
+        {"stage": 0, "pages": 2, "tied_back": 5},
     ],
     ids=[
         "pull-listing",
@@ -178,6 +183,11 @@ async def test_a_place_stored_before_the_offset_was_kept_goes_on_from_the_cursor
         "bool-anchor",
         "text-anchors",
         "anchors-without-offset",
+        "negative-back",
+        "bool-back",
+        "text-back",
+        "back-past-the-bound",
+        "back-without-offset",
     ],
 )
 def test_a_page_no_reader_could_have_stored_is_no_place(stored: dict[str, Any]) -> None:
@@ -485,9 +495,9 @@ async def test_a_comment_that_leaves_the_block_between_two_runs_hides_no_other(
     assert None in places, "no pass finished"
 
 
-async def test_a_place_lost_with_its_anchors_starts_the_block_over() -> None:
+async def test_a_place_lost_with_its_anchors_steps_back_to_the_blocks_start() -> None:
     """The anchors themselves edited away (or more comments left than a page goes back): where the read stood is
-    unknown, so it starts the block again from its first comment, says so, and still reads every one."""
+    unknown, so it steps back, here to the block's first page, says so, and still reads every one."""
     forge = Comments({i: 1 for i in range(1, TIED + 1)})
     read: set[int] = set()
     cursor, place = START + timedelta(days=1), None
@@ -502,7 +512,9 @@ async def test_a_place_lost_with_its_anchors_starts_the_block_over() -> None:
                 assert place is not None and place["tied_anchors"], place
                 _edit(*place["tied_anchors"])(forge)
     assert read == set(range(1, TIED + 1)), f"comments never read: {sorted(set(range(1, TIED + 1)) - read)}"
-    assert [e for e in logs if e["event"] == "slop_meter_tied_block_restarted"], "the restart is not logged"
+    assert [
+        e for e in logs if e["event"] in ("slop_meter_tied_block_restarted", "slop_meter_tied_block_stepped_back")
+    ], "the step back is not logged"
 
 
 class Shuffling:
@@ -555,3 +567,222 @@ def test_each_page_starts_on_read_comments_and_goes_past_them() -> None:
         page, size, start = tied_window(offset)
         assert (page - 1) * size == start and start < offset < start + size and 1 <= size <= 100, (offset, page, size)
         assert offset - start >= min(events.TIED_OVERLAP, offset), f"{offset}: the page goes back too few: {start}"
+
+
+# ---- a block followed by later comments, a place found again only from comments still in the block ------------------
+
+
+class Block:
+    """Issue comments as GitHub lists them: updated since ``since`` (inclusive), oldest update first and, among one
+    update, by id; page ``n`` of ``per_page`` (up to ``most``) is items ``(n - 1) * size`` on. ``tied`` comments share
+    the block's second, and ``later`` comments follow it a day apart, so a page that reaches the block's end holds them
+    too, and a comment edited away moves among them. ``before[n]`` changes the comments before the ``n``th call."""
+
+    def __init__(self, tied: int, later: int = 2, *, most: int = 100) -> None:
+        self.updated = {i: START + timedelta(days=1) for i in range(1, tied + 1)}
+        self.updated.update({1000 + k: START + timedelta(days=2 + k) for k in range(later)})
+        self.most, self.calls = most, 0
+        self.before: dict[int, Any] = {}
+
+    async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+        params = params or {}
+        if not path.endswith("/issues/comments"):
+            return FakeResponse(200, [])
+        self.calls += 1
+        change = self.before.pop(self.calls, None)
+        if change is not None:
+            change(self)
+        page, since = int(params.get("page", 1)), params.get("since", "")
+        size = min(int(params.get("per_page", 30)), self.most)
+        stamp = {i: at.strftime("%Y-%m-%dT%H:%M:%SZ") for i, at in self.updated.items()}
+        listing = sorted((stamp[i], i) for i in stamp if stamp[i] >= since)
+        chunk = listing[(page - 1) * size : page * size]
+        items = [{"id": i, "user": {"login": f"user{i}"}, "created_at": at, "updated_at": at} for at, i in chunk]
+        nxt = f"{FORGE}{path}?page={page + 1}" if page * size < len(listing) else None
+        return FakeResponse(200, items, next_url=nxt)
+
+
+async def _over_runs(forge: Block, *, calls: int, runs: int, after: Any = None) -> tuple[set[int], list[Any]]:
+    """Every comment read over ``runs`` runs of ``calls`` calls and then one run with calls enough to finish, each run
+    starting from what the loop stores; ``after(forge, run, place)`` runs after each of the first ``runs``. Returns the
+    comments read and the tied-block log lines."""
+    read: set[int] = set()
+    cursor, place = START, None
+    with capture_logs() as logs:
+        for run in range(1, runs + 2):
+            reader = _reader(forge, cursor, place)
+            await _run(reader, calls if run <= runs else 100_000)
+            read |= {int(e[0].split(":")[1]) for e in reader.batch.events}
+            cursor = reader.batch.comments_since or cursor
+            place = None if reader.place is None else reader.place.to_json()
+            assert place is None or ReaderPlace.from_json(place, **CAPS) is not None, f"a stored place loads: {place}"
+            if after is not None and run <= runs:
+                after(forge, run, place)
+    return read, [e for e in logs if e["event"].startswith("slop_meter_tied")]
+
+
+def _gone(*ids: int, edit: bool = True) -> Any:
+    def change(forge: Block) -> None:
+        for i in ids:
+            if edit and i in forge.updated:
+                forge.updated[i] = START + timedelta(days=30)
+            else:
+                forge.updated.pop(i, None)
+
+    return change
+
+
+def _once(run: int, change: Any) -> Any:
+    def after(forge: Block, number: int, place: Any) -> None:
+        if number == run:
+            change(forge)
+
+    return after
+
+
+@pytest.fixture
+def hundred_a_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(events, "PER_PAGE", 100)
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+async def test_an_anchor_edited_onto_the_page_is_not_the_place() -> None:
+    """The review's case: 250 comments at one second, then two later ones, one call a run; comment 180, the last read,
+    edited after run 3. Run 4 asked for page 3 of 85 (171 to 250, the two later ones, then 180, moved to the end) and
+    took 180 there for the place: 181 to 250 and the two later comments were never read, and the cursor moved past
+    them (main left out one). An anchor counts only while it still has the block's update."""
+    forge = Block(250)
+    read, _logs = await _over_runs(forge, calls=1, runs=30, after=_once(3, _gone(180)))
+    missing = sorted(set(forge.updated) - read)
+    assert not missing, f"comments never read: {len(missing)}, {missing[:8]}"
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+@pytest.mark.parametrize("edit", [True, False], ids=["edited", "deleted"])
+async def test_a_place_lost_on_a_page_past_the_block_does_not_move_the_cursor(edit: bool) -> None:
+    """The review's case: 250 at one second, eleven of the comments read edited away (or deleted) after run 3, more
+    than a page goes back. Run 4's page (182 to 250 and the later ones) held no anchor, so the place was lost, but the
+    page moved the cursor past 181 all the same, and nothing went back for it. A lost place never moves the cursor."""
+    forge = Block(250)
+    read, _logs = await _over_runs(forge, calls=1, runs=30, after=_once(3, _gone(*range(1, 12), edit=edit)))
+    missing = sorted(set(forge.updated) - read)
+    assert not missing, f"comments never read: {len(missing)}, {missing[:8]}"
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+async def test_no_comment_is_left_out_across_blocks_departures_and_runs() -> None:
+    """The review's grid, with comments after the block: edits and deletions of the first comments read, and edits of
+    the newest anchor or of all three, after run 1, 2 or 3, for blocks of 105 to 500; then drained."""
+    cases: list[str] = []
+    for tied in (105, 150, 190, 250, 300, 500):
+        for run in (1, 2, 3):
+            changes: dict[str, Any] = {
+                f"edit {d}": _once(run, _gone(*range(1, d + 1))) for d in (1, 10, 11, 30, 100, 150) if d < tied
+            }
+            changes.update(
+                {f"delete {d}": _once(run, _gone(*range(1, d + 1), edit=False)) for d in (1, 11, 150) if d < tied}
+            )
+
+            def anchors(newest: bool, at: int = run) -> Any:
+                def after(forge: Block, number: int, place: Any) -> None:
+                    if number == at and place is not None:
+                        ids = place.get("tied_anchors") or []
+                        _gone(*(ids[-1:] if newest else ids))(forge)
+
+                return after
+
+            changes.update({"edit the newest anchor": anchors(True), "edit the anchors": anchors(False)})
+            for name, after in changes.items():
+                forge = Block(tied)
+                read, _logs = await _over_runs(forge, calls=1, runs=12, after=after)
+                missing = sorted(set(forge.updated) - read)
+                if missing:
+                    cases.append(f"{tied} tied, {name} after run {run}: {len(missing)} never read {missing[:4]}")
+    assert not cases, f"{len(cases)} cases leave comments out: {cases[:6]}"
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+async def test_a_place_lost_deep_in_a_block_steps_back_rather_than_starting_over() -> None:
+    """A thousand at one second; 150 of the comments read deleted after run 7, more than a page goes back. The read
+    steps back a page from where it stood (no anchor there: they moved up 150), then twice as far, finds the newest
+    anchor, and goes on from it: three calls, not a reading of the block again from its first page."""
+    forge = Block(1000)
+    read, logs = await _over_runs(forge, calls=1, runs=20, after=_once(7, _gone(*range(1, 151), edit=False)))
+    assert not sorted(set(forge.updated) - read), f"comments never read: {sorted(set(forge.updated) - read)[:8]}"
+    steps = [
+        (e["event"].removeprefix("slop_meter_tied_block_"), e["read"], e.get("to"))
+        for e in logs
+        if "block" in e["event"]
+    ]
+    stood = steps[0][1] if steps else 0
+    assert stood > 300 and steps == [("stepped_back", stood, stood - 100), ("stepped_back", stood, stood - 200)], (
+        f"one page back, then two, from where the read stood: {steps}"
+    )
+    unchanged = Block(1000)
+    await _over_runs(unchanged, calls=1, runs=20)
+    assert forge.calls <= unchanged.calls + 2, (
+        f"{forge.calls} calls, against {unchanged.calls} with nothing deleted: the loss cost more than its steps back"
+    )
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+@pytest.mark.parametrize(("call", "deleted"), [(4, 38), (5, 12), (6, 150)])
+async def test_a_place_lost_within_a_run_is_found_again_in_it(call: int, deleted: int) -> None:
+    """A loss between two pages of one run: the pages after the place is found again bring comments the run saw
+    before the loss, which are not the same page answered again (counted so, the run stopped there, "no comment not
+    read already", and the next pass read the block again from its start). The run reads the block through."""
+    forge = Block(1000)
+    forge.before[call] = _gone(*range(1, deleted + 1), edit=False)
+    reader = EventReader(
+        forge,
+        REPO,
+        comments_since=START,
+        review_comments_since=None,
+        reviews_since=None,
+        # Their authors are known, so no login lookup (a cap of 0 here) marks the read as cut short.
+        known_logins=[f"user{i}" for i in forge.updated],
+        **CAPS,
+    )
+    with capture_logs() as logs:
+        await _run(reader, 40)
+    read = {int(e[0].split(":")[1]) for e in reader.batch.events}
+    stopped = [e["reason"] for e in logs if e["event"] == "slop_meter_tied_pages_stopped"]
+    assert [e for e in logs if e["event"] == "slop_meter_tied_block_stepped_back"], "the run never lost its place"
+    assert (sorted(set(forge.updated) - read), stopped, reader.batch.more) == ([], [], False), (
+        f"never read {sorted(set(forge.updated) - read)[:8]}, stopped {stopped}, cut short {reader.batch.more}"
+    )
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+async def test_anchors_edited_after_every_run_leave_no_comment_out() -> None:
+    """The comments a place names edited away after every one of 40 runs: the place is lost every run and found again
+    only at the block's start. That is slow, but no comment is left out once the edits stop."""
+
+    def every_run(forge: Block, number: int, place: Any) -> None:
+        if place is not None:
+            _gone(*(place.get("tied_anchors") or []))(forge)
+
+    forge = Block(400)
+    read, logs = await _over_runs(forge, calls=1, runs=40, after=every_run)
+    assert len([e for e in logs if e["event"] == "slop_meter_tied_block_restarted"]) >= 10, "the place was not lost"
+    assert not sorted(set(forge.updated) - read), f"comments never read: {sorted(set(forge.updated) - read)[:8]}"
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+async def test_a_page_the_forge_refuses_ends_the_listing_rather_than_stepping_back() -> None:
+    """A refusal is no answer about where the read stands: the listing ends there, as before, without a step back."""
+
+    class Refusing(Block):
+        async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
+            if path.endswith("/issues/comments") and int((params or {}).get("page", 1)) > 1:
+                self.calls += 1
+                return FakeResponse(422, {"message": "no"})
+            return await super().get(path, repo=repo, params=params)
+
+    forge = Refusing(300)
+    reader = _reader(forge, START, None)
+    with capture_logs() as logs:
+        await _run(reader, 20)
+    tied = [e["event"] for e in logs if e["event"].startswith("slop_meter_tied_block")]
+    # The first page from the cursor, that page again from the update it moved the cursor to, and the refused one.
+    assert (forge.calls, tied) == (3, []), f"{forge.calls} calls, {tied}: a refused page was taken for a lost place"
