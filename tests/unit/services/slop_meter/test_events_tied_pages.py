@@ -172,6 +172,10 @@ async def test_a_place_stored_before_the_offset_was_kept_goes_on_from_the_cursor
         {"stage": 0, "pages": 2, "tied_offset": 3, "tied_back": "5"},
         {"stage": 0, "pages": 2, "tied_offset": 3, "tied_back": 10_000 * PAGE},
         {"stage": 0, "pages": 2, "tied_back": 5},
+        {"stage": 0, "pages": 2, "tied_offset": 3, "tied_marks": [1, 2, 3, 4]},
+        {"stage": 0, "pages": 2, "tied_offset": 3, "tied_marks": [False]},
+        {"stage": 0, "pages": 2, "tied_offset": 3, "tied_marks": "1"},
+        {"stage": 0, "pages": 2, "tied_marks": [1]},
     ],
     ids=[
         "pull-listing",
@@ -188,6 +192,10 @@ async def test_a_place_stored_before_the_offset_was_kept_goes_on_from_the_cursor
         "text-back",
         "back-past-the-bound",
         "back-without-offset",
+        "too-many-marks",
+        "bool-mark",
+        "text-marks",
+        "marks-without-offset",
     ],
 )
 def test_a_page_no_reader_could_have_stored_is_no_place(stored: dict[str, Any]) -> None:
@@ -762,18 +770,35 @@ async def test_a_place_lost_within_a_run_is_found_again_in_it(call: int, deleted
 
 
 @pytest.mark.usefixtures("hundred_a_page")
-async def test_anchors_edited_after_every_run_leave_no_comment_out() -> None:
-    """The comments a place names edited away after every one of 40 runs: the place is lost every run and found again
-    only at the block's start. That is slow, but no comment is left out once the edits stop."""
-
-    def every_run(forge: Block, number: int, place: Any) -> None:
-        if place is not None:
-            _gone(*(place.get("tied_anchors") or []))(forge)
-
-    forge = Block(400)
-    read, logs = await _over_runs(forge, calls=1, runs=40, after=every_run)
-    assert len([e for e in logs if e["event"] == "slop_meter_tied_block_restarted"]) >= 10, "the place was not lost"
-    assert not sorted(set(forge.updated) - read), f"comments never read: {sorted(set(forge.updated) - read)[:8]}"
+async def test_the_last_comments_read_edited_after_every_run_do_not_stall_the_block() -> None:
+    """#585: the three comments read last edited after every run took every anchor out of the block, so each run lost
+    its place, stepped back to the block's start and read its first page again: 2,000 at one second had 1,523 unread
+    after 200 runs. The marks further back on the page still give the place, so the block is read, while the edits go
+    on, in about as many runs as with none."""
+    read_by: dict[str, int | None] = {}
+    lost: dict[str, int] = {}
+    for edits in (False, True):
+        forge = Block(2000)
+        seen: set[int] = set()
+        cursor, place = START, None
+        with capture_logs() as logs:
+            for run in range(1, 61):
+                reader = _reader(forge, cursor, place)
+                await _run(reader, 1)
+                seen |= {int(e[0].split(":")[1]) for e in reader.batch.events}
+                cursor = reader.batch.comments_since or cursor
+                place = None if reader.place is None else reader.place.to_json()
+                if edits and place is not None:
+                    _gone(*(place.get("tied_anchors") or []))(forge)
+                if not set(range(1, 2001)) - seen:
+                    break
+        name = "edited" if edits else "unchanged"
+        read_by[name] = run if not set(range(1, 2001)) - seen else None
+        lost[name] = len([e for e in logs if e["event"].startswith("slop_meter_tied_block_")])
+    assert read_by["edited"] is not None and read_by["edited"] <= (read_by["unchanged"] or 0) + 2, (
+        f"runs to read the block, its last three read edited after each and not: {read_by}"
+    )
+    assert lost["edited"] == 0, f"the place was lost {lost['edited']} times with marks still in the block"
 
 
 @pytest.mark.usefixtures("hundred_a_page")
@@ -794,3 +819,37 @@ async def test_a_page_the_forge_refuses_ends_the_listing_rather_than_stepping_ba
     tied = [e["event"] for e in logs if e["event"].startswith("slop_meter_tied_block")]
     # The first page from the cursor, that page again from the update it moved the cursor to, and the refused one.
     assert (forge.calls, tied) == (3, []), f"{forge.calls} calls, {tied}: a refused page was taken for a lost place"
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+@pytest.mark.parametrize(("edited", "steps"), [(6, 0), (9, 1)], ids=["last-six", "last-nine"])
+async def test_marks_further_back_give_the_place_when_more_of_the_last_read_are_edited(edited: int, steps: int) -> None:
+    """#585: with the last six read edited, the 9th last, a mark, is still on the next page; with the last nine, the
+    page's first new comment, a mark, is on the page one step back. Never the block's start, and nothing left out."""
+
+    def edit_last(forge: Block, number: int, place: Any) -> None:
+        if number == 3:
+            last = place["tied_anchors"][-1]  # the last comment read; the block's ids are in the order read
+            _gone(*range(last - edited + 1, last + 1))(forge)
+
+    forge = Block(1000)
+    read, logs = await _over_runs(forge, calls=1, runs=20, after=edit_last)
+    assert not sorted(set(forge.updated) - read), f"comments never read: {sorted(set(forge.updated) - read)[:8]}"
+    events_ = [e["event"].removeprefix("slop_meter_tied_block_") for e in logs if "_block_" in e["event"]]
+    assert events_ == ["stepped_back"] * steps, f"the last {edited} read edited: {events_}"
+
+
+@pytest.mark.usefixtures("hundred_a_page")
+async def test_the_place_keeps_marks_further_back_than_its_anchors() -> None:
+    """#585: a place among tied comments keeps the 5th and the 9th last read and the page's first new comment, and
+    loads them again."""
+    forge = Block(1000)
+    reader = _reader(forge, START, None)
+    await _run(reader, 3)
+    place = reader.place
+    assert place is not None and place.tied_offset is not None, place
+    read = sorted(int(e[0].split(":")[1]) for e in reader.batch.events)
+    last = read[-1]
+    assert place.tied_anchors == (last - 2, last - 1, last), place
+    assert place.tied_marks[:2] == (last - 4, last - 8) and len(place.tied_marks) == 3, place
+    assert ReaderPlace.from_json(place.to_json(), **CAPS) == place, "the marks do not survive being stored"
