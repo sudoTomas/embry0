@@ -350,9 +350,20 @@ class ForgeOutage(Exception):
         super().__init__(f"the forge answered {status}")
         self.status, self.rate_limited, self.wait = status, rate_limited, wait
 
+    def says(self, forge: str, *, what: str = "the probe") -> str:
+        """The outage in words, for an answer: ``GitHub could not answer (503)``, or ``GitHub rate limited the
+        probe (429): it asks to wait 120 s``. ``what`` names what the forge rate limited."""
+        said = f"{forge} rate limited {what}" if self.rate_limited else f"{forge} could not answer"
+        said += f" ({self.status})"
+        if self.wait:
+            said += f": it asks to wait {math.ceil(self.wait)} s"
+        return said
 
-def _outage(response: Any) -> ForgeOutage | None:
-    """The :class:`ForgeOutage` ``response`` is, or None for an answer about access."""
+
+def outage_of(response: Any) -> ForgeOutage | None:
+    """The :class:`ForgeOutage` ``response`` is: a 5xx, a 429, or a 4xx carrying a rate-limit signal
+    (:func:`embry0.execution.forge_client.rate_limited`); None for an answer about access. One reading for every
+    call an organization makes to the forge: its probe, its webhooks, its discovery and its actions (#571, #579)."""
     from embry0.execution.forge_client import rate_limited, retry_after_seconds
 
     status = getattr(response, "status_code", 200)
@@ -394,7 +405,7 @@ class _ProbeTime:
             return
         if response is None:
             raise ProbeOutOfTime()
-        raise _outage(response) or ForgeOutage(getattr(response, "status_code", 0), wait=advertised)
+        raise outage_of(response) or ForgeOutage(getattr(response, "status_code", 0), wait=advertised)
 
     async def sleep(self, delay: float) -> None:
         """The client's wait before a retry, on the probe's clock."""
@@ -416,7 +427,7 @@ async def _ask(client: _Client, path: str, **kwargs: Any) -> Any:
     a 429, or a 4xx carrying a rate-limit signal (GitHub's primary and secondary rate limits come back as 403;
     :func:`embry0.execution.forge_client.rate_limited`)."""
     response = await client.get(path, **kwargs)
-    outage = _outage(response)
+    outage = outage_of(response)
     if outage is not None:
         raise outage
     return response

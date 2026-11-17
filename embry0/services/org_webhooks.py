@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote, urlsplit
 
+from embry0.services.organizations import outage_of
+
 ORG_HOOK_EVENTS = ("issues", "issue_comment", "pull_request", "workflow_run")
 WEBHOOK_PATH = "/api/v1/webhook"
 
@@ -94,8 +96,16 @@ def _hook(body: Any) -> OrgHook | None:
 
 async def list_org_hooks(client: _Client, owner: str) -> list[OrgHook] | None:
     """Every webhook on the organization, or ``None`` when the credential
-    cannot see them (GitHub answers 404 to a token without hook administration)."""
+    cannot see them (GitHub answers 404 to a token without hook administration).
+
+    An outage is not that: a 5xx, a 429 or a rate-limited 403 raises
+    :class:`embry0.services.organizations.ForgeOutage`, and a transport error
+    is raised as it is, so no caller reads either as a missing permission
+    (#579)."""
     resp = await client.get(f"/orgs/{quote(owner, safe='')}/hooks", params={"per_page": 100})
+    outage = outage_of(resp)
+    if outage is not None:
+        raise outage
     if resp.status_code != 200:
         return None
     body = _json(resp)
@@ -117,7 +127,8 @@ async def install_org_hook(
 
     Idempotent: the forge is read first, and an existing hook at the target
     is reported as ``already`` with nothing written. The secret goes to the
-    forge once, in the create call; it is not in the result.
+    forge once, in the create call; it is not in the result. An outage on
+    either call raises (:func:`list_org_hooks`); only a refusal is ``failed``.
     """
     hooks = await list_org_hooks(client, owner)
     if hooks is None:
@@ -138,6 +149,9 @@ async def install_org_hook(
     )
     if resp.status_code in (200, 201):
         return InstallResult("done", _hook(_json(resp)), "webhook installed")
+    outage = outage_of(resp)
+    if outage is not None:
+        raise outage
     body = _json(resp)
     message = str(body.get("message") or "") if isinstance(body, dict) else ""
     return InstallResult("failed", None, f"the forge answered {resp.status_code}" + (f": {message}" if message else ""))

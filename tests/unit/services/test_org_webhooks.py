@@ -9,6 +9,7 @@ import pytest
 from embry0.services import org_webhooks
 from embry0.services.organizations import (
     SETTINGS,
+    ForgeOutage,
     context_audit_budget_usd,
     context_audit_days,
     context_audit_max_jobs_per_tick,
@@ -146,10 +147,11 @@ async def test_install_fails_closed_when_hooks_are_not_listable_or_the_create_is
     assert refused.outcome == "failed"
     assert refused.detail == "the forge answered 422: Hook already exists on this organization"
 
-    silent = await org_webhooks.install_org_hook(
-        Client(Resp(200, []), Resp(500)), "acme", target="https://h.example.com/api/v1/webhook", secret="s"
-    )
-    assert silent.detail == "the forge answered 500"
+    with pytest.raises(ForgeOutage) as outage:
+        await org_webhooks.install_org_hook(
+            Client(Resp(200, []), Resp(500)), "acme", target="https://h.example.com/api/v1/webhook", secret="s"
+        )
+    assert outage.value.status == 500, "a create the forge answered 500 is an outage, not a refusal (#579)"
 
 
 # ---- organization settings ----
@@ -339,3 +341,50 @@ def test_context_audit_budget_reads_only_a_valid_cap(settings: dict[str, Any], b
 )
 def test_context_audit_max_jobs_per_tick_reads_only_a_valid_cap(settings: dict[str, Any], cap: int | None) -> None:
     assert context_audit_max_jobs_per_tick(settings) == cap
+
+
+class _Headed:
+    """A response with headers, for the rate-limit signals."""
+
+    def __init__(self, status_code: int, headers: dict[str, str] | None = None, body: Any = None) -> None:
+        self.status_code = status_code
+        self.headers = headers or {}
+        self._body = body
+
+    def json(self) -> Any:
+        return self._body
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [_Headed(503), _Headed(429), _Headed(403, {"X-RateLimit-Remaining": "0"}), _Headed(403, {"Retry-After": "60"})],
+    ids=["503", "429", "primary-limit-403", "secondary-limit-403"],
+)
+@pytest.mark.asyncio
+async def test_an_outage_listing_the_hooks_is_not_a_missing_permission(answer: _Headed) -> None:
+    """#579: any status but 200 read as "cannot see the hooks", and the install as "needs organization hook
+    administration", blaming the token for an outage or a rate limit."""
+    for call in (
+        org_webhooks.list_org_hooks(Client(answer), "acme"),  # type: ignore[arg-type]
+        org_webhooks.install_org_hook(
+            Client(answer), "acme", target="https://h.example.com/api/v1/webhook", secret="s"
+        ),  # type: ignore[arg-type]
+    ):
+        try:
+            result = await call
+        except ForgeOutage as exc:
+            assert exc.status == answer.status_code, exc
+            continue
+        pytest.fail(f"an outage ({answer.status_code} {answer.headers}) was read as an answer: {result}")
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+@pytest.mark.asyncio
+async def test_a_refusal_listing_the_hooks_is_still_a_missing_permission(status: int) -> None:
+    hidden = await org_webhooks.install_org_hook(
+        Client(_Headed(status)),
+        "acme",
+        target="https://h.example.com/api/v1/webhook",
+        secret="s",  # type: ignore[arg-type]
+    )
+    assert hidden.outcome == "failed" and "needs organization hook administration" in hidden.detail, hidden

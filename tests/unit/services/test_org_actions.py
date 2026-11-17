@@ -568,3 +568,61 @@ async def test_deactivate_reaches_an_archived_registration_and_no_other_action_d
 def test_vocabularies_are_closed() -> None:
     assert org_actions.ACTIONS == ("register", "hook", "onboard", "watch", "deactivate")
     assert org_actions.OUTCOMES == ("done", "already", "skipped", "failed")
+
+
+class _OutageResp(FakeResp):
+    def __init__(self, status: int, headers: dict[str, str] | None = None) -> None:
+        super().__init__(status)
+        self.headers = headers or {}
+
+
+class _OutageForge(FakeForge):
+    def __init__(self, *, listing: Any = None, created: Any = None) -> None:
+        super().__init__()
+        self.listing, self.created = listing, created
+
+    async def get(self, path: str, **kwargs: Any) -> FakeResp:
+        if isinstance(self.listing, Exception):
+            raise self.listing
+        return self.listing if self.listing is not None else await super().get(path, **kwargs)
+
+    async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
+        if self.created is not None:
+            self.posts.append((path, json))
+            if isinstance(self.created, Exception):
+                raise self.created
+            return self.created
+        return await super().post(path, json=json, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("forge", "detail"),
+    [
+        (_OutageForge(listing=_OutageResp(503)), "GitHub could not answer (503)"),
+        (
+            _OutageForge(listing=_OutageResp(403, {"Retry-After": "60"})),
+            "GitHub rate limited the request (403): it asks to wait 60 s",
+        ),
+        (_OutageForge(created=_OutageResp(502)), "GitHub could not answer (502)"),
+    ],
+    ids=["listing-503", "listing-rate-limited-403", "create-502"],
+)
+@pytest.mark.asyncio
+async def test_a_hook_action_during_an_outage_fails_naming_it(forge: _OutageForge, detail: str) -> None:
+    """#579, the repository webhook action alike: an outage listing the hooks was skipped as a webhook the token
+    cannot list, and one on the create read as the forge refusing the webhook."""
+    results = await run_action(context(forge_client=forge), "hook", ["acme/widgets"])
+    assert [(r.repo, r.outcome, r.detail) for r in results] == [("acme/widgets", "failed", detail)], results
+
+
+@pytest.mark.parametrize("on", ["listing", "create"])
+@pytest.mark.asyncio
+async def test_a_hook_action_github_never_answers_fails_naming_it(on: str) -> None:
+    import httpx
+
+    refused = httpx.ConnectError("connection refused")
+    forge = _OutageForge(listing=refused) if on == "listing" else _OutageForge(created=refused)
+    results = await run_action(context(forge_client=forge), "hook", ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [("failed", "GitHub could not be reached")], (
+        f"GitHub not reached on the {on}: {results}"
+    )

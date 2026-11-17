@@ -16,10 +16,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import httpx
 import structlog
 
 from embry0.services import org_webhooks
 from embry0.services.org_discovery import hook_points_here, public_origin
+from embry0.services.organizations import outage_of
 from embry0.services.watcher_stacks import WatcherStack
 
 logger = structlog.get_logger(__name__)
@@ -181,7 +183,15 @@ async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: b
         return ActionResult(repo, "skipped", "GITHUB_WEBHOOK_SECRET is not set, so deliveries could not be verified")
     if ctx.forge_client is None:
         return ActionResult(repo, "failed", "no forge client for the owner's credential")
-    listing = await ctx.forge_client.get(f"/repos/{repo}/hooks", params={"per_page": 100})
+    # An outage says nothing of the credential (#579): the action fails, naming what the forge did, rather than
+    # being skipped as a webhook it cannot list.
+    try:
+        listing = await ctx.forge_client.get(f"/repos/{repo}/hooks", params={"per_page": 100})
+    except httpx.RequestError:
+        return ActionResult(repo, "failed", "GitHub could not be reached")
+    outage = outage_of(listing)
+    if outage is not None:
+        return ActionResult(repo, "failed", outage.says("GitHub", what="the request"))
     if listing.status_code != 200:
         return ActionResult(repo, "skipped", f"cannot list webhooks (HTTP {listing.status_code})")
     hooks = _json(listing)
@@ -190,15 +200,21 @@ async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: b
         return ActionResult(repo, "already", f"a webhook already posts to {origin}")
     if dry_run:
         return ActionResult(repo, "done", f"would create a webhook posting to {ctx.webhook_url}")
-    created = await ctx.forge_client.post(
-        f"/repos/{repo}/hooks",
-        json={
-            "name": "web",
-            "active": True,
-            "events": list(GITHUB_HOOK_EVENTS),
-            "config": {"url": ctx.webhook_url, "content_type": "json", "secret": ctx.webhook_secret},
-        },
-    )
+    try:
+        created = await ctx.forge_client.post(
+            f"/repos/{repo}/hooks",
+            json={
+                "name": "web",
+                "active": True,
+                "events": list(GITHUB_HOOK_EVENTS),
+                "config": {"url": ctx.webhook_url, "content_type": "json", "secret": ctx.webhook_secret},
+            },
+        )
+    except httpx.RequestError:
+        return ActionResult(repo, "failed", "GitHub could not be reached")
+    outage = outage_of(created)
+    if outage is not None:
+        return ActionResult(repo, "failed", outage.says("GitHub", what="the request"))
     if created.status_code != 201:
         return ActionResult(repo, "failed", f"the forge refused the webhook (HTTP {created.status_code})")
     return ActionResult(repo, "done", f"webhook created, posting to {ctx.webhook_url}")

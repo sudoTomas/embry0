@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 from typing import Any, cast
 
 import httpx
@@ -189,29 +188,33 @@ async def probe_access(request: Request, owner: str, forge: str, token: str) -> 
             )
         return await org_service.probe_github(owner, token)
     except (httpx.RequestError, org_service.ForgeOutage, org_service.ProbeOutOfTime) as exc:
-        name = "GitLab" if forge == "gitlab" else "GitHub"
-        outage = exc if isinstance(exc, org_service.ForgeOutage) else None
-        # Classes, not text: the text can carry the request's URL.
-        logger.warning(
-            "organization_probe_unreachable",
-            owner=owner,
-            forge=forge,
-            error=type(exc).__name__,
-            status=outage.status if outage else None,
-            rate_limited=outage.rate_limited if outage else None,
-            wait=outage.wait if outage else None,
-            cause=_root_cause(exc),
-        )
-        if outage is not None:
-            what = "rate limited the probe" if outage.rate_limited else "could not answer"
-            detail = f"{name} {what} ({outage.status})"
-            if outage.wait:
-                detail += f": it asks to wait {math.ceil(outage.wait)} s"
-        elif isinstance(exc, org_service.ProbeOutOfTime):
-            detail = f"{name} did not answer within {org_service.PROBE_SECONDS:g} seconds"
-        else:
-            detail = f"{name} could not be reached"
-        raise HTTPException(status_code=502, detail=detail) from exc
+        raise _forge_failed("organization_probe_unreachable", owner, forge, exc, what="the probe") from exc
+
+
+def _forge_failed(event: str, owner: str, forge: str, exc: Exception, *, what: str) -> HTTPException:
+    """The 502 for a call the forge did not answer about: never reached (a transport error), an outage or a rate
+    limit (:class:`embry0.services.organizations.ForgeOutage`), or past the probe's deadline. Logged as ``event``
+    with the owner, the forge, the error's class (not its text, which can carry the request's URL), the status and
+    the wait the forge named. Shared by the probe and the organization webhook routes (#571, #579)."""
+    name = "GitLab" if forge == "gitlab" else "GitHub"
+    outage = exc if isinstance(exc, org_service.ForgeOutage) else None
+    logger.warning(
+        event,
+        owner=owner,
+        forge=forge,
+        error=type(exc).__name__,
+        status=outage.status if outage else None,
+        rate_limited=outage.rate_limited if outage else None,
+        wait=outage.wait if outage else None,
+        cause=_root_cause(exc),
+    )
+    if outage is not None:
+        detail = outage.says(name, what=what)
+    elif isinstance(exc, org_service.ProbeOutOfTime):
+        detail = f"{name} did not answer within {org_service.PROBE_SECONDS:g} seconds"
+    else:
+        detail = f"{name} could not be reached"
+    return HTTPException(status_code=502, detail=detail)
 
 
 def _root_cause(exc: BaseException) -> str | None:
@@ -863,7 +866,11 @@ async def get_organization_webhook(owner: str, request: Request) -> dict[str, An
     org, client = await _org_for_hooks(request, owner)
     origin = webhook_origin(request)
     target = org_webhooks.hook_target(origin) if origin else None
-    hooks = await org_webhooks.list_org_hooks(client, org.owner)
+    try:
+        hooks = await org_webhooks.list_org_hooks(client, org.owner)
+    except (httpx.RequestError, org_service.ForgeOutage) as exc:
+        # An outage says nothing of what the credential may see (#579): not "hooks_visible" false.
+        raise _forge_failed("organization_webhook_unreachable", org.owner, org.forge, exc, what="the request") from exc
     hook = org_webhooks.hook_pointing_at(hooks, target) if hooks and target else None
     ours = target.rstrip("/") if target else None
     return {
@@ -909,7 +916,18 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
             status_code=422, detail="GITHUB_WEBHOOK_SECRET is empty: an organization webhook must be signed"
         )
     target = org_webhooks.hook_target(origin)
-    result = await org_webhooks.install_org_hook(client, org.owner, target=target, secret=secret)
+    try:
+        result = await org_webhooks.install_org_hook(client, org.owner, target=target, secret=secret)
+    except (httpx.RequestError, org_service.ForgeOutage) as exc:
+        # The forge did not answer about the token (#579): an outage, not a missing hook administration. The attempt
+        # is audited all the same, as a failed one was.
+        await emit_audit(
+            getattr(request.app.state, "db", None),
+            "organization.webhook_install",
+            actor=request_actor(request),
+            details={"owner": org.owner, "outcome": "unreachable", "hook_id": None},
+        )
+        raise _forge_failed("organization_webhook_unreachable", org.owner, org.forge, exc, what="the request") from exc
     await emit_audit(
         getattr(request.app.state, "db", None),
         "organization.webhook_install",

@@ -429,3 +429,115 @@ async def test_install_reports_hooks_the_credential_cannot_list(app: Any, forge:
     assert resp.status_code == 502
     assert "cannot list the webhooks of acme" in resp.json()["detail"]
     assert forge.posts == []
+
+
+# ---- an outage is not a missing permission (#579) ----
+
+
+class _OutageForge(FakeForge):
+    """The forge answering the hook listing, or the create, with ``answer``: an outage, a rate limit, or a failure
+    to reach it at all."""
+
+    def __init__(self, *, listing: Any = None, created: Any = None) -> None:
+        super().__init__()
+        self.listing, self.created = listing, created
+
+    async def get(self, path: str, **kwargs: Any) -> Any:
+        if isinstance(self.listing, Exception):
+            raise self.listing
+        return self.listing if self.listing is not None else await super().get(path, **kwargs)
+
+    async def post(self, path: str, **kwargs: Any) -> Any:
+        self.posts.append((path, kwargs["json"]))
+        return self.created if self.created is not None else await super().post(path, **kwargs)
+
+
+class _Headed(FakeResponse):
+    def __init__(self, status_code: int, headers: dict[str, str] | None = None) -> None:
+        super().__init__(status_code, {"message": "unavailable"})
+        self.headers = headers or {}
+
+
+def _forge(app: Any, monkeypatch: pytest.MonkeyPatch, forge: FakeForge) -> None:
+    monkeypatch.setattr(organizations_api, "make_forge_client", lambda request, org, token: forge)
+
+
+_OUTAGES = {
+    "503": (_Headed(503), "GitHub could not answer (503)"),
+    "429": (_Headed(429, {"Retry-After": "30"}), "GitHub rate limited the request (429): it asks to wait 30 s"),
+    "rate-limited-403": (_Headed(403, {"X-RateLimit-Remaining": "0"}), "GitHub rate limited the request (403)"),
+}
+
+
+@pytest.mark.parametrize("outage", list(_OUTAGES), ids=list(_OUTAGES))
+@pytest.mark.asyncio
+async def test_installing_during_an_outage_names_the_outage_not_the_token(
+    app: Any, monkeypatch: pytest.MonkeyPatch, outage: str
+) -> None:
+    answer, detail = _OUTAGES[outage]
+    _forge(app, monkeypatch, _OutageForge(listing=answer))
+    audits: list[tuple[str, dict[str, Any]]] = []
+
+    async def audit(_db: Any, action: str, **kwargs: Any) -> None:
+        audits.append((action, kwargs["details"]))
+
+    monkeypatch.setattr(organizations_api, "emit_audit", audit)
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert (resp.status_code, resp.json().get("detail")) == (502, detail), (
+        f"an install during an outage ({outage}) blamed the token: {resp.status_code} {resp.text}"
+    )
+    assert audits == [("organization.webhook_install", {"owner": "acme", "outcome": "unreachable", "hook_id": None})], (
+        f"the attempt is audited, as a failed one was: {audits}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_create_answered_with_an_outage_names_it(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    _forge(app, monkeypatch, _OutageForge(created=_Headed(502)))
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert (resp.status_code, resp.json().get("detail")) == (502, "GitHub could not answer (502)"), resp.text
+
+
+@pytest.mark.asyncio
+async def test_installing_when_github_cannot_be_reached_says_so(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    _forge(app, monkeypatch, _OutageForge(listing=httpx.ConnectError("connection refused")))
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    ) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+        status = await client.get("/api/v1/orgs/acme/webhook")
+    assert [(r.status_code, r.json().get("detail")) for r in (resp, status)] == [
+        (502, "GitHub could not be reached")
+    ] * 2, f"a forge never reached: {resp.text} {status.text}"
+
+
+@pytest.mark.parametrize("outage", list(_OUTAGES), ids=list(_OUTAGES))
+@pytest.mark.asyncio
+async def test_the_webhook_status_during_an_outage_is_not_hooks_not_visible(
+    app: Any, monkeypatch: pytest.MonkeyPatch, outage: str
+) -> None:
+    answer, detail = _OUTAGES[outage]
+    _forge(app, monkeypatch, _OutageForge(listing=answer))
+    async with _client(app) as client:
+        resp = await client.get("/api/v1/orgs/acme/webhook")
+    assert (resp.status_code, resp.json().get("detail")) == (502, detail), (
+        f"the status during an outage ({outage}) read as hooks not visible: {resp.status_code} {resp.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_listing_still_reads_as_no_hook_administration(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _forge(app, monkeypatch, _OutageForge(listing=_Headed(404)))
+    async with _client(app) as client:
+        install = await client.post("/api/v1/orgs/acme/webhook")
+        status = await client.get("/api/v1/orgs/acme/webhook")
+    assert install.status_code == 502 and "needs organization hook administration" in install.json()["detail"]
+    assert status.status_code == 200 and status.json()["hooks_visible"] is False, status.text
