@@ -626,3 +626,224 @@ async def test_a_hook_action_github_never_answers_fails_naming_it(on: str) -> No
     assert [(r.outcome, r.detail) for r in results] == [("failed", "GitHub could not be reached")], (
         f"GitHub not reached on the {on}: {results}"
     )
+
+
+@pytest.mark.parametrize("answer", ["502", "lost"], ids=["answered-502", "answer-lost"])
+@pytest.mark.asyncio
+async def test_a_hook_github_stored_but_answered_badly_is_done(answer: str) -> None:
+    """#582: the create was retried, and the hook GitHub had stored made the retry a 422 and the action failed. It
+    is sent once, and the hooks listed again: the one pointing here is the action done."""
+    import httpx
+
+    class StoredButAnsweredBadly(FakeForge):
+        async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
+            assert kwargs.get("retry_transient") is False, "the create is sent once"
+            self.posts.append((path, json))
+            self.hooks.append({"id": 9, "config": {"url": json["config"]["url"]}})
+            if answer == "lost":
+                raise httpx.ReadTimeout("the answer was lost")
+            return _OutageResp(502)
+
+    forge = StoredButAnsweredBadly()
+    results = await run_action(context(forge_client=forge), "hook", ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [
+        ("done", f"webhook created, posting to {HOOK_URL} (GitHub's answer was lost)")
+    ], results
+    assert len(forge.posts) == 1, forge.posts
+
+
+class _Hanging(FakeForge):
+    """A forge that takes the listing of the repositories named and never answers it."""
+
+    def __init__(self, *hanging: str) -> None:
+        super().__init__()
+        self.hanging = hanging
+
+    async def get(self, path: str, **kwargs: Any) -> FakeResp:
+        import asyncio
+
+        if any(path == f"/repos/{repo}/hooks" for repo in self.hanging):
+            await asyncio.Event().wait()
+        return await super().get(path, **kwargs)
+
+
+def _timed(monkeypatch: pytest.MonkeyPatch, *, repo: float, least: float, request: float, **ctx: Any) -> Any:
+    """A context whose hook action has ``request`` seconds in all, at most ``repo`` for each repository, and starts a
+    repository only with ``least`` left (a hundredth of a second kept back for the look after a create)."""
+    from embry0.services import org_actions as actions
+    from embry0.services import org_webhooks
+    from embry0.services.organizations import ForgeTime
+
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", repo)
+    monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", least)
+    monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.01)
+    facts = {f"acme/r{n}": fact(f"acme/r{n}", hook_present=False) for n in range(1, 6)}
+    return context(facts=facts, forge_time=ForgeTime(), request_time=ForgeTime(request), **ctx)
+
+
+async def _within_ten_seconds(ctx: Any, repos: list[str]) -> list[Any]:
+    import asyncio
+
+    try:
+        return await asyncio.wait_for(run_action(ctx, "hook", repos), timeout=10)
+    except TimeoutError:
+        pytest.fail("the hook action waited on a forge that never answers past 10 s")
+
+
+@pytest.mark.asyncio
+async def test_one_slow_repository_does_not_leave_the_rest_no_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#582: each repository has its share of the request's time, here a fifth of a second of two: one GitHub never
+    answers about fails at its share, and the next one still has its own."""
+    ctx = _timed(monkeypatch, repo=0.2, least=0.05, request=2.0, forge_client=_Hanging("acme/r1"))
+    results = await _within_ten_seconds(ctx, ["acme/r1", "acme/r2"])
+    assert [(r.repo, r.outcome, r.detail) for r in results] == [
+        ("acme/r1", "failed", "GitHub did not answer within 0.2 seconds"),
+        ("acme/r2", "done", f"webhook created, posting to {HOOK_URL}"),
+    ], results
+
+
+@pytest.mark.asyncio
+async def test_repositories_past_the_requests_time_are_not_tried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#582: a request of up to 500 repositories, one after another, each with a fresh 25 s, outlasted the dashboard's
+    30 s. The request has its time in all; a repository it does not reach is skipped, not tried, and run again."""
+    import time
+
+    hanging = _Hanging(*(f"acme/r{n}" for n in range(1, 6)))
+    ctx = _timed(monkeypatch, repo=0.2, least=0.15, request=0.5, forge_client=hanging)
+    started = time.monotonic()
+    results = await _within_ten_seconds(ctx, [f"acme/r{n}" for n in range(1, 6)])
+    outcomes = [(r.outcome, r.detail) for r in results]
+    assert outcomes[:2] == [("failed", "GitHub did not answer within 0.2 seconds")] * 2, outcomes
+    assert outcomes[2:] == [("skipped", "not tried: out of time, run again")] * 3, outcomes
+    assert time.monotonic() - started < 1.0, f"the request took {time.monotonic() - started:.2f}s of its 0.5"
+
+
+@pytest.mark.asyncio
+async def test_a_hook_whose_relisting_github_never_reaches_fails_naming_the_create() -> None:
+    """The create's answer lost, and GitHub not reached for the look after it: the create's words, not the error's."""
+    import httpx
+
+    class Lost(FakeForge):
+        async def get(self, path: str, **kwargs: Any) -> FakeResp:
+            if self.posts:
+                raise httpx.ConnectError("refused")
+            return await super().get(path, **kwargs)
+
+        async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
+            self.posts.append((path, json))
+            raise httpx.ReadTimeout("the answer was lost")
+
+    results = await run_action(context(forge_client=Lost()), "hook", ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [("failed", "GitHub could not be reached")], results
+
+
+class _Creating(FakeForge):
+    """A forge whose create answers each of ``answers`` in turn (a response; "hang" after storing the hook; "hang
+    before" without storing it), and after them stores the hook and answers 201."""
+
+    def __init__(self, *answers: Any, relisting_hangs: bool = False) -> None:
+        super().__init__()
+        self.answers, self.gets, self.relisting_hangs = list(answers), 0, relisting_hangs
+
+    async def get(self, path: str, **kwargs: Any) -> FakeResp:
+        import asyncio
+
+        self.gets += 1
+        if self.posts:
+            # The look after a create: a forge's answer takes a moment, and one may never come.
+            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(0.05))
+        return await super().get(path, **kwargs)
+
+    async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
+        import asyncio
+
+        assert kwargs.get("retry_transient") is False, "the client never sends the create again by itself"
+        if not self.answers:
+            return await super().post(path, json=json, **kwargs)
+        answer = self.answers.pop(0)
+        self.posts.append((path, json))
+        if answer == "hang":
+            self.hooks.append({"id": 9, "config": {"url": json["config"]["url"]}})
+        if answer in ("hang", "hang before"):
+            await asyncio.Event().wait()
+        return answer
+
+
+def _short(monkeypatch: pytest.MonkeyPatch, forge: Any) -> Any:
+    """A context with half a second for each repository, a fifth of a second of it kept back for the look after a
+    create."""
+    from embry0.services import org_actions as actions
+    from embry0.services import org_webhooks
+    from embry0.services.organizations import ForgeTime
+
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 0.5)
+    monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.1)
+    monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.2)
+    return context(forge_client=forge, forge_time=ForgeTime(), request_time=ForgeTime(5.0))
+
+
+@pytest.mark.asyncio
+async def test_a_create_github_made_but_answers_late_is_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review of #584: a create that hangs past the deadline after GitHub stored the hook was reported as not
+    answered. Part of the time is kept back for the look after it, which finds the hook."""
+    forge = _Creating("hang")
+    results = await _within_ten_seconds(_short(monkeypatch, forge), ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [
+        ("done", f"webhook created, posting to {HOOK_URL} (GitHub's answer was lost)")
+    ], results
+
+
+@pytest.mark.parametrize("relisting_hangs", [False, True], ids=["listed", "listing-hangs"])
+@pytest.mark.asyncio
+async def test_a_create_unanswered_and_not_listed_may_have_been_made(
+    monkeypatch: pytest.MonkeyPatch, relisting_hangs: bool
+) -> None:
+    forge = _Creating("hang before", relisting_hangs=relisting_hangs)
+    results = await _within_ten_seconds(_short(monkeypatch, forge), ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [
+        ("failed", "GitHub did not answer the create in time, nor list the webhook after it: it may have been made")
+    ], results
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_create_is_sent_again_after_its_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review of #584: a rate-limited create was not processed, so it cannot make a second hook: it is sent again
+    after the wait GitHub asks for, within the deadline. Nothing else is sent again."""
+    from embry0.services import organizations as org_service
+
+    waits: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        waits.append(delay)
+
+    monkeypatch.setattr(org_service, "_sleep", fake_sleep)
+    forge = _Creating(_OutageResp(429, {"Retry-After": "0.1"}))
+    results = await _within_ten_seconds(_short(monkeypatch, forge), ["acme/widgets"])
+    assert [(r.outcome, len(forge.posts), waits) for r in results] == [("done", 2, [0.1])], (results, forge.posts)
+
+
+@pytest.mark.asyncio
+async def test_a_create_rate_limited_past_the_deadline_is_not_looked_for(monkeypatch: pytest.MonkeyPatch) -> None:
+    forge = _Creating(_OutageResp(429, {"Retry-After": "120"}))
+    results = await _within_ten_seconds(_short(monkeypatch, forge), ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [
+        ("failed", "GitHub rate limited the request (429): it asks to wait 120 s")
+    ], results
+    assert (len(forge.posts), forge.gets) == (1, 1), "sent once, and the hooks not listed again: it was not made"
+
+
+@pytest.mark.asyncio
+async def test_a_create_answered_with_an_outage_is_still_sent_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a rate limit is sent again, however much time is left: a 502 may be a create GitHub made."""
+    from embry0.services import org_actions as actions
+    from embry0.services import organizations as org_service
+
+    async def no_wait(delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(org_service, "_sleep", no_wait)
+    forge = _Creating(_OutageResp(502))
+    ctx = _short(monkeypatch, forge)
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 5.0)
+    results = await _within_ten_seconds(ctx, ["acme/widgets"])
+    assert [(r.outcome, len(forge.posts)) for r in results] == [("failed", 1)], results

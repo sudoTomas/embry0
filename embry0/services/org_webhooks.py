@@ -11,11 +11,29 @@ manage hooks) and where it points (the configured public webhook origin).
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote, urlsplit
 
-from embry0.services.organizations import outage_of
+import httpx
+
+from embry0.services.organizations import (
+    CreateUnanswered,
+    ForgeOutage,
+    ForgeTime,
+    ProbeOutOfTime,
+    outage_of,
+    within,
+)
+
+#: Seconds of a call's deadline kept back from a webhook create for listing the hooks after it (#582): a create the
+#: forge made but answers late is found there, rather than reported as not answered.
+RELIST_SECONDS = 3.0
+#: How many times a create is sent when the forge rate-limits it: a rate-limited request was not processed, so
+#: sending it again cannot make a second hook. Any other answer, or none, is not sent again.
+CREATE_ATTEMPTS = 2
 
 ORG_HOOK_EVENTS = ("issues", "issue_comment", "pull_request", "workflow_run")
 WEBHOOK_PATH = "/api/v1/webhook"
@@ -115,13 +133,67 @@ async def list_org_hooks(client: _Client, owner: str) -> list[OrgHook] | None:
 
 
 def hook_pointing_at(hooks: list[OrgHook], target: str) -> OrgHook | None:
-    """The hook whose URL is ``target``, trailing slash aside."""
+    """The hook whose URL is ``target``, trailing slash aside.
+
+    The URL alone decides, as it does for ``already``: a hook at the target
+    with other events, inactive, or with another secret is still this one,
+    so neither an install nor the look after a lost create makes a second.
+    """
     wanted = target.rstrip("/")
     return next((hook for hook in hooks if hook.url.rstrip("/") == wanted), None)
 
 
+async def timed[T](forge_time: ForgeTime | None, call: Awaitable[T]) -> T:
+    """``call`` within what is left of ``forge_time`` (:class:`ProbeOutOfTime` past it); as it is with none."""
+    return await call if forge_time is None else await within(forge_time, call)
+
+
+async def send_create(client: Any, path: str, payload: dict[str, Any], *, forge_time: ForgeTime | None = None) -> Any:
+    """Send a webhook create on ``path``, and return the forge's answer.
+
+    Sent once (#582): a create the forge made and answered with an outage,
+    or whose answer was lost, would be refused when sent again (a 422), or
+    on a forge that takes duplicates make a second hook. A rate limit is the
+    exception: the forge did not process the request, so it is sent again
+    after the wait it asks for, up to :data:`CREATE_ATTEMPTS` times, when
+    that wait fits in what is left of ``forge_time``.
+
+    With ``forge_time``, :data:`RELIST_SECONDS` of it are kept back for
+    listing the hooks after it. Raises :class:`ProbeOutOfTime` before
+    sending when nothing more is left, :class:`CreateUnanswered` when the
+    answer did not come in the time it had, and ``httpx.RequestError`` when
+    the forge was not reached or the answer was lost on the way.
+    """
+    for attempt in range(1, CREATE_ATTEMPTS + 1):
+        if forge_time is None:
+            resp = await client.post(path, json=payload, retry_transient=False)
+        else:
+            room = forge_time.left() - RELIST_SECONDS
+            if room <= 0:
+                raise ProbeOutOfTime()
+            try:
+                async with asyncio.timeout(room):
+                    resp = await client.post(path, json=payload, retry_transient=False)
+            except TimeoutError:
+                raise CreateUnanswered() from None
+        outage = outage_of(resp)
+        if forge_time is None or outage is None or not outage.rate_limited or attempt == CREATE_ATTEMPTS:
+            return resp
+        wait = outage.wait if outage.wait is not None else 1.0
+        if wait >= forge_time.left() - RELIST_SECONDS:
+            return resp
+        await forge_time.sleep(wait)
+    raise AssertionError("unreachable: every attempt returns")
+
+
 async def install_org_hook(
-    client: _Client, owner: str, *, target: str, secret: str, events: tuple[str, ...] = ORG_HOOK_EVENTS
+    client: _Client,
+    owner: str,
+    *,
+    target: str,
+    secret: str,
+    events: tuple[str, ...] = ORG_HOOK_EVENTS,
+    forge_time: ForgeTime | None = None,
 ) -> InstallResult:
     """Create the organization webhook unless one already points at ``target``.
 
@@ -129,8 +201,19 @@ async def install_org_hook(
     is reported as ``already`` with nothing written. The secret goes to the
     forge once, in the create call; it is not in the result. An outage on
     either call raises (:func:`list_org_hooks`); only a refusal is ``failed``.
+
+    The create is sent once (:func:`send_create`, #582): a forge that stored
+    the hook and whose answer was an outage, or was lost, would answer a
+    second create with a 422, and the install would read as failed though it
+    is installed (or, on a forge that takes duplicates, make two hooks).
+    After such an answer, or none in its time, the hooks are listed once
+    more: one pointing at ``target`` is ``done``. A rate-limited create was
+    not made, and is not looked for.
+
+    With ``forge_time``, every call is made within it, and the create keeps
+    :data:`RELIST_SECONDS` of it back for that last listing.
     """
-    hooks = await list_org_hooks(client, owner)
+    hooks = await timed(forge_time, list_org_hooks(client, owner))
     if hooks is None:
         return InstallResult(
             "failed", None, f"cannot list the webhooks of {owner} (needs organization hook administration)"
@@ -138,19 +221,36 @@ async def install_org_hook(
     existing = hook_pointing_at(hooks, target)
     if existing is not None:
         return InstallResult("already", existing, "a webhook already points here")
-    resp = await client.post(
-        f"/orgs/{quote(owner, safe='')}/hooks",
-        json={
-            "name": "web",
-            "active": True,
-            "events": list(events),
-            "config": {"url": target, "content_type": "json", "secret": secret, "insecure_ssl": "0"},
-        },
-    )
-    if resp.status_code in (200, 201):
+    lost: Exception | None = None
+    try:
+        resp = await send_create(
+            client,
+            f"/orgs/{quote(owner, safe='')}/hooks",
+            {
+                "name": "web",
+                "active": True,
+                "events": list(events),
+                "config": {"url": target, "content_type": "json", "secret": secret, "insecure_ssl": "0"},
+            },
+            forge_time=forge_time,
+        )
+    except (httpx.RequestError, CreateUnanswered) as exc:
+        resp, lost = None, exc
+    if resp is not None and resp.status_code in (200, 201):
         return InstallResult("done", _hook(_json(resp)), "webhook installed")
-    outage = outage_of(resp)
+    outage = lost or (outage_of(resp) if resp is not None else None)
     if outage is not None:
+        if isinstance(outage, ForgeOutage) and outage.rate_limited:
+            raise outage
+        # The forge may have stored the hook and lost its answer: what it lists now says. A listing that fails too
+        # leaves the create's own outage the answer.
+        try:
+            listed = await timed(forge_time, list_org_hooks(client, owner))
+        except (httpx.RequestError, ForgeOutage, ProbeOutOfTime):
+            raise outage from None
+        stored = hook_pointing_at(listed or [], target)
+        if stored is not None:
+            return InstallResult("done", stored, "webhook installed (the forge's answer to the create was lost)")
         raise outage
     body = _json(resp)
     message = str(body.get("message") or "") if isinstance(body, dict) else ""

@@ -388,3 +388,218 @@ async def test_a_refusal_listing_the_hooks_is_still_a_missing_permission(status:
         secret="s",  # type: ignore[arg-type]
     )
     assert hidden.outcome == "failed" and "needs organization hook administration" in hidden.detail, hidden
+
+
+# ---- the create is sent once, and a lost answer is looked at again (#582) ----
+
+
+async def _install_over(answer_create: Any) -> tuple[Any, list[str]]:
+    """The install through the real forge client: the organization lists no hook until the create, which GitHub
+    stores and then answers with ``answer_create``. Returns the result (or the exception raised) and the requests."""
+    import httpx
+
+    from embry0.execution.github_client import GitHubClient
+
+    target = "https://h.example.com/api/v1/webhook"
+    stored: list[dict[str, Any]] = []
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json=stored)
+        if stored:
+            return httpx.Response(422, json={"message": "Hook already exists on this organization"})
+        stored.append(_hook(target, hook_id=7))
+        if isinstance(answer_create, Exception):
+            raise answer_create
+        return answer_create
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as http:
+        client = GitHubClient(default_token="t", owner_env_tokens=False, token_owner="acme", http_client=http)
+
+        async def no_wait(_delay: float) -> None:
+            return None
+
+        client._sleep = no_wait  # type: ignore[method-assign]
+        try:
+            result: Any = await org_webhooks.install_org_hook(client, "acme", target=target, secret="s")
+        except Exception as exc:  # noqa: BLE001 - what the install raised is the result here
+            result = exc
+    return result, sent
+
+
+@pytest.mark.parametrize("answer", ["502", "lost"], ids=["answered-502", "answer-lost"])
+@pytest.mark.asyncio
+async def test_a_create_github_stored_but_answered_badly_is_installed(answer: str) -> None:
+    """#582: the client sent the create again; GitHub, which had stored the first, answered 422, and the install was
+    reported (and audited) failed although the hook was there. It is sent once, and the hooks listed again."""
+    import httpx
+
+    created = httpx.Response(502) if answer == "502" else httpx.ReadTimeout("the answer was lost")
+    result, sent = await _install_over(created)
+    assert sent.count("POST") == 1, f"the create was sent {sent.count('POST')} times: {sent}"
+    assert getattr(result, "outcome", None) == "done" and result.hook.id == 7, (
+        f"a hook GitHub stored is installed, whatever its answer to the create: {result!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_create_github_did_not_store_is_still_the_outage() -> None:
+    client = Client(Resp(200, []), Resp(503))
+    with pytest.raises(ForgeOutage) as outage:
+        await org_webhooks.install_org_hook(client, "acme", target="https://h.example.com/api/v1/webhook", secret="s")  # type: ignore[arg-type]
+    assert outage.value.status == 503
+    assert [c[0] for c in client.calls] == ["GET", "POST", "GET"], f"listed again after the outage: {client.calls}"
+    assert client.calls[1][2].get("retry_transient") is False, "the create is sent once"
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_fails_after_the_create_leaves_the_creates_outage() -> None:
+    class Failing(Client):
+        async def get(self, path: str, **kwargs: Any) -> Resp:
+            self.calls.append(("GET", path, kwargs))
+            return Resp(200, []) if len(self.calls) == 1 else Resp(504)
+
+    client = Failing(Resp(200, []), Resp(502))
+    with pytest.raises(ForgeOutage) as outage:
+        await org_webhooks.install_org_hook(client, "acme", target="https://h.example.com/api/v1/webhook", secret="s")  # type: ignore[arg-type]
+    assert outage.value.status == 502, f"the create's outage is the answer, not the listing's: {outage.value.status}"
+
+
+@pytest.mark.asyncio
+async def test_a_hook_elsewhere_on_the_organization_is_not_the_one_the_create_made() -> None:
+    """Review of #584: the look after a lost create must find a hook pointing at the target, not any hook."""
+    elsewhere = _hook("https://elsewhere.example.com/hook")
+    client = Client(Resp(200, [elsewhere]), Resp(502))
+    with pytest.raises(ForgeOutage) as outage:
+        await org_webhooks.install_org_hook(client, "acme", target="https://h.example.com/api/v1/webhook", secret="s")  # type: ignore[arg-type]
+    assert outage.value.status == 502, "a hook pointing elsewhere was taken for the one the create made"
+
+
+class _Creating(Client):
+    """The organization's hooks, and a create that answers each of ``answers`` in turn: a response, or "hang" after
+    storing the hook, or "hang before" without."""
+
+    def __init__(self, *answers: Any, relisting_hangs: bool = False) -> None:
+        super().__init__(Resp(200, []))
+        self.hooks: list[dict[str, Any]] = []
+        self.answers = list(answers)
+        self.relisting_hangs = relisting_hangs
+
+    async def get(self, path: str, **kwargs: Any) -> Resp:
+        import asyncio
+
+        self.calls.append(("GET", path, kwargs))
+        if any(call[0] == "POST" for call in self.calls):
+            # The look after a create: a forge's answer takes a moment, and one may never come.
+            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(0.05))
+        return Resp(200, list(self.hooks))
+
+    async def post(self, path: str, **kwargs: Any) -> Resp:
+        import asyncio
+
+        self.calls.append(("POST", path, kwargs))
+        answer = self.answers.pop(0) if self.answers else "made"
+        if answer in ("hang", "made"):
+            self.hooks.append(_hook(kwargs["json"]["config"]["url"], hook_id=7))
+        if answer in ("hang", "hang before"):
+            await asyncio.Event().wait()
+        return Resp(201, self.hooks[-1]) if answer == "made" else answer
+
+
+async def _install_timed(monkeypatch: pytest.MonkeyPatch, client: Any, *, seconds: float = 0.5) -> Any:
+    """The install with half a second in all (or ``seconds``), a fifth of a second kept back for the look after the
+    create; what it returned or raised."""
+    import asyncio
+
+    from embry0.services import organizations as org_service
+
+    monkeypatch.setattr(org_service, "PROBE_SECONDS", seconds)
+    monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.2)
+    try:
+        return await asyncio.wait_for(
+            org_webhooks.install_org_hook(
+                client,
+                "acme",
+                target="https://h.example.com/api/v1/webhook",
+                secret="s",
+                forge_time=org_service.ForgeTime(),
+            ),
+            timeout=10,
+        )
+    except TimeoutError:
+        pytest.fail("the install waited on a create that never answers past 10 s")
+    except Exception as exc:  # noqa: BLE001 - what the install raised is the result here
+        return exc
+
+
+@pytest.mark.asyncio
+async def test_an_install_whose_create_answers_late_finds_the_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review of #584: a create that hangs past the deadline after GitHub stored the hook was reported as not
+    answered. Part of the time is kept back for the look after it, which finds the hook."""
+    result = await _install_timed(monkeypatch, _Creating("hang"))
+    assert getattr(result, "outcome", None) == "done" and result.hook.id == 7, result
+
+
+@pytest.mark.asyncio
+async def test_an_install_whose_create_never_answers_may_have_made_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    from embry0.services.organizations import CreateUnanswered
+
+    result = await _install_timed(monkeypatch, _Creating("hang before"))
+    assert isinstance(result, CreateUnanswered), result
+
+
+@pytest.mark.asyncio
+async def test_an_install_whose_look_after_the_create_hangs_ends_in_its_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The look after an unanswered create is bounded too: it answers that the create may have been made."""
+    from embry0.services.organizations import CreateUnanswered
+
+    result = await _install_timed(monkeypatch, _Creating("hang before", relisting_hangs=True))
+    assert isinstance(result, CreateUnanswered), result
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_create_is_sent_again_within_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review of #584: a rate-limited create was not processed, so sending it again cannot make a second hook."""
+    from embry0.services import organizations as org_service
+
+    waits: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        waits.append(delay)
+
+    monkeypatch.setattr(org_service, "_sleep", fake_sleep)
+    limited = Resp(429)
+    limited.headers = {"Retry-After": "0.1"}  # type: ignore[attr-defined]
+    client = _Creating(limited)
+    result = await _install_timed(monkeypatch, client)
+    assert getattr(result, "outcome", None) == "done", result
+    assert ([c[0] for c in client.calls], waits) == (["GET", "POST", "POST"], [0.1]), client.calls
+
+
+@pytest.mark.asyncio
+async def test_a_create_rate_limited_past_the_deadline_is_answered_and_not_looked_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limited = Resp(429)
+    limited.headers = {"Retry-After": "120"}  # type: ignore[attr-defined]
+    client = _Creating(limited)
+    result = await _install_timed(monkeypatch, client)
+    assert isinstance(result, ForgeOutage) and (result.status, result.rate_limited, result.wait) == (429, True, 120.0)
+    assert [c[0] for c in client.calls] == ["GET", "POST"], f"a create that was not made is looked for: {client.calls}"
+
+
+@pytest.mark.asyncio
+async def test_a_create_answered_with_an_outage_is_sent_once_whatever_the_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a rate limit is sent again: a 502 may be a create GitHub made, and the hooks are listed instead."""
+    from embry0.services import organizations as org_service
+
+    async def no_wait(delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(org_service, "_sleep", no_wait)
+    client = _Creating(Resp(502))
+    result = await _install_timed(monkeypatch, client, seconds=5.0)
+    assert isinstance(result, ForgeOutage) and result.status == 502, result
+    assert [c[0] for c in client.calls] == ["GET", "POST", "GET"], client.calls

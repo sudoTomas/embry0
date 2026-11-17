@@ -234,7 +234,9 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
     app.state.fake_forge = forge
     app.state.forge_clients_built = []
 
-    async def fake_forge_client(request: Any, owner: str, forge_name: str, credential_id: str | None) -> FakeForge:
+    async def fake_forge_client(
+        request: Any, owner: str, forge_name: str, credential_id: str | None, forge_time: Any = None
+    ) -> FakeForge:
         app.state.forge_clients_built.append(owner)
         return forge
 
@@ -621,3 +623,36 @@ async def test_a_post_without_the_csrf_header_is_refused(app: Any) -> None:
         resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "register", "repos": ["acme/widgets"]})
     assert resp.status_code == 403
     assert app.state.repos_repo.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_the_hook_action_answers_within_the_requests_time(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#582 review: the route gives the hook action one budget for the whole request (the probe's, under the
+    dashboard's timeout), so a forge that never answers fails the first repositories at their share and leaves the
+    rest not tried, rather than holding the request a share per repository."""
+    import asyncio
+    import time
+
+    from embry0.services import org_actions as actions
+    from embry0.services import org_webhooks
+    from embry0.services import organizations as org_service
+
+    monkeypatch.setattr(org_service, "PROBE_SECONDS", 0.5)
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 0.2)
+    monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.15)
+    monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.01)
+
+    async def never(path: str, **kwargs: Any) -> Any:
+        await asyncio.Event().wait()
+
+    app.state.fake_forge.get = never
+    repos = ["acme/widgets", "acme/gadgets", "acme/one", "acme/two"]
+    started = time.monotonic()
+    async with _client(app) as client:
+        resp = await asyncio.wait_for(
+            client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": repos}), timeout=10
+        )
+    outcomes = [(r["outcome"], r["detail"]) for r in resp.json()["results"]]
+    assert outcomes[:2] == [("failed", "GitHub did not answer within 0.2 seconds")] * 2, outcomes
+    assert outcomes[2:] == [("skipped", "not tried: out of time, run again")] * 2, outcomes
+    assert time.monotonic() - started < 2.0, f"{time.monotonic() - started:.2f}s for a request of 0.5"

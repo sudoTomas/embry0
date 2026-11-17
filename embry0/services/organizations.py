@@ -379,6 +379,11 @@ class ProbeOutOfTime(Exception):
     it: no answer about access either (#571)."""
 
 
+class CreateUnanswered(ProbeOutOfTime):
+    """A webhook create was sent and its answer did not come in the time it had, and the hooks listed after it did not
+    show the hook, or could not be listed: the forge may have made it all the same (#582)."""
+
+
 #: How long a probe may take in all, its retries and their waits included: under the dashboard's 30 s request
 #: timeout, so the person is answered rather than left with a timeout of their own.
 PROBE_SECONDS = 25.0
@@ -387,12 +392,20 @@ _monotonic: Callable[[], float] = time.monotonic
 _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
-class _ProbeTime:
-    """What is left of one probe's :data:`PROBE_SECONDS`, and the client's waits measured against it."""
+class ForgeTime:
+    """What is left of one call's deadline to the forge (``seconds``, :data:`PROBE_SECONDS` unless given), and the
+    client's waits measured against it: an organization's probe (#571), and its webhook install, status read and
+    repository ``hook`` action (#582). ``restart`` starts the deadline again, for a client used once per repository.
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, seconds: float | None = None) -> None:
         self._clock, self._wait = _monotonic, _sleep
-        self._end = self._clock() + PROBE_SECONDS
+        self.seconds = PROBE_SECONDS if seconds is None else seconds
+        self._end = self._clock() + self.seconds
+
+    def restart(self, seconds: float) -> None:
+        self.seconds = seconds
+        self._end = self._clock() + seconds
 
     def left(self) -> float:
         return max(0.0, self._end - self._clock())
@@ -412,12 +425,12 @@ class _ProbeTime:
         await self._wait(delay)
 
 
-async def _within(probe_time: _ProbeTime, probe: Awaitable[AccessProbe]) -> AccessProbe:
-    """``probe``, ended at its deadline: a forge that takes the connection and never answers would otherwise hold it
-    for every attempt's whole timeout."""
+async def within[T](forge_time: ForgeTime, call: Awaitable[T]) -> T:
+    """``call``, ended at its deadline (:class:`ProbeOutOfTime`): a forge that takes the connection and never answers
+    would otherwise hold it for every attempt's whole timeout."""
     try:
-        async with asyncio.timeout(probe_time.left()):
-            return await probe
+        async with asyncio.timeout(forge_time.left()):
+            return await call
     except TimeoutError:
         raise ProbeOutOfTime() from None
 
@@ -467,7 +480,7 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
     own policy; one that persists raises (a transport error, or
     :class:`ForgeOutage`) rather than being read as no access.
     """
-    probe_time = _ProbeTime()
+    probe_time = ForgeTime()
     if client is None:
         from embry0.execution.github_client import GitHubClient
 
@@ -478,7 +491,7 @@ async def probe_github(owner: str, token: str, *, client: _Client | None = None)
             sleep=probe_time.sleep,
             before_wait=probe_time.before_wait,
         )
-    return await _within(probe_time, _probe_github(owner, client))
+    return await within(probe_time, _probe_github(owner, client))
 
 
 async def _probe_github(owner: str, client: _Client) -> AccessProbe:
@@ -539,7 +552,7 @@ async def probe_gitlab(
 ) -> AccessProbe:
     """Read and identity for a GitLab group with ``token``. Hooks are not probed in this release. Transient failures
     as :func:`probe_github`'s."""
-    probe_time = _ProbeTime()
+    probe_time = ForgeTime()
     if client is None:
         from embry0.execution.gitlab_client import GitLabClient
 
@@ -552,7 +565,7 @@ async def probe_gitlab(
             sleep=probe_time.sleep,
             before_wait=probe_time.before_wait,
         )
-    return await _within(probe_time, _probe_gitlab(owner, client))
+    return await within(probe_time, _probe_gitlab(owner, client))
 
 
 async def _probe_gitlab(owner: str, client: _Client) -> AccessProbe:

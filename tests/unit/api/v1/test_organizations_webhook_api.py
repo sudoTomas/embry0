@@ -94,7 +94,7 @@ def app(monkeypatch: pytest.MonkeyPatch, forge: FakeForge) -> Any:
     )
     tokens: list[str] = []
 
-    def fake_client(request: Any, org: Organization, token: str) -> FakeForge:
+    def fake_client(request: Any, org: Organization, token: str, **_kwargs: Any) -> FakeForge:
         tokens.append(token)
         return forge
 
@@ -459,7 +459,7 @@ class _Headed(FakeResponse):
 
 
 def _forge(app: Any, monkeypatch: pytest.MonkeyPatch, forge: FakeForge) -> None:
-    monkeypatch.setattr(organizations_api, "make_forge_client", lambda request, org, token: forge)
+    monkeypatch.setattr(organizations_api, "make_forge_client", lambda request, org, token, **_kw: forge)
 
 
 _OUTAGES = {
@@ -541,3 +541,100 @@ async def test_a_refused_listing_still_reads_as_no_hook_administration(
         status = await client.get("/api/v1/orgs/acme/webhook")
     assert install.status_code == 502 and "needs organization hook administration" in install.json()["detail"]
     assert status.status_code == 200 and status.json()["hooks_visible"] is False, status.text
+
+
+# ---- one deadline for the webhook routes (#582) ----
+
+
+class _Hanging(FakeForge):
+    async def get(self, path: str, **kwargs: Any) -> Any:
+        import asyncio
+
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+@pytest.mark.parametrize("method", ["POST", "GET"])
+@pytest.mark.asyncio
+async def test_a_forge_that_never_answers_ends_at_the_deadline(
+    app: Any, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """#582: no deadline held the install 31 s on a forge that never answers, past the dashboard's 30 s. The routes
+    end at the probe's, here a fifth of a second."""
+    import asyncio
+    import time
+
+    from embry0.services import organizations as org_service
+
+    monkeypatch.setattr(org_service, "PROBE_SECONDS", 0.2)
+    _forge(app, monkeypatch, _Hanging())
+    started = time.monotonic()
+    async with _client(app) as client:
+        try:
+            resp = await asyncio.wait_for(client.request(method, "/api/v1/orgs/acme/webhook"), timeout=10)
+        except TimeoutError:
+            pytest.fail(f"{method} waited on a forge that never answers past 10 s")
+    assert (resp.status_code, resp.json().get("detail")) == (502, "GitHub did not answer within 0.2 seconds"), (
+        f"{method} after {time.monotonic() - started:.2f}s: {resp.status_code} {resp.text}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_wait_past_the_deadline_is_answered_at_once(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A listing answered 429 with Retry-After: 120: the client waited 30 s (its cap) for a retry certain to be
+    refused again, and an install could end after the dashboard had already shown a timeout."""
+    import httpx
+
+    from embry0.execution import forge_client
+    from embry0.services import organizations as org_service
+
+    waits: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        waits.append(delay)
+
+    monkeypatch.setattr(org_service, "_sleep", fake_sleep)
+    monkeypatch.setattr(organizations_api, "make_forge_client", _REAL_MAKE_FORGE_CLIENT)
+    real_client = httpx.AsyncClient
+
+    def limited(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "120"}, json={"message": "slow down"})
+
+    monkeypatch.setattr(
+        forge_client.httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(limited), **kw)
+    )
+    import asyncio
+
+    async with _client(app) as client:
+        try:
+            resp = await asyncio.wait_for(client.post("/api/v1/orgs/acme/webhook"), timeout=10)
+        except TimeoutError:
+            pytest.fail("the install waited, for real, on a Retry-After past its deadline")
+    assert (resp.status_code, resp.json().get("detail")) == (
+        502,
+        "GitHub rate limited the request (429): it asks to wait 120 s",
+    ), resp.text
+    assert waits == [], f"a wait past the deadline was waited: {waits}"
+
+
+_REAL_MAKE_FORGE_CLIENT = organizations_api.make_forge_client
+
+
+@pytest.mark.asyncio
+async def test_a_create_unanswered_says_it_may_have_been_made(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review of #584: a create sent and never answered, and not listed after it, may have been made all the same."""
+    from embry0.services import org_webhooks
+    from embry0.services import organizations as org_service
+
+    async def unanswered(*_args: Any, **_kwargs: Any) -> Any:
+        raise org_service.CreateUnanswered()
+
+    monkeypatch.setattr(org_webhooks, "install_org_hook", unanswered)
+    _forge(app, monkeypatch, FakeForge())
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert (resp.status_code, resp.json().get("detail")) == (
+        502,
+        "GitHub did not answer the create in time, nor list the webhook after it: it may have been made; "
+        "install again to see (a webhook already there is kept)",
+    ), resp.text
