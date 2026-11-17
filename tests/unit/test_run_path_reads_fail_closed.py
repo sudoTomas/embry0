@@ -18,9 +18,16 @@ store, a policy or a pool, and an awaited credential lookup (``forge_token``,
 
 Known limits: a read gathered with ``asyncio.gather(..., return_exceptions=True)``;
 a read made in a helper the ``try`` calls, past the one level the helper's own
-module is scanned at; and a receiver or method outside the pattern above. Those
-shapes are found by the per-site tests (``tests/unit/api/test_unreadable_values.py``),
-not here.
+module is scanned at; a receiver or method outside the pattern above; and a
+``raise`` the handler reaches only on some paths (``if x: raise`` then a
+default) counts as handled only when it is a statement of the handler itself,
+not one nested in a branch. Those shapes are found by the per-site tests
+(``tests/unit/api/test_unreadable_values.py``), not here.
+
+Never scanned: ``embry0/api/``, ``embry0/execution/`` and the rest of
+``embry0/services/`` (only ``_executor_run``, ``budget_policy``, ``done_when``,
+``job_log_access`` and ``credentials/`` are). A read there is not a run's, or is
+covered by a per-site test.
 """
 
 from __future__ import annotations
@@ -62,10 +69,12 @@ NOT_CONFIG = {
     ): "traces, for an account wait",
     ("embry0/services/_executor_run.py", "_fail_setup_proposal", "self._jobs.get"): "marks a proposal failed",
     ("embry0/services/_executor_run.py", "_run_workflow", "self._jobs.get"): (
-        "the job's row: its except keeps the error and raises it inside the run's error handling"
+        "never takes this error for a default: the job's row, whose except keeps it and raises it inside the "
+        "run's error handling"
     ),
     ("embry0/services/_executor_run.py", "_run_pr_review_workflow", "self._jobs.get"): (
-        "the job's row: its except keeps the error and raises it inside the review's error handling"
+        "never takes this error for a default: the job's row, whose except keeps it and raises it inside the "
+        "review's error handling"
     ),
     ("embry0/services/_executor_run.py", "_run_workflow", "forge_token"): (
         "the duplicate-PR check is skipped, never run with another token; the sandbox's enrollment resolves the "
@@ -75,11 +84,8 @@ NOT_CONFIG = {
         "repository discovery's tokens to try: a registry it cannot read leaves fewer to try, never another's"
     ),
     ("embry0/services/credentials/resolver.py", "pinned_pause", "self._repo.get"): "the resolve that follows raises",
-    ("embry0/services/credentials/resolver.py", "_reuse_llm", "self._repo.get"): (
-        "a reuse it cannot read falls to the fresh resolve, which raises"
-    ),
     ("embry0/workflows/qa/orchestrator.py", "_init_orchestrator_node_impl", "qa_configs_repo.get"): (
-        "its except ends the QA run as infra_error, saying why"
+        "never takes this error for a default: its except ends the QA run as infra_error, saying why"
     ),
     ("embry0/workflows/qa/orchestrator_report.py", "qa_report_node", "forge_token"): (
         "the report is skipped, never posted with another token"
@@ -141,8 +147,9 @@ def _catches(handler: ast.ExceptHandler) -> bool:
 
 
 def _handles(handler: ast.ExceptHandler) -> bool:
-    """An ``except StoredValueTooDeep`` that raises it again: the value too deep to read is not swallowed."""
-    return _catches(handler) and any(isinstance(n, ast.Raise) for stmt in handler.body for n in ast.walk(stmt))
+    """An ``except StoredValueTooDeep`` that raises it again on every path: a ``raise`` that is a statement of the
+    handler itself, not one nested in a branch (``if x: raise`` then a default is a swallow)."""
+    return _catches(handler) and any(isinstance(stmt, ast.Raise) for stmt in handler.body)
 
 
 def _suppresses(node: ast.With | ast.AsyncWith) -> bool:
@@ -220,6 +227,7 @@ def test_the_guard_finds_each_shape_it_reads() -> None:
         ("with contextlib.suppress(Exception):\n        return await repo.get('x')", True),
         ("with suppress(BaseException):\n        return await repo.get('x')", True),
         (body + "except StoredValueTooDeep:\n        raise\n    except Exception:\n        return None", False),
+        (body + "except StoredValueTooDeep:\n        if x:\n            raise\n        return None", True),
         (body + "except ValueError:\n        return None", False),
         (
             "try:\n        return await forge_token(resolver, 'r', 'github', '')\n    except Exception:\n        return ''",

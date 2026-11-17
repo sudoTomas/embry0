@@ -664,6 +664,8 @@ class CredentialResolver:
                 continue
             try:
                 row = await self._repo.get(str(use["credential_id"]))
+            except StoredValueTooDeep:
+                raise  # the account the job used is unknown, not gone: no other account takes its place (#527)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("credential_registry_error", op="get", error=str(exc)[:200])
                 return None

@@ -70,10 +70,12 @@ VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
 
 # #348: the runtime paths from PENDING straight to FAILED, each for a job that
 # never ran and must not carry a started_at it did not earn. The dispatch
-# budget gate is asked before a job is marked running (ERR_BUDGET_REFUSED);
-# and a run that cannot read what it would run on, its row holding a stored
-# value too deep to read (#527), fails before it starts (ERR_STORAGE). Narrow
-# on purpose: only a write carrying one of these codes may take it, so every
+# budget gate is asked before a job is marked running (ERR_BUDGET_REFUSED).
+# And any storage failure before the job starts fails it (ERR_STORAGE): a
+# Postgres error, a lost connection included, or a stored value too deep to
+# read (#527). There is no retry: the job fails with the reason, and a person
+# runs it again, rather than staying pending until a restart. Narrow on
+# purpose: only a write carrying one of these codes may take it, so every
 # other failure still has to pass through RUNNING. Kept out of the table above
 # because the table cannot express the condition.
 _FAILED_BEFORE_START_CODES = frozenset({ErrorCode.BUDGET_REFUSED.value, ErrorCode.STORAGE.value})

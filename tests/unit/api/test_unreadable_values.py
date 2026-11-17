@@ -407,6 +407,64 @@ async def test_a_fresh_job_too_deep_to_read_fails_from_pending(client: AsyncClie
         )
 
 
+@pytest.mark.parametrize("path", ["run", "review"])
+async def test_a_lost_connection_before_start_fails_the_job_from_pending(client: AsyncClient, path: str) -> None:
+    """Any storage failure before the job starts fails it (ERR_STORAGE), a lost connection as much as a value too
+    deep to read. There is no retry: the job fails with the reason and a person runs it again, rather than its
+    failure being refused from pending and the job staying queued until a restart."""
+    from unittest.mock import AsyncMock
+
+    import asyncpg
+
+    from embry0.services._executor_run import _run_pr_review_workflow
+    from embry0.services.world import failure_words
+    from embry0.storage.repositories.jobs import JobsRepository
+    from tests.unit.services.test_failed_job_pr import PR, _executor, _patches
+
+    app = client.app  # type: ignore[attr-defined]
+    db = app.state.db
+    issue = await app.state.issues_repo.create(title="t", repo="acme/widgets")
+    issue_id = issue["id"] if isinstance(issue, dict) else issue
+    await db.execute("UPDATE issues SET status = 'in_progress' WHERE id = $1", issue_id)
+    jobs = JobsRepository(db)
+    job = await jobs.create(repo="acme/widgets", task="t", issue_id=issue_id)
+    write = jobs.update
+
+    async def _update(job_id: str, **fields: Any) -> None:
+        if fields.get("status") == "running":
+            raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed in the middle of operation")
+        await write(job_id, **fields)
+
+    jobs.update = _update  # type: ignore[method-assign]
+    ex = _executor()
+    ex._jobs, ex._issues = jobs, app.state.issues_repo
+    ex._broadcast_event = AsyncMock()  # type: ignore[method-assign]
+    ex._refuse_if_over_budget = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    started: list[str] = []
+
+    async def _stream(input_value, issue_id, job_id, state_sink=None, **kw):  # noqa: ANN001, ANN003, ARG001
+        started.append(job_id)
+        raise RuntimeError("the workflow ran")
+
+    ex._execute_workflow_stream = _stream  # type: ignore[assignment]
+    a, b, c, d = _patches(AsyncMock(return_value=PR))
+    with a, b, c, d:
+        if path == "run":
+            await ex._run_workflow(issue_id, job, {"title": "t", "body": "", "repo": "acme/widgets"})
+        else:
+            await _run_pr_review_workflow(ex, job)
+
+    row = await db.fetchrow("SELECT status, error_code, error_message, started_at FROM jobs WHERE job_id = $1", job)
+    assert started == [], "the workflow started without the job marked running"
+    assert (row["status"], row["error_code"]) == ("failed", "ERR_STORAGE"), f"the job was never failed: {dict(row)}"
+    assert row["started_at"] is None and "connection was closed" in str(row["error_message"]), dict(row)
+    assert "storage" in str(failure_words(row["error_code"], row["error_message"])), "a person is not told why"
+    if path == "run":
+        assert await db.fetchval("SELECT status FROM issues WHERE id = $1", issue_id) == "open", (
+            "the issue is left in progress"
+        )
+
+
 # ---- a pinned credential too deep to read is not the deployment's (round 9) ----
 
 
@@ -475,6 +533,48 @@ async def test_a_pinned_llm_credential_too_deep_to_read_fails_rather_than_taking
     )
     with pytest.raises(StoredValueTooDeep, match="in credential_bindings, credentials"):
         await resolver.resolve_llm("acme/widgets", "anthropic")
+
+
+async def test_the_account_a_job_used_too_deep_to_read_is_not_replaced_by_another(client: AsyncClient) -> None:
+    """A job that already used an account keeps it: one it can no longer read is unknown, not gone, so no other
+    account of the registry takes its place."""
+    from types import SimpleNamespace
+
+    from embry0.services.credentials.resolver import CredentialResolver
+    from embry0.storage.repositories.credentials import CredentialsRepository
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    secrets = await _pinned_credential(db, kind="llm_api_key", provider="anthropic", host="", role="llm")
+    cipher = secrets.encrypt("registry-token-000000000004")
+    if hasattr(cipher, "__await__"):
+        cipher = await cipher
+    await db.execute(
+        "INSERT INTO credentials (id, kind, provider, host, label, secret_ciphertext, masked_preview, created_by) "
+        "VALUES ('cred-0002', 'llm_api_key', 'anthropic', '', 'another-account', $1, '****', 'someone')",
+        cipher,
+    )
+    await db.execute("DELETE FROM credential_bindings WHERE credential_id = 'cred-0001'")
+    await db.execute(
+        "INSERT INTO credential_bindings (scope_kind, scope_value, role, provider, credential_id, created_by) "
+        "VALUES ('global', '', 'llm', 'anthropic', 'cred-0002', 'someone')"
+    )
+    await db.execute(
+        "INSERT INTO credential_uses (credential_id, credential_label, job_id, role, provider) "
+        "VALUES ('cred-0001', 'bound-to-widgets', 'job-1', 'llm', 'anthropic')"
+    )
+    resolver = CredentialResolver(
+        CredentialsRepository(db),
+        secrets,
+        SimpleNamespace(github_token="", gitlab_token="", anthropic_api_key=""),
+        environ={},
+        cache_ttl_seconds=0,
+    )
+    with pytest.raises(StoredValueTooDeep, match="in credentials"):
+        await resolver.resolve_llm("acme/widgets", "anthropic", job_id="job-1")
+
+    await db.execute("UPDATE credentials SET metadata = '{}'::jsonb WHERE id = 'cred-0001'")
+    used = await resolver.resolve_llm("acme/widgets", "anthropic", job_id="job-1")
+    assert used.label == "bound-to-widgets", f"the readable account the job used is not kept: {used}"
 
 
 # ---- boot recovery takes back the readable jobs (round 9) ----
