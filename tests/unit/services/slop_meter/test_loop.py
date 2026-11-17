@@ -402,6 +402,14 @@ def _comment(i: int, login: str, day: int) -> dict[str, Any]:
     return {"id": i, "user": {"login": login}, "created_at": stamp, "updated_at": stamp}
 
 
+def _pages_of_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reader's page size set to FakeForge's comment pages, two: the reader chooses the size of a page among
+    comments that share one update (events.tied_window) and takes the forge to honour it up to its own page size."""
+    import embry0.services.slop_meter.events as events
+
+    monkeypatch.setattr(events, "PER_PAGE", 2)
+
+
 class FakeForge:
     """GitHub's listings for one repository, paged by hand; every call is recorded."""
 
@@ -421,8 +429,10 @@ class FakeForge:
                 _comment(i, "ana", min(i, 28)) for i in range(1, self.comment_pages + 1)
             ]
             later = sorted((c for c in every if c["updated_at"] >= since), key=lambda c: (c["updated_at"], c["id"]))
-            nxt = f"{FORGE}{path}?page={page + 1}" if page * 2 < len(later) else None
-            return FakeResponse(200, later[(page - 1) * 2 : page * 2], next_url=nxt, remaining=self.remaining)
+            # Two a page at most; fewer when a page asks for fewer, as the forge does.
+            size = min(int((params or {}).get("per_page", 2)), 2)
+            nxt = f"{FORGE}{path}?page={page + 1}" if page * size < len(later) else None
+            return FakeResponse(200, later[(page - 1) * size : page * size], next_url=nxt, remaining=self.remaining)
         if path == f"/repos/{r}/pulls/comments":
             return FakeResponse(200, [], remaining=self.remaining)
         if path == f"/repos/{r}/pulls":
@@ -474,7 +484,8 @@ async def test_forge_events_are_read_a_call_at_a_time_from_their_cursors() -> No
 
 
 @pytest.mark.asyncio
-async def test_a_listing_cut_by_the_budget_resumes_after_its_last_page() -> None:
+async def test_a_listing_cut_by_the_budget_resumes_after_its_last_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    _pages_of_two(monkeypatch)
     forge = FakeForge(comment_pages=5)
     reader = EventReader(
         forge, REPO, comments_since=None, review_comments_since=None, reviews_since=None, max_pages=10, max_pulls=10
@@ -493,20 +504,23 @@ class Comments:
     """Issue comments, two a page, updated since ``since`` (inclusive), oldest update first; ``after_page_1``
     edits comments once the first page has been answered, as a person might between two pages of one read."""
 
-    def __init__(self, updated: dict[int, int], edit: dict[int, int] | None = None) -> None:
+    def __init__(self, updated: dict[int, int], edit: dict[int, int] | None = None, *, page_size: int = 2) -> None:
         self.updated = {i: START + timedelta(days=day) for i, day in updated.items()}
         self.edit = {i: START + timedelta(days=day) for i, day in (edit or {}).items()}
+        # The most a page holds; a smaller ``per_page`` is honoured, as the forge does.
+        self.page_size = page_size
 
     async def get(self, path: str, *, repo: str, params: dict[str, Any] | None = None) -> FakeResponse:
         params = params or {}
         if not path.endswith("/issues/comments"):
             return FakeResponse(200, [])
         page, since = int(params.get("page", 1)), params.get("since", "")
+        size = min(int(params.get("per_page", self.page_size)), self.page_size)
         stamp = {i: at.strftime("%Y-%m-%dT%H:%M:%SZ") for i, at in self.updated.items()}
         later = sorted((stamp[i], i) for i in stamp if stamp[i] >= since)
-        chunk = later[(page - 1) * 2 : page * 2]
+        chunk = later[(page - 1) * size : page * size]
         items = [{"id": i, "user": {"login": f"user{i}"}, "created_at": at, "updated_at": at} for at, i in chunk]
-        nxt = f"{FORGE}{path}?page={page + 1}" if page * 2 < len(later) else None
+        nxt = f"{FORGE}{path}?page={page + 1}" if page * size < len(later) else None
         if self.edit:
             self.updated.update(self.edit)
             self.edit = {}
@@ -541,10 +555,13 @@ async def test_a_comment_edited_between_two_pages_hides_no_other() -> None:
     assert await _comments_read(forge, passes=3) == set(range(1, 7)), "a comment was never read"
 
 
-async def test_comments_that_share_one_update_are_read_page_by_page() -> None:
+async def test_comments_that_share_one_update_are_read_page_by_page(monkeypatch: pytest.MonkeyPatch) -> None:
     """When every comment of a page has the update the page was asked from, asking from the newest again would
-    bring the same page: the listing goes on by page number, and every comment is read once the pass ends."""
-    forge = Comments({i: 1 for i in range(1, 6)})
+    bring the same page: the listing goes on among them by page, and every comment is read once the pass ends."""
+    import embry0.services.slop_meter.events as events
+
+    monkeypatch.setattr(events, "PER_PAGE", 3)
+    forge = Comments({i: 1 for i in range(1, 6)}, page_size=3)
     assert await _comments_read(forge, passes=1) == set(range(1, 6))
 
 
@@ -561,8 +578,9 @@ async def test_the_rate_reserve_stops_the_ticks_forge_calls() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_large_backlog_shares_the_budget_round_robin() -> None:
+async def test_a_large_backlog_shares_the_budget_round_robin(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two repositories: one with a long comment history. Each gets a call in turn; neither starves."""
+    _pages_of_two(monkeypatch)
     big, small = "acme/big", "acme/small"
     forges = {big: FakeForge(comment_pages=50, repo=big), small: FakeForge(repo=small)}
     records, order = _history(2)
