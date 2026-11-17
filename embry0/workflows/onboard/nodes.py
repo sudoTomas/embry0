@@ -32,6 +32,7 @@ from embry0.services.shared_build_cache import (
     keeps_the_shared_cache,
     leaves_the_shared_cache,
 )
+from embry0.storage.database import StoredValueTooDeep
 from embry0.workflows.pipeline_graphs import onboard_pipeline_graph
 
 logger = structlog.get_logger(__name__)
@@ -187,6 +188,8 @@ async def analyze_node(state: dict[str, Any], config: RunnableConfig) -> dict[st
     if profiles_repo is not None:
         try:
             rows = await profiles_repo.list()
+        except StoredValueTooDeep:
+            raise  # onboarding would offer no profiles (#527)
         except Exception as exc:  # noqa: BLE001
             logger.warning("onboard_profile_catalog_unavailable", error=str(exc))
             rows = []

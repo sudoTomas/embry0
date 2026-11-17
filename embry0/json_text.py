@@ -89,6 +89,23 @@ def nested_deeper_than(value: Any, depth: int) -> bool:
 #: What a read shows of a stored document too deep even to write as JSON text.
 UNSERVABLE_TEXT = "[a document nested too deep to show]"
 
+#: How deep :func:`too_deep_to_read` nests: past what ``json.dumps`` writes, which stops short of 10,000 levels.
+_TOO_DEEP_TO_READ_LEVELS = 20_000
+
+
+def too_deep_to_read(kind: str) -> Any:
+    """A stand-in for a stored JSONB value too deep and too long to read (#527): an object (``kind`` ``{``) or an
+    array (``[``) nested past what JSON can write.
+
+    The value itself is at least as deep, so a read serves the stand-in as it
+    would serve the value: as :data:`UNSERVABLE_TEXT` (:func:`served`, #449).
+    Only the reads that show rows build one (``DatabasePool.fetch_for_display``).
+    """
+    chain: dict[str, Any] = {}
+    for _ in range(_TOO_DEEP_TO_READ_LEVELS):
+        chain = {"": chain}
+    return [chain] if kind == "[" else chain
+
 
 def served(value: Any) -> Any:
     """``value`` as a read serves it: as it is, or as its JSON text when it nests deeper than :data:`STORED_DEPTH`.

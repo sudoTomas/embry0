@@ -15,6 +15,7 @@ from langchain_core.runnables import RunnableConfig
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
 from embry0.services.job_log_access import analysis_job_scope, deployment_allowlist, repository_log_containers
+from embry0.storage.database import StoredValueTooDeep
 from embry0.workflows.issue_to_pr.evidence import log_scope
 from embry0.workflows.issue_to_pr.nodes._common import _filter_user_env_for_sandbox, job_repository
 
@@ -53,6 +54,8 @@ async def _resolve_base_branch_for_job(
         # the default — without one the lookup is skipped and the job
         # silently targets "main".
         has_token = bool(await forge_token(resolver, repo, token_forge, default))
+    except StoredValueTooDeep:
+        raise  # without the token the base branch would be a guess (#527)
     except Exception:
         logger.warning("base_branch_token_lookup_failed", repo=repo, exc_info=True)
         has_token = False

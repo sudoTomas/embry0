@@ -24,6 +24,7 @@ from langgraph.config import get_stream_writer
 
 from embry0.execution import events, sandbox_files
 from embry0.services.slop import is_slop, parse_work_nature
+from embry0.storage.database import StoredValueTooDeep
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import (
     GENERIC_AGENT_TYPES,
@@ -343,6 +344,8 @@ async def _known_agent_types(config: RunnableConfig) -> set[str] | None:
         return {
             str(row["type"]) for row in await AgentDefinitionsRepository(db).list_all() if row.get("runs_in_jobs", True)
         }
+    except StoredValueTooDeep:
+        raise  # routing would know no agents (#527)
     except Exception:
         logger.warning("plan_route_agent_types_unavailable", exc_info=True)
         return None

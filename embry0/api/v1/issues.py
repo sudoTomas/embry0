@@ -290,7 +290,8 @@ async def get_issue(
     children_rows = await issues.get_children(issue_id, repos=covered)
     children = [IssueResponse(**c) for c in children_rows]
 
-    issue_jobs, _ = await jobs.list_all(issue_id=issue_id, limit=100, offset=0, repos=covered)
+    # Shown as the job list shows them: a job holding a value too deep to read lists with a stand-in (#527).
+    issue_jobs, _ = await jobs.list_all(issue_id=issue_id, limit=100, offset=0, repos=covered, for_display=True)
 
     return IssueDetailResponse(**issue, children=children, jobs=issue_jobs)
 

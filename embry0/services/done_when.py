@@ -208,11 +208,17 @@ async def current(jobs_repo: Any, job_id: str, fallback: Any) -> dict[str, Any] 
     """The job's list as it stands on its row (a person may have edited it), else ``fallback``.
 
     Read at the start of every coding run, so the next run works to an edit.
-    An unreadable row keeps ``fallback``: the list never blocks a run.
+    A row that cannot be read keeps ``fallback``: the list never blocks a run.
+    A row holding a value too deep to read (#527) is not that: its list may
+    be anything, so the read's error is raised.
     """
+    from embry0.storage.database import StoredValueTooDeep
+
     if jobs_repo is not None and job_id:
         try:
             row = await jobs_repo.get(job_id)
+        except StoredValueTooDeep:
+            raise
         except Exception:  # noqa: BLE001 - the state's copy serves
             row = None
         stored = as_list(row.get("done_when")) if isinstance(row, Mapping) else None

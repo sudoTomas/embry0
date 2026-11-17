@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from embry0.services.organizations import FORGES, STATUSES, Organization
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, StoredValueTooDeep
 
 _COLUMNS = (
     "owner, forge, credential_id, display_name, settings, access, repo_count, "
@@ -45,6 +45,24 @@ class OrganizationsRepository:
     async def get(self, owner: str) -> Organization | None:
         row = await self._db.fetchrow(f"SELECT {_COLUMNS} FROM organizations WHERE owner = $1", owner.strip().lower())
         return _org(row) if row else None
+
+    async def list_readable(self, *, include_removed: bool = False) -> tuple[list[Organization], list[str]]:
+        """:meth:`list_all` after it raised ``StoredValueTooDeep`` (#527): each organization read alone, so one
+        row too deep to read leaves the others; and the owners of those that could not be read."""
+        owners = await self._db.fetch(
+            "SELECT owner FROM organizations WHERE ($1::boolean OR status <> 'removed') ORDER BY owner", include_removed
+        )
+        orgs: list[Organization] = []
+        unreadable: list[str] = []
+        for row in owners:
+            try:
+                org = await self.get(str(row["owner"]))
+            except StoredValueTooDeep:
+                unreadable.append(str(row["owner"]))
+                continue
+            if org is not None:
+                orgs.append(org)
+        return orgs, unreadable
 
     async def register(
         self,

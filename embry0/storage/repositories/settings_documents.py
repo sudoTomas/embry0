@@ -115,8 +115,12 @@ class SettingsDocumentsRepository:
         )
         await conn.execute("DELETE FROM settings_documents WHERE scope = $1", old)
 
-    async def lock(self, conn: asyncpg.Connection, scope: str) -> dict[str, Any]:
+    async def lock(self, conn: asyncpg.Connection, scope: str, *, data_as_text: bool = False) -> dict[str, Any]:
         """The row, locked for the caller's transaction.
+
+        ``data_as_text`` reads the values as their stored text, ``data_text``,
+        with ``data`` empty: for a document whose values the codec does not
+        read (``StoredValueTooDeep``, #527), which only a whole document replaces.
 
         The deployment's row is created empty when missing, as it always was.
         A layer that has no row reads as an empty document at generation 0
@@ -130,7 +134,10 @@ class SettingsDocumentsRepository:
             await conn.execute(
                 "INSERT INTO settings_documents (scope) VALUES ($1) ON CONFLICT (scope) DO NOTHING", scope
             )
-        row = await conn.fetchrow(f"SELECT {_COLUMNS} FROM settings_documents WHERE scope = $1 FOR UPDATE", scope)
+        columns = (
+            _COLUMNS.replace(" data,", " '{}'::jsonb AS data, data::text AS data_text,") if data_as_text else _COLUMNS
+        )
+        row = await conn.fetchrow(f"SELECT {columns} FROM settings_documents WHERE scope = $1 FOR UPDATE", scope)
         if row is None:
             return {
                 "scope": scope,

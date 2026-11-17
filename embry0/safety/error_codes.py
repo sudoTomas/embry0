@@ -368,6 +368,8 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("langgraph.errors:GraphRecursionError", ErrorCode.GRAPH_RECURSION),
     ("asyncpg:PostgresError", ErrorCode.STORAGE),
     ("asyncpg:InterfaceError", ErrorCode.STORAGE),
+    # #527: a stored JSONB value too deep and too long to read; the run that met it fails, never runs on defaults.
+    ("embry0.storage.database:StoredValueTooDeep", ErrorCode.STORAGE),
     ("httpx:HTTPError", ErrorCode.UPSTREAM_HTTP),
     ("asyncio:LimitOverrunError", ErrorCode.AGENT_OUTPUT_OVERFLOW),
 )

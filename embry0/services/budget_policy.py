@@ -45,6 +45,7 @@ from embry0.settings.registry import SectionRefused
 from embry0.settings.scope import Scope, ScopeError
 from embry0.settings.sections.budget import BUDGET, BudgetSettings
 from embry0.settings.store import SettingsStore, Snapshot
+from embry0.storage.database import StoredValueTooDeep
 from embry0.storage.repositories.budget_config import LABEL, read_row
 
 logger = structlog.get_logger(__name__)
@@ -244,6 +245,8 @@ class BudgetPolicy:
     async def _snapshot(self) -> Snapshot | None:
         try:
             return await self._store.snapshot()
+        except StoredValueTooDeep:
+            raise  # the document is unreadable, not missing: the variables are not its budget (#527)
         except Exception:
             logger.error(
                 "budget_settings_unreadable",

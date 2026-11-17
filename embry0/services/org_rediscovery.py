@@ -29,6 +29,7 @@ import structlog
 
 from embry0.services.loop_schedule import seconds_until_next_run
 from embry0.services.organizations import Organization, rediscover_hours
+from embry0.storage.database import StoredValueTooDeep
 
 logger = structlog.get_logger(__name__)
 
@@ -42,6 +43,8 @@ ACTOR = "embry0:org-rediscovery"
 
 class _Organizations(Protocol):
     async def list_all(self, *, include_removed: bool = False) -> list[Organization]: ...
+
+    async def list_readable(self, *, include_removed: bool = False) -> tuple[list[Organization], list[str]]: ...
 
 
 class _Runs(Protocol):
@@ -108,6 +111,8 @@ class OrgRediscoveryLoop:
         self._start_run = start_run
         self._clock = clock
         self._tick_seconds = tick_seconds
+        #: Owners whose row was too deep to read (#527), logged once each in this process, not every tick.
+        self._unreadable_logged: set[str] = set()
         # When each owner's last start was refused before a run row existed,
         # the one attempt nothing else records.
         self._refused_at: dict[str, datetime] = {}
@@ -125,7 +130,21 @@ class OrgRediscoveryLoop:
         """
         now = self._clock()
         started: list[str] = []
-        for org in await self._organizations.list_all():
+        try:
+            orgs = await self._organizations.list_all()
+        except StoredValueTooDeep:
+            # One organization's row is too deep to read (#527): the others go; that one does not, and says so.
+            orgs, unreadable = await self._organizations.list_readable()
+            for owner in unreadable:
+                if owner in self._unreadable_logged:
+                    continue
+                self._unreadable_logged.add(owner)
+                logger.error(
+                    "org_rediscovery_unreadable",
+                    owner=owner,
+                    reason="its stored row holds a value too deep to read; it is not rediscovered until stored again",
+                )
+        for org in orgs:
             hours = rediscover_hours(org.settings)
             if org.status != "active" or hours is None:
                 continue

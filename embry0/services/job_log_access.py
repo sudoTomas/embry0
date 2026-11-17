@@ -23,6 +23,7 @@ from typing import Any
 import structlog
 
 from embry0.execution.proxy.container_allowlist import ContainerAllowlist, is_pattern
+from embry0.storage.database import StoredValueTooDeep
 
 logger = structlog.get_logger(__name__)
 
@@ -96,6 +97,8 @@ async def watched_stack(repo: str | None, configurable: Mapping[str, Any]) -> An
 
             stacks = WatcherStacksRepository(db)
         return await stacks.get(repo) if stacks is not None else None
+    except StoredValueTooDeep:
+        raise  # the stack's own allowlist is unknown, not absent (#527)
     except Exception:
         logger.warning("watched_stack_unavailable", repo=repo, exc_info=True)
         return None

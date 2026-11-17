@@ -38,6 +38,7 @@ from embry0.orchestration.budget import (
 from embry0.orchestration.state import AgentOutputEntry
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
+from embry0.storage.database import StoredValueTooDeep
 
 if TYPE_CHECKING:
     from embry0.settings.sections.budget import BudgetSettings
@@ -195,6 +196,8 @@ async def load_agent_definition_or_none(config: Any, agent_type: str) -> dict[st
         from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 
         return await AgentDefinitionsRepository(db).get(agent_type)
+    except StoredValueTooDeep:
+        raise  # the code's definition would widen the operator's tools (#527)
     except Exception:
         logger.warning("agent_definition_load_failed", agent_type=agent_type, exc_info=True)
         return None
@@ -221,6 +224,8 @@ async def _provider_config_row(config: Any, *, failure_event: str) -> dict[str, 
         from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
         row = await ProviderConfigRepository(db).get()
+    except StoredValueTooDeep:
+        raise  # no policy would let a disabled model run (#527)
     except Exception:
         logger.warning(failure_event, exc_info=True)
         return None
@@ -291,6 +296,8 @@ async def load_budget_settings(config: Any) -> BudgetSettings:
 
             settings = await BudgetPolicy(SettingsStore(configurable["db"]), app_config, retry_seconds=None).settings()
             return settings
+    except StoredValueTooDeep:
+        raise  # the variables' budget is not the one the document sets (#527)
     except Exception:
         logger.warning("budget_policy_load_failed", exc_info=True, hint="read from the variables instead")
     return env_budget(app_config)
@@ -377,6 +384,8 @@ async def _load_repo_preferences(state: dict[str, Any], config: Any) -> dict[str
         return None
     try:
         row = await prefs_repo.get(repo)
+    except StoredValueTooDeep:
+        raise  # the run would go on without the repository's modes (#527)
     except Exception:
         logger.warning("repo_preferences_load_failed", repo=repo, exc_info=True)
         return None

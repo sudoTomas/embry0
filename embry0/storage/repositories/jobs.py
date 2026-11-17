@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from embry0.safety.error_codes import ErrorCode
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, StoredValueTooDeep, read_jsonb_text
 from embry0.storage.repositories.gate_refusal import gate_refusal_sql
 from embry0.storage.schemas import JobStatus
 
@@ -68,20 +68,24 @@ VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
     JobStatus.PR_CLOSED: {JobStatus.PR_MERGED, JobStatus.COMPLETED},
 }
 
-# #348: the one runtime path from PENDING straight to FAILED. The dispatch
-# budget gate is asked before a job is marked running, so a job it refuses
-# never ran and must not carry a started_at it did not earn. Narrow on
-# purpose: only a write carrying ERR_BUDGET_REFUSED may take it, so every
-# other failure still has to pass through RUNNING. Kept out of the table
-# above because the table cannot express the condition.
-_GATE_REFUSAL_CODE = ErrorCode.BUDGET_REFUSED.value
+# #348: the runtime paths from PENDING straight to FAILED, each for a job that
+# never ran and must not carry a started_at it did not earn. The dispatch
+# budget gate is asked before a job is marked running (ERR_BUDGET_REFUSED).
+# And any storage failure before the job starts fails it (ERR_STORAGE): a
+# Postgres error, a lost connection included, or a stored value too deep to
+# read (#527). There is no retry: the job fails with the reason, and a person
+# runs it again, rather than staying pending until a restart. Narrow on
+# purpose: only a write carrying one of these codes may take it, so every
+# other failure still has to pass through RUNNING. Kept out of the table above
+# because the table cannot express the condition.
+_FAILED_BEFORE_START_CODES = frozenset({ErrorCode.BUDGET_REFUSED.value, ErrorCode.STORAGE.value})
 
 
 def _is_gate_refusal(current_status: str, new_status: str, fields: dict[str, Any]) -> bool:
     return (
         current_status == JobStatus.PENDING
         and new_status == JobStatus.FAILED
-        and fields.get("error_code") == _GATE_REFUSAL_CODE
+        and fields.get("error_code") in _FAILED_BEFORE_START_CODES
     )
 
 
@@ -273,6 +277,13 @@ class JobsRepository:
             return None
         return dict(row)
 
+    async def get_for_display(self, job_id: str) -> dict[str, Any] | None:
+        """:meth:`get`, for a read that only shows the job (its detail) after :meth:`get` raised
+        ``StoredValueTooDeep``: a JSONB value too deep to read (#527) is a stand-in, served as a document too
+        deep to show. Nothing that acts on a job reads it this way."""
+        row = await self._db.fetchrow_for_display("SELECT * FROM jobs WHERE job_id = $1", job_id)
+        return dict(row) if row is not None else None
+
     async def repositories_of(self, job_ids: Collection[str]) -> dict[str, str | None]:
         """The repository each job in ``job_ids`` that exists works on (:func:`job_repository_sql`), None for a job
         with no repository. A job that does not exist is absent."""
@@ -343,11 +354,15 @@ class JobsRepository:
         pipeline_template: str | None = None,
         exclude_dispatched_by: list[str] | None = None,
         repos: Sequence[str] | None = None,
+        for_display: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
         """List jobs with optional filters. Returns (rows, total_count).
 
         ``repos`` (lower-cased slugs) keeps only the jobs working on those repositories, by
         :func:`job_repository_sql`, before the page is cut and the total counted; None keeps every job.
+
+        ``for_display`` is for a read that only shows the rows (the job list): a page holding a JSONB value too
+        deep to read (#527) is read again with that value as a stand-in, so the other jobs still list.
         """
         conditions: list[str] = []
         args: list[Any] = []
@@ -383,10 +398,13 @@ class JobsRepository:
         total = await self._db.fetchval(f"SELECT COUNT(*) FROM jobs {where}", *args)
 
         args.extend([limit, offset])
-        rows = await self._db.fetch(
-            f"SELECT * FROM jobs {where} ORDER BY created_at DESC, job_id DESC LIMIT ${idx} OFFSET ${idx + 1}",
-            *args,
-        )
+        query = f"SELECT * FROM jobs {where} ORDER BY created_at DESC, job_id DESC LIMIT ${idx} OFFSET ${idx + 1}"
+        try:
+            rows = await self._db.fetch(query, *args)
+        except StoredValueTooDeep:
+            if not for_display:
+                raise
+            rows = await self._db.fetch_for_display(query, *args)
         return [dict(r) for r in rows], int(total or 0)
 
     async def in_statuses_for_issues(
@@ -748,6 +766,31 @@ class JobsRepository:
             """
         )
         return [dict(r) for r in rows]
+
+    async def inflight_for_recovery_readable(self) -> tuple[list[dict[str, Any]], list[str]]:
+        """:meth:`inflight_for_recovery` after it raised ``StoredValueTooDeep`` (#527): each row's ``launch``
+        read alone, so one row too deep to read leaves the others to recover; and the ids of those that could
+        not be read, which boot fails."""
+        rows = await self._db.fetch(
+            """
+            SELECT job_id, status, pipeline_template, issue_id, launch::text AS launch, interrupted_at,
+                   resume_attempts
+            FROM jobs
+            WHERE status IN ('running', 'pending')
+            ORDER BY created_at
+            """
+        )
+        readable: list[dict[str, Any]] = []
+        unreadable: list[str] = []
+        for row in rows:
+            job = dict(row)
+            try:
+                job["launch"] = read_jsonb_text(job["launch"]) if job["launch"] is not None else None
+            except StoredValueTooDeep:
+                unreadable.append(str(job["job_id"]))
+                continue
+            readable.append(job)
+        return readable, unreadable
 
     async def begin_recovery(self, job_ids: Collection[str], *, counted: Collection[str]) -> list[str]:
         """Take these in-flight jobs back at boot (#307).

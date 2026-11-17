@@ -22,6 +22,7 @@ from embry0.safety.redaction import register_known_secrets
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
+from embry0.storage.database import StoredValueTooDeep
 from embry0.storage.repositories.jobs import StatusTransitionConflict
 from embry0.storage.repositories.repo_setup_proposals import RepoSetupProposalsRepository
 from embry0.trackers import forge_number_of, github_number_of, linear_identifier_of
@@ -453,18 +454,24 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
 
     trace_id_bound = False
     job_row: dict[str, Any] | None = None
+    unreadable: StoredValueTooDeep | None = None
     try:
         job_row = await self._jobs.get(job_id)
         trace_id = (job_row or {}).get("trace_id")
         if trace_id:
             cv.bind_contextvars(trace_id=trace_id)
             trace_id_bound = True
+    except StoredValueTooDeep as exc:
+        # The review's frozen config is too deep to read (#527): the job fails with the reason, below.
+        unreadable = exc
     except Exception:
         logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
 
     review = dict((job_row or {}).get("pipeline_config") or {})
     sink: dict[str, Any] = {}
     try:
+        if unreadable is not None:
+            raise unreadable
         if await self._refuse_if_over_budget(job_id, actor=(job_row or {}).get("dispatched_by")):
             return
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
@@ -648,6 +655,8 @@ async def _load_merged_env_vars(self: IssueExecutor, repo_name: str, job_id: str
             if v["value"] != "[DECRYPTION_FAILED]"
         ]
         return env_vars or None
+    except StoredValueTooDeep:
+        raise  # the job would run without its variables (#527)
     except Exception:
         logger.warning("env_merge_failed", repo=repo_name, exc_info=True)
         return None
@@ -664,6 +673,8 @@ async def _agent_definitions_for_precheck(self: IssueExecutor) -> list[dict[str,
             rows = await AgentDefinitionsRepository(db).list_all()
             if rows:
                 return [dict(row) for row in rows if row.get("runs_in_jobs", True)]
+        except StoredValueTooDeep:
+            raise  # the seeds are not the definitions the job runs (#527)
         except Exception:
             logger.warning("llm_precheck_agent_definitions_failed", exc_info=True)
     from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
@@ -676,7 +687,9 @@ async def _model_policy_for_precheck(self: IssueExecutor) -> dict[str, Any] | No
 
     ``load_model_policy`` returns None while the row sets no default and
     disables nothing, which would hide a Grok tier fallback from the sandbox.
-    Disabled ids are carried and ignored by ``providers_for_job``.
+    Disabled ids are carried and ignored by ``providers_for_job``. A read that
+    fails leaves the precheck without a policy, but a row too deep to read
+    (#527) raises: it is not a policy that sets nothing.
     """
     db = getattr(self, "_db", None)
     if db is None:
@@ -685,6 +698,8 @@ async def _model_policy_for_precheck(self: IssueExecutor) -> dict[str, Any] | No
         from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
         cfg = await ProviderConfigRepository(db).get()
+    except StoredValueTooDeep:
+        raise
     except Exception:
         logger.warning("llm_precheck_model_policy_failed", exc_info=True)
         return None
@@ -905,6 +920,8 @@ async def _precheck_llm_accounts(
         if jobs is not None:
             try:
                 job = await jobs.get(job_id)
+            except StoredValueTooDeep:
+                raise  # the job's overrides are unknown, not absent (#527)
             except Exception:
                 logger.warning("llm_precheck_job_fetch_failed", job_id=job_id, exc_info=True)
         overrides = (job or {}).get("pipeline_config") or {}
@@ -1357,12 +1374,17 @@ async def _run_workflow(
     # was assigned in execute() at job creation time.
     trace_id_bound = False
     job_row: dict[str, Any] | None = None
+    unreadable: StoredValueTooDeep | None = None
     try:
         job_row = await self._jobs.get(job_id)
         trace_id = (job_row or {}).get("trace_id")
         if trace_id:
             cv.bind_contextvars(trace_id=trace_id)
             trace_id_bound = True
+    except StoredValueTooDeep as exc:
+        # The job's row holds a value too deep to read (#527): run without it and its config (a budget, models,
+        # tools) would be its defaults. The job fails with the reason, below.
+        unreadable = exc
     except Exception:
         logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
 
@@ -1373,6 +1395,8 @@ async def _run_workflow(
     # instead of destroying nothing and recording $0.00 (#246).
     streamed_state: dict[str, Any] = {}
     try:
+        if unreadable is not None:
+            raise unreadable
         # The actor is the job row's dispatcher, NOT issues.created_by: that
         # column holds a provenance constant ("webhook-label", "triage"), so
         # bucketing on it made the hourly limit one fleet-wide throttle (#246).
@@ -1452,6 +1476,8 @@ async def _run_workflow(
         if repo_prefs is not None and issue.get("repo"):
             try:
                 pref = await repo_prefs.get(issue["repo"])
+            except StoredValueTooDeep:
+                raise  # the run would go on without the repository's profile and modes (#527)
             except Exception:
                 logger.warning("repo_prefs_fetch_failed", job_id=job_id, repo=issue["repo"], exc_info=True)
         if (job_row or {}).get("sandbox_profile"):

@@ -268,6 +268,17 @@ async def undo_change(full_repo: str, revision_id: int, request: Request) -> dic
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
     else:
         prefs = request.app.state.repo_preferences_repo
+        if before is not None and before.get("unread"):
+            # The change replaced a value too deep to read (#527): its old text is in the record, but putting it
+            # back would store what nobody can read again, and the API refuses a document that deep.
+            unread = ", ".join(sorted(before["unread"]))
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"That change replaced {unread}, stored too deep to read; its old text is kept in the change "
+                    "record but cannot be put back."
+                ),
+            )
         if before is None:
             new_revision_id = await prefs.delete_recorded(full_repo, actor=actor, source="restore", reason=reason)
         else:

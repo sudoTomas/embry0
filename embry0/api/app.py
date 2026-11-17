@@ -2350,11 +2350,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             metrics=loop_metrics,
         )
 
-    try:
-        watched = await app.state.watcher_stacks_repo.list_all(enabled_only=True)
-    except Exception:
-        watched = []
-        logger.critical("watcher_stacks_unreadable", exc_info=True)
+    watched = await watched_stacks(app.state.watcher_stacks_repo)
     app.state.watcher_services = {stack.repo: _watcher_for(stack) for stack in watched}
     # Back-compat for the single-stack callers (POST /watcher/run with no
     # stack, the health check's default): the first stack, or None.
@@ -3098,6 +3094,31 @@ def _start_recovered_jobs(executor: Any, jobs: list[dict[str, Any]]) -> None:
         )
 
 
+async def watched_stacks(stacks_repo: Any) -> list[Any]:
+    """The enabled watched stacks a start watches.
+
+    One stack whose stored row holds a value too deep to read (#527) is left out, and logged critical by name;
+    the others are watched. Any other failure to read them leaves none watched, logged critical, as before.
+    """
+    from embry0.storage.database import StoredValueTooDeep
+
+    try:
+        try:
+            return list(await stacks_repo.list_all(enabled_only=True))
+        except StoredValueTooDeep:
+            watched, unreadable = await stacks_repo.list_readable(enabled_only=True)
+            for repo in unreadable:
+                logger.critical(
+                    "watcher_stack_unreadable",
+                    repo=repo,
+                    reason="its stored row holds a value too deep to read; it is not watched until stored again",
+                )
+            return list(watched)
+    except Exception:
+        logger.critical("watcher_stacks_unreadable", exc_info=True)
+        return []
+
+
 def create_app(
     config: Embry0Config | None = None,
     *,
@@ -3149,6 +3170,13 @@ def create_app(
             status_code=409,
             content={"detail": "Job or issue status has already changed; retry if needed."},
         )
+
+    from embry0.storage.database import StoredValueTooDeep
+
+    @app.exception_handler(StoredValueTooDeep)
+    async def stored_value_too_deep_handler(request: Request, exc: StoredValueTooDeep) -> JSONResponse:
+        # A stored JSONB value the codec does not read (#527): say so, and that it must be replaced.
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     from fastapi.exceptions import RequestValidationError
 
