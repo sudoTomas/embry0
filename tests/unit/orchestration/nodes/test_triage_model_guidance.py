@@ -216,11 +216,12 @@ async def test_triage_node_without_a_db_names_the_config_defaults() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unreadable_provider_row_does_not_block_triage() -> None:
+async def test_an_unreadable_provider_row_fails_triage_rather_than_naming_the_defaults() -> None:
+    """#551: triage would otherwise steer every agent to the tier defaults, not the deployment's models."""
+
     class _BrokenDb:
         async def fetchrow(self, *_args: Any) -> None:
             raise RuntimeError("db down")
 
-    prompt = await _triage_system_prompt({"db": _BrokenDb()})
-
-    assert f'ALWAYS use "{Embry0Config.model_fields["model_heavy"].default}"' in prompt
+    with pytest.raises(RuntimeError, match="db down"):
+        await _triage_system_prompt({"db": _BrokenDb()})

@@ -18,7 +18,6 @@ from langgraph.config import get_stream_writer
 from embry0.execution import events, sandbox_git
 from embry0.safety.error_codes import ErrorCode
 from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
-from embry0.storage.database import StoredValueTooDeep
 from embry0.workflows.pipeline_graphs import pr_review_pipeline_graph
 from embry0.workflows.pr_review import publish as _publish
 from embry0.workflows.pr_review.agent_seed import AGENT_TYPE, PR_REVIEWER_AGENT_SEED
@@ -59,16 +58,12 @@ def _failed(rv: dict[str, Any], code: str, summary: str) -> dict[str, Any]:
 
 
 async def _repo_preferences(configurable: dict[str, Any], repo: str) -> dict[str, Any]:
+    """The repository's preferences; ``{}`` without a repository or a row. A failed read raises (#551): the
+    review would otherwise run on the default sandbox profile and modes instead of the repository's."""
     prefs_repo = configurable.get("repo_preferences_repo")
     if prefs_repo is None:
         return {}
-    try:
-        row = await prefs_repo.get(repo)
-    except StoredValueTooDeep:
-        raise  # the review would take the default sandbox profile (#527)
-    except Exception:
-        logger.warning("pr_review_preferences_unavailable", repo=repo, exc_info=True)
-        return {}
+    row = await prefs_repo.get(repo)
     return dict(row) if isinstance(row, dict) else {}
 
 

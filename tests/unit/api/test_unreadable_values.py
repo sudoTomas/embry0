@@ -604,3 +604,53 @@ async def test_one_in_flight_job_too_deep_to_read_leaves_the_others_to_recover(c
     assert failed == ["job-deep"], failed
     row = await db.fetchrow("SELECT status, error_code FROM jobs WHERE job_id = 'job-deep'")
     assert (row["status"], row["error_code"]) == ("failed", "ERR_STORAGE"), dict(row)
+
+
+@pytest.mark.parametrize("path", ["run", "review"])
+async def test_a_fresh_job_whose_row_read_fails_fails_from_pending(client: AsyncClient, path: str) -> None:
+    """#551: any failed read of the job's own row fails it from pending as a storage failure, not only one too
+    deep: the error is recorded, the end is announced, and the issue goes back to open."""
+    from unittest.mock import AsyncMock
+
+    import asyncpg
+
+    from embry0.services._executor_run import _run_pr_review_workflow
+    from embry0.storage.repositories.jobs import JobsRepository
+    from tests.unit.services.test_failed_job_pr import PR, _executor, _patches
+
+    app = client.app  # type: ignore[attr-defined]
+    db = app.state.db
+    issue = await app.state.issues_repo.create(title="t", repo="acme/widgets")
+    issue_id = issue["id"] if isinstance(issue, dict) else issue
+    await db.execute("UPDATE issues SET status = 'in_progress' WHERE id = $1", issue_id)
+    jobs = JobsRepository(db)
+    job = await jobs.create(repo="acme/widgets", task="t", issue_id=issue_id if path == "run" else None)
+    jobs.get = AsyncMock(  # type: ignore[method-assign]
+        side_effect=asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed in the middle of operation")
+    )
+
+    ex = _executor()
+    ex._jobs, ex._issues = jobs, app.state.issues_repo
+    ex._broadcast_event = AsyncMock()  # type: ignore[method-assign]
+    ex._announce_finished = AsyncMock()  # type: ignore[method-assign]
+    ex._refuse_if_over_budget = AsyncMock(return_value=False)  # type: ignore[method-assign]
+
+    async def _stream(input_value, issue_id, job_id, state_sink=None, **kw):  # noqa: ANN001, ANN003, ARG001
+        raise RuntimeError("the workflow ran")
+
+    ex._execute_workflow_stream = _stream  # type: ignore[assignment]
+    a, b, c, d = _patches(AsyncMock(return_value=PR))
+    with a, b, c, d:
+        if path == "run":
+            await ex._run_workflow(issue_id, job, {"title": "t", "body": "", "repo": "acme/widgets"})
+        else:
+            await _run_pr_review_workflow(ex, job)
+    row = await db.fetchrow("SELECT status, error_code, error_message, started_at FROM jobs WHERE job_id = $1", job)
+    assert (row["status"], row["error_code"]) == ("failed", "ERR_STORAGE"), f"the job was never failed: {dict(row)}"
+    assert row["started_at"] is None and "connection was closed" in str(row["error_message"]), dict(row)
+    ex._announce_finished.assert_awaited_once_with(job)
+    if path == "run":
+        assert await db.fetchval("SELECT status FROM issues WHERE id = $1", issue_id) == "open", (
+            "the issue is left in progress, so a run again is refused"
+        )
+        ex._post_tracker_outcome.assert_awaited()

@@ -198,7 +198,11 @@ async def test_when_no_snapshot_can_be_read_every_key_reads_the_old_way(db_with_
     assert (decision.allowed, decision.limit) == (False, "daily")
 
 
-async def test_a_job_whose_policy_cannot_be_read_falls_back_to_the_variables(db_with_migrations: DatabasePool) -> None:
+async def test_a_job_whose_policy_cannot_be_read_fails_rather_than_reading_the_variables(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """#551: the job's budget is what the operator set, not the variables the release before fell back to."""
+
     class Down:
         async def settings(self) -> Any:
             raise ConnectionResetError("db down")
@@ -209,7 +213,8 @@ async def test_a_job_whose_policy_cannot_be_read_falls_back_to_the_variables(db_
             "embry0_config": _config(MAX_BUDGET_USD="3", BUDGET_OVERRUN_MODE="hard"),
         }
     }
-    assert await load_budget_policy(graph) == (3.0, "hard"), "the variables the release before fell back to"
+    with pytest.raises(ConnectionResetError, match="db down"):
+        await load_budget_policy(graph)
 
 
 async def test_one_organizations_failed_copy_stops_no_other_and_is_read_from_its_settings(
