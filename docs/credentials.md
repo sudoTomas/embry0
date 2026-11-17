@@ -44,7 +44,7 @@ Scope values are normalized on write by the API and the repository, and the reso
 - **repo**: the exact path, lowercased.
 - **host**: lowercased, and it must equal the forge's host (`github.com`, or the `GITLAB_URL` host); anything else is a 422.
 
-A bound credential that is `disabled` or `quarantined`, or whose secret cannot be decrypted, is skipped and the next step is tried. A **pinned** binding is not skipped: the job fails with `ERR_CREDENTIAL_UNAVAILABLE` instead of using another account. Pinning is accepted only on LLM bindings at repo or owner scope, so a forge-token binding is never pinned. When nothing matches, not even the environment, resolution fails with `ERR_CREDENTIAL_MISSING`.
+A bound credential that is `disabled` or `quarantined`, or whose secret cannot be decrypted, is skipped and the next step is tried. A **pinned** binding is not skipped: the job fails with `ERR_CREDENTIAL_UNAVAILABLE` instead of using another account. Pinning is accepted only on LLM bindings at repo or owner scope, so a forge-token binding is never pinned. The table holds the same rule (`credential_bindings_pinned_check`): an upgrade unpins any other binding stored pinned before it, logging each and the count (`migration_message`). When nothing matches, not even the environment, resolution fails with `ERR_CREDENTIAL_MISSING`.
 
 One binding per scope, role and provider. `acme/widgets` bound to the credential `alice` and `github:acme` bound to `acme-bot` means `acme/widgets` pushes as `alice` and every other `acme` repo as `acme-bot`.
 
@@ -56,11 +56,13 @@ An LLM account is `llm_oauth` or `llm_api_key` on `anthropic` or `xai`, or `llm_
 the job's chosen key > repo > owner > global pool > env
 ```
 
-The job's chosen key is the one a person picked when starting the work from the dashboard ("Run with", [the design](superpowers/specs/2026-10-25-run-with-design.md)): it serves its provider for that job, whatever the bindings say. If it is disabled, quarantined, gone or cannot be decrypted, the job fails with `ERR_CREDENTIAL_UNAVAILABLE`, as a pinned binding does; no other key runs in its place.
+The job's chosen key is the one a person picked when starting the work from the dashboard ("Run with", [the design](superpowers/specs/2026-10-25-run-with-design.md)): it serves its provider for that job, whatever the bindings say. If it is disabled, quarantined, gone or cannot be decrypted, or cannot be read, the job fails with `ERR_CREDENTIAL_UNAVAILABLE`, as a pinned binding does; no other key runs in its place. A sandbox derived from the job (QA's, onboarding's) is served the job's chosen key the same way, read from the job itself.
 
 The owner step reads the owner on the forge the repository's work is on: its registration's forge, else `DEFAULT_FORGE` (the forge a job on a repository nobody registered clones from). `github:acme` is the GitHub organization and `gitlab:acme` the GitLab group, two owners, so a repository of one never reads the other's account. A repository with neither a registration nor a `DEFAULT_FORGE` reads no owner's account (the trace says `owner:<owner> -> skipped (the repository's forge is unknown)`): it cannot be said to be under either, and its own binding and the global pool still serve it. `GET /api/v1/run-with/keys` offers the owner's keys the same way. There is no host step. The global pool is every `ok` credential of that provider bound at global scope, role `llm`, ordered by `priority` ascending and then `last_used_at` ascending with nulls first. A disabled row is skipped. A quarantined row is skipped while `quarantined_until` is null or still in the future; a past `quarantined_until` is usable again without a rewrite.
 
 Pinning is accepted on an LLM binding at repo or owner scope. A pinned credential that is disabled, quarantined, or cannot be decrypted fails the job with `ERR_CREDENTIAL_UNAVAILABLE`. It does not fall through to the pool. A global binding cannot be pinned.
+
+When the registry cannot be read at the repository's step or its owner's, or the repository's forge cannot be read, the resolution fails with `ERR_CREDENTIAL_UNAVAILABLE` as well (`the anthropic credential for 'acme/gadgets' could not be resolved: the credential registry could not be read`): a binding there may be pinned, so neither the pool nor the environment serves in its place. A registry error at the global pool's step goes on to the environment, since nothing there is pinned. A forge account's resolution goes on to the environment after a registry error, since a forge binding is never pinned.
 
 What the sandbox receives:
 
@@ -199,7 +201,7 @@ The dry run for `acme/gadgets`, which has no repo binding but whose owner is bou
 }
 ```
 
-On a deployment that has not imported yet, the same call ends in `"source": "env"`, `"id": null`, a label naming the env key, and a trace step such as `env:GITHUB_TOKEN__ACME`. A skipped credential shows as `owner:github:acme -> acme-bot skipped (disabled)`. The call answers 404 for an unregistered repo or when nothing resolves, and 409 when a pinned credential is unavailable.
+On a deployment that has not imported yet, the same call ends in `"source": "env"`, `"id": null`, a label naming the env key, and a trace step such as `env:GITHUB_TOKEN__ACME`. A skipped credential shows as `owner:github:acme -> acme-bot skipped (disabled)`. The call answers 404 for an unregistered repo or when nothing resolves, and 409 when a pinned credential is unavailable or the registry cannot be read at a step that may pin one.
 
 ### A key with a repository allowlist
 

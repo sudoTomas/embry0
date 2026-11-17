@@ -4742,6 +4742,43 @@ deliverable under an "Assumptions" heading.$seed$
         CREATE INDEX IF NOT EXISTS idx_jobs_repository ON jobs (lower(COALESCE(repo, context->>'repo')));
         """,
     ),
+    (
+        151,
+        "credential bindings: a pin only on a model account's binding at repo or owner scope, as the API writes one",
+        # The API and CredentialsRepository.replace_bindings accept a pin only
+        # on an LLM binding at repo or owner scope (pin_allowed); the table
+        # held no such rule, and the resolver relies on it: a registry error
+        # at a step that holds no pin goes on to the environment. A binding
+        # stored pinned anywhere else loses its pin here and serves as such a
+        # binding is written now, skipped when its credential cannot be used.
+        # Each raises a WARNING naming it, then one gives the count (the
+        # runner logs them as migration_message). The CHECK keeps the table to
+        # pin_allowed's rule.
+        """
+        DO $$
+        DECLARE r record; n integer := 0;
+        BEGIN
+            FOR r IN SELECT id, scope_kind, scope_value, role, provider FROM credential_bindings
+                      WHERE pinned AND NOT (role = 'llm' AND scope_kind IN ('repo', 'owner')) ORDER BY id LOOP
+                RAISE WARNING 'binding % (% %, % %) unpinned: only a model account''s binding at repo or owner '
+                    'scope is pinned', r.id, r.scope_kind, r.scope_value, r.role, r.provider;
+                n := n + 1;
+            END LOOP;
+            IF n > 0 THEN
+                RAISE WARNING '% pinned binding(s) unpinned', n;
+            ELSE
+                RAISE NOTICE '0 pinned binding(s) unpinned';
+            END IF;
+        END $$;
+
+        UPDATE credential_bindings SET pinned = FALSE
+         WHERE pinned AND NOT (role = 'llm' AND scope_kind IN ('repo', 'owner'));
+
+        ALTER TABLE credential_bindings DROP CONSTRAINT IF EXISTS credential_bindings_pinned_check;
+        ALTER TABLE credential_bindings ADD CONSTRAINT credential_bindings_pinned_check
+            CHECK (NOT pinned OR (role = 'llm' AND scope_kind IN ('repo', 'owner')));
+        """,
+    ),
 ]
 
 

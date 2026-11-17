@@ -31,7 +31,7 @@ from embry0.services.credentials.providers import (
 )
 from embry0.storage.database import StoredValueTooDeep
 from embry0.storage.encryption import SecretsProvider
-from embry0.storage.repositories.credentials import CredentialsRepository
+from embry0.storage.repositories.credentials import CredentialsRepository, pin_allowed
 
 logger = structlog.get_logger(__name__)
 
@@ -151,6 +151,15 @@ def _pinned(
     return CredentialUnavailableError(
         message, scope_kind=scope_kind, detail=detail, trace=tuple(trace), missing=missing, pointer=pointer
     )
+
+
+def _registry_unread(repo: str, what: str, trace: list[str], pointer: str) -> CredentialUnavailableError:
+    """The error of a resolution for ``repo`` that a registry error stopped before it read every scope where a
+    credential may be pinned (:func:`pin_allowed`): one pinned there is never passed over for the pool or the
+    environment. ``what`` is the provider or forge. It names no credential, as nothing was read to name."""
+    detail = f"the {what} credential for {repo!r} could not be resolved: the credential registry could not be read"
+    logger.warning("credential_registry_unread", repo=repo, what=what, trace=trace)
+    return CredentialUnavailableError(detail + pointer, detail=detail, trace=tuple(trace), pointer=pointer)
 
 
 class CredentialResolver:
@@ -357,8 +366,9 @@ class CredentialResolver:
             ("host", self.forge_host(forge)),
             ("global", ""),
         )
+        reached = 0
         try:
-            for scope_kind, scope_value in steps:
+            for reached, (scope_kind, scope_value) in enumerate(steps):
                 if scope_kind != "global" and not scope_value.split(":", 1)[-1]:
                     continue
                 rows = await self._repo.candidates(
@@ -401,9 +411,14 @@ class CredentialResolver:
             # A registry row too deep to read (#527) is not an outage: the pinned credential is unknown, not
             # absent, so the job fails rather than taking the deployment's token.
             raise
-        except Exception as exc:  # noqa: BLE001 — a registry outage must not fail a job that env can serve
+        except Exception as exc:  # noqa: BLE001 — env serves on, unless a step left unread may pin
             logger.warning("credential_registry_error", repo=repo, forge=forge, error=str(exc)[:200])
             trace.append(f"registry error: {type(exc).__name__}")
+            # No forge binding is pinned (pin_allowed, the table's credential_bindings_pinned_check), so the
+            # environment serves on here; were one pinnable, a step left unread would fail the resolution as the
+            # model accounts' walk does.
+            if any(pin_allowed("forge", kind) for kind, _ in steps[reached:]):
+                raise _registry_unread(repo, forge, trace, _shows_why(repo)) from exc
 
         token, key = await self._env_token(repo, forge, trace)
         if token:
@@ -526,6 +541,14 @@ class CredentialResolver:
         for provider in providers:
             # A key chosen for this job outranks the parent's: resolve_llm serves it.
             chosen = await self._job_pin(job_id, provider)
+            if not chosen and parent_job_id:
+                # The parent's chosen key serves this sandbox as it serves the parent, read from the parent job
+                # itself rather than from what it used: no other key runs in its place, whether the key cannot
+                # serve now or the record of the parent's uses cannot be read.
+                parent_chosen = await self._job_pin(parent_job_id, provider)
+                if parent_chosen:
+                    resolved[provider] = await self._resolve_job_pin(parent_chosen, provider, job_id=job_id)
+                    continue
             reused = await self._reuse_llm(provider, job_id, parent_uses) if parent_uses and not chosen else None
             resolved[provider] = reused if reused is not None else await self.resolve_llm(repo, provider, job_id=job_id)
         return resolved
@@ -624,13 +647,22 @@ class CredentialResolver:
         try:
             pins = await self._job_pins(job_id)
         except Exception as exc:
-            raise CredentialUnavailableError(f"the key chosen for job {job_id} could not be read: {exc}") from exc
+            raise CredentialUnavailableError(
+                f"the key chosen for job {job_id} could not be read: {type(exc).__name__}"
+            ) from exc
         pinned = pins.get(provider)
         return str(pinned) if pinned else None
 
     async def _resolve_job_pin(self, credential_id: str, provider: str, *, job_id: str) -> ResolvedCredential:
         """The key chosen for the job; :class:`CredentialUnavailableError` when it cannot serve ``provider``."""
-        row = await self._repo.get(credential_id)
+        try:
+            row = await self._repo.get(credential_id)
+        except StoredValueTooDeep:
+            raise  # as for a binding's: a row too deep to read is not an outage (#527)
+        except Exception as exc:
+            raise CredentialUnavailableError(
+                f"the key chosen for this job ({credential_id}) could not be read: {type(exc).__name__}"
+            ) from exc
         if not row:
             raise CredentialUnavailableError(f"the key chosen for this job ({credential_id}) no longer exists")
         label = str(row.get("label") or credential_id)
@@ -684,11 +716,15 @@ class CredentialResolver:
     async def _resolve_llm_fresh(self, repo: str, provider: str, *, job_id: str) -> ResolvedCredential:
         trace: list[str] = []
         owner = self.owner_of(repo)
+        # The steps a registry error leaves unread: until the repository's forge is read, its own and its owner's.
+        unread = ["repo", "owner"]
         try:
             forge = await self.forge_of(repo)
             if owner and forge is None:
                 trace.append(f"owner:{owner} -> skipped (the repository's forge is unknown)")
-            for scope_kind, scope_value in llm_scopes(repo, forge):
+            scopes = llm_scopes(repo, forge)
+            for reached, (scope_kind, scope_value) in enumerate(scopes):
+                unread = [kind for kind, _ in scopes[reached:]]
                 rows = await self._repo.candidates(
                     scope_kind=scope_kind, scope_value=scope_value, role="llm", provider=provider
                 )
@@ -716,9 +752,11 @@ class CredentialResolver:
             raise
         except StoredValueTooDeep:
             raise  # as for a forge credential: a row too deep to read is not an outage (#527)
-        except Exception as exc:  # noqa: BLE001 — a registry outage must not fail a job that env can serve
+        except Exception as exc:  # noqa: BLE001 — env serves on, unless a step left unread may pin
             logger.warning("credential_registry_error", repo=repo, provider=provider, error=str(exc)[:200])
             trace.append(f"registry error: {type(exc).__name__}")
+            if any(pin_allowed("llm", kind) for kind in unread):
+                raise _registry_unread(repo, provider, trace, _shows_why(repo, provider)) from exc
 
         fallback = env_fallback(provider, self._environ, self._config, credentials_file=self._credentials_file)
         if fallback:
