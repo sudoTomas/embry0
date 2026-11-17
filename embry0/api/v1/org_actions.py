@@ -190,7 +190,22 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         forge_time=forge_time,
         request_time=request_time,
     )
+    # The hook action tries last the owner's repositories known to use up their share, so that repositories that
+    # never answer do not take every identical request's time ahead of the rest (#586). What a request learns is noted
+    # for the repositories it tried, and only those (org_actions.note_slowness). Kept in this process, one set per
+    # organization, each bounded: a restart only forgets which repositories were slow.
+    slow: dict[str, None] | None = None
+    if forge_time is not None:
+        slow_by_owner: dict[str, dict[str, None]] | None = getattr(st, "org_hook_slow", None)
+        if slow_by_owner is None:
+            slow_by_owner = st.org_hook_slow = {}
+        slow = slow_by_owner.setdefault(org.owner.lower(), {})
+        ctx.slow = tuple(slow)
     results = await org_actions.run_action(ctx, body.action, body.repos, dry_run=body.dry_run)
+    if slow is not None:
+        org_actions.note_slowness(slow, results)
+        if not slow:
+            st.org_hook_slow.pop(org.owner.lower(), None)
     rediscovery = None
     if not body.dry_run:
         await emit_audit(

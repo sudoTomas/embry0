@@ -741,9 +741,10 @@ class _Creating(FakeForge):
     """A forge whose create answers each of ``answers`` in turn (a response; "hang" after storing the hook; "hang
     before" without storing it), and after them stores the hook and answers 201."""
 
-    def __init__(self, *answers: Any, relisting_hangs: bool = False) -> None:
+    def __init__(self, *answers: Any, relisting_hangs: bool = False, relisting_takes: float = 0.05) -> None:
         super().__init__()
         self.answers, self.gets, self.relisting_hangs = list(answers), 0, relisting_hangs
+        self.relisting_takes = relisting_takes
 
     async def get(self, path: str, **kwargs: Any) -> FakeResp:
         import asyncio
@@ -751,7 +752,7 @@ class _Creating(FakeForge):
         self.gets += 1
         if self.posts:
             # The look after a create: a forge's answer takes a moment, and one may never come.
-            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(0.05))
+            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(self.relisting_takes))
         return await super().get(path, **kwargs)
 
     async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
@@ -847,3 +848,76 @@ async def test_a_create_answered_with_an_outage_is_still_sent_once(monkeypatch: 
     monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 5.0)
     results = await _within_ten_seconds(ctx, ["acme/widgets"])
     assert [(r.outcome, len(forge.posts)) for r in results] == [("failed", 1)], results
+
+
+@pytest.mark.asyncio
+async def test_the_time_kept_back_finds_a_hook_whose_create_hangs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586: the reserve itself, not one a test sets. GitHub stores the hook and the create hangs; with the real
+    reserve left the hooks are listed, which takes half a second, and the hook is there."""
+    from embry0.services import org_actions as actions
+    from embry0.services import org_webhooks
+    from embry0.services.organizations import ForgeTime
+
+    share = org_webhooks.RELIST_SECONDS + 0.5 if org_webhooks.RELIST_SECONDS >= 1 else 3.5
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", share)
+    monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.1)
+    forge = _Creating("hang", relisting_takes=0.5)
+    ctx = context(forge_client=forge, forge_time=ForgeTime(), request_time=ForgeTime(share + 1))
+    results = await _within_ten_seconds(ctx, ["acme/widgets"])
+    assert [r.outcome for r in results] == ["done"], (
+        f"with {org_webhooks.RELIST_SECONDS} s kept back, a create GitHub made is not found: {results}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_repositories_known_slow_are_acted_on_last_and_answered_in_order() -> None:
+    """#586: those ``ctx.slow`` names (any case) are acted on after the rest, the one noted longest ago (first in
+    ``ctx.slow``) first; the answer keeps the order asked."""
+    acted: list[str] = []
+
+    class Recording(FakeForge):
+        async def get(self, path: str, **kwargs: Any) -> FakeResp:
+            acted.append(path.split("/")[3])
+            return await super().get(path, **kwargs)
+
+    facts = {f"acme/r{n}": fact(f"acme/r{n}", hook_present=False) for n in range(1, 6)}
+    ctx = context(facts=facts, forge_client=Recording(), slow=("acme/r3", "ACME/r1"))
+    results = await run_action(ctx, "hook", [f"acme/r{n}" for n in range(1, 6)])
+    assert acted == ["r2", "r4", "r5", "r3", "r1"], acted
+    assert [r.repo for r in results] == [f"acme/r{n}" for n in range(1, 6)], results
+
+
+@pytest.mark.asyncio
+async def test_a_hook_request_says_which_repositories_it_tried_and_how_they_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#586: a repository that used up its share is ``slow``, one that answered within it ``answered``, and one the
+    request's time did not reach was not tried and says nothing."""
+    ctx = _timed(monkeypatch, repo=0.2, least=0.15, request=0.5, forge_client=_Hanging("acme/r1", "acme/r2"))
+    results = await _within_ten_seconds(ctx, [f"acme/r{n}" for n in range(1, 6)])
+    assert [r.timing for r in results] == ["slow", "slow", "", "", ""], results
+    ctx = _timed(monkeypatch, repo=0.2, least=0.15, request=5.0, forge_client=_Hanging("acme/r1"))
+    results = await _within_ten_seconds(ctx, [f"acme/r{n}" for n in range(1, 4)])
+    assert [r.timing for r in results] == ["slow", "answered", "answered"], results
+
+
+def test_slowness_is_noted_only_for_the_repositories_a_request_tried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586: a request changes what is known only about what it tried, so other requests (for other repositories, a
+    dry run, a key limited to a few) never undo what earlier ones learned; and the set is bounded."""
+    from embry0.services import org_actions as actions
+    from embry0.services.org_actions import ActionResult, note_slowness
+
+    slow = {"acme/a": None, "acme/b": None}
+    note_slowness(
+        slow,
+        [
+            ActionResult("acme/A", "done", "webhook created", timing="answered"),
+            ActionResult("acme/b", "skipped", "not tried: out of time, run again"),
+            ActionResult("acme/c", "failed", "GitHub did not answer within 10 seconds", timing="slow"),
+            ActionResult("acme/d", "failed", "refused"),
+        ],
+    )
+    assert list(slow) == ["acme/b", "acme/c"], slow
+    monkeypatch.setattr(actions, "SLOW_REPOS_CAP", 3)
+    note_slowness(slow, [ActionResult(f"acme/x{n}", "failed", "no answer", timing="slow") for n in range(3)])
+    assert list(slow) == ["acme/x0", "acme/x1", "acme/x2"], f"the set holds the cap, the oldest dropped: {slow}"

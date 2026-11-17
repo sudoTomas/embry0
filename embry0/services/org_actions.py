@@ -13,7 +13,7 @@ every repository it changed and changes nothing.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 import httpx
@@ -94,6 +94,9 @@ class ActionResult:
     repo: str
     outcome: str
     detail: str
+    #: For the ``hook`` action: ``slow`` when the repository was tried and used up its share of the request's time,
+    #: ``answered`` when it was tried and answered within it, empty when it was not tried (#586). Not part of the answer.
+    timing: str = field(default="", compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {"repo": self.repo, "outcome": self.outcome, "detail": self.detail}
@@ -132,6 +135,11 @@ class ActionContext:
     #: The whole request's time for the ``hook`` action, under the dashboard's timeout: each repository's share comes
     #: out of it, and the repositories it does not reach are not tried (#582).
     request_time: ForgeTime | None = None
+    #: Repositories (any case) known to use up their share, the one noted longest ago first (note_slowness): acted on
+    #: after the rest, in that order, so that repositories that never answer do not take every request's time ahead of
+    #: them, and one noted slow that answers again is reached as the others are noted again (#586). The results are in
+    #: the order asked whatever the order acted in.
+    slow: tuple[str, ...] = ()
 
 
 #: The most of the request's time one repository's ``hook`` may take, so a slow one does not leave the rest none (#582).
@@ -139,6 +147,30 @@ HOOK_REPO_SECONDS = 10.0
 #: A repository's ``hook`` is tried only with this much of the request's time left: enough for its listing, its create
 #: and the look after it. The rest are skipped, not tried, and a second run (the action is idempotent) goes on.
 HOOK_MIN_SECONDS = 2 * RELIST_SECONDS
+#: The detail of a repository the request's time did not reach.
+NOT_TRIED = "not tried: out of time, run again"
+#: The most repositories an owner's known-slow set holds (note_slowness), as many as one request may ask; past it the
+#: one noted longest ago is dropped.
+SLOW_REPOS_CAP = 500
+
+
+def note_slowness(slow: dict[str, None], results: list[ActionResult]) -> None:
+    """Update ``slow``, an owner's repositories known to use up their share (lowercased, the one noted longest ago
+    first), from a ``hook`` request's results (#586).
+
+    Only a repository the request tried changes it: one that used up its share is added, one that answered within
+    it is removed. One it did not try (out of time, refused, not seen by discovery) changes nothing, so a request for
+    other repositories, a dry run or a key limited to a few never undoes what earlier requests learned. Bounded at
+    :data:`SLOW_REPOS_CAP` entries."""
+    for result in results:
+        key = result.repo.lower()
+        if result.timing == "slow":
+            slow.pop(key, None)
+            slow[key] = None
+        elif result.timing == "answered":
+            slow.pop(key, None)
+    while len(slow) > SLOW_REPOS_CAP:
+        slow.pop(next(iter(slow)))
 
 
 def webhook_url_for(config: Any) -> str | None:
@@ -186,16 +218,18 @@ async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: b
         return await _hook_now(ctx, repo, facts, dry_run)
     left = ctx.request_time.left() if ctx.request_time is not None else HOOK_REPO_SECONDS
     if left < HOOK_MIN_SECONDS:
-        return ActionResult(repo, "skipped", "not tried: out of time, run again")
+        return ActionResult(repo, "skipped", NOT_TRIED)
     share = min(HOOK_REPO_SECONDS, left)
     ctx.forge_time.restart(share)
     try:
-        return await _hook_now(ctx, repo, facts, dry_run)
+        result = await _hook_now(ctx, repo, facts, dry_run)
     except ProbeOutOfTime:
-        return ActionResult(repo, "failed", f"GitHub did not answer within {round(share, 1):g} seconds")
+        result = ActionResult(repo, "failed", f"GitHub did not answer within {round(share, 1):g} seconds")
     except ForgeOutage as exc:
         # A wait the forge asked for, longer than what is left of the deadline: answered at once.
-        return ActionResult(repo, "failed", exc.says("GitHub", what="the request"))
+        result = ActionResult(repo, "failed", exc.says("GitHub", what="the request"))
+    # Within the time kept back for the look after a create: it took its share, all but that look at least.
+    return replace(result, timing="slow" if ctx.forge_time.left() <= org_webhooks.RELIST_SECONDS else "answered")
 
 
 async def _hook_now(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:
@@ -370,6 +404,39 @@ _RUNNERS: dict[str, _Action] = {
 }
 
 
+async def _act(
+    ctx: ActionContext,
+    runner: _Action,
+    action: str,
+    asked: str,
+    key: str,
+    prefix: str,
+    facts_by_key: dict[str, dict[str, Any]],
+    dry_run: bool,
+) -> ActionResult:
+    """One repository's outcome (:func:`run_action`)."""
+    if not key.startswith(prefix):
+        return ActionResult(asked, "skipped", f"not under {ctx.owner}")
+    refused = await ctx.refusal(asked) if ctx.refusal is not None else None
+    if refused is not None:
+        return ActionResult(asked, "failed", refused)
+    row = facts_by_key.get(key)
+    if row is None:
+        return ActionResult(asked, "skipped", "not seen by discovery; run discovery first")
+    repo = str(row.get("repo") or key)
+    if row.get("archived") and action != "deactivate":
+        return ActionResult(repo, "skipped", "archived")
+    facts = dict(row.get("facts") or {})
+    facts.setdefault("default_branch", row.get("default_branch"))
+    try:
+        return await runner(ctx, repo, facts, dry_run)
+    except Refused as exc:
+        return ActionResult(repo, "failed", str(exc))
+    except Exception as exc:  # noqa: BLE001 - one repository's error is its own result
+        logger.warning("org_action_repo_failed", owner=ctx.owner, action=action, repo=repo, error=type(exc).__name__)
+        return ActionResult(repo, "failed", f"{type(exc).__name__}: {str(exc)[:200]}")
+
+
 async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_run: bool = False) -> list[ActionResult]:
     """One outcome per repository, in the order asked, duplicates folded.
 
@@ -390,40 +457,23 @@ async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_r
         raise ValueError(f"unknown action {action!r}; expected one of {list(ACTIONS)}")
     facts_by_key = {key.lower(): row for key, row in ctx.facts.items()}
     prefix = f"{ctx.owner.lower()}/"
-    results: list[ActionResult] = []
+    asked_once: list[tuple[str, str]] = []
     seen: set[str] = set()
     for asked in repos:
         key = asked.strip().lower()
         if not key or key in seen:
             continue
         seen.add(key)
-        if not key.startswith(prefix):
-            results.append(ActionResult(asked.strip(), "skipped", f"not under {ctx.owner}"))
-            continue
-        refused = await ctx.refusal(asked.strip()) if ctx.refusal is not None else None
-        if refused is not None:
-            results.append(ActionResult(asked.strip(), "failed", refused))
-            continue
-        row = facts_by_key.get(key)
-        if row is None:
-            results.append(ActionResult(asked.strip(), "skipped", "not seen by discovery; run discovery first"))
-            continue
-        repo = str(row.get("repo") or key)
-        if row.get("archived") and action != "deactivate":
-            results.append(ActionResult(repo, "skipped", "archived"))
-            continue
-        facts = dict(row.get("facts") or {})
-        facts.setdefault("default_branch", row.get("default_branch"))
-        try:
-            result = await runner(ctx, repo, facts, dry_run)
-        except Refused as exc:
-            result = ActionResult(repo, "failed", str(exc))
-        except Exception as exc:  # noqa: BLE001 - one repository's error is its own result
-            logger.warning(
-                "org_action_repo_failed", owner=ctx.owner, action=action, repo=repo, error=type(exc).__name__
-            )
-            result = ActionResult(repo, "failed", f"{type(exc).__name__}: {str(exc)[:200]}")
-        results.append(result)
+        asked_once.append((asked.strip(), key))
+    # Acted on in the order asked, those known slow after the rest, the one noted longest ago first (#586): one noted
+    # again moves to the end, so one that answers again comes forward. Answered in the order asked.
+    slow = {r.lower(): rank for rank, r in enumerate(ctx.slow)}
+    order = sorted(range(len(asked_once)), key=lambda n: (asked_once[n][1] in slow, slow.get(asked_once[n][1], 0)))
+    answers: dict[int, ActionResult] = {}
+    for n in order:
+        asked, key = asked_once[n]
+        answers[n] = await _act(ctx, runner, action, asked, key, prefix, facts_by_key, dry_run)
+    results = [answers[n] for n in range(len(asked_once))]
     logger.info(
         "org_action_run",
         owner=ctx.owner,
