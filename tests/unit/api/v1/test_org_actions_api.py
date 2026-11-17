@@ -658,12 +658,9 @@ async def test_the_hook_action_answers_within_the_requests_time(app: Any, monkey
     assert time.monotonic() - started < 2.0, f"{time.monotonic() - started:.2f}s for a request of 0.5"
 
 
-@pytest.mark.asyncio
-async def test_repeated_hook_requests_reach_repositories_behind_ones_that_never_answer(
-    app: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """#586: two repositories GitHub never answers about, asked first, took each request's time, and the two after
-    them were skipped on every identical request. The next request tries first what the last one did not reach."""
+def _hanging_and_healthy(app: Any, monkeypatch: pytest.MonkeyPatch, hanging: int, healthy: int) -> list[str]:
+    """``hanging`` repositories GitHub never answers about, then ``healthy`` ones, all seen by discovery, at half a
+    second a request and a fifth of a second a repository; the repositories, in that order."""
     import asyncio
 
     from embry0.services import org_actions as actions
@@ -674,29 +671,67 @@ async def test_repeated_hook_requests_reach_repositories_behind_ones_that_never_
     monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 0.2)
     monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.15)
     monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.01)
+    repos = [f"acme/h{n}" for n in range(1, hanging + 1)] + [f"acme/g{n}" for n in range(1, healthy + 1)]
+    app.state.org_repos_repo.rows += [fact("acme", repo, hook_present=False) for repo in repos]
     forge = app.state.fake_forge
-    healthy = forge.get
+    answer = forge.get
 
     async def get(path: str, **kwargs: Any) -> Any:
-        if path in ("/repos/acme/widgets/hooks", "/repos/acme/gadgets/hooks"):
+        if path.startswith("/repos/acme/h"):
             await asyncio.Event().wait()
-        return await healthy(path, **kwargs)
+        return await answer(path, **kwargs)
 
     forge.get = get
-    repos = ["acme/widgets", "acme/gadgets", "acme/one", "acme/two"]
-    calls = []
+    return repos
+
+
+async def _hook_request(client: Any, repos: list[str], **body: Any) -> dict[str, str]:
+    import asyncio
+
+    resp = await asyncio.wait_for(
+        client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": repos, **body}), timeout=10
+    )
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert [r["repo"] for r in results] == repos, "the answer is in the order asked"
+    return {r["repo"]: r["outcome"] for r in results}
+
+
+def _made(calls: list[dict[str, str]]) -> set[str]:
+    # The fake lists one hook for every repository, so a second made reads as already there.
+    return {repo for call in calls for repo, outcome in call.items() if outcome in ("done", "already")}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("hanging", "healthy"), [(2, 2), (4, 2), (5, 1)])
+async def test_repeated_hook_requests_reach_repositories_behind_ones_that_never_answer(
+    app: Any, monkeypatch: pytest.MonkeyPatch, hanging: int, healthy: int
+) -> None:
+    """#586: repositories GitHub never answers about, asked first, took each request's time, and those after them
+    were skipped on every identical request. Each request now tries last the ones known to use up their share, so
+    identical requests reach the healthy ones in a few calls (a request here has time for two that hang)."""
+    repos = _hanging_and_healthy(app, monkeypatch, hanging, healthy)
+    calls: list[dict[str, str]] = []
     async with _client(app) as client:
-        for _call in range(3):
-            resp = await asyncio.wait_for(
-                client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": repos}), timeout=10
-            )
-            calls.append({r["repo"]: r["outcome"] for r in resp.json()["results"]})
-    # The fake lists one hook for every repository, so the second made reads as already there.
-    made = {repo for call in calls for repo, outcome in call.items() if outcome in ("done", "already")}
-    assert made == {"acme/one", "acme/two"}, f"three identical requests: {calls}"
-    assert [list(call) for call in calls] == [repos] * 3, "each answer is in the order asked"
-    # Once a request reaches every repository in its time, there is no order left to keep.
-    forge.get = healthy
-    async with _client(app) as client:
-        await client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": repos})
-    assert "acme" not in app.state.org_hook_order, app.state.org_hook_order
+        for _call in range(4):
+            calls.append(await _hook_request(client, repos))
+    assert _made(calls) == {r for r in repos if "/g" in r}, f"{hanging} hanging, {healthy} healthy: {calls}"
+
+
+@pytest.mark.asyncio
+async def test_other_hook_requests_do_not_undo_the_progress(keyed_app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586 review: one remembered order per owner was replaced, or dropped, by any other hook request of the owner.
+    A request for other repositories, a dry run and a limited key's request for its own repository each change what is
+    known only about the repositories they try, so identical requests still reach the healthy ones."""
+    repos = _hanging_and_healthy(keyed_app, monkeypatch, 4, 2)
+    calls: list[dict[str, str]] = []
+    async with _client(keyed_app, ADMIN_TOKEN) as admin, _client(keyed_app, LIMITED_ADMIN_TOKEN) as limited:
+        for _round in range(3):
+            calls.append(await _hook_request(admin, repos))
+            await _hook_request(admin, ["acme/widgets"])
+            await _hook_request(admin, repos[:2], dry_run=True)
+            await _hook_request(limited, ["acme/one"])
+    assert _made(calls) == {"acme/g1", "acme/g2"}, f"interleaved requests undid the progress: {calls}"
+    assert set(keyed_app.state.org_hook_slow["acme"]) == {f"acme/h{n}" for n in range(1, 5)}, (
+        keyed_app.state.org_hook_slow
+    )

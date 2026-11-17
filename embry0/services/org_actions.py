@@ -94,9 +94,9 @@ class ActionResult:
     repo: str
     outcome: str
     detail: str
-    #: The ``hook`` action used this repository's whole share of the request's time on it (#586): the next request
-    #: tries it last. Not part of the answer.
-    spent_share: bool = field(default=False, compare=False)
+    #: For the ``hook`` action: ``slow`` when the repository was tried and used up its share of the request's time,
+    #: ``answered`` when it was tried and answered within it, empty when it was not tried (#586). Not part of the answer.
+    timing: str = field(default="", compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {"repo": self.repo, "outcome": self.outcome, "detail": self.detail}
@@ -135,11 +135,10 @@ class ActionContext:
     #: The whole request's time for the ``hook`` action, under the dashboard's timeout: each repository's share comes
     #: out of it, and the repositories it does not reach are not tried (#582).
     request_time: ForgeTime | None = None
-    #: Repositories (any case) to act on before the rest, and after the rest: what the last request did not reach, and
-    #: what used up its share there (hook_order_after), so that repeated requests make progress (#586). The results
-    #: are in the order asked whatever the order acted in.
-    try_first: tuple[str, ...] = ()
-    try_last: tuple[str, ...] = ()
+    #: Repositories (any case) known to use up their share (note_slowness): acted on after the rest, so that
+    #: repositories that never answer do not take every request's time ahead of them (#586). The results are in the
+    #: order asked whatever the order acted in.
+    slow: tuple[str, ...] = ()
 
 
 #: The most of the request's time one repository's ``hook`` may take, so a slow one does not leave the rest none (#582).
@@ -149,15 +148,28 @@ HOOK_REPO_SECONDS = 10.0
 HOOK_MIN_SECONDS = 2 * RELIST_SECONDS
 #: The detail of a repository the request's time did not reach.
 NOT_TRIED = "not tried: out of time, run again"
+#: The most repositories an owner's known-slow set holds (note_slowness), as many as one request may ask; past it the
+#: one noted longest ago is dropped.
+SLOW_REPOS_CAP = 500
 
 
-def hook_order_after(results: list[ActionResult]) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """What the next ``hook`` request of the same owner tries first, and last (#586): the repositories this one did
-    not reach, and those that used up their share. Repositories that never answer would otherwise take the request's
-    time first on every identical call, and the ones after them would never be tried."""
-    first = tuple(r.repo.lower() for r in results if r.outcome == "skipped" and r.detail == NOT_TRIED)
-    last = tuple(r.repo.lower() for r in results if r.spent_share)
-    return first, last
+def note_slowness(slow: dict[str, None], results: list[ActionResult]) -> None:
+    """Update ``slow``, an owner's repositories known to use up their share (lowercased, the one noted longest ago
+    first), from a ``hook`` request's results (#586).
+
+    Only a repository the request tried changes it: one that used up its share is added, one that answered within
+    it is removed. One it did not try (out of time, refused, not seen by discovery) changes nothing, so a request for
+    other repositories, a dry run or a key limited to a few never undoes what earlier requests learned. Bounded at
+    :data:`SLOW_REPOS_CAP` entries."""
+    for result in results:
+        key = result.repo.lower()
+        if result.timing == "slow":
+            slow.pop(key, None)
+            slow[key] = None
+        elif result.timing == "answered":
+            slow.pop(key, None)
+    while len(slow) > SLOW_REPOS_CAP:
+        slow.pop(next(iter(slow)))
 
 
 def webhook_url_for(config: Any) -> str | None:
@@ -216,7 +228,7 @@ async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: b
         # A wait the forge asked for, longer than what is left of the deadline: answered at once.
         result = ActionResult(repo, "failed", exc.says("GitHub", what="the request"))
     # Within the time kept back for the look after a create: it took its share, all but that look at least.
-    return replace(result, spent_share=True) if ctx.forge_time.left() <= org_webhooks.RELIST_SECONDS else result
+    return replace(result, timing="slow" if ctx.forge_time.left() <= org_webhooks.RELIST_SECONDS else "answered")
 
 
 async def _hook_now(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:
@@ -452,11 +464,9 @@ async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_r
             continue
         seen.add(key)
         asked_once.append((asked.strip(), key))
-    # Acted on in the order asked, except what ctx.try_first and ctx.try_last move (#586); answered in the order asked.
-    first, last = {r.lower() for r in ctx.try_first}, {r.lower() for r in ctx.try_last}
-    order = sorted(
-        range(len(asked_once)), key=lambda n: 0 if asked_once[n][1] in first else 2 if asked_once[n][1] in last else 1
-    )
+    # Acted on in the order asked, those known slow after the rest (#586); answered in the order asked.
+    slow = {r.lower() for r in ctx.slow}
+    order = sorted(range(len(asked_once)), key=lambda n: asked_once[n][1] in slow)
     answers: dict[int, ActionResult] = {}
     for n in order:
         asked, key = asked_once[n]

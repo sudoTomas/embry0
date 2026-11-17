@@ -870,8 +870,8 @@ async def test_the_time_kept_back_finds_a_hook_whose_create_hangs(monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_repositories_are_acted_on_first_and_last_as_asked_and_answered_in_order() -> None:
-    """#586: ``try_first`` and ``try_last`` move repositories in the order acted on; the answer keeps the order asked."""
+async def test_repositories_known_slow_are_acted_on_last_and_answered_in_order() -> None:
+    """#586: those ``ctx.slow`` names (any case) are acted on after the rest; the answer keeps the order asked."""
     acted: list[str] = []
 
     class Recording(FakeForge):
@@ -880,18 +880,43 @@ async def test_repositories_are_acted_on_first_and_last_as_asked_and_answered_in
             return await super().get(path, **kwargs)
 
     facts = {f"acme/r{n}": fact(f"acme/r{n}", hook_present=False) for n in range(1, 6)}
-    ctx = context(facts=facts, forge_client=Recording(), try_first=("ACME/r4",), try_last=("acme/r1",))
+    ctx = context(facts=facts, forge_client=Recording(), slow=("ACME/r1", "acme/r3"))
     results = await run_action(ctx, "hook", [f"acme/r{n}" for n in range(1, 6)])
-    assert acted == ["r4", "r2", "r3", "r5", "r1"], acted
+    assert acted == ["r2", "r4", "r5", "r1", "r3"], acted
     assert [r.repo for r in results] == [f"acme/r{n}" for n in range(1, 6)], results
 
 
 @pytest.mark.asyncio
-async def test_what_the_next_request_tries_first_and_last(monkeypatch: pytest.MonkeyPatch) -> None:
-    """#586: the repositories a request did not reach go first next time, and those that used their share go last."""
-    from embry0.services.org_actions import hook_order_after
-
+async def test_a_hook_request_says_which_repositories_it_tried_and_how_they_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#586: a repository that used up its share is ``slow``, one that answered within it ``answered``, and one the
+    request's time did not reach was not tried and says nothing."""
     ctx = _timed(monkeypatch, repo=0.2, least=0.15, request=0.5, forge_client=_Hanging("acme/r1", "acme/r2"))
     results = await _within_ten_seconds(ctx, [f"acme/r{n}" for n in range(1, 6)])
-    assert [r.outcome for r in results] == ["failed", "failed", "skipped", "skipped", "skipped"], results
-    assert hook_order_after(results) == (("acme/r3", "acme/r4", "acme/r5"), ("acme/r1", "acme/r2")), results
+    assert [r.timing for r in results] == ["slow", "slow", "", "", ""], results
+    ctx = _timed(monkeypatch, repo=0.2, least=0.15, request=5.0, forge_client=_Hanging("acme/r1"))
+    results = await _within_ten_seconds(ctx, [f"acme/r{n}" for n in range(1, 4)])
+    assert [r.timing for r in results] == ["slow", "answered", "answered"], results
+
+
+def test_slowness_is_noted_only_for_the_repositories_a_request_tried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586: a request changes what is known only about what it tried, so other requests (for other repositories, a
+    dry run, a key limited to a few) never undo what earlier ones learned; and the set is bounded."""
+    from embry0.services import org_actions as actions
+    from embry0.services.org_actions import ActionResult, note_slowness
+
+    slow = {"acme/a": None, "acme/b": None}
+    note_slowness(
+        slow,
+        [
+            ActionResult("acme/A", "done", "webhook created", timing="answered"),
+            ActionResult("acme/b", "skipped", "not tried: out of time, run again"),
+            ActionResult("acme/c", "failed", "GitHub did not answer within 10 seconds", timing="slow"),
+            ActionResult("acme/d", "failed", "refused"),
+        ],
+    )
+    assert list(slow) == ["acme/b", "acme/c"], slow
+    monkeypatch.setattr(actions, "SLOW_REPOS_CAP", 3)
+    note_slowness(slow, [ActionResult(f"acme/x{n}", "failed", "no answer", timing="slow") for n in range(3)])
+    assert list(slow) == ["acme/x0", "acme/x1", "acme/x2"], f"the set holds the cap, the oldest dropped: {slow}"
