@@ -732,9 +732,9 @@ def test_the_loop_module_names_its_limits_from_config() -> None:
 
 @pytest.mark.asyncio
 async def test_a_repositorys_bots_are_embry0s_authors_there_and_the_owners_list() -> None:
-    """#184: production's ``bots`` reads the repository's preferred author and the owner's credential's author,
-    and, until its layer imported them (#169), the ``slop_meter_bots`` the owner's row still lists; a missing
-    source adds nothing."""
+    """#184: production's ``bots`` reads the repository's preferred author and the owner's credential's author; the
+    ``slop_meter_bots`` the owner's row still lists until its layer imported them (#169) are ``moved_bots``', read as
+    of the score's snapshot (#575). A missing source adds nothing."""
     from types import SimpleNamespace
 
     class Store:
@@ -744,23 +744,23 @@ async def test_a_repositorys_bots_are_embry0s_authors_there_and_the_owners_list(
         async def get(self, key: str) -> Any:
             return self.rows.get(key)
 
-    asked: list[tuple[str, str]] = []
+    asked: list[tuple[Any, str, str]] = []
 
-    async def moved(section: str, owner: str, settings: Any) -> dict[str, Any]:
-        asked.append((section, owner))
+    async def moved(snapshot: Any, section: str, owner: str, settings: Any) -> dict[str, Any]:
+        asked.append((snapshot, section, owner))
         return {"bots": list(settings.get("slop_meter_bots") or [])}
 
     prefs = Store({REPO: {"git_author_email": "agent@acme.example"}})
     org = SimpleNamespace(owner="acme", credential_id="cred-1", settings={"slop_meter_bots": ["release-bot"]})
     orgs = Store({REPO.split("/")[0]: org})
     credentials = Store({"cred-1": {"git_author_email": "bot@acme.example"}})
-    got = await loop_mod.repo_bots(REPO, prefs=prefs, orgs=orgs, credentials=credentials, moved=moved)
-    assert got == ["agent@acme.example", "bot@acme.example", "release-bot"]
-    assert asked == [("slop_meter", "acme")], "the owner's row is read through the moved-settings reader"
-    imported = await loop_mod.repo_bots(REPO, prefs=prefs, orgs=orgs, credentials=credentials)
-    assert imported == ["agent@acme.example", "bot@acme.example"], (
-        "without the reader the row is not read: the layer's slop_meter.bots are the section's, read when scored"
-    )
+    got = await loop_mod.repo_bots(REPO, prefs=prefs, orgs=orgs, credentials=credentials)
+    assert got == ["agent@acme.example", "bot@acme.example"]
+    snapshot = object()
+    listed = await loop_mod.moved_bots(REPO, snapshot, orgs=orgs, moved=moved)
+    assert listed == ["release-bot"]
+    assert asked == [(snapshot, "slop_meter", "acme")], "the owner's row is read as of the snapshot it is given"
+    assert await loop_mod.moved_bots(REPO, snapshot, orgs=Store({}), moved=moved) == []
     nothing = await loop_mod.repo_bots(REPO, prefs=Store({}), orgs=Store({}), credentials=Store({}))
     assert nothing == []
 
