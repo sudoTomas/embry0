@@ -379,6 +379,11 @@ class ProbeOutOfTime(Exception):
     it: no answer about access either (#571)."""
 
 
+class CreateUnanswered(ProbeOutOfTime):
+    """A webhook create was sent and its answer did not come in the time it had, and the hooks listed after it did not
+    show the hook, or could not be listed: the forge may have made it all the same (#582)."""
+
+
 #: How long a probe may take in all, its retries and their waits included: under the dashboard's 30 s request
 #: timeout, so the person is answered rather than left with a timeout of their own.
 PROBE_SECONDS = 25.0
@@ -388,16 +393,19 @@ _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 class ForgeTime:
-    """What is left of one call's :data:`PROBE_SECONDS` to the forge, and the client's waits measured against it:
-    an organization's probe (#571), and its webhook install, status read and repository ``hook`` action (#582).
-    ``restart`` starts the deadline again, for a client used once per repository."""
+    """What is left of one call's deadline to the forge (``seconds``, :data:`PROBE_SECONDS` unless given), and the
+    client's waits measured against it: an organization's probe (#571), and its webhook install, status read and
+    repository ``hook`` action (#582). ``restart`` starts the deadline again, for a client used once per repository.
+    """
 
-    def __init__(self) -> None:
+    def __init__(self, seconds: float | None = None) -> None:
         self._clock, self._wait = _monotonic, _sleep
-        self._end = self._clock() + PROBE_SECONDS
+        self.seconds = PROBE_SECONDS if seconds is None else seconds
+        self._end = self._clock() + self.seconds
 
-    def restart(self) -> None:
-        self._end = self._clock() + PROBE_SECONDS
+    def restart(self, seconds: float) -> None:
+        self.seconds = seconds
+        self._end = self._clock() + seconds
 
     def left(self) -> float:
         return max(0.0, self._end - self._clock())

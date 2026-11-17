@@ -210,6 +210,11 @@ def _forge_failed(event: str, owner: str, forge: str, exc: Exception, *, what: s
     )
     if outage is not None:
         detail = outage.says(name, what=what)
+    elif isinstance(exc, org_service.CreateUnanswered):
+        detail = (
+            f"{name} did not answer the create in time, nor list the webhook after it: it may have been made; "
+            "install again to see (a webhook already there is kept)"
+        )
     elif isinstance(exc, org_service.ProbeOutOfTime):
         detail = f"{name} did not answer within {org_service.PROBE_SECONDS:g} seconds"
     else:
@@ -923,8 +928,8 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
         )
     target = org_webhooks.hook_target(origin)
     try:
-        result = await org_service.within(
-            forge_time, org_webhooks.install_org_hook(client, org.owner, target=target, secret=secret)
+        result = await org_webhooks.install_org_hook(
+            client, org.owner, target=target, secret=secret, forge_time=forge_time
         )
     except (httpx.RequestError, org_service.ForgeOutage, org_service.ProbeOutOfTime) as exc:
         # The forge did not answer about the token (#579): an outage, not a missing hook administration. The attempt

@@ -20,9 +20,9 @@ import httpx
 import structlog
 
 from embry0.services import org_webhooks
-from embry0.services import organizations as org_service
 from embry0.services.org_discovery import hook_points_here, public_origin
-from embry0.services.organizations import ForgeOutage, ForgeTime, ProbeOutOfTime, outage_of, within
+from embry0.services.org_webhooks import RELIST_SECONDS, send_create, timed
+from embry0.services.organizations import CreateUnanswered, ForgeOutage, ForgeTime, ProbeOutOfTime, outage_of
 from embry0.services.watcher_stacks import WatcherStack
 
 logger = structlog.get_logger(__name__)
@@ -129,6 +129,16 @@ class ActionContext:
     refusal: Callable[[str], Awaitable[str | None]] | None = None
     #: The deadline ``forge_client`` waits by, started again for each repository's ``hook`` (#582).
     forge_time: ForgeTime | None = None
+    #: The whole request's time for the ``hook`` action, under the dashboard's timeout: each repository's share comes
+    #: out of it, and the repositories it does not reach are not tried (#582).
+    request_time: ForgeTime | None = None
+
+
+#: The most of the request's time one repository's ``hook`` may take, so a slow one does not leave the rest none (#582).
+HOOK_REPO_SECONDS = 10.0
+#: A repository's ``hook`` is tried only with this much of the request's time left: enough for its listing, its create
+#: and the look after it. The rest are skipped, not tried, and a second run (the action is idempotent) goes on.
+HOOK_MIN_SECONDS = 2 * RELIST_SECONDS
 
 
 def webhook_url_for(config: Any) -> str | None:
@@ -169,15 +179,20 @@ async def _register(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_ru
 
 
 async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:
-    """Create the repository's webhook, within one deadline (:data:`embry0.services.organizations.PROBE_SECONDS`)
-    for its listing and its create, as the organization's own install (#582)."""
+    """Create the repository's webhook, its calls within its share of the request's time (#582): what is left of
+    ``request_time``, at most :data:`HOOK_REPO_SECONDS`. With less than :data:`HOOK_MIN_SECONDS` left it is not tried,
+    and says so, so that a request of many repositories is answered under the dashboard's timeout."""
     if ctx.forge_time is None:
         return await _hook_now(ctx, repo, facts, dry_run)
-    ctx.forge_time.restart()
+    left = ctx.request_time.left() if ctx.request_time is not None else HOOK_REPO_SECONDS
+    if left < HOOK_MIN_SECONDS:
+        return ActionResult(repo, "skipped", "not tried: out of time, run again")
+    share = min(HOOK_REPO_SECONDS, left)
+    ctx.forge_time.restart(share)
     try:
-        return await within(ctx.forge_time, _hook_now(ctx, repo, facts, dry_run))
+        return await _hook_now(ctx, repo, facts, dry_run)
     except ProbeOutOfTime:
-        return ActionResult(repo, "failed", f"GitHub did not answer within {org_service.PROBE_SECONDS:g} seconds")
+        return ActionResult(repo, "failed", f"GitHub did not answer within {round(share, 1):g} seconds")
     except ForgeOutage as exc:
         # A wait the forge asked for, longer than what is left of the deadline: answered at once.
         return ActionResult(repo, "failed", exc.says("GitHub", what="the request"))
@@ -204,7 +219,7 @@ async def _hook_now(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_ru
     # An outage says nothing of the credential (#579): the action fails, naming what the forge did, rather than
     # being skipped as a webhook it cannot list.
     try:
-        listing = await ctx.forge_client.get(f"/repos/{repo}/hooks", params={"per_page": 100})
+        listing = await timed(ctx.forge_time, ctx.forge_client.get(f"/repos/{repo}/hooks", params={"per_page": 100}))
     except httpx.RequestError:
         return ActionResult(repo, "failed", "GitHub could not be reached")
     outage = outage_of(listing)
@@ -218,29 +233,35 @@ async def _hook_now(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_ru
         return ActionResult(repo, "already", f"a webhook already posts to {origin}")
     if dry_run:
         return ActionResult(repo, "done", f"would create a webhook posting to {ctx.webhook_url}")
-    # Sent once (#582): a forge that stored the hook and whose answer was an outage, or was lost, would answer a
-    # second create with a 422. After such an answer the hooks are listed once more instead.
+    # Sent once, or again only after a rate limit (send_create, #582): a forge that stored the hook and whose answer
+    # was an outage, or was lost, would answer a second create with a 422. After such an answer, or none in its time,
+    # the hooks are listed once more instead; a rate-limited create was not made, and is not looked for.
     lost_answer: str | None = None
     try:
-        created = await ctx.forge_client.post(
+        created = await send_create(
+            ctx.forge_client,
             f"/repos/{repo}/hooks",
-            json={
+            {
                 "name": "web",
                 "active": True,
                 "events": list(GITHUB_HOOK_EVENTS),
                 "config": {"url": ctx.webhook_url, "content_type": "json", "secret": ctx.webhook_secret},
             },
-            retry_transient=False,
+            forge_time=ctx.forge_time,
         )
     except httpx.RequestError:
         lost_answer = "GitHub could not be reached"
+    except CreateUnanswered:
+        lost_answer = "GitHub did not answer the create in time, nor list the webhook after it: it may have been made"
     else:
         outage = outage_of(created)
+        if outage is not None and outage.rate_limited:
+            return ActionResult(repo, "failed", outage.says("GitHub", what="the request"))
         lost_answer = outage.says("GitHub", what="the request") if outage is not None else None
     if lost_answer is not None:
         try:
-            again = await ctx.forge_client.get(f"/repos/{repo}/hooks", params={"per_page": 100})
-        except httpx.RequestError:
+            again = await timed(ctx.forge_time, ctx.forge_client.get(f"/repos/{repo}/hooks", params={"per_page": 100}))
+        except (httpx.RequestError, ForgeOutage, ProbeOutOfTime):
             return ActionResult(repo, "failed", lost_answer)
         listed = _json(again) if again.status_code == 200 else None
         if hook_points_here(listed if isinstance(listed, list) else [], (origin,)):

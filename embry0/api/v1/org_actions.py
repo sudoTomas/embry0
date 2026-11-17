@@ -162,13 +162,14 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
     webhook_url = org_actions.webhook_url_for(config)
     webhook_secret = str(getattr(config, "github_webhook_secret", "") or "")
     forge_client = None
-    forge_time = None
+    forge_time = request_time = None
     # The owner's token is fetched only when a hook could actually be made:
     # an action that is skipped for every repository needs no credential.
     if body.action == "hook" and org.forge == "github" and hooks_allowed and webhook_url and webhook_secret:
         from embry0.services.organizations import ForgeTime
 
-        forge_time = ForgeTime()
+        # The request's time, under the dashboard's timeout, and the clock each repository's share runs on.
+        request_time, forge_time = ForgeTime(), ForgeTime()
         forge_client = await _forge_client(request, org.owner, org.forge, org.credential_id, forge_time)
     stacks_repo = getattr(st, "watcher_stacks_repo", None)
     ctx = ActionContext(
@@ -187,6 +188,7 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         force=body.force,
         refusal=partial(_refusal, request, f"run the {body.action} action", dry_run=body.dry_run),
         forge_time=forge_time,
+        request_time=request_time,
     )
     results = await org_actions.run_action(ctx, body.action, body.repos, dry_run=body.dry_run)
     rediscovery = None

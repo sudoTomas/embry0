@@ -618,3 +618,23 @@ async def test_a_wait_past_the_deadline_is_answered_at_once(app: Any, monkeypatc
 
 
 _REAL_MAKE_FORGE_CLIENT = organizations_api.make_forge_client
+
+
+@pytest.mark.asyncio
+async def test_a_create_unanswered_says_it_may_have_been_made(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review of #584: a create sent and never answered, and not listed after it, may have been made all the same."""
+    from embry0.services import org_webhooks
+    from embry0.services import organizations as org_service
+
+    async def unanswered(*_args: Any, **_kwargs: Any) -> Any:
+        raise org_service.CreateUnanswered()
+
+    monkeypatch.setattr(org_webhooks, "install_org_hook", unanswered)
+    _forge(app, monkeypatch, FakeForge())
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert (resp.status_code, resp.json().get("detail")) == (
+        502,
+        "GitHub did not answer the create in time, nor list the webhook after it: it may have been made; "
+        "install again to see (a webhook already there is kept)",
+    ), resp.text
