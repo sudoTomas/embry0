@@ -481,11 +481,11 @@ class _Creating(Client):
     """The organization's hooks, and a create that answers each of ``answers`` in turn: a response, or "hang" after
     storing the hook, or "hang before" without."""
 
-    def __init__(self, *answers: Any, relisting_hangs: bool = False) -> None:
+    def __init__(self, *answers: Any, relisting_hangs: bool = False, relisting_takes: float = 0.05) -> None:
         super().__init__(Resp(200, []))
         self.hooks: list[dict[str, Any]] = []
         self.answers = list(answers)
-        self.relisting_hangs = relisting_hangs
+        self.relisting_hangs, self.relisting_takes = relisting_hangs, relisting_takes
 
     async def get(self, path: str, **kwargs: Any) -> Resp:
         import asyncio
@@ -493,7 +493,7 @@ class _Creating(Client):
         self.calls.append(("GET", path, kwargs))
         if any(call[0] == "POST" for call in self.calls):
             # The look after a create: a forge's answer takes a moment, and one may never come.
-            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(0.05))
+            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(self.relisting_takes))
         return Resp(200, list(self.hooks))
 
     async def post(self, path: str, **kwargs: Any) -> Resp:
@@ -508,15 +508,18 @@ class _Creating(Client):
         return Resp(201, self.hooks[-1]) if answer == "made" else answer
 
 
-async def _install_timed(monkeypatch: pytest.MonkeyPatch, client: Any, *, seconds: float = 0.5) -> Any:
-    """The install with half a second in all (or ``seconds``), a fifth of a second kept back for the look after the
-    create; what it returned or raised."""
+async def _install_timed(
+    monkeypatch: pytest.MonkeyPatch, client: Any, *, seconds: float = 0.5, reserve: float | None = 0.2
+) -> Any:
+    """The install with half a second in all (or ``seconds``), a fifth of a second (or ``reserve``, or with None the
+    real one) kept back for the look after the create; what it returned or raised."""
     import asyncio
 
     from embry0.services import organizations as org_service
 
     monkeypatch.setattr(org_service, "PROBE_SECONDS", seconds)
-    monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.2)
+    if reserve is not None:
+        monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", reserve)
     try:
         return await asyncio.wait_for(
             org_webhooks.install_org_hook(
@@ -603,3 +606,15 @@ async def test_a_create_answered_with_an_outage_is_sent_once_whatever_the_time(m
     result = await _install_timed(monkeypatch, client, seconds=5.0)
     assert isinstance(result, ForgeOutage) and result.status == 502, result
     assert [c[0] for c in client.calls] == ["GET", "POST", "GET"], client.calls
+
+
+@pytest.mark.asyncio
+async def test_the_time_kept_back_finds_a_create_that_hangs_until_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586: the reserve itself, not one a test sets. GitHub stores the hook and the create hangs; half a second after
+    it is sent, with the real reserve left, the hooks are listed, which takes half a second, and the hook is there.
+    With nothing (or too little) kept back, the create waits out the deadline and the look has no time left."""
+    seconds = org_webhooks.RELIST_SECONDS + 0.5 if org_webhooks.RELIST_SECONDS >= 1 else 3.5
+    result = await _install_timed(monkeypatch, _Creating("hang", relisting_takes=0.5), seconds=seconds, reserve=None)
+    assert getattr(result, "outcome", None) == "done", (
+        f"with {org_webhooks.RELIST_SECONDS} s kept back, a create GitHub made is not found: {result!r}"
+    )

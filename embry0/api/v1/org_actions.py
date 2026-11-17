@@ -190,7 +190,22 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         forge_time=forge_time,
         request_time=request_time,
     )
+    # The hook action tries first what the last one of this owner did not reach, and last what used up its share
+    # there, so that repositories that never answer do not take every identical request's time first (#586). Kept in
+    # this process: a restart only forgets an order.
+    orders: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] | None = None
+    if forge_time is not None:
+        orders = getattr(st, "org_hook_order", None)
+        if orders is None:
+            orders = st.org_hook_order = {}
+        ctx.try_first, ctx.try_last = orders.get(org.owner.lower(), ((), ()))
     results = await org_actions.run_action(ctx, body.action, body.repos, dry_run=body.dry_run)
+    if orders is not None:
+        after = org_actions.hook_order_after(results)
+        if any(after):
+            orders[org.owner.lower()] = after
+        else:
+            orders.pop(org.owner.lower(), None)
     rediscovery = None
     if not body.dry_run:
         await emit_audit(

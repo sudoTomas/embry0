@@ -656,3 +656,47 @@ async def test_the_hook_action_answers_within_the_requests_time(app: Any, monkey
     assert outcomes[:2] == [("failed", "GitHub did not answer within 0.2 seconds")] * 2, outcomes
     assert outcomes[2:] == [("skipped", "not tried: out of time, run again")] * 2, outcomes
     assert time.monotonic() - started < 2.0, f"{time.monotonic() - started:.2f}s for a request of 0.5"
+
+
+@pytest.mark.asyncio
+async def test_repeated_hook_requests_reach_repositories_behind_ones_that_never_answer(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#586: two repositories GitHub never answers about, asked first, took each request's time, and the two after
+    them were skipped on every identical request. The next request tries first what the last one did not reach."""
+    import asyncio
+
+    from embry0.services import org_actions as actions
+    from embry0.services import org_webhooks
+    from embry0.services import organizations as org_service
+
+    monkeypatch.setattr(org_service, "PROBE_SECONDS", 0.5)
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 0.2)
+    monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.15)
+    monkeypatch.setattr(org_webhooks, "RELIST_SECONDS", 0.01)
+    forge = app.state.fake_forge
+    healthy = forge.get
+
+    async def get(path: str, **kwargs: Any) -> Any:
+        if path in ("/repos/acme/widgets/hooks", "/repos/acme/gadgets/hooks"):
+            await asyncio.Event().wait()
+        return await healthy(path, **kwargs)
+
+    forge.get = get
+    repos = ["acme/widgets", "acme/gadgets", "acme/one", "acme/two"]
+    calls = []
+    async with _client(app) as client:
+        for _call in range(3):
+            resp = await asyncio.wait_for(
+                client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": repos}), timeout=10
+            )
+            calls.append({r["repo"]: r["outcome"] for r in resp.json()["results"]})
+    # The fake lists one hook for every repository, so the second made reads as already there.
+    made = {repo for call in calls for repo, outcome in call.items() if outcome in ("done", "already")}
+    assert made == {"acme/one", "acme/two"}, f"three identical requests: {calls}"
+    assert [list(call) for call in calls] == [repos] * 3, "each answer is in the order asked"
+    # Once a request reaches every repository in its time, there is no order left to keep.
+    forge.get = healthy
+    async with _client(app) as client:
+        await client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": repos})
+    assert "acme" not in app.state.org_hook_order, app.state.org_hook_order

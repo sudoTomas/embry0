@@ -741,9 +741,10 @@ class _Creating(FakeForge):
     """A forge whose create answers each of ``answers`` in turn (a response; "hang" after storing the hook; "hang
     before" without storing it), and after them stores the hook and answers 201."""
 
-    def __init__(self, *answers: Any, relisting_hangs: bool = False) -> None:
+    def __init__(self, *answers: Any, relisting_hangs: bool = False, relisting_takes: float = 0.05) -> None:
         super().__init__()
         self.answers, self.gets, self.relisting_hangs = list(answers), 0, relisting_hangs
+        self.relisting_takes = relisting_takes
 
     async def get(self, path: str, **kwargs: Any) -> FakeResp:
         import asyncio
@@ -751,7 +752,7 @@ class _Creating(FakeForge):
         self.gets += 1
         if self.posts:
             # The look after a create: a forge's answer takes a moment, and one may never come.
-            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(0.05))
+            await (asyncio.Event().wait() if self.relisting_hangs else asyncio.sleep(self.relisting_takes))
         return await super().get(path, **kwargs)
 
     async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
@@ -847,3 +848,50 @@ async def test_a_create_answered_with_an_outage_is_still_sent_once(monkeypatch: 
     monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", 5.0)
     results = await _within_ten_seconds(ctx, ["acme/widgets"])
     assert [(r.outcome, len(forge.posts)) for r in results] == [("failed", 1)], results
+
+
+@pytest.mark.asyncio
+async def test_the_time_kept_back_finds_a_hook_whose_create_hangs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586: the reserve itself, not one a test sets. GitHub stores the hook and the create hangs; with the real
+    reserve left the hooks are listed, which takes half a second, and the hook is there."""
+    from embry0.services import org_actions as actions
+    from embry0.services import org_webhooks
+    from embry0.services.organizations import ForgeTime
+
+    share = org_webhooks.RELIST_SECONDS + 0.5 if org_webhooks.RELIST_SECONDS >= 1 else 3.5
+    monkeypatch.setattr(actions, "HOOK_REPO_SECONDS", share)
+    monkeypatch.setattr(actions, "HOOK_MIN_SECONDS", 0.1)
+    forge = _Creating("hang", relisting_takes=0.5)
+    ctx = context(forge_client=forge, forge_time=ForgeTime(), request_time=ForgeTime(share + 1))
+    results = await _within_ten_seconds(ctx, ["acme/widgets"])
+    assert [r.outcome for r in results] == ["done"], (
+        f"with {org_webhooks.RELIST_SECONDS} s kept back, a create GitHub made is not found: {results}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_repositories_are_acted_on_first_and_last_as_asked_and_answered_in_order() -> None:
+    """#586: ``try_first`` and ``try_last`` move repositories in the order acted on; the answer keeps the order asked."""
+    acted: list[str] = []
+
+    class Recording(FakeForge):
+        async def get(self, path: str, **kwargs: Any) -> FakeResp:
+            acted.append(path.split("/")[3])
+            return await super().get(path, **kwargs)
+
+    facts = {f"acme/r{n}": fact(f"acme/r{n}", hook_present=False) for n in range(1, 6)}
+    ctx = context(facts=facts, forge_client=Recording(), try_first=("ACME/r4",), try_last=("acme/r1",))
+    results = await run_action(ctx, "hook", [f"acme/r{n}" for n in range(1, 6)])
+    assert acted == ["r4", "r2", "r3", "r5", "r1"], acted
+    assert [r.repo for r in results] == [f"acme/r{n}" for n in range(1, 6)], results
+
+
+@pytest.mark.asyncio
+async def test_what_the_next_request_tries_first_and_last(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586: the repositories a request did not reach go first next time, and those that used their share go last."""
+    from embry0.services.org_actions import hook_order_after
+
+    ctx = _timed(monkeypatch, repo=0.2, least=0.15, request=0.5, forge_client=_Hanging("acme/r1", "acme/r2"))
+    results = await _within_ten_seconds(ctx, [f"acme/r{n}" for n in range(1, 6)])
+    assert [r.outcome for r in results] == ["failed", "failed", "skipped", "skipped", "skipped"], results
+    assert hook_order_after(results) == (("acme/r3", "acme/r4", "acme/r5"), ("acme/r1", "acme/r2")), results
