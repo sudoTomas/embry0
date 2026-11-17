@@ -735,3 +735,28 @@ async def test_other_hook_requests_do_not_undo_the_progress(keyed_app: Any, monk
     assert set(keyed_app.state.org_hook_slow["acme"]) == {f"acme/h{n}" for n in range(1, 5)}, (
         keyed_app.state.org_hook_slow
     )
+
+
+@pytest.mark.asyncio
+async def test_a_slow_repository_that_answers_again_is_reached(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#586 re-review: three repositories GitHub never answers about, noted slow; then the third answers again. Run in
+    the order asked, the first two took every request's time and the third stayed slow for good. Run by when each was
+    noted, the ones noted again go to the back, and the third is made within two requests."""
+    import asyncio
+
+    answer = app.state.fake_forge.get
+    repos = _hanging_and_healthy(app, monkeypatch, 3, 0)
+    async with _client(app) as client:
+        for _call in range(2):
+            await _hook_request(client, repos)
+        assert set(app.state.org_hook_slow["acme"]) == set(repos), app.state.org_hook_slow
+
+        async def recovered(path: str, **kwargs: Any) -> Any:
+            if path in ("/repos/acme/h1/hooks", "/repos/acme/h2/hooks"):
+                await asyncio.Event().wait()
+            return await answer(path, **kwargs)
+
+        app.state.fake_forge.get = recovered
+        calls = [await _hook_request(client, repos) for _call in range(2)]
+    assert _made(calls) == {"acme/h3"}, f"the third answers again but is never tried: {calls}"
+    assert "acme/h3" not in app.state.org_hook_slow["acme"], app.state.org_hook_slow

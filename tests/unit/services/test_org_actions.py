@@ -871,7 +871,8 @@ async def test_the_time_kept_back_finds_a_hook_whose_create_hangs(monkeypatch: p
 
 @pytest.mark.asyncio
 async def test_repositories_known_slow_are_acted_on_last_and_answered_in_order() -> None:
-    """#586: those ``ctx.slow`` names (any case) are acted on after the rest; the answer keeps the order asked."""
+    """#586: those ``ctx.slow`` names (any case) are acted on after the rest, the one noted longest ago (first in
+    ``ctx.slow``) first; the answer keeps the order asked."""
     acted: list[str] = []
 
     class Recording(FakeForge):
@@ -880,9 +881,9 @@ async def test_repositories_known_slow_are_acted_on_last_and_answered_in_order()
             return await super().get(path, **kwargs)
 
     facts = {f"acme/r{n}": fact(f"acme/r{n}", hook_present=False) for n in range(1, 6)}
-    ctx = context(facts=facts, forge_client=Recording(), slow=("ACME/r1", "acme/r3"))
+    ctx = context(facts=facts, forge_client=Recording(), slow=("acme/r3", "ACME/r1"))
     results = await run_action(ctx, "hook", [f"acme/r{n}" for n in range(1, 6)])
-    assert acted == ["r2", "r4", "r5", "r1", "r3"], acted
+    assert acted == ["r2", "r4", "r5", "r3", "r1"], acted
     assert [r.repo for r in results] == [f"acme/r{n}" for n in range(1, 6)], results
 
 

@@ -135,9 +135,10 @@ class ActionContext:
     #: The whole request's time for the ``hook`` action, under the dashboard's timeout: each repository's share comes
     #: out of it, and the repositories it does not reach are not tried (#582).
     request_time: ForgeTime | None = None
-    #: Repositories (any case) known to use up their share (note_slowness): acted on after the rest, so that
-    #: repositories that never answer do not take every request's time ahead of them (#586). The results are in the
-    #: order asked whatever the order acted in.
+    #: Repositories (any case) known to use up their share, the one noted longest ago first (note_slowness): acted on
+    #: after the rest, in that order, so that repositories that never answer do not take every request's time ahead of
+    #: them, and one noted slow that answers again is reached as the others are noted again (#586). The results are in
+    #: the order asked whatever the order acted in.
     slow: tuple[str, ...] = ()
 
 
@@ -464,9 +465,10 @@ async def run_action(ctx: ActionContext, action: str, repos: list[str], *, dry_r
             continue
         seen.add(key)
         asked_once.append((asked.strip(), key))
-    # Acted on in the order asked, those known slow after the rest (#586); answered in the order asked.
-    slow = {r.lower() for r in ctx.slow}
-    order = sorted(range(len(asked_once)), key=lambda n: asked_once[n][1] in slow)
+    # Acted on in the order asked, those known slow after the rest, the one noted longest ago first (#586): one noted
+    # again moves to the end, so one that answers again comes forward. Answered in the order asked.
+    slow = {r.lower(): rank for rank, r in enumerate(ctx.slow)}
+    order = sorted(range(len(asked_once)), key=lambda n: (asked_once[n][1] in slow, slow.get(asked_once[n][1], 0)))
     answers: dict[int, ActionResult] = {}
     for n in order:
         asked, key = asked_once[n]
