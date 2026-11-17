@@ -837,22 +837,28 @@ def webhook_origin(request: Request) -> str | None:
     return origins[0] if origins else None
 
 
-def make_forge_client(request: Request, org: Organization, token: str) -> Any:
+def make_forge_client(request: Request, org: Organization, token: str, *, forge_time: Any = None) -> Any:
     """The client the webhook routes and the context audit call the forge
-    with. A module function so tests swap in a fake."""
+    with. A module function so tests swap in a fake. With ``forge_time``
+    (:class:`embry0.services.organizations.ForgeTime`), its waits are
+    measured against that deadline (#582)."""
     from embry0.execution.github_client import GitHubClient
 
-    return GitHubClient(default_token=token, max_attempts=2, owner_env_tokens=False, token_owner=org.owner)
+    timed = {"sleep": forge_time.sleep, "before_wait": forge_time.before_wait} if forge_time is not None else {}
+    return GitHubClient(default_token=token, max_attempts=2, owner_env_tokens=False, token_owner=org.owner, **timed)
 
 
-async def _org_for_hooks(request: Request, owner: str) -> tuple[Organization, Any]:
+async def _org_for_hooks(request: Request, owner: str) -> tuple[Organization, Any, org_service.ForgeTime]:
+    """The organization, a client with its credential, and the deadline the client waits by: the probe's (#582),
+    started when the client is made, so a webhook route answers under the dashboard's own timeout."""
     org = await _org_read(request, owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
     if org.forge != "github":
         raise HTTPException(status_code=422, detail="organization webhooks are a GitHub feature in this release")
     token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
-    return org, make_forge_client(request, org, token)
+    forge_time = org_service.ForgeTime()
+    return org, make_forge_client(request, org, token, forge_time=forge_time), forge_time
 
 
 @router.get("/orgs/{owner}/webhook")
@@ -863,12 +869,12 @@ async def get_organization_webhook(owner: str, request: Request) -> dict[str, An
     A hook that points elsewhere is listed by its origin only: such URLs often
     carry another service's token, and this route is not admin-only.
     """
-    org, client = await _org_for_hooks(request, owner)
+    org, client, forge_time = await _org_for_hooks(request, owner)
     origin = webhook_origin(request)
     target = org_webhooks.hook_target(origin) if origin else None
     try:
-        hooks = await org_webhooks.list_org_hooks(client, org.owner)
-    except (httpx.RequestError, org_service.ForgeOutage) as exc:
+        hooks = await org_service.within(forge_time, org_webhooks.list_org_hooks(client, org.owner))
+    except (httpx.RequestError, org_service.ForgeOutage, org_service.ProbeOutOfTime) as exc:
         # An outage says nothing of what the credential may see (#579): not "hooks_visible" false.
         raise _forge_failed("organization_webhook_unreachable", org.owner, org.forge, exc, what="the request") from exc
     hook = org_webhooks.hook_pointing_at(hooks, target) if hooks and target else None
@@ -891,7 +897,7 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
     hooks. Idempotent: a hook already pointing here is ``already``.
     """
     await enforce_owner_allowlist(request, owner, action="install an organization's webhook")
-    org, client = await _org_for_hooks(request, owner)
+    org, client, forge_time = await _org_for_hooks(request, owner)
     if org.status != "active":
         raise HTTPException(status_code=409, detail=f"organization {owner} is {org.status}")
     if org.access.get("owner_kind") == "user":
@@ -917,8 +923,10 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
         )
     target = org_webhooks.hook_target(origin)
     try:
-        result = await org_webhooks.install_org_hook(client, org.owner, target=target, secret=secret)
-    except (httpx.RequestError, org_service.ForgeOutage) as exc:
+        result = await org_service.within(
+            forge_time, org_webhooks.install_org_hook(client, org.owner, target=target, secret=secret)
+        )
+    except (httpx.RequestError, org_service.ForgeOutage, org_service.ProbeOutOfTime) as exc:
         # The forge did not answer about the token (#579): an outage, not a missing hook administration. The attempt
         # is audited all the same, as a failed one was.
         await emit_audit(

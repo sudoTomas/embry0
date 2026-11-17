@@ -20,8 +20,9 @@ import httpx
 import structlog
 
 from embry0.services import org_webhooks
+from embry0.services import organizations as org_service
 from embry0.services.org_discovery import hook_points_here, public_origin
-from embry0.services.organizations import outage_of
+from embry0.services.organizations import ForgeOutage, ForgeTime, ProbeOutOfTime, outage_of, within
 from embry0.services.watcher_stacks import WatcherStack
 
 logger = structlog.get_logger(__name__)
@@ -126,6 +127,8 @@ class ActionContext:
     webhook_secret: str = ""
     force: bool = False
     refusal: Callable[[str], Awaitable[str | None]] | None = None
+    #: The deadline ``forge_client`` waits by, started again for each repository's ``hook`` (#582).
+    forge_time: ForgeTime | None = None
 
 
 def webhook_url_for(config: Any) -> str | None:
@@ -166,6 +169,21 @@ async def _register(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_ru
 
 
 async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:
+    """Create the repository's webhook, within one deadline (:data:`embry0.services.organizations.PROBE_SECONDS`)
+    for its listing and its create, as the organization's own install (#582)."""
+    if ctx.forge_time is None:
+        return await _hook_now(ctx, repo, facts, dry_run)
+    ctx.forge_time.restart()
+    try:
+        return await within(ctx.forge_time, _hook_now(ctx, repo, facts, dry_run))
+    except ProbeOutOfTime:
+        return ActionResult(repo, "failed", f"GitHub did not answer within {org_service.PROBE_SECONDS:g} seconds")
+    except ForgeOutage as exc:
+        # A wait the forge asked for, longer than what is left of the deadline: answered at once.
+        return ActionResult(repo, "failed", exc.says("GitHub", what="the request"))
+
+
+async def _hook_now(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: bool) -> ActionResult:
     # Only the live listing decides "already", and only a hook on the
     # WEBHOOK_PUBLIC_URL origin counts: discovery's hook_present may be stale
     # or set by another origin, and the dashboard's public vhost answers 404
@@ -200,6 +218,9 @@ async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: b
         return ActionResult(repo, "already", f"a webhook already posts to {origin}")
     if dry_run:
         return ActionResult(repo, "done", f"would create a webhook posting to {ctx.webhook_url}")
+    # Sent once (#582): a forge that stored the hook and whose answer was an outage, or was lost, would answer a
+    # second create with a 422. After such an answer the hooks are listed once more instead.
+    lost_answer: str | None = None
     try:
         created = await ctx.forge_client.post(
             f"/repos/{repo}/hooks",
@@ -209,12 +230,24 @@ async def _hook(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run: b
                 "events": list(GITHUB_HOOK_EVENTS),
                 "config": {"url": ctx.webhook_url, "content_type": "json", "secret": ctx.webhook_secret},
             },
+            retry_transient=False,
         )
     except httpx.RequestError:
-        return ActionResult(repo, "failed", "GitHub could not be reached")
-    outage = outage_of(created)
-    if outage is not None:
-        return ActionResult(repo, "failed", outage.says("GitHub", what="the request"))
+        lost_answer = "GitHub could not be reached"
+    else:
+        outage = outage_of(created)
+        lost_answer = outage.says("GitHub", what="the request") if outage is not None else None
+    if lost_answer is not None:
+        try:
+            again = await ctx.forge_client.get(f"/repos/{repo}/hooks", params={"per_page": 100})
+        except httpx.RequestError:
+            return ActionResult(repo, "failed", lost_answer)
+        listed = _json(again) if again.status_code == 200 else None
+        if hook_points_here(listed if isinstance(listed, list) else [], (origin,)):
+            return ActionResult(
+                repo, "done", f"webhook created, posting to {ctx.webhook_url} (GitHub's answer was lost)"
+            )
+        return ActionResult(repo, "failed", lost_answer)
     if created.status_code != 201:
         return ActionResult(repo, "failed", f"the forge refused the webhook (HTTP {created.status_code})")
     return ActionResult(repo, "done", f"webhook created, posting to {ctx.webhook_url}")

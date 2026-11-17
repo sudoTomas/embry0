@@ -388,3 +388,80 @@ async def test_a_refusal_listing_the_hooks_is_still_a_missing_permission(status:
         secret="s",  # type: ignore[arg-type]
     )
     assert hidden.outcome == "failed" and "needs organization hook administration" in hidden.detail, hidden
+
+
+# ---- the create is sent once, and a lost answer is looked at again (#582) ----
+
+
+async def _install_over(answer_create: Any) -> tuple[Any, list[str]]:
+    """The install through the real forge client: the organization lists no hook until the create, which GitHub
+    stores and then answers with ``answer_create``. Returns the result (or the exception raised) and the requests."""
+    import httpx
+
+    from embry0.execution.github_client import GitHubClient
+
+    target = "https://h.example.com/api/v1/webhook"
+    stored: list[dict[str, Any]] = []
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json=stored)
+        if stored:
+            return httpx.Response(422, json={"message": "Hook already exists on this organization"})
+        stored.append(_hook(target, hook_id=7))
+        if isinstance(answer_create, Exception):
+            raise answer_create
+        return answer_create
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as http:
+        client = GitHubClient(default_token="t", owner_env_tokens=False, token_owner="acme", http_client=http)
+
+        async def no_wait(_delay: float) -> None:
+            return None
+
+        client._sleep = no_wait  # type: ignore[method-assign]
+        try:
+            result: Any = await org_webhooks.install_org_hook(client, "acme", target=target, secret="s")
+        except Exception as exc:  # noqa: BLE001 - what the install raised is the result here
+            result = exc
+    return result, sent
+
+
+@pytest.mark.parametrize("answer", ["502", "lost"], ids=["answered-502", "answer-lost"])
+@pytest.mark.asyncio
+async def test_a_create_github_stored_but_answered_badly_is_installed(answer: str) -> None:
+    """#582: the client sent the create again; GitHub, which had stored the first, answered 422, and the install was
+    reported (and audited) failed although the hook was there. It is sent once, and the hooks listed again."""
+    import httpx
+
+    created = httpx.Response(502) if answer == "502" else httpx.ReadTimeout("the answer was lost")
+    result, sent = await _install_over(created)
+    assert sent.count("POST") == 1, f"the create was sent {sent.count('POST')} times: {sent}"
+    assert getattr(result, "outcome", None) == "done" and result.hook.id == 7, (
+        f"a hook GitHub stored is installed, whatever its answer to the create: {result!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_create_github_did_not_store_is_still_the_outage() -> None:
+    client = Client(Resp(200, []), Resp(503))
+    with pytest.raises(ForgeOutage) as outage:
+        await org_webhooks.install_org_hook(client, "acme", target="https://h.example.com/api/v1/webhook", secret="s")  # type: ignore[arg-type]
+    assert outage.value.status == 503
+    assert [c[0] for c in client.calls] == ["GET", "POST", "GET"], f"listed again after the outage: {client.calls}"
+    assert client.calls[1][2].get("retry_transient") is False, "the create is sent once"
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_fails_after_the_create_leaves_the_creates_outage() -> None:
+    class Failing(Client):
+        async def get(self, path: str, **kwargs: Any) -> Resp:
+            self.calls.append(("GET", path, kwargs))
+            return Resp(200, []) if len(self.calls) == 1 else Resp(504)
+
+    client = Failing(Resp(200, []), Resp(502))
+    with pytest.raises(ForgeOutage) as outage:
+        await org_webhooks.install_org_hook(client, "acme", target="https://h.example.com/api/v1/webhook", secret="s")  # type: ignore[arg-type]
+    assert outage.value.status == 502, f"the create's outage is the answer, not the listing's: {outage.value.status}"

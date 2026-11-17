@@ -234,7 +234,9 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
     app.state.fake_forge = forge
     app.state.forge_clients_built = []
 
-    async def fake_forge_client(request: Any, owner: str, forge_name: str, credential_id: str | None) -> FakeForge:
+    async def fake_forge_client(
+        request: Any, owner: str, forge_name: str, credential_id: str | None, forge_time: Any = None
+    ) -> FakeForge:
         app.state.forge_clients_built.append(owner)
         return forge
 

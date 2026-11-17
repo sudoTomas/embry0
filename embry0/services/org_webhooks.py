@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote, urlsplit
 
-from embry0.services.organizations import outage_of
+import httpx
+
+from embry0.services.organizations import ForgeOutage, outage_of
 
 ORG_HOOK_EVENTS = ("issues", "issue_comment", "pull_request", "workflow_run")
 WEBHOOK_PATH = "/api/v1/webhook"
@@ -129,6 +131,12 @@ async def install_org_hook(
     is reported as ``already`` with nothing written. The secret goes to the
     forge once, in the create call; it is not in the result. An outage on
     either call raises (:func:`list_org_hooks`); only a refusal is ``failed``.
+
+    The create is sent once (#582): a forge that stored the hook and whose
+    answer was an outage, or was lost, would answer a second create with a
+    422, and the install would read as failed though it is installed (or, on
+    a forge that takes duplicates, make two hooks). After such an answer the
+    hooks are listed once more: one pointing at ``target`` is ``done``.
     """
     hooks = await list_org_hooks(client, owner)
     if hooks is None:
@@ -138,19 +146,32 @@ async def install_org_hook(
     existing = hook_pointing_at(hooks, target)
     if existing is not None:
         return InstallResult("already", existing, "a webhook already points here")
-    resp = await client.post(
-        f"/orgs/{quote(owner, safe='')}/hooks",
-        json={
-            "name": "web",
-            "active": True,
-            "events": list(events),
-            "config": {"url": target, "content_type": "json", "secret": secret, "insecure_ssl": "0"},
-        },
-    )
-    if resp.status_code in (200, 201):
+    lost: Exception | None = None
+    try:
+        resp = await client.post(
+            f"/orgs/{quote(owner, safe='')}/hooks",
+            json={
+                "name": "web",
+                "active": True,
+                "events": list(events),
+                "config": {"url": target, "content_type": "json", "secret": secret, "insecure_ssl": "0"},
+            },
+            retry_transient=False,
+        )
+    except httpx.RequestError as exc:
+        resp, lost = None, exc
+    if resp is not None and resp.status_code in (200, 201):
         return InstallResult("done", _hook(_json(resp)), "webhook installed")
-    outage = outage_of(resp)
+    outage = lost or (outage_of(resp) if resp is not None else None)
     if outage is not None:
+        # The forge may have stored the hook and lost its answer: what it lists now says. A listing that fails too
+        # leaves the create's own outage the answer.
+        try:
+            stored = hook_pointing_at(await list_org_hooks(client, owner) or [], target)
+        except (httpx.RequestError, ForgeOutage):
+            raise outage from None
+        if stored is not None:
+            return InstallResult("done", stored, "webhook installed (the forge's answer to the create was lost)")
         raise outage
     body = _json(resp)
     message = str(body.get("message") or "") if isinstance(body, dict) else ""

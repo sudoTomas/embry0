@@ -626,3 +626,52 @@ async def test_a_hook_action_github_never_answers_fails_naming_it(on: str) -> No
     assert [(r.outcome, r.detail) for r in results] == [("failed", "GitHub could not be reached")], (
         f"GitHub not reached on the {on}: {results}"
     )
+
+
+@pytest.mark.parametrize("answer", ["502", "lost"], ids=["answered-502", "answer-lost"])
+@pytest.mark.asyncio
+async def test_a_hook_github_stored_but_answered_badly_is_done(answer: str) -> None:
+    """#582: the create was retried, and the hook GitHub had stored made the retry a 422 and the action failed. It
+    is sent once, and the hooks listed again: the one pointing here is the action done."""
+    import httpx
+
+    class StoredButAnsweredBadly(FakeForge):
+        async def post(self, path: str, *, json: Any = None, **kwargs: Any) -> FakeResp:
+            assert kwargs.get("retry_transient") is False, "the create is sent once"
+            self.posts.append((path, json))
+            self.hooks.append({"id": 9, "config": {"url": json["config"]["url"]}})
+            if answer == "lost":
+                raise httpx.ReadTimeout("the answer was lost")
+            return _OutageResp(502)
+
+    forge = StoredButAnsweredBadly()
+    results = await run_action(context(forge_client=forge), "hook", ["acme/widgets"])
+    assert [(r.outcome, r.detail) for r in results] == [
+        ("done", f"webhook created, posting to {HOOK_URL} (GitHub's answer was lost)")
+    ], results
+    assert len(forge.posts) == 1, forge.posts
+
+
+@pytest.mark.asyncio
+async def test_a_hook_action_on_a_forge_that_never_answers_ends_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#582: each repository's hook has the probe's deadline, here a fifth of a second."""
+    import asyncio
+
+    from embry0.services import organizations as org_service
+
+    class Hanging(FakeForge):
+        async def get(self, path: str, **kwargs: Any) -> FakeResp:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    monkeypatch.setattr(org_service, "PROBE_SECONDS", 0.2)
+    ctx = context(forge_client=Hanging(), forge_time=org_service.ForgeTime())
+    try:
+        results = await asyncio.wait_for(run_action(ctx, "hook", ["acme/widgets", "acme/gadgets"]), timeout=10)
+    except TimeoutError:
+        pytest.fail("the hook action waited on a forge that never answers past 10 s")
+    assert [(r.repo, r.outcome, r.detail) for r in results] == [
+        (repo, "failed", "GitHub did not answer within 0.2 seconds") for repo in ("acme/widgets", "acme/gadgets")
+    ], results
