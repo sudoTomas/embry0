@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
@@ -163,7 +162,7 @@ def job_repository(job: Mapping[str, Any]) -> str | None:
     context = job.get("context")
     if isinstance(context, str):
         try:
-            context = json.loads(context)
+            context = read_jsonb_text(context)  # as the codec reads it, not a second copy (#597)
         except ValueError:
             return None
     named = context.get("repo") if isinstance(context, Mapping) else None

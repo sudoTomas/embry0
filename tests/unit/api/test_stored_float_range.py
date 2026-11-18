@@ -178,3 +178,17 @@ async def test_running_a_job_holding_one_again_says_why_its_budget_is_not_carrie
     carried, notes = await carried_config(MagicMock(), {"max_budget_usd": PAST}, job={}, runner=None, repo=None)
     assert carried == {} and len(notes) == 1, (carried, notes)
     assert "that this deployment can read" in notes[0], notes
+
+
+async def test_a_verification_report_that_is_only_such_a_number_is_served_as_its_digits(client: AsyncClient) -> None:
+    """``GET /jobs/{id}/verification`` decodes a report arriving as text itself: as the codec does, not into inf
+    (#597)."""
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await db.execute("INSERT INTO jobs (job_id, task, repo, status) VALUES ('job-v', 't', 'acme/widgets', 'completed')")
+    await db.execute(
+        "INSERT INTO job_verifications (job_id, tier, gate_verdict, browser_qa, report) "
+        "VALUES ('job-v', 'light', 'pass', 'skipped', (1e400 + 0.5)::numeric::text::jsonb)"
+    )
+    answer = await client.get("/api/v1/jobs/job-v/verification")
+    assert answer.status_code == 200, f"answered {answer.status_code}"
+    assert answer.json()["report"] == PAST, f"served as {str(answer.json().get('report'))[:40]}"

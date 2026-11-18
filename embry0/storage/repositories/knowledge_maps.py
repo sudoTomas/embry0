@@ -24,7 +24,7 @@ from typing import Any
 import asyncpg
 
 from embry0.services.knowledge_maps import owner_query
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, read_jsonb_text
 
 _META = "slug, owner, title, repo, commit_sha, source, generated_at, uploaded_at, uploaded_by, node_count, edge_count"
 
@@ -35,7 +35,7 @@ class OwnerTaken(Exception):
 
 def _json(value: Any) -> Any:
     # The pool decodes JSONB; a pool without the codec hands back its text.
-    return json.loads(value) if isinstance(value, str) else value
+    return read_jsonb_text(value) if isinstance(value, str) else value  # as the codec reads it (#597)
 
 
 class KnowledgeMapsRepository:

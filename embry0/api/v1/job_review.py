@@ -25,7 +25,6 @@ those paths stay as deprecated aliases (:data:`deprecated_router`) until
 from __future__ import annotations
 
 import inspect
-import json
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -45,6 +44,7 @@ from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 from embry0.services.run_with import RunWith, apply_run_with, models_with, run_with_of
+from embry0.storage.database import read_jsonb_text
 from embry0.storage.repositories.jobs import job_repository
 
 router = APIRouter()
@@ -92,7 +92,7 @@ def _json_field(value: Any) -> Any:
     """A JSONB column as the row gave it: decoded already, or text to decode."""
     if isinstance(value, str):
         try:
-            return json.loads(value)
+            return read_jsonb_text(value)  # as the codec reads it, not a second copy (#597)
         except ValueError:
             return None
     return value

@@ -1,6 +1,5 @@
 """Jobs API — create, list, get, cancel jobs."""
 
-import json
 import uuid
 from typing import Any
 
@@ -23,7 +22,7 @@ from embry0.json_text import STORED_DEPTH, nested_deeper_than
 from embry0.safety.redaction import job_secret_values, redact_event
 from embry0.services.answer_recorder import answers_context, ended_job_takes_no_answer, record_answer, start_again_says
 from embry0.services.run_with import RunWith, apply_run_with
-from embry0.storage.database import StoredValueTooDeep
+from embry0.storage.database import StoredValueTooDeep, read_jsonb_text
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repos import UnregisteredRepoError
 
@@ -472,7 +471,7 @@ def _as_object(value: Any) -> Any:
     when the pool has a codec and as text when it does not."""
     if isinstance(value, str):
         try:
-            return json.loads(value)
+            return read_jsonb_text(value)  # as the codec reads it, not a second copy (#597)
         except ValueError:
             return value
     return value
