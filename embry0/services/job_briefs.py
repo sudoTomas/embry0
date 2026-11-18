@@ -42,6 +42,7 @@ from embry0.services.brief_writer import (
     system_prompt,
 )
 from embry0.services.lead_kinds import id_pattern
+from embry0.storage.database import read_jsonb_text
 from embry0.workflows.row_behaviour import WORKFLOW_PIPELINES, builtin_template, delivers
 
 #: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
@@ -147,7 +148,7 @@ def job_inputs(job: Mapping[str, Any]) -> dict[str, Any]:
     raw = job.get("work_nature")
     if isinstance(raw, str):
         try:
-            raw = json.loads(raw)
+            raw = read_jsonb_text(raw)  # as the codec reads it, not a second copy (#597)
         except ValueError:
             raw = None
     return {

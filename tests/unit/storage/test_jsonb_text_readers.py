@@ -20,6 +20,8 @@ import pytest
 
 from embry0.api.v1 import decisions, job_review
 from embry0.api.v1.jobs import _as_object
+from embry0.services.done_when import as_list
+from embry0.services.job_briefs import job_inputs
 from embry0.storage.database import _jsonb_decoder
 from embry0.storage.repositories import knowledge_maps, leads
 from embry0.storage.repositories.jobs import job_repository
@@ -65,3 +67,36 @@ def test_a_jobs_repository_from_its_context_text_reads_as_the_codec_does() -> No
     named = job_repository({"context": f'{{"repo": "acme/widgets", "n": {TOO_LONG}}}'})
     assert named == "acme/widgets", "a context holding an integer past int's digit limit loses its repository"
     assert job_repository({"context": "{oops"}) is None
+
+
+def test_a_done_when_list_arriving_as_text_reads_as_the_codec_does() -> None:
+    """``done_when.as_list`` keeps the list it decodes: such a number in it stays its digits, and such an integer no
+    longer drops the whole list."""
+    text = f'{{"items": [{{"id": "d1", "done": "it builds", "n": {PAST}, "m": {TOO_LONG}}}]}}'
+    listed = as_list(text)
+    assert listed is not None, "the list is dropped"
+    assert listed["items"][0]["n"] == PAST and listed["items"][0]["m"] == TOO_LONG, str(listed)[:80]
+    assert as_list("{oops") is None
+
+
+def test_a_jobs_work_nature_arriving_as_text_reads_as_the_codec_does() -> None:
+    text = f'{{"nature": "cleanup", "slop_score": {PAST}, "n": {TOO_LONG}}}'
+    nature = job_inputs({"work_nature": text})["work_nature"]
+    assert nature is not None and nature["slop_score"] == PAST, f"read as {str(nature)[:60]}"
+
+
+def test_a_cleanup_report_is_read_as_the_codec_reads_it() -> None:
+    """Progression prices a merged cleanup from its report's text: counts beside a value nested past ``json.loads``'s
+    reach are read by the codec's own reader, where ``json.loads`` raised and failed the whole page."""
+    from datetime import UTC, datetime
+
+    from embry0.services.progression import price
+    from embry0.services.progression_pack import default_rules
+    from embry0.storage.repositories.progression import ProgressEvent
+    from tests.unit.storage.test_jsonb_decoder_deep import _deep_text
+
+    rules = default_rules()
+    cleaned = rules.outcomes["cleaned"]
+    report = '{"added": 1, "removed": 61, "notes": ' + _deep_text(12_000) + "}"
+    event = ProgressEvent("cleaned", "slopmaster", datetime(2026, 1, 1, tzinfo=UTC), report)
+    assert price(event, rules=rules) == [("coding", cleaned.xp + 60 * cleaned.per_line_removed)]
