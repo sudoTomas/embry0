@@ -162,12 +162,14 @@ async def run_organization_action(owner: str, body: ActionBody, request: Request
         # own webhook delivers for every repository (ADR 0012). Not read in time, it is unknown, and each
         # repository's own hooks decide.
         origin = org_discovery.public_origin(str(getattr(config, "webhook_public_url", "") or ""))
-        org_hook = await org_discovery.organization_hook_state(
-            forge_client,
-            org.owner,
-            (origin,) if origin else (),
-            forge_time=ForgeTime(min(org_actions.HOOK_REPO_SECONDS, request_time.left())),
-        )
+        # Only an organization carries hooks of its own, as discovery reads them; a user's repositories have theirs.
+        if access.get("owner_kind") == "organization":
+            org_hook = await org_discovery.organization_hook_state(
+                forge_client,
+                org.owner,
+                (origin,) if origin else (),
+                forge_time=ForgeTime(min(org_actions.HOOK_REPO_SECONDS, request_time.left())),
+            )
     stacks_repo = getattr(st, "watcher_stacks_repo", None)
     ctx = ActionContext(
         owner=org.owner,

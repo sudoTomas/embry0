@@ -369,6 +369,8 @@ async def test_an_organization_hook_here_delivers_for_every_repository() -> None
         ({**ORG_HOOK, "active": False}, "inert"),
         ({**ORG_HOOK, "events": ["push"]}, "inert"),
         ({**ORG_HOOK, "events": ["issues", "pull_request"]}, "inert"),
+        ({**ORG_HOOK, "config": {**ORG_HOOK["config"], "content_type": "form"}}, "inert"),
+        ({**ORG_HOOK, "config": {"url": ORG_HOOK["config"]["url"]}}, "inert"),
     ],
     ids=[
         "another-origin",
@@ -379,6 +381,8 @@ async def test_an_organization_hook_here_delivers_for_every_repository() -> None
         "switched-off",
         "push-only",
         "no-issue-comments",
+        "form-encoded",
+        "github-default-form",
     ],
 )
 async def test_an_organization_hook_that_does_not_deliver_here_does_not_count(hook: dict[str, Any], state: str) -> None:
@@ -595,3 +599,24 @@ async def test_an_outage_reading_the_hooks_is_unknown_not_hidden(status: int) ->
     assert hooks == {"hooks_visible": None, "hook_count": None, "hook_present": None}, (
         f"an outage ({status}) is unknown, not a hidden listing: {hooks}"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://embry0.example.com/api/v1/webhook?source=org",
+        "https://EMBRY0.Example.com/api/v1/webhook",
+        "https://embry0.example.com:443/api/v1/webhook/",
+    ],
+    ids=["query-string", "host-case", "default-port-and-slash"],
+)
+async def test_an_organization_hook_at_the_target_written_otherwise_still_delivers(url: str) -> None:
+    """#591 review: the organization's hook is matched on its target, as a URL: a query string, a host's case, a
+    default port or a trailing slash leave it the same target, so it is not read as absent."""
+    f = forge_with_sites()
+    f.routes["/orgs/acme/hooks"] = _Resp(200, [{**ORG_HOOK, "config": {**ORG_HOOK["config"], "url": url}}])
+    found = await discover(
+        f, "acme", owner_kind="organization", hook_origins=("https://embry0.example.com",), embry0_state=_known
+    )
+    assert [r.facts["org_hook"] for r in found.repos] == ["delivers", "delivers"], url

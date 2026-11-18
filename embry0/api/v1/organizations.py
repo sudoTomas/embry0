@@ -968,6 +968,9 @@ async def rediscover(request: Request, org: Organization, *, event: str) -> str 
     except HTTPException as exc:
         logger.warning(event, owner=org.owner, detail=str(exc.detail))
         return None
+    except Exception as exc:  # noqa: BLE001 - the change it follows is done; its answer must not be lost to this
+        logger.warning(event, owner=org.owner, error=type(exc).__name__, exc_info=True)
+        return None
     return str(run["id"])
 
 

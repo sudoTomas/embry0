@@ -206,7 +206,9 @@ def make_app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> Any:
     settings.update(config)
     app = create_app(Embry0Config(_env_file=None, **settings))
     orgs = FakeOrgsRepo()
-    orgs.orgs["acme"] = Organization(owner="acme", forge="github", access={"hooks": True, "read": True})
+    orgs.orgs["acme"] = Organization(
+        owner="acme", forge="github", access={"hooks": True, "read": True, "owner_kind": "organization"}
+    )
     orgs.orgs["paused"] = Organization(owner="paused", forge="github", status="paused")
     app.state.organizations_repo = orgs
     facts = FakeFactsRepo()
@@ -377,7 +379,12 @@ async def test_a_hook_on_the_dashboard_origins_is_not_this_deployments(monkeypat
 async def test_hook_reads_the_organization_webhook_and_adds_no_repository_hook(app: Any) -> None:
     """The route reads the organization's hooks once and hands the answer to the action."""
     app.state.fake_forge.org_hooks = [
-        {"id": 9, "active": True, "events": ["issues", "issue_comment", "pull_request"], "config": {"url": HOOK_URL}}
+        {
+            "id": 9,
+            "active": True,
+            "events": ["issues", "issue_comment", "pull_request"],
+            "config": {"url": HOOK_URL, "content_type": "json"},
+        }
     ]
     async with _client(app) as client:
         resp = await client.post(
@@ -835,3 +842,58 @@ async def test_an_organization_hook_listing_that_never_answers_takes_only_a_repo
             client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets"]}), timeout=10
         )
     assert [r["outcome"] for r in resp.json()["results"]] == ["done"], resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_repository_the_organization_webhook_covers_costs_no_call(app: Any) -> None:
+    """#591 review: with the organization's hook delivering, each repository is answered from it, before its own
+    hooks are listed: no call per repository, and none of them can hang the request."""
+    import asyncio
+
+    app.state.fake_forge.org_hooks = [
+        {
+            "id": 9,
+            "active": True,
+            "events": ["issues", "issue_comment", "pull_request"],
+            "config": {"url": HOOK_URL, "content_type": "json"},
+        }
+    ]
+    asked: list[str] = []
+    answer = app.state.fake_forge.get
+
+    async def get(path: str, **kwargs: Any) -> Any:
+        asked.append(path)
+        if path.startswith("/repos/"):
+            await asyncio.Event().wait()
+        return await answer(path, **kwargs)
+
+    app.state.fake_forge.get = get
+    repos = ["acme/widgets", "acme/gadgets", "acme/one"]
+    async with _client(app) as client:
+        resp = await asyncio.wait_for(
+            client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": repos}), timeout=10
+        )
+    assert [r["outcome"] for r in resp.json()["results"]] == ["already"] * 3, resp.text
+    assert [p for p in asked if p.startswith("/repos/")] == [], f"a covered repository's hooks were listed: {asked}"
+
+
+@pytest.mark.asyncio
+async def test_a_users_hooks_are_never_read_as_an_organizations(app: Any) -> None:
+    """#591 review: only an organization has hooks of its own, as discovery reads them; a user owner's are not
+    asked for."""
+    acme = app.state.organizations_repo.orgs["acme"]
+    app.state.organizations_repo.orgs["acme"] = Organization(
+        owner=acme.owner, forge=acme.forge, access={**acme.access, "owner_kind": "user"}
+    )
+    asked: list[str] = []
+    answer = app.state.fake_forge.get
+
+    async def get(path: str, **kwargs: Any) -> Any:
+        asked.append(path)
+        return await answer(path, **kwargs)
+
+    app.state.fake_forge.get = get
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/actions", json={"action": "hook", "repos": ["acme/widgets"]})
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done"], resp.text
+    assert not [p for p in asked if p.startswith("/orgs/")], f"a user's hooks were read as an organization's: {asked}"

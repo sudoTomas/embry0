@@ -59,6 +59,9 @@ class OrgHook:
     url: str
     events: tuple[str, ...]
     active: bool
+    #: How it posts: ``json``, or ``form`` (GitHub's default for a hook made through its API). The receiver reads
+    #: JSON only (``webhook_ingress``), so a form hook delivers nothing it can read.
+    content_type: str = ""
 
     def to_dict(self, *, origin_only: bool = False) -> dict[str, Any]:
         url = origin_of(self.url) if origin_only else self.url
@@ -114,7 +117,8 @@ def _hook(body: Any) -> OrgHook | None:
     raw_events = body.get("events")
     events = tuple(str(e) for e in raw_events) if isinstance(raw_events, list) else ()
     hook_id = body.get("id") if isinstance(body.get("id"), int) else None
-    return OrgHook(id=hook_id, url=url, events=events, active=bool(body.get("active", True)))
+    content_type = str(config.get("content_type") or "form")
+    return OrgHook(id=hook_id, url=url, events=events, active=bool(body.get("active", True)), content_type=content_type)
 
 
 async def list_org_hooks(client: _Reader, owner: str) -> list[OrgHook] | None:
@@ -142,15 +146,42 @@ def sends_intake_events(hook: OrgHook) -> bool:
     return "*" in hook.events or set(INTAKE_EVENTS) <= set(hook.events)
 
 
-def hook_pointing_at(hooks: list[OrgHook], target: str) -> OrgHook | None:
-    """The hook whose URL is ``target``, trailing slash aside.
+def same_target(url: str, target: str) -> bool:
+    """Whether ``url`` posts to ``target``: the same scheme, host and port (a host's case and a default port aside)
+    and the same path (a trailing slash aside), whatever its query. Not a prefix: a look-alike or longer host, another
+    port or another path (the GitLab route under it) is another target."""
+    one, two = urlsplit(url.strip()), urlsplit(target.strip())
+    try:
+        ports = (one.port, two.port)
+    except ValueError:
+        return False
 
-    The URL alone decides, as it does for ``already``: a hook at the target
+    def port(scheme: str, number: int | None) -> int | None:
+        return number if number is not None else {"https": 443, "http": 80}.get(scheme.lower())
+
+    return (
+        one.scheme.lower() == two.scheme.lower()
+        and (one.hostname or "") == (two.hostname or "")
+        and bool(one.hostname)
+        and port(one.scheme, ports[0]) == port(two.scheme, ports[1])
+        and one.path.rstrip("/") == two.path.rstrip("/")
+    )
+
+
+def hooks_pointing_at(hooks: list[OrgHook], target: str) -> list[OrgHook]:
+    """Every hook that posts to ``target`` (:func:`same_target`)."""
+    return [hook for hook in hooks if same_target(hook.url, target)]
+
+
+def hook_pointing_at(hooks: list[OrgHook], target: str) -> OrgHook | None:
+    """The first hook that posts to ``target`` (:func:`same_target`).
+
+    The target alone decides, as it does for ``already``: a hook at the target
     with other events, inactive, or with another secret is still this one,
     so neither an install nor the look after a lost create makes a second.
     """
-    wanted = target.rstrip("/")
-    return next((hook for hook in hooks if hook.url.rstrip("/") == wanted), None)
+    found = hooks_pointing_at(hooks, target)
+    return found[0] if found else None
 
 
 async def timed[T](forge_time: ForgeTime | None, call: Awaitable[T]) -> T:

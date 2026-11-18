@@ -682,3 +682,21 @@ async def test_a_create_unanswered_says_it_may_have_been_made(app: Any, monkeypa
         "GitHub did not answer the create in time, nor list the webhook after it: it may have been made; "
         "install again to see (a webhook already there is kept)",
     ), resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_rediscovery_that_fails_otherwise_does_not_hide_the_install(
+    app: Any, forge: FakeForge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#591 review: an install that made the hook answers it, whatever starting the rediscovery after it raises."""
+
+    class RunsUnreadable:
+        async def running_run(self, owner: str) -> None:
+            raise RuntimeError("the runs table cannot be read")
+
+    monkeypatch.setattr(organizations_api, "_facts_repo", lambda request: RunsUnreadable())
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["outcome"], resp.json()["rediscovery"]) == ("done", None), resp.text
+    assert len(forge.posts) == 1

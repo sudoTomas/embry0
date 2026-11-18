@@ -264,8 +264,9 @@ async def _hook_now(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_ru
         return ActionResult(
             repo,
             "skipped",
-            "the organization webhook points here but is switched off or does not send issue, issue comment "
-            "and pull request events: fix it on GitHub, then run discovery again",
+            "the organization webhook points here but is switched off, does not send issue, issue comment and "
+            "pull request events, or posts them as form data rather than JSON: fix it on GitHub, then run discovery "
+            "again",
         )
     # An outage says nothing of the credential (#579): the action fails, naming what the forge did, rather than
     # being skipped as a webhook it cannot list.

@@ -24,7 +24,7 @@ import structlog
 
 from embry0.execution.forge_client import Listing
 from embry0.json_text import json_object
-from embry0.services.org_webhooks import hook_pointing_at, hook_target, list_org_hooks, sends_intake_events, timed
+from embry0.services.org_webhooks import hook_target, hooks_pointing_at, list_org_hooks, sends_intake_events, timed
 from embry0.services.organizations import ForgeTime
 
 logger = structlog.get_logger(__name__)
@@ -194,8 +194,8 @@ def hook_state(hooks: list[Any], origins: tuple[str, ...]) -> bool | None:
 
 
 #: What the owner's organization webhook does for this deployment: ``delivers`` (active, at the
-#: webhook target, sending the intake events), ``inert`` (at the target, but switched off or
-#: sending too little) or ``absent`` (none at the target).
+#: webhook target, sending the intake events as JSON), ``inert`` (at the target, but switched off,
+#: sending too little or posting form data) or ``absent`` (none at the target).
 OrgHookState = Literal["delivers", "inert", "absent"]
 
 
@@ -208,7 +208,9 @@ async def organization_hook_state(
     under the owner, so one that delivers here stands in for a hook on each
     of them. It must post to the webhook target itself
     (``<origin>/api/v1/webhook``, the URL the install creates and the
-    webhook routes compare), be active, and send the events intake reads.
+    webhook routes compare; a host's case and a query aside), be active,
+    send the events intake reads, and post them as JSON, the only body the
+    receiver reads.
     None when there is no origin to compare against or the hooks cannot be
     read, an error reading them included (an outage, #579, or no answer
     within ``forge_time``, #582): unknown is not no, and each repository's
@@ -224,10 +226,13 @@ async def organization_hook_state(
         return None
     if hooks is None:
         return None
-    here = [hook for target in targets if (hook := hook_pointing_at(hooks, target)) is not None]
+    here = [hook for target in targets for hook in hooks_pointing_at(hooks, target)]
     if not here:
         return "absent"
-    return "delivers" if any(hook.active and sends_intake_events(hook) for hook in here) else "inert"
+    # The receiver reads JSON only: a hook posting form data (GitHub's default for one made through its API) reaches
+    # it with nothing it can read.
+    delivering = any(hook.active and hook.content_type == "json" and sends_intake_events(hook) for hook in here)
+    return "delivers" if delivering else "inert"
 
 
 def hook_hosts(hooks: list[Any]) -> list[str]:
