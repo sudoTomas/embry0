@@ -206,3 +206,72 @@ async def test_the_next_push_creates_once_when_the_earlier_create_made_nothing(
     rows = await _rows(db_with_migrations)
     assert rows == [{"id": pushed, "created_by": "dev@example.com", "tracker_key": "7"}], rows
     assert sync._pushing == {}, f"the record of the earlier create is still kept: {sync._pushing}"
+
+
+def _later_issue(number: int, when: datetime) -> dict[str, Any]:
+    """The token's issue with the same words, made at ``when``: by another deployment or a script with the token."""
+    return {
+        "number": number,
+        "title": TITLE,
+        "body": BODY,
+        "user": {"login": BOT},
+        "labels": [],
+        "state": "open",
+        "created_at": _stamp(when),
+        "updated_at": _stamp(when),
+        "html_url": f"https://github.com/{REPO}/issues/{number}",
+    }
+
+
+async def test_a_kept_record_does_not_take_an_issue_made_well_after_its_outcome_became_unknown(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#630 review: the token's issue with the same words, made eight minutes later, is not what the create made,
+    though the record is kept ten minutes: an issue it made was made before its outcome became unknown."""
+    gh, sync, issues, pushed = await _unknown_create(db_with_migrations, answer="502-unmade")
+    later = datetime.now(UTC) + timedelta(minutes=8)
+    monkeypatch.setattr(github_sync, "_now", lambda: later, raising=False)
+    answered = await _webhook(sync, issues, _later_issue(20, later))
+    tracked = await issues.get_by_tracker_ref("github", REPO, "20")
+    assert tracked is not None and tracked["id"] != pushed, (
+        f"an issue made eight minutes after the outcome became unknown was linked to the kept record: {tracked}, "
+        f"{answered}"
+    )
+
+
+async def test_the_next_push_does_not_take_an_issue_made_well_after_its_outcome_became_unknown(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gh, sync, issues, pushed = await _unknown_create(db_with_migrations, answer="502-unmade")
+    later = datetime.now(UTC) + timedelta(minutes=8)
+    gh.issues.append(_later_issue(20, later))
+    monkeypatch.setattr(github_sync, "_now", lambda: later, raising=False)
+    data = await sync.push_create(pushed, issues)
+    assert data is not None and data["number"] != 20, f"the next push took an issue made eight minutes later: {data}"
+    assert gh.posts == 2, f"the next push did not create: {gh.posts} creates"
+
+
+async def test_the_next_push_says_what_to_do_while_github_still_cannot_say(db_with_migrations: DatabasePool) -> None:
+    """#630 review: the 502 the sync route answers carries this, so it says what to do."""
+    gh, sync, issues, pushed = await _unknown_create(db_with_migrations)
+    gh.user_ok = False
+    with pytest.raises(Exception) as raised:
+        await sync.push_create(pushed, issues)
+    assert "try again in a few minutes" in str(raised.value) and "10 minutes" in str(raised.value), raised.value
+
+
+async def test_records_past_their_time_are_forgotten_on_any_repositorys_event(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#630 review: not only on an event of their own repository."""
+    gh, sync, issues, pushed = await _unknown_create(db_with_migrations)
+    later = datetime.now(UTC) + timedelta(minutes=11)
+    monkeypatch.setattr(github_sync, "_now", lambda: later, raising=False)
+    other = _later_issue(30, later)
+    ctx = TriggerContext(
+        issues_repo=issues, issue_executor=None, trigger_labels=set(), event_type="issues", action="opened"
+    )
+    await sync.handle_webhook_event(
+        {"action": "opened", "issue": other, "repository": {"full_name": "acme/other"}}, ctx
+    )
+    assert sync._pushing == {}, f"a record past its time in another repository is still kept: {sync._pushing}"

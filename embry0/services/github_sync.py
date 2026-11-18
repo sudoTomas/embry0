@@ -11,7 +11,7 @@ import httpx
 import structlog
 
 from embry0.execution.github_client import GitHubClient
-from embry0.forge_lookup import LOOKUP_PAUSE_SECONDS, answered_at, forge_time, made_since
+from embry0.forge_lookup import LOOKUP_MARGIN, LOOKUP_PAUSE_SECONDS, answered_at, forge_time, made_since
 from embry0.services.trigger_labels import matching_triggers, normalize_labels
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.schemas import IssueStatus
@@ -132,6 +132,8 @@ class _Push:
     body: str
     started: datetime
     kept_until: datetime | None = None
+    #: When its outcome became unknown: an issue it made was made before then (#630 review).
+    unknown_at: datetime | None = None
     claimed: str | None = None
     #: The deliveries the webhook left to this create (#628 review): an issue that may be its own, which it could not
     #: tell. They are handled again once the create resolves (:meth:`GitHubSyncService._resolve`).
@@ -215,6 +217,7 @@ class GitHubSyncService:
                 made_since(kept.started, None),
                 pushed_by_another_since(kept.started),
                 self._claim(repo, kept),
+                latest=kept.unknown_at + LOOKUP_MARGIN if kept.unknown_at is not None else None,
             )
             read, found = earlier
             if found is not None:
@@ -226,7 +229,9 @@ class GitHubSyncService:
                 return found
             if not read:
                 raise CreateOutcomeUnknown(
-                    f"an earlier create of {issue_id} may have made a GitHub issue, and GitHub could not be read to say"
+                    f"an earlier create of {issue_id} may have made a GitHub issue, and GitHub could not be read to say: "
+                    f"try again in a few minutes; after {int(UNKNOWN_OUTCOME_KEPT.total_seconds() // 60)} minutes the "
+                    "sync creates the issue again"
                 )
             await self._resolve(repo, kept)
 
@@ -242,7 +247,8 @@ class GitHubSyncService:
             await self._link(issues_repo, issue_id, data)
         except _OutcomeUnknown as exc:
             # #629: kept a while, so a late webhook links what the create made, or the next push finds it.
-            push.kept_until, push.claimed, kept_unknown = _now() + UNKNOWN_OUTCOME_KEPT, None, True
+            push.unknown_at = _now()
+            push.kept_until, push.claimed, kept_unknown = push.unknown_at + UNKNOWN_OUTCOME_KEPT, None, True
             logger.warning("github_issue_create_kept_unknown", issue_id=issue_id, repo=repo)
             raise exc.error from None
         finally:
@@ -262,15 +268,16 @@ class GitHubSyncService:
         )
 
     def _live(self, repo: str) -> list[_Push]:
-        """The creates under way in ``repo``, and those kept after an unknown outcome until their time; the rest are
-        forgotten."""
-        key, now = repo.lower(), _now()
-        live = [push for push in self._pushing.get(key, ()) if push.kept_until is None or push.kept_until > now]
-        if live:
-            self._pushing[key] = live
-        else:
-            self._pushing.pop(key, None)
-        return live
+        """The creates under way in ``repo``, and those kept after an unknown outcome until their time. Kept records
+        past their time are forgotten here, in every repository, on any repository's event (#630 review)."""
+        now = _now()
+        for key in list(self._pushing):
+            live = [push for push in self._pushing[key] if push.kept_until is None or push.kept_until > now]
+            if live:
+                self._pushing[key] = live
+            else:
+                del self._pushing[key]
+        return self._pushing.get(repo.lower(), [])
 
     async def _resolve(self, repo: str, push: _Push) -> None:
         """Forget ``push``, which has resolved, then handle again each delivery the webhook left to it (#628 review).
@@ -330,6 +337,7 @@ class GitHubSyncService:
             if _same_text(sent.get("title"), push.title)
             and _same_text(sent.get("body"), push.body)
             and created >= made_since(push.started, None)
+            and (push.unknown_at is None or created <= push.unknown_at + LOOKUP_MARGIN)
         ]
         if not candidates:
             return [], True
@@ -399,6 +407,7 @@ class GitHubSyncService:
         earliest: datetime,
         pushed_by_another: Callable[[Any], Awaitable[bool]],
         claim: Callable[[Any], bool] = lambda _number: True,
+        latest: datetime | None = None,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Whether the issues could be read, and the one this token created in ``repo`` with ``payload``'s title and
         body, no earlier than ``earliest`` (``embry0.forge_lookup.made_since``), and that no other embry0 issue
@@ -437,6 +446,9 @@ class GitHubSyncService:
                 created = forge_time(item.get("created_at"))
                 author = str((item.get("user") or {}).get("login") or "")
                 if created is None or created < earliest or author.lower() != login.lower():
+                    continue
+                if latest is not None and created > latest:
+                    # Made after the create this lookup is for could have made it (#630 review).
                     continue
                 if not (
                     _same_text(item.get("title"), payload.get("title"))
