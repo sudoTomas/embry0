@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -65,6 +65,26 @@ def _parse_issue(payload: dict[str, Any]) -> TrackerIssue | None:
 _OPENED_BY_WEBHOOK = "webhook"
 _LABELED_BY_WEBHOOK = "webhook-label"
 _WEBHOOK_ORIGINS = frozenset({_OPENED_BY_WEBHOOK, _LABELED_BY_WEBHOOK})
+#: How long before the create started the webhook's row may read as made and still be taken for the mirror of the
+#: issue the create made: the database's clock and this host's may differ a little.
+_MIRROR_CLOCK_MARGIN = timedelta(seconds=30)
+
+
+def _mirrors_this_create(row: dict[str, Any], started: datetime) -> bool:
+    """Whether ``row`` is the issues webhook's mirror of the issue a create started at ``started`` made (#620).
+
+    GitHub sends ``issues.opened`` as it makes the issue, so the webhook can make its row before the create links
+    the issue (#622). That row was made after the create started. A row the webhook made before then mirrors an
+    earlier issue: another embry0 issue's push with the same title and body, which the same race left unlinked. A
+    row whose creation time cannot be read is not taken for this create's mirror.
+    """
+    made = row.get("created_at")
+    return (
+        row.get("created_by") in _WEBHOOK_ORIGINS
+        and isinstance(made, datetime)
+        and made.tzinfo is not None
+        and made >= started - _MIRROR_CLOCK_MARGIN
+    )
 
 
 def _same_text(stored: Any, sent: Any) -> bool:
@@ -108,14 +128,18 @@ class GitHubSyncService:
         repo = issue["repo"]
         payload = {"title": issue["title"], "body": issue.get("body", ""), "labels": issue.get("labels", [])}
 
+        started = datetime.now(UTC)
+
         async def pushed_by_another(number: Any) -> bool:
             # #620: another embry0 issue with the same title and body, pushed by the same token minutes before,
-            # holds that GitHub issue: it is not this create. A row the issues webhook made from it is not that:
-            # it mirrors the issue, and when this create made it, the webhook can have come first (#622).
+            # holds that GitHub issue: it is not this create. The issues webhook's mirror of the issue this create
+            # made is not that: when this create made it, the webhook can have come first (#622).
             row = await issues_repo.get_by_tracker_ref(TRACKER, repo, str(number))
-            return row is not None and row.get("id") != issue_id and row.get("created_by") not in _WEBHOOK_ORIGINS
+            if row is None or row.get("id") == issue_id:
+                return False
+            return not _mirrors_this_create(row, started)
 
-        data = await self._create_issue(repo, payload, pushed_by_another)
+        data = await self._create_issue(repo, payload, started, pushed_by_another)
         await issues_repo.update(
             issue_id,
             tracker=TRACKER,
@@ -127,7 +151,11 @@ class GitHubSyncService:
         return data
 
     async def _create_issue(
-        self, repo: str, payload: dict[str, Any], pushed_by_another: Callable[[Any], Awaitable[bool]]
+        self,
+        repo: str,
+        payload: dict[str, Any],
+        started: datetime,
+        pushed_by_another: Callable[[Any], Awaitable[bool]],
     ) -> dict[str, Any]:
         """Create the GitHub issue; the issue GitHub made.
 
@@ -135,10 +163,9 @@ class GitHubSyncService:
         lost in transit) may hide an issue GitHub made: the newest issues are read once for it (#613), and only
         when it is not there is the create sent once more. When they cannot be read the outcome stays unknown, and
         the create is not sent again, since it could make a second issue: the failure is raised. Raises too when
-        the create was refused, or when that last send fails. ``pushed_by_another``: whether a GitHub issue, by
-        number, is another embry0 issue's (#620).
+        the create was refused, or when that last send fails. ``started``: when the create started, by the local
+        clock. ``pushed_by_another``: whether a GitHub issue, by number, is another embry0 issue's (#620).
         """
-        started = datetime.now(UTC)
         unknown: httpx.TransportError | None = None
         resp: httpx.Response | None = None
         try:

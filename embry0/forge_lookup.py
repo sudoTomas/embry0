@@ -33,7 +33,11 @@ def forge_time(value: Any) -> datetime | None:
 
 
 def answered_at(response: httpx.Response | None) -> datetime | None:
-    """When the forge sent ``response``, by its own clock (its ``Date`` header); None without a readable one."""
+    """When the forge sent ``response``, by its own clock (its ``Date`` header); None without a readable one.
+
+    A 5xx that a proxy between embry0 and the forge made carries the proxy's clock, not the forge's: a proxy whose
+    clock is badly off shifts the window as this host's clock would.
+    """
     value = response.headers.get("date") if response is not None else None
     if not value:
         return None

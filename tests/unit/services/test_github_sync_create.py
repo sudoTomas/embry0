@@ -50,6 +50,7 @@ def _github(
     skew: timedelta = timedelta(0),
     links: dict[int, dict[str, Any]] | None = None,
     made_is_adopted_by: str = "",
+    database_clock: timedelta = timedelta(0),
 ) -> tuple[GitHubSyncService, list[dict[str, Any]], list[str], list[float]]:
     """GitHub with one repository. The first create meets ``first``: "made-502" (made, answered 502), "made-lost"
     (made, its answer lost), "not-made-502" (refused before it was made, answered 502), or "refused" (422).
@@ -61,7 +62,8 @@ def _github(
     body with CRLF line ends and trailing spaces. ``unreadable``: "issues" or "user" cannot be read. The list is
     GitHub's: by creation, newest first unless asked otherwise, ``per_page`` at a time (30 unless asked), and only
     the issues updated since ``since``. ``made_is_adopted_by``: as the first create makes its issue, the issues
-    webhook makes an embry0 issue from it, with this ``created_by``, in ``links`` (number → embry0 issue)."""
+    webhook makes an embry0 issue from it, with this ``created_by``, in ``links`` (number → embry0 issue), at the
+    database's time, which runs ``database_clock`` ahead of this host's."""
     now = datetime.now(UTC) + skew
     issues: list[dict[str, Any]] = []
     calls: list[str] = []
@@ -121,7 +123,11 @@ def _github(
             made = issue(sent["title"], body, BOT, datetime.now(UTC) + skew)
             issues.append(made)
             if posts == 1 and made_is_adopted_by and links is not None:
-                links[made["number"]] = {"id": "iss-adopted", "created_by": made_is_adopted_by}
+                links[made["number"]] = {
+                    "id": "iss-adopted",
+                    "created_by": made_is_adopted_by,
+                    "created_at": datetime.now(UTC) + database_clock,
+                }
             if posts == 1 and first == "made-502":
                 return answer(502)
             if posts == 1 and first == "made-lost":
@@ -245,11 +251,14 @@ async def test_an_earlier_issue_is_not_taken_for_this_create_when_this_hosts_clo
 # -- an issue already linked to an embry0 issue (#620) ---------------------------------------------------------
 
 
-async def test_an_issue_another_embry0_issue_pushed_is_not_taken_for_this_one() -> None:
+@pytest.mark.parametrize("made", ["a-minute-before", "just-now"])
+async def test_an_issue_another_embry0_issue_pushed_is_not_taken_for_this_one(made: str) -> None:
     """Two embry0 issues with the same title and body, pushed by the same token a minute apart: the first one's
     GitHub issue is linked to it. The second's create is answered 502 before GitHub made it; the first one's issue
-    matches every other test, but it is another embry0 issue's, so the create is sent once more."""
-    links = {7: {"id": "iss-0", "created_by": "user"}}
+    matches every other test, but it is another embry0 issue's, so the create is sent once more. That holds when
+    the other embry0 issue was made just now, too: only the webhook's rows mirror an issue."""
+    when = datetime.now(UTC) - (timedelta(minutes=1) if made == "a-minute-before" else timedelta(0))
+    links = {7: {"id": "iss-0", "created_by": "user", "created_at": when}}
     sync, issues, calls, _ = _github("not-made-502", earlier=("bot-a-minute-ago",), links=links)
     repo = _repo(links)
     data = await sync.push_create("iss-1", repo)
@@ -268,12 +277,37 @@ async def test_an_issue_already_linked_to_this_embry0_issue_is_taken() -> None:
 
 
 @pytest.mark.parametrize("created_by", ["webhook", "webhook-label"])
-async def test_an_issue_the_webhook_made_an_embry0_issue_from_is_still_this_create(created_by: str) -> None:
+@pytest.mark.parametrize("database_clock", [timedelta(0), -timedelta(seconds=10)], ids=["same-clock", "db-10s-behind"])
+async def test_an_issue_the_webhook_made_an_embry0_issue_from_is_still_this_create(
+    created_by: str, database_clock: timedelta
+) -> None:
     """GitHub made the issue and answered 502, and its issues webhook made an embry0 issue from it before the
-    lookup ran. That row mirrors the issue this create made; it is not another embry0 issue's push, and sending the
-    create again would make a second GitHub issue."""
+    lookup ran (#622). That row mirrors the issue this create made, made after the create started, give or take
+    the database's clock: it is not another embry0 issue's push, and sending the create again would make a second
+    GitHub issue."""
     links: dict[int, dict[str, Any]] = {}
-    sync, issues, calls, _ = _github("made-502", links=links, made_is_adopted_by=created_by)
+    sync, issues, calls, _ = _github(
+        "made-502", links=links, made_is_adopted_by=created_by, database_clock=database_clock
+    )
     data = await sync.push_create("iss-1", _repo(links))
     assert calls.count("POST issues") == 1, f"a second issue was made: {calls}"
     assert data is not None and data["number"] == _creates(issues)[0]["number"] and data["number"] in links
+
+
+@pytest.mark.parametrize(
+    ("created_by", "made"),
+    [("webhook", "a-minute-before"), ("webhook-label", "a-minute-before"), ("webhook", "unknown")],
+)
+async def test_the_webhooks_mirror_of_an_earlier_push_is_another_embry0_issues(created_by: str, made: str) -> None:
+    """Another embry0 issue with the same title and body was pushed a minute before; GitHub made #7 for it, and the
+    issues webhook mirrored #7 first (#622). This create is answered 502 before GitHub made it. The mirror was made
+    before this create started, so it is not this create's: the create is sent once more. A mirror whose creation
+    time cannot be read is not taken for this create's either."""
+    when = datetime.now(UTC) - timedelta(minutes=1) if made == "a-minute-before" else None
+    links: dict[int, dict[str, Any]] = {7: {"id": "iss-0-mirror", "created_by": created_by, "created_at": when}}
+    sync, _, calls, _ = _github("not-made-502", earlier=("bot-a-minute-ago",), links=links)
+    repo = _repo(links)
+    data = await sync.push_create("iss-1", repo)
+    assert calls.count("POST issues") == 2, f"the mirror of another embry0 issue's push was taken: {calls}"
+    assert data is not None and data["number"] != 7
+    assert repo.update.await_args.kwargs["tracker_key"] == str(data["number"])
