@@ -218,3 +218,93 @@ async def test_the_issue_of_a_job_cancelled_during_its_run_is_left_to_the_cancel
     actions = [c.args[1] for c in audit.await_args_list]
     assert "issue.status_changed" not in actions, f"the run recorded its failure on the issue: {actions}"
     assert (await issues.get(issue_id) or {}).get("status") == "triaging", "the run moved the cancelled job's issue"
+
+
+# ---- #600: the failure write is a compare-and-swap; a fallback PR of a job found ended is kept ----------
+
+
+async def test_a_job_failed_between_the_check_and_the_write_keeps_its_failure(db_with_migrations: DatabasePool) -> None:
+    """Another writer fails the job right after the check: the run's failure does not replace that one's code and
+    message, and the end is not announced again."""
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="acme/widgets", task="t")
+    await jobs.update(job_id, status="running")
+    ex = _executor(jobs, allowed=True)
+    seen = _counting(ex)
+    read = jobs.status
+    reads: list[str | None] = []
+
+    async def status(jid: str) -> str | None:
+        current = await read(jid)
+        reads.append(current)
+        if len(reads) == 1:  # boot recovery fails it right after the check
+            await jobs.fail_jobs([jid], "ERR_ORPHANED", "Orchestrator restarted")
+        return current
+
+    jobs.status = status  # type: ignore[method-assign]
+    written = await _executor_run._fail_the_run(ex, job_id, error_message="boom", error_code="ERR_UNKNOWN")
+
+    row = await jobs.get(job_id) or {}
+    assert written is False and reads == ["running", "failed"], reads
+    assert (row.get("error_code"), row.get("error_message")) == ("ERR_ORPHANED", "Orchestrator restarted"), (
+        f"the run's failure replaced the other writer's: {row.get('error_code')} {row.get('error_message')!r}"
+    )
+    assert seen["announced"] == [] and seen["stamped"] == []
+
+
+PR = "https://forge.test/acme/widgets/pull/9"
+
+
+def _cancel_while_opening(ex: Any, jobs: JobsRepository, job_id: str) -> list[str]:
+    """A fallback opener that a person's cancel overtakes: the job is cancelled while the forge opens the PR."""
+    recorded: list[str] = []
+
+    async def opener(*_a: Any, **_k: Any) -> tuple[str, None]:
+        await jobs.update(job_id, status="cancelled", error_message="cancelled by a person")
+        return PR, None
+
+    ex._open_fallback_pr = AsyncMock(side_effect=opener)
+    ex._record_pr_opened = AsyncMock(side_effect=lambda issue_id, jid, url, *a: recorded.append(url))
+    return recorded
+
+
+async def test_a_pull_request_opened_for_a_job_cancelled_meanwhile_is_kept_on_the_job(
+    db_with_migrations: DatabasePool,
+) -> None:
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="acme/widgets", task="t")
+    ex = _executor(jobs, allowed=True)
+    seen = _counting(ex)
+    recorded = _cancel_while_opening(ex, jobs, job_id)
+    stream = AsyncMock(side_effect=RuntimeError("the sandbox went away"))
+
+    with (
+        patch.object(ex, "_execute_workflow_stream", stream),
+        patch("embry0.services.issue_executor.emit_audit", new=AsyncMock()),
+    ):
+        await ex._run_workflow(None, job_id, {"title": "t", "body": "", "repo": "acme/widgets"})
+
+    row = await jobs.get(job_id) or {}
+    assert (row.get("status"), row.get("pr_url")) == ("cancelled", PR), f"the pull request is not kept: {dict(row)}"
+    assert recorded == [PR], "the case ledger is not told the pull request opened"
+    assert seen["announced"] == [] and seen["stamped"] == [], seen
+
+
+async def test_a_pull_request_opened_for_a_resumed_job_cancelled_meanwhile_is_kept_on_the_job(
+    db_with_migrations: DatabasePool,
+) -> None:
+    issues = IssuesRepository(db_with_migrations)
+    issue_id = await issues.create("Fix the idle timer", repo="acme/widgets")
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="acme/widgets", task="t", issue_id=issue_id)
+    await jobs.update(job_id, status="running")
+    ex = _executor(jobs, allowed=True)
+    ex._issues = issues
+    seen = _counting(ex)
+    recorded = _cancel_while_opening(ex, jobs, job_id)
+
+    await ex._fail_resume(issue_id, job_id, RuntimeError("the sandbox went away"), None, {})
+
+    row = await jobs.get(job_id) or {}
+    assert (row.get("status"), row.get("pr_url")) == ("cancelled", PR), dict(row)
+    assert recorded == [PR] and seen["announced"] == [] and seen["cleaned"] == [job_id], (recorded, seen)

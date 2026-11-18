@@ -431,6 +431,36 @@ async def test_before_start_never_fails_a_job_that_left_pending(jobs_repo: JobsR
     assert (await jobs_repo.get(job_id))["status"] == ended
 
 
+@pytest.mark.asyncio
+async def test_an_expected_status_keeps_another_writers_failure(jobs_repo: JobsRepository):
+    """#600: a write that names the statuses it may replace leaves a job in any other one as it is, the same-status
+    ``failed -> failed`` included."""
+    from embry0.storage.repositories.jobs import FAILABLE_JOB_STATUSES, StatusTransitionConflict
+
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+    await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+    await jobs_repo.update(job_id, status=JobStatus.FAILED, error_code="ERR_ORPHANED", error_message="first")
+
+    with pytest.raises(StatusTransitionConflict, match="is failed"):
+        await jobs_repo.update(
+            job_id,
+            status=JobStatus.FAILED,
+            error_code="ERR_UNKNOWN",
+            error_message="second",
+            expected_status=FAILABLE_JOB_STATUSES,
+        )
+
+    job = await jobs_repo.get(job_id)
+    assert (job["error_code"], job["error_message"]) == ("ERR_ORPHANED", "first")
+
+    other = await jobs_repo.create(repo="a/b", task="t")
+    await jobs_repo.update(other, status=JobStatus.RUNNING)
+    await jobs_repo.update(
+        other, status=JobStatus.FAILED, error_code="ERR_UNKNOWN", expected_status=FAILABLE_JOB_STATUSES
+    )
+    assert (await jobs_repo.get(other))["status"] == "failed", "a status it expects is replaced"
+
+
 def test_the_transition_table_itself_still_forbids_pending_to_failed():
     """The refusal is an exception beside the table, not an entry in it:
     readers of VALID_JOB_TRANSITIONS (cas_transition_on_conn, delivery
