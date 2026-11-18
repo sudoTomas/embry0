@@ -191,7 +191,9 @@ async def upsert_sticky_comment(
     existing_id = await _find_sticky_comment_id(client, repo=repo, issue_number=issue_number, marker=marker)
 
     if existing_id is not None:
-        resp = await client.patch(f"/repos/{repo}/issues/comments/{existing_id}", repo=repo, json={"body": body})
+        resp = await client.patch(
+            f"/repos/{repo}/issues/comments/{existing_id}", repo=repo, json={"body": body}, retry_transient=True
+        )  # safe to send again (#45): it sets the comment's body
         if resp.status_code in (200, 201):
             _logger.info(
                 "qa_sticky_comment_updated",
@@ -248,7 +250,9 @@ async def edit_sticky_comment(
     existing_id = await _find_sticky_comment_id(client, repo=repo, issue_number=issue_number, marker=marker)
     if existing_id is None:
         return False
-    resp = await client.patch(f"/repos/{repo}/issues/comments/{existing_id}", repo=repo, json={"body": body})
+    resp = await client.patch(
+        f"/repos/{repo}/issues/comments/{existing_id}", repo=repo, json={"body": body}, retry_transient=True
+    )  # safe to send again (#45): it sets the comment's body
     resp.raise_for_status()
     return True
 

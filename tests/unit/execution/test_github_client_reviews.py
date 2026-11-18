@@ -115,12 +115,14 @@ async def test_a_review_whose_answer_was_lost_is_not_sent_again() -> None:
     assert calls == ["POST"], "a lost answer may follow an accepted review: re-sending it would post it twice"
 
 
-async def test_other_posts_still_retry_a_502() -> None:
+@pytest.mark.parametrize(("first", "sent"), [(502, 1), (429, 2)], ids=["502", "429"])
+async def test_a_created_issue_is_sent_again_only_when_github_did_not_act_on_it(first: int, sent: int) -> None:
+    """#45: a create answered 502 may be one GitHub made, and is not sent again; one refused with a 429 is."""
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.method)
-        return httpx.Response(502) if len(calls) == 1 else httpx.Response(201, json={"number": 1})
+        return httpx.Response(first) if len(calls) == 1 else httpx.Response(201, json={"number": 1})
 
-    created = await _client(handler).create_issue("acme/widgets", title="t", body="b")
-    assert created == {"number": 1} and len(calls) == 2, "the default retry policy must be unchanged"
+    await _client(handler).create_issue("acme/widgets", title="t", body="b")
+    assert len(calls) == sent, f"a create answered {first} was sent {len(calls)} times"

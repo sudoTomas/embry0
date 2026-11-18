@@ -113,7 +113,10 @@ async def find_unanswered_reviews(
     """Every open, same-repository, non-draft pull request with review threads nobody answered."""
     owner, name = repo.split("/", 1)
     resp = await client.post(
-        "/graphql", repo=repo, json={"query": _QUERY, "variables": {"owner": owner, "name": name, "first": PULLS}}
+        "/graphql",
+        repo=repo,
+        json={"query": _QUERY, "variables": {"owner": owner, "name": name, "first": PULLS}},
+        retry_transient=True,  # a query sent as a POST: safe to send again (#45)
     )
     body = resp.json() if resp.status_code == 200 else None
     if not isinstance(body, dict) or body.get("errors") or not (body.get("data") or {}).get("repository"):

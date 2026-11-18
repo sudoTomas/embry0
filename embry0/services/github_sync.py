@@ -112,7 +112,8 @@ class GitHubSyncService:
             "labels": issue.get("labels", []),
             "state": gh_state,
         }
-        resp = await self._client.patch(f"/repos/{repo}/issues/{number}", repo=repo, json=payload)
+        # Safe to send again (#45): it sets the issue's fields, so a second send leaves them as the first did.
+        resp = await self._client.patch(f"/repos/{repo}/issues/{number}", repo=repo, json=payload, retry_transient=True)
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         await issues_repo.update(issue_id, github_synced_at=datetime.now(UTC))

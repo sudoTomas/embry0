@@ -431,6 +431,7 @@ async def _apply_pr_labels(
             f"/repos/{repo}/issues/{pr_number}/labels",
             repo=repo,
             json={"labels": list(labels)},
+            retry_transient=True,  # safe to send again (#45): a label it already has is not added twice
         )
         resp.raise_for_status()
     except Exception as exc:

@@ -378,7 +378,10 @@ async def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, A
         repo, number = match["repo"], int(match["number"])
         if body.note:
             await client.post(f"/repos/{repo}/issues/{number}/comments", repo=repo, json={"body": body.note})
-        resp = await client.patch(f"/repos/{repo}/pulls/{number}", repo=repo, json={"state": "closed"})
+        # Safe to send again (#45): closing a closed pull request leaves it closed.
+        resp = await client.patch(
+            f"/repos/{repo}/pulls/{number}", repo=repo, json={"state": "closed"}, retry_transient=True
+        )
         if resp.status_code >= 300:
             raise HTTPException(
                 status_code=502, detail=f"the forge did not close the pull request ({resp.status_code})"
