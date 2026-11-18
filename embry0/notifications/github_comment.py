@@ -13,12 +13,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 import structlog
 
+from embry0.forge_lookup import LOOKUP_PAUSE_SECONDS, answered_at, forge_time, made_since
 from embry0.notifications.inbound_parser import is_directive_line
 from embry0.notifications.retry import (
     PermanentSendError,
@@ -61,21 +62,6 @@ _ZERO_WIDTH_SPACE = "\u200b"
 def _defuse(text: str) -> str:
     """Neutralise a line of agent-authored text that would parse as a directive."""
     return f"{_ZERO_WIDTH_SPACE}{text}" if is_directive_line(text) else text
-
-
-#: How long before the post a comment the lookup finds may have been made (#613): the local clock and GitHub's may
-#: differ, and the post's own retries take time.
-_LOOKUP_MARGIN = timedelta(minutes=5)
-#: The pause before the lookup, so a comment GitHub made as the answer was lost shows in its list.
-_LOOKUP_PAUSE_SECONDS = 1.5
-
-
-def _when(value: Any) -> datetime | None:
-    """A GitHub timestamp (``2026-01-01T00:00:00Z``) as an aware datetime; None for anything else."""
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 class GitHubCommentChannel:
@@ -184,8 +170,14 @@ class GitHubCommentChannel:
         if token:
             post_kwargs["headers"] = {"Authorization": f"Bearer {token}"}
 
+        # The last attempt's answer, None when it was lost: its Date header is GitHub's clock for the lookup (#620).
+        answer: httpx.Response | None = None
+
         async def attempt(number: int) -> dict[str, Any]:
+            nonlocal answer
+            answer = None
             resp = await self._client.post(url, **post_kwargs)
+            answer = resp
             if resp.status_code >= 400:
                 logger.warning(
                     "github_comment_post_failed",
@@ -228,8 +220,9 @@ class GitHubCommentChannel:
         # #613: the outcome is unknown, so GitHub may hold the comment: the issue's newest comments are read once
         # for it, and only when it is not there is it sent once more, under the same rule. When they cannot be
         # read the outcome stays unknown, and the comment is not sent again, since it could post a second one.
-        await self._sleep(_LOOKUP_PAUSE_SECONDS)
-        read, made = await self._comment_made_since(repo, issue_number, body, started, post_kwargs.get("headers"))
+        await self._sleep(LOOKUP_PAUSE_SECONDS)
+        earliest = made_since(started, answered_at(answer))
+        read, made = await self._comment_made_since(repo, issue_number, body, earliest, post_kwargs.get("headers"))
         if made is not None:
             logger.info("github_comment_found_after_an_unknown_outcome", repo=repo, issue_number=issue_number)
             return made
@@ -251,21 +244,23 @@ class GitHubCommentChannel:
             raise
 
     async def _comment_made_since(
-        self, repo: str, issue_number: int, body: str, started: datetime, headers: dict[str, str] | None
+        self, repo: str, issue_number: int, body: str, earliest: datetime, headers: dict[str, str] | None
     ) -> tuple[bool, dict[str, Any] | None]:
         """Whether the comments could be read, and the one this channel's token posted on the issue with ``body``,
-        made since a margin before ``started`` (None when there is none).
+        made no earlier than ``earliest`` (``embry0.forge_lookup.made_since``; None when there is none).
 
-        Only the token's own comment counts: a person's comment with the same words is not this post. The margin
-        (``_LOOKUP_MARGIN``) allows for the local clock and GitHub's differing, and for the post's own retries; a
-        comment made before it is an earlier post. One page of up to 100 comments is read: an issue that took more
-        in those minutes is not read past them. When the token's user or the comments cannot be read, the outcome
-        stays unknown.
+        Only the token's own comment counts: a person's comment with the same words is not this post, and one made
+        before ``earliest`` is an earlier post. GitHub lists an issue's comments oldest first, so only those updated
+        since ``earliest`` are listed: on an issue with more than a page of comments, the first page would hold the
+        oldest. One page of up to 100 is read: an issue that took more in those minutes is not read past them. When
+        the token's user or the comments cannot be read, the outcome stays unknown; when the user cannot be read,
+        the comments are not listed.
         """
-        earliest = started - _LOOKUP_MARGIN
         try:
             who = await self._client.get("/user", headers=headers or {})
             login = str((who.json() or {}).get("login") or "") if who.status_code == 200 else ""
+            if not login:
+                return False, None
             resp = await self._client.get(
                 f"/repos/{repo}/issues/{issue_number}/comments",
                 params={"since": earliest.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100},
@@ -275,13 +270,13 @@ class GitHubCommentChannel:
         except Exception:
             logger.warning("github_comment_lookup_failed", repo=repo, issue_number=issue_number, exc_info=True)
             return False, None
-        if not login or not isinstance(listed, list):
+        if not isinstance(listed, list):
             return False, None
         wanted = body.replace("\r\n", "\n").strip()
         for item in listed:
             if not isinstance(item, dict):
                 continue
-            created = _when(item.get("created_at"))
+            created = forge_time(item.get("created_at"))
             author = str((item.get("user") or {}).get("login") or "")
             if created is None or created < earliest or author.lower() != login.lower():
                 continue

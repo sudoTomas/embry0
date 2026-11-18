@@ -60,7 +60,10 @@ free text beyond that. On every approve:
 | `PUT /pulls/{n}/merge` with `sha` pinned and `merge_method: squash` | 409 → `stale`; other errors → `failed` (may be approved again) |
 
 A PR already merged outside embry0 is recorded as `merged` with its merge
-commit, and never merged twice. Two replies racing for one ask cannot both
+commit, and never merged twice. So is one found merged after a failed merge
+call: at the approved head, it is this ask's merge; at another head, someone
+merged it outside embry0, and the detail says so (`merged outside embry0 at
+<head>, not the approved head`). Two replies racing for one ask cannot both
 act: every state change is one conditional `UPDATE`.
 
 Paths on the plan §7.3 denylist (migrations, auth/OIDC/session, infra/compose/

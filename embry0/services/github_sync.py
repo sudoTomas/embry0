@@ -9,6 +9,7 @@ import httpx
 import structlog
 
 from embry0.execution.github_client import GitHubClient
+from embry0.forge_lookup import LOOKUP_PAUSE_SECONDS, answered_at, forge_time, made_since
 from embry0.services.trigger_labels import matching_triggers, normalize_labels
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.schemas import IssueStatus
@@ -59,19 +60,31 @@ def _parse_issue(payload: dict[str, Any]) -> TrackerIssue | None:
     )
 
 
-#: How long before the create an issue the lookup finds may have been made (#613): the local clock and GitHub's
-#: may differ, and the create's own retries take time. As the question comment's lookup has it.
-_LOOKUP_MARGIN = timedelta(minutes=5)
-#: The pause before the lookup, so an issue GitHub made as the answer was lost shows in its list.
-_LOOKUP_PAUSE_SECONDS = 1.5
+#: ``created_by`` of the rows the issues webhook makes from a GitHub issue: on ``opened``, and on ``labeled`` for
+#: an issue it did not track yet.
+_OPENED_BY_WEBHOOK = "webhook"
+_LABELED_BY_WEBHOOK = "webhook-label"
+_WEBHOOK_ORIGINS = frozenset({_OPENED_BY_WEBHOOK, _LABELED_BY_WEBHOOK})
+#: How long before the create started the webhook's row may read as made and still be taken for the mirror of the
+#: issue the create made: the database's clock and this host's may differ a little.
+_MIRROR_CLOCK_MARGIN = timedelta(seconds=30)
 
 
-def _when(value: Any) -> datetime | None:
-    """A GitHub timestamp (``2026-01-01T00:00:00Z``) as an aware datetime; None for anything else."""
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+def _mirrors_this_create(row: dict[str, Any], started: datetime) -> bool:
+    """Whether ``row`` is the issues webhook's mirror of the issue a create started at ``started`` made (#620).
+
+    GitHub sends ``issues.opened`` as it makes the issue, so the webhook can make its row before the create links
+    the issue (#622). That row was made after the create started. A row the webhook made before then mirrors an
+    earlier issue: another embry0 issue's push with the same title and body, which the same race left unlinked. A
+    row whose creation time cannot be read is not taken for this create's mirror.
+    """
+    made = row.get("created_at")
+    return (
+        row.get("created_by") in _WEBHOOK_ORIGINS
+        and isinstance(made, datetime)
+        and made.tzinfo is not None
+        and made >= started - _MIRROR_CLOCK_MARGIN
+    )
 
 
 def _same_text(stored: Any, sent: Any) -> bool:
@@ -114,7 +127,19 @@ class GitHubSyncService:
             return None
         repo = issue["repo"]
         payload = {"title": issue["title"], "body": issue.get("body", ""), "labels": issue.get("labels", [])}
-        data = await self._create_issue(repo, payload)
+
+        started = datetime.now(UTC)
+
+        async def pushed_by_another(number: Any) -> bool:
+            # #620: another embry0 issue with the same title and body, pushed by the same token minutes before,
+            # holds that GitHub issue: it is not this create. The issues webhook's mirror of the issue this create
+            # made is not that: when this create made it, the webhook can have come first (#622).
+            row = await issues_repo.get_by_tracker_ref(TRACKER, repo, str(number))
+            if row is None or row.get("id") == issue_id:
+                return False
+            return not _mirrors_this_create(row, started)
+
+        data = await self._create_issue(repo, payload, started, pushed_by_another)
         await issues_repo.update(
             issue_id,
             tracker=TRACKER,
@@ -125,16 +150,22 @@ class GitHubSyncService:
         logger.info("github_issue_created", issue_id=issue_id, github_number=data["number"])
         return data
 
-    async def _create_issue(self, repo: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _create_issue(
+        self,
+        repo: str,
+        payload: dict[str, Any],
+        started: datetime,
+        pushed_by_another: Callable[[Any], Awaitable[bool]],
+    ) -> dict[str, Any]:
         """Create the GitHub issue; the issue GitHub made.
 
         The create is sent again only when GitHub did not act on it (#45). An unknown outcome (a 5xx, or an answer
         lost in transit) may hide an issue GitHub made: the newest issues are read once for it (#613), and only
         when it is not there is the create sent once more. When they cannot be read the outcome stays unknown, and
         the create is not sent again, since it could make a second issue: the failure is raised. Raises too when
-        the create was refused, or when that last send fails.
+        the create was refused, or when that last send fails. ``started``: when the create started, by the local
+        clock. ``pushed_by_another``: whether a GitHub issue, by number, is another embry0 issue's (#620).
         """
-        started = datetime.now(UTC)
         unknown: httpx.TransportError | None = None
         resp: httpx.Response | None = None
         try:
@@ -146,8 +177,10 @@ class GitHubSyncService:
             resp.raise_for_status()
             created: dict[str, Any] = resp.json()
             return created
-        await self._sleep(_LOOKUP_PAUSE_SECONDS)
-        read, made = await self._issue_made_since(repo, payload, started)
+        await self._sleep(LOOKUP_PAUSE_SECONDS)
+        read, made = await self._issue_made_since(
+            repo, payload, made_since(started, answered_at(resp)), pushed_by_another
+        )
         if made is not None:
             logger.info("github_issue_found_after_an_unknown_outcome", repo=repo, github_number=made.get("number"))
             return made
@@ -163,23 +196,29 @@ class GitHubSyncService:
         return again
 
     async def _issue_made_since(
-        self, repo: str, payload: dict[str, Any], started: datetime
+        self,
+        repo: str,
+        payload: dict[str, Any],
+        earliest: datetime,
+        pushed_by_another: Callable[[Any], Awaitable[bool]],
     ) -> tuple[bool, dict[str, Any] | None]:
         """Whether the issues could be read, and the one this token created in ``repo`` with ``payload``'s title and
-        body, at most ``_LOOKUP_MARGIN`` before ``started`` (None when there is none).
+        body, no earlier than ``earliest`` (``embry0.forge_lookup.made_since``), and that no other embry0 issue
+        pushed (None when there is none).
 
         As the question comment's lookup does (``embry0.notifications.github_comment``): only the token's own issue
         counts, since a person's, or another finding's from the same template, can carry the same words; and only
         one created in the window, since GitHub's ``since`` selects by update time, which an old issue's edit moves.
         The match assumes GitHub stores the title and body as sent, so both sides' line endings and trailing
-        whitespace are normalised first. One page of 100 issues is read: a repository that took more in those
-        minutes is not read past them. When the token's user or the issues cannot be read, the outcome stays
-        unknown.
+        whitespace are normalised first. One page of 100 issues is read, newest first: a repository that took more
+        in those minutes is not read past them. When the token's user, the issues or their links cannot be read,
+        the outcome stays unknown; when the user cannot be read, the issues are not listed.
         """
-        earliest = started - _LOOKUP_MARGIN
         try:
             who = await self._client.get("/user", repo=repo)
             login = str((who.json() or {}).get("login") or "") if who.status_code == 200 else ""
+            if not login:
+                return False, None
             resp = await self._client.get(
                 f"/repos/{repo}/issues",
                 repo=repo,
@@ -192,22 +231,27 @@ class GitHubSyncService:
                 },
             )
             listed = resp.json() if resp.status_code == 200 else None
+            if not isinstance(listed, list):
+                return False, None
+            for item in listed:
+                if not isinstance(item, dict) or "pull_request" in item:
+                    continue
+                created = forge_time(item.get("created_at"))
+                author = str((item.get("user") or {}).get("login") or "")
+                if created is None or created < earliest or author.lower() != login.lower():
+                    continue
+                if not (
+                    _same_text(item.get("title"), payload.get("title"))
+                    and _same_text(item.get("body"), payload.get("body"))
+                ):
+                    continue
+                if await pushed_by_another(item.get("number")):
+                    logger.info("github_issue_lookup_skipped_linked_elsewhere", repo=repo, number=item.get("number"))
+                    continue
+                return True, item
         except Exception:
             logger.warning("github_issue_lookup_failed", repo=repo, exc_info=True)
             return False, None
-        if not login or not isinstance(listed, list):
-            return False, None
-        for item in listed:
-            if not isinstance(item, dict) or "pull_request" in item:
-                continue
-            created = _when(item.get("created_at"))
-            author = str((item.get("user") or {}).get("login") or "")
-            if created is None or created < earliest or author.lower() != login.lower():
-                continue
-            if _same_text(item.get("title"), payload.get("title")) and _same_text(
-                item.get("body"), payload.get("body")
-            ):
-                return True, item
         return True, None
 
     async def push_update(self, issue_id: str, issues_repo: IssuesRepository) -> dict[str, Any] | None:
@@ -265,7 +309,7 @@ class GitHubSyncService:
         if action == "opened":
             if existing:
                 return {"status": "ignored", "reason": "issue already exists"}
-            issue_id = await create_tracked_issue(issues_repo, issue, created_by="webhook")
+            issue_id = await create_tracked_issue(issues_repo, issue, created_by=_OPENED_BY_WEBHOOK)
             dispatched = False
             if matching_triggers(issue.labels, triggers):
                 # A row created moments ago is always `open`.
@@ -291,7 +335,7 @@ class GitHubSyncService:
             # than dropped — before this, the only way to start a job from a
             # label was to have the label present at creation time.
             if action == "labeled" and matching_triggers(issue.labels, triggers):
-                issue_id = await create_tracked_issue(issues_repo, issue, created_by="webhook-label")
+                issue_id = await create_tracked_issue(issues_repo, issue, created_by=_LABELED_BY_WEBHOOK)
                 dispatched = await start_triage(
                     issue_id,
                     IssueStatus.OPEN,

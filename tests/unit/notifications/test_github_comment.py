@@ -1,5 +1,6 @@
 """Test GitHub-comment outbound channel."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -297,16 +298,22 @@ def _comment_forge(
     *,
     unreadable: str = "",
     earlier: tuple[str, ...] = ("bot-two-days-ago", "bot-two-days-ago-edited-now", "person-now"),
+    older: int = 0,
+    skew: Any = None,
 ):
     """GitHub for one issue. The first comment POST meets ``first``: "made-502" or "made-503" (GitHub made the
     comment and answered 5xx), "made-lost" (made, its answer lost), or "not-made-502" (answered 502 before it was
     made). Later POSTs make the comment. ``earlier``: identical comments already on the issue when the first POST
     comes: "bot-two-days-ago" (the token's own, before the window), "bot-two-days-ago-edited-now" (the same, but
-    edited now, so GitHub's ``since``, which reads the update time, lists it) and "person-now" (a person's, inside
-    the window).
-    ``unreadable``: "comments" or "user" cannot be read. The list honours ``since`` as GitHub does (updated at)."""
+    edited now, so GitHub's ``since``, which reads the update time, lists it), "bot-seven-minutes-ago" (the token's
+    own, a post seven minutes before) and "person-now" (a person's, inside the window). ``older``: that many other
+    comments, two days old, come before them. ``skew``: how far GitHub's clock runs ahead of this host's (a
+    timedelta), which every timestamp and every answer's ``Date`` header follow.
+    ``unreadable``: "comments" or "user" cannot be read. The list is GitHub's: oldest first, ``per_page`` at a time
+    (30 unless asked), and only the comments updated since ``since``."""
     import json
     from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
 
     import httpx
 
@@ -314,6 +321,12 @@ def _comment_forge(
 
     def stamp(when: datetime) -> str:
         return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def github_now() -> datetime:
+        return datetime.now(UTC) + (skew or timedelta(0))
+
+    def answer(status: int, **kwargs: Any) -> httpx.Response:
+        return httpx.Response(status, headers={"Date": format_datetime(github_now(), usegmt=True)}, **kwargs)
 
     comments: list[dict] = []
     seen: list[str] = []
@@ -332,31 +345,36 @@ def _comment_forge(
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(f"{request.method} {request.url.path.rsplit('/', 1)[-1]}")
         if request.method == "GET" and request.url.path == "/user":
-            return httpx.Response(500) if unreadable == "user" else httpx.Response(200, json={"login": _BOT})
+            return answer(500) if unreadable == "user" else answer(200, json={"login": _BOT})
         if request.method == "GET":
             if unreadable == "comments":
-                return httpx.Response(500)
+                return answer(500)
             since = request.url.params.get("since") or ""
-            return httpx.Response(200, json=[c for c in comments if c["updated_at"] >= since])
+            page = int(request.url.params.get("per_page") or 30)
+            return answer(200, json=[c for c in comments if c["updated_at"] >= since][:page])
         body = json.loads(request.content)["body"]
         posts = sum(1 for s in seen if s.startswith("POST"))
         if posts == 1:
-            now = datetime.now(UTC)
+            now = github_now()
+            for n in range(older):
+                comments.append(comment(f"an older comment {n}", "a-person", now - timedelta(days=2)))
             if "bot-two-days-ago" in earlier:
                 comments.append(comment(body, _BOT, now - timedelta(days=2)))
             if "bot-two-days-ago-edited-now" in earlier:
                 comments.append(comment(body, _BOT, now - timedelta(days=2), edited=now))
+            if "bot-seven-minutes-ago" in earlier:
+                comments.append(comment(body, _BOT, now - timedelta(minutes=7)))
             if "person-now" in earlier:
                 comments.append(comment(body, "a-person", now))
         if posts == 1 and first == "not-made-502":
-            return httpx.Response(502)
-        made = comment(body, _BOT, datetime.now(UTC))
+            return answer(502)
+        made = comment(body, _BOT, github_now())
         comments.append(made)
         if posts == 1 and first in ("made-502", "made-503"):
-            return httpx.Response(int(first[-3:]))
+            return answer(int(first[-3:]))
         if posts == 1 and first == "made-lost":
             raise httpx.ReadTimeout("the answer was lost", request=request)
-        return httpx.Response(201, json=made)
+        return answer(201, json=made)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.github.test")
     channel = GitHubCommentChannel(http_client=client, dashboard_base_url="https://x", sleep=sleeps)
@@ -364,6 +382,7 @@ def _comment_forge(
 
 
 def _ours_in_the_window(comments: list[dict]) -> int:
+    """The token's comments of the last hour, a post seven minutes before included."""
     from datetime import UTC, datetime, timedelta
 
     recent = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -406,6 +425,46 @@ async def test_an_outcome_the_comments_cannot_tell_is_not_posted_again(unreadabl
     with pytest.raises((TransientSendError, httpx.HTTPError)):
         await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
     assert sum(1 for s in seen if s.startswith("POST")) == 1 and _ours_in_the_window(comments) == 1, seen
+    if unreadable == "user":
+        assert seen == ["POST comments", "GET user"], f"the comments were listed without a login to match: {seen}"
+
+
+@pytest.mark.asyncio
+async def test_a_comment_github_made_on_a_long_issue_is_found_past_its_first_page():
+    """#620: GitHub lists an issue's comments oldest first. With 150 older comments on the issue, the first page of
+    100 holds only old ones; the lookup lists those made since a few minutes before the post, so the fresh one is
+    on it, and it is not posted again."""
+    channel, comments, seen, _ = _comment_forge("made-502", older=150)
+    await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+    assert seen == ["POST comments", "GET user", "GET comments"], seen
+    assert _ours_in_the_window(comments) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_comment_github_made_is_found_when_this_hosts_clock_runs_ahead():
+    """#620: this host's clock runs ten minutes ahead of GitHub's. By the local clock the comment GitHub made was
+    made before the window; by the 502's Date header, GitHub's clock, it was made inside it, and is found."""
+    from datetime import timedelta
+
+    channel, comments, seen, _ = _comment_forge("made-502", skew=-timedelta(minutes=10))
+    await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+    assert seen == ["POST comments", "GET user", "GET comments"], f"posted twice: {seen}"
+    assert _ours_in_the_window(comments) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_post_is_not_taken_for_this_one_when_this_hosts_clock_runs_behind():
+    """#620: this host's clock runs ten minutes behind GitHub's, and the token posted the same comment seven minutes
+    before, by GitHub's clock. By the local clock that post falls inside the window; by the 502's Date header it is
+    an earlier post, and the comment GitHub did not make is posted once more."""
+    from datetime import timedelta
+
+    channel, comments, seen, _ = _comment_forge(
+        "not-made-502", skew=timedelta(minutes=10), earlier=("bot-seven-minutes-ago",)
+    )
+    await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+    assert seen == ["POST comments", "GET user", "GET comments", "POST comments"], seen
+    assert _ours_in_the_window(comments) == 2, "the earlier post was taken for this one"
 
 
 @pytest.mark.asyncio
