@@ -1357,7 +1357,8 @@ class IssueExecutor:
                 logger.warning("cancel_status_recheck_failed", job_id=job_id, exc_info=True)
 
         try:
-            await self._jobs.update(job_id, status="cancelled", **({"error_message": reason} if reason else {}))
+            reason_field: dict[str, Any] = {"error_message": reason} if reason else {}
+            await self._jobs.update(job_id, status="cancelled", **reason_field)
             await self._finish_credential_uses(job_id, error_code="cancelled")
             await self._announce_finished(job_id)
         except StatusTransitionConflict:
@@ -1548,6 +1549,7 @@ class IssueExecutor:
         # #349: a resumed run that raised after pushing its branch still
         # gets its PR; the carried facts (#482) name the branch.
         pr_url, _ = await self._open_fallback_pr(issue_id, job_id, last_state or {}, error_code=code.value)
+        pr_field: dict[str, Any] = {"pr_url": pr_url} if pr_url else {}
         # Spec 2026-11-10: a resumed map that raised leaves no document; its proposal says why first.
         await _executor_outcomes.finish_areas_map(
             self, job_id, (last_state or {}).get("areas_proposal_id"), None, str(exc)
@@ -1563,7 +1565,7 @@ class IssueExecutor:
                 float((last_state or {}).get("total_cost_usd") or 0.0),
             ),
             budget_overrun_usd=_executor_run._overrun_of(exc, last_state),
-            **({"pr_url": pr_url} if pr_url else {}),
+            **pr_field,
         )
         await self._finish_credential_uses(job_id, error_code=code.value)
         await self._announce_finished(job_id)

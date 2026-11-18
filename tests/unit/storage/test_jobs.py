@@ -374,26 +374,29 @@ async def test_fail_orphaned_says_a_queued_job_never_started(jobs_repo: JobsRepo
     assert {queued_row["error_code"], running_row["error_code"]} == {"ERR_ORPHANED"}
 
 
-# ---- #348: the gate refusal is the one pending -> failed transition ----------
+# ---- #348, #588: only a writer that never marked the job running may fail it from pending ----
 
 
 @pytest.mark.asyncio
-async def test_a_budget_refusal_may_fail_a_pending_job(jobs_repo: JobsRepository):
+@pytest.mark.parametrize("error_code", ["ERR_BUDGET_REFUSED", "ERR_STORAGE", "ERR_UNKNOWN", None])
+async def test_a_failure_before_start_may_fail_a_pending_job(jobs_repo: JobsRepository, error_code: str | None):
+    """Whatever its code: the writer says the job never started."""
     job_id = await jobs_repo.create(repo="a/b", task="t")
+    fields = {"error_code": error_code} if error_code else {}
 
-    await jobs_repo.update(job_id, status=JobStatus.FAILED, error_code="ERR_BUDGET_REFUSED", error_message="refused")
+    await jobs_repo.update(job_id, status=JobStatus.FAILED, error_message="refused", before_start=True, **fields)
 
     job = await jobs_repo.get(job_id)
     assert job is not None
-    assert (job["status"], job["started_at"]) == ("failed", None)
+    assert (job["status"], job["started_at"], job["error_code"]) == ("failed", None, error_code)
     assert job["finished_at"] is not None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error_code", [None, "ERR_BUDGET_OVERRUN", "ERR_UNKNOWN"])
-async def test_no_other_failure_may_skip_running(jobs_repo: JobsRepository, error_code: str | None):
-    """The exception is keyed on the refusal code; every other failure of a
-    pending job is still an invalid transition."""
+@pytest.mark.parametrize("error_code", [None, "ERR_BUDGET_REFUSED", "ERR_STORAGE", "ERR_UNKNOWN"])
+async def test_no_other_write_may_skip_running(jobs_repo: JobsRepository, error_code: str | None):
+    """A code does not open the way: a write that does not say the job never started is still an invalid
+    transition, the refusal's and a storage failure's codes included."""
     job_id = await jobs_repo.create(repo="a/b", task="t")
     fields = {"error_code": error_code} if error_code else {}
 
@@ -401,6 +404,31 @@ async def test_no_other_failure_may_skip_running(jobs_repo: JobsRepository, erro
         await jobs_repo.update(job_id, status=JobStatus.FAILED, **fields)
 
     assert (await jobs_repo.get(job_id))["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_before_start_opens_only_pending_to_failed(jobs_repo: JobsRepository):
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+
+    with pytest.raises(ValueError, match="pending -> completed"):
+        await jobs_repo.update(job_id, status=JobStatus.COMPLETED, before_start=True)
+
+    assert (await jobs_repo.get(job_id))["status"] == "pending"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ended", ["cancelled", "completed"])
+async def test_before_start_never_fails_a_job_that_left_pending(jobs_repo: JobsRepository, ended: str):
+    """A job cancelled (or ended) meanwhile is not the writer's to fail: the flag opens failed only from pending."""
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+    if ended == "completed":
+        await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+    await jobs_repo.update(job_id, status=ended, error_message="stopped by a person")
+
+    with pytest.raises(ValueError, match=f"{ended} -> failed"):
+        await jobs_repo.update(job_id, status=JobStatus.FAILED, error_code="ERR_UNKNOWN", before_start=True)
+
+    assert (await jobs_repo.get(job_id))["status"] == ended
 
 
 def test_the_transition_table_itself_still_forbids_pending_to_failed():

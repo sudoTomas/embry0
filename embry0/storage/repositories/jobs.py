@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from embry0.safety.error_codes import ErrorCode
 from embry0.storage.database import DatabasePool, StoredValueTooDeep, read_jsonb_text
 from embry0.storage.repositories.gate_refusal import gate_refusal_sql
 from embry0.storage.schemas import JobStatus
@@ -68,25 +67,18 @@ VALID_JOB_TRANSITIONS: dict[str, set[str]] = {
     JobStatus.PR_CLOSED: {JobStatus.PR_MERGED, JobStatus.COMPLETED},
 }
 
-# #348: the runtime paths from PENDING straight to FAILED, each for a job that
-# never ran and must not carry a started_at it did not earn. The dispatch
-# budget gate is asked before a job is marked running (ERR_BUDGET_REFUSED).
-# And any storage failure before the job starts fails it (ERR_STORAGE): a
-# Postgres error, a lost connection included, or a stored value too deep to
-# read (#527). There is no retry: the job fails with the reason, and a person
-# runs it again, rather than staying pending until a restart. Narrow on
-# purpose: only a write carrying one of these codes may take it, so every
-# other failure still has to pass through RUNNING. Kept out of the table above
-# because the table cannot express the condition.
-_FAILED_BEFORE_START_CODES = frozenset({ErrorCode.BUDGET_REFUSED.value, ErrorCode.STORAGE.value})
 
-
-def _is_gate_refusal(current_status: str, new_status: str, fields: dict[str, Any]) -> bool:
-    return (
-        current_status == JobStatus.PENDING
-        and new_status == JobStatus.FAILED
-        and fields.get("error_code") in _FAILED_BEFORE_START_CODES
-    )
+# #348, #588: a job that fails before it starts goes from PENDING straight to
+# FAILED: it never ran and must not carry a started_at it did not earn. The
+# writer says so (``update(..., before_start=True)``): the dispatch budget
+# gate's refusal, and a run's own error handler for anything it caught before
+# it marked the job running (a refusal, a row it could not read, a gate that
+# raised), whatever the failure's code. There is no retry: the job fails with
+# the reason, and a person runs it again, rather than staying pending until a
+# restart. Every other write still has to pass through RUNNING. Kept out of
+# the table above because the table cannot express the condition.
+def _fails_before_start(current_status: str, new_status: str, *, before_start: bool) -> bool:
+    return before_start and current_status == JobStatus.PENDING and new_status == JobStatus.FAILED
 
 
 # RAV-1271: statuses a live job terminates into. Entering any of these must
@@ -526,13 +518,16 @@ class JobsRepository:
         count = await self._db.fetchval(f"SELECT COUNT(*) FROM jobs j {join} WHERE {' AND '.join(conditions)}", *args)
         return int(count or 0)
 
-    async def update(self, job_id: str, **fields: Any) -> None:
+    async def update(self, job_id: str, *, before_start: bool = False, **fields: Any) -> None:
         """Update specific fields on a job. Validates status transitions.
 
         When a status transition is requested, uses a compare-and-swap UPDATE
         (WHERE status=$expected RETURNING job_id) to eliminate the read-then-write
         race. Raises StatusTransitionConflict if no row is updated (another
         writer changed the status concurrently).
+
+        ``before_start``: the writer never marked this job running, so a job
+        still pending may go straight to failed, whatever its code (#348, #588).
         """
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
         if not valid:
@@ -560,7 +555,9 @@ class JobsRepository:
 
             else:
                 allowed = VALID_JOB_TRANSITIONS.get(current_status, set())
-                if new_status not in allowed and not _is_gate_refusal(current_status, new_status, valid):
+                if new_status not in allowed and not _fails_before_start(
+                    current_status, new_status, before_start=before_start
+                ):
                     logger.warning(
                         "invalid_job_status_transition",
                         job_id=job_id,
@@ -694,9 +691,10 @@ class JobsRepository:
         ``interrupted_code`` / ``interrupted_message`` when given, so a
         deploy-killed job reads as one.
 
-        Deliberately set-based and outside per-row transition validation
-        (pending -> failed is not a runtime transition): at startup nothing
-        races, and the WHERE clause is its own from-state guard. Lives here so
+        Deliberately set-based and outside per-row transition validation (a
+        runtime write takes pending -> failed only when it says the job never
+        started, #588): at startup nothing races, and the WHERE clause is its
+        own from-state guard. Lives here so
         the lifecycle knowledge stays in the repository layer (RAV-1063).
 
         Being raw SQL, it carries the terminal-status invariant itself

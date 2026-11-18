@@ -1622,6 +1622,10 @@ gate itself refused, so an in-run hard stop counts (#331). Reaching a cap fails 
 job with `ERR_BUDGET_REFUSED`, writes a `job.budget_refused` audit row naming
 the limit, returns the issue to `open` so a later trigger still works, and
 posts the outcome to the originating tracker. A cap of `0` means unlimited.
+The refused job goes from `pending` straight to `failed`, with no `started_at`.
+So does a job whose runner fails for any other reason before it marks the job
+running, such as a gate that raises or a job row it cannot read, with that
+failure's own code (#588).
 
 **Background calls outside a job (#164).** The proposal and job briefs and the
 Slop-O-Meter's judgments ask their model directly, through
