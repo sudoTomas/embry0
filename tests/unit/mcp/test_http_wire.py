@@ -8,8 +8,10 @@ recorded against mcp 1.30 before the port to mcp 2 (#503) and must not move:
 - ``MCP_ALLOWED_HOSTS`` unset: any Host is served (the service sits behind
   nginx on arbitrary hostnames). Set: only those hosts, anything else 421,
   and any Origin header 403 (no origins are allowlisted).
-- No bearer: 401 at the door. A wrong bearer gets through the door, and the
-  orchestrator's own 401 reaches the caller as the tool's error text.
+- No bearer: 401 at the door. A bearer the orchestrator does not take: 401
+  at the door too, before ``initialize``, the tool or prompt lists or any
+  call (until #599's review it got through to them); one it cannot check
+  now: 503.
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ def _orchestrator(request: httpx.Request) -> httpx.Response:
     """A fake orchestrator that, like the real one, refuses any other key."""
     if request.headers.get("authorization") != f"Bearer {GOOD_KEY}":
         return httpx.Response(401, json={"detail": "Invalid or missing API key"})
+    if request.url.path == "/api/v1/tools":
+        return httpx.Response(200, json=[])
     if request.url.path == "/api/v1/health/ready":
         return httpx.Response(200, json={"status": "ready"})
     if request.url.path == "/api/v1/jobs":
@@ -166,16 +170,48 @@ async def test_the_door_runs_before_the_host_check(monkeypatch):
     assert status == 401
 
 
-async def test_a_wrong_key_gets_the_orchestrators_401_as_the_tool_error(monkeypatch):
+DISCOVERY = [
+    ("initialize", {"protocolVersion": PROTOCOL, "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    ("tools/list", {}),
+    ("prompts/list", {}),
+    ("prompts/get", {"name": "setup"}),
+    ("tools/call", {"name": "job_list", "arguments": {}}),
+]
+
+
+@pytest.mark.parametrize(("method", "params"), DISCOVERY)
+async def test_a_key_the_orchestrator_does_not_take_is_served_nothing(monkeypatch, method, params):
     async with _endpoint(monkeypatch, allowed_hosts=None) as http:
-        status, body = await _rpc(
-            http, "tools/call", {"name": "job_list", "arguments": {}}, authorization="Bearer emb_wrong-key"
-        )
-    assert status == 200
-    assert _tool_text(body) == (
-        True,
-        "Error executing tool job_list: embry0 API error 401: Invalid or missing API key",
-    ), "the orchestrator's refusal must reach the caller verbatim"
+        status, body = await _rpc(http, method, params, authorization="Bearer emb_wrong-key")
+    assert (status, body) == (401, {"error": "unauthorized", "detail": "the embry0 API does not take this key"}), (
+        f"{method} answered a key the orchestrator refuses: {status} {body}"
+    )
+
+
+@pytest.mark.parametrize(("method", "params"), DISCOVERY[:3])
+async def test_a_key_the_orchestrator_takes_is_served_discovery(monkeypatch, method, params):
+    async with _endpoint(monkeypatch, allowed_hosts=None) as http:
+        status, body = await _rpc(http, method, params)
+    assert status == 200 and "result" in body, body
+    if method == "tools/list":
+        assert len(body["result"]["tools"]) > 50, "the key sees the tool surface"
+
+
+@pytest.mark.parametrize("answer", [500, "unreachable"])
+async def test_a_key_the_orchestrator_cannot_check_gets_503(monkeypatch, answer):
+    def upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/tools":
+            if answer == "unreachable":
+                raise httpx.ConnectError("refused")
+            return httpx.Response(answer, json={"detail": "boom"})
+        return _orchestrator(request)
+
+    async with _endpoint(monkeypatch, allowed_hosts=None, upstream=upstream) as http:
+        status, body = await _rpc(http, "tools/list")
+    assert (status, body) == (
+        503,
+        {"error": "unavailable", "detail": "the embry0 API could not check this key; try again"},
+    )
 
 
 async def test_the_callers_key_is_what_the_orchestrator_sees(monkeypatch):
@@ -190,7 +226,7 @@ async def test_the_callers_key_is_what_the_orchestrator_sees(monkeypatch):
     assert status == 200
     assert _tool_text(body)[0] is False, body
     assert body["result"]["structuredContent"] == {"status": "ready"}
-    assert seen == [f"Bearer {GOOD_KEY}"]
+    assert seen == [f"Bearer {GOOD_KEY}", f"Bearer {GOOD_KEY}"], "the key check, then the tool's own call"
 
 
 # --------------------------------------------------------------- what is shown

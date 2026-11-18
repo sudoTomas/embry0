@@ -191,6 +191,18 @@ class Embry0Client:
     async def health(self) -> dict[str, Any]:
         return _as_dict(await self._request("GET", "/api/v1/health/ready"))
 
+    async def key_accepted(self) -> bool:
+        """Whether the orchestrator takes the key this request carries: ``GET /tools``, behind the same
+        authentication as every route a tool calls, which reads nothing else. False on its 401; any other failure
+        raises :class:`Embry0APIError`, as it says nothing about the key."""
+        try:
+            await self._request("GET", "/api/v1/tools")
+        except Embry0APIError as exc:
+            if exc.status_code == 401:
+                return False
+            raise
+        return True
+
     async def stats(self) -> dict[str, Any]:
         return _as_dict(await self._request("GET", "/api/v1/stats"))
 
