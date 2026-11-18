@@ -25,6 +25,7 @@ ambiguous. The cast does NOT cause double-encoding; only manual
 import asyncio
 import json
 import re
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -63,9 +64,20 @@ def _jsonb_decoder(value: str) -> Any:
     (``inf``, which JSON cannot write), and an ``int`` that long cannot be
     written out either. Only a value that holds one is read a second time, so
     every other value is read by the one ``json.loads`` call it always was.
+
+    ``json.loads`` reads a number with a fraction by ``float()``, which gives
+    ``inf`` for one past a ``float``'s range (309 integer digits or more;
+    Postgres writes every number in full, with no exponent) and raises nothing.
+    JSON cannot write ``inf``, so a route with no response model answered 500
+    and one with a response model served it as ``null`` (#537). Such a number is
+    read as its text, a ``str``, as such an integer is. ``parse_float`` runs
+    only for a number with a fraction, so a value with none is read exactly as
+    before; one with them pays a Python call each, about 0.1 µs. NaN and the
+    infinities never reach it: JSON has no such numbers, and Postgres stores
+    none in a JSONB value.
     """
     try:
-        return json.loads(value)
+        return json.loads(value, parse_float=_float_or_digits)
     except RecursionError:
         return _loads_deep(value)
     except json.JSONDecodeError:
@@ -73,7 +85,7 @@ def _jsonb_decoder(value: str) -> Any:
     except ValueError:
         # Not malformed text, which is a JSONDecodeError: an integer past int's digit limit (#523).
         try:
-            return json.loads(value, parse_int=_int_or_digits)
+            return json.loads(value, parse_int=_int_or_digits, parse_float=_float_or_digits)
         except RecursionError:
             return _loads_deep(value)
 
@@ -103,6 +115,16 @@ def _int_or_digits(digits: str) -> int | str:
         return int(digits)
     except ValueError:
         return digits
+
+
+_FLOAT_MAX = sys.float_info.max
+
+
+def _float_or_digits(text: str) -> float | str:
+    """The float ``text`` spells, or ``text`` itself when it is past a float's range, which ``float()`` reads as
+    ``inf`` (#537)."""
+    value = float(text)
+    return value if -_FLOAT_MAX <= value <= _FLOAT_MAX else text
 
 
 _WHITESPACE = " \t\n\r"
@@ -216,7 +238,7 @@ def _loads_deep(text: str) -> Any:
                 if number is not None:
                     whole, fraction, exponent = number.groups()
                     if fraction or exponent:
-                        value = float(whole + (fraction or "") + (exponent or ""))
+                        value = _float_or_digits(whole + (fraction or "") + (exponent or ""))
                     else:
                         value = _int_or_digits(whole)
                     i = number.end()

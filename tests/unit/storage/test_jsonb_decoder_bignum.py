@@ -70,22 +70,35 @@ def test_malformed_text_with_such_an_integer_is_still_refused(text: str) -> None
         _jsonb_decoder(text)
 
 
-def test_an_ordinary_value_is_read_by_one_plain_json_loads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The common path is the call it always was: no second pass, no ``parse_int`` callback slowing it."""
+def test_an_ordinary_value_is_read_by_one_json_loads_with_no_callback_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The common path is one ``json.loads`` call, and no callback runs for a value with no fractional number: #537's
+    ``parse_float`` runs once per number with a fraction, where a ``parse_int`` would run for every integer."""
     calls: list[dict[str, Any]] = []
+    fractions: list[str] = []
     loads = json.loads
+    convert = database._float_or_digits
 
     def counted(text: str, **kwargs: Any) -> Any:
         calls.append(kwargs)
         return loads(text, **kwargs)
 
+    def counted_fraction(text: str) -> Any:
+        fractions.append(text)
+        return convert(text)
+
     monkeypatch.setattr(database.json, "loads", counted)
-    assert _jsonb_decoder('{"a": [1, 2.5, "x", null], "n": 12345678901234567890}')["n"] == 12345678901234567890
-    assert calls == [{}], f"an ordinary value is read differently: {calls}"
+    monkeypatch.setattr(database, "_float_or_digits", counted_fraction)
+    assert _jsonb_decoder('{"a": [1, "x", null], "n": 12345678901234567890}')["n"] == 12345678901234567890
+    assert [set(c) for c in calls] == [{"parse_float"}] and fractions == [], (
+        f"a value with no fractional number is read differently: {calls}, {fractions}"
+    )
+    calls.clear()
+    assert _same(_jsonb_decoder('{"a": [1, 2.5]}'), {"a": [1, 2.5]})
+    assert len(calls) == 1 and fractions == ["2.5"], f"the callback runs once per fraction: {calls}, {fractions}"
     calls.clear()
     _jsonb_decoder(f'{{"n": {TOO_LONG}}}')
     assert len(calls) == 2 and "parse_int" in calls[1], f"only a value holding such an integer is read again: {calls}"
     calls.clear()
     with pytest.raises(json.JSONDecodeError):
         _jsonb_decoder('{"n": 1')
-    assert calls == [{}], f"text that is not JSON is not read again: {calls}"
+    assert len(calls) == 1, f"text that is not JSON is not read again: {calls}"
