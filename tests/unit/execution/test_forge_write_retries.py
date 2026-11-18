@@ -112,6 +112,12 @@ async def test_retry_transient_false_keeps_only_the_retries_that_cannot_repeat_a
 #: a note, a pull request) never belongs here.
 SAFE_TO_REPEAT = {
     ("embry0/services/github_prs.py", "/labels"): "adding a label the pull request has adds nothing",
+    ("embry0/services/github_prs.py", "/pulls"): (
+        "GitHub refuses a second open request for the same head and base (422), and the opener finds the first"
+    ),
+    ("embry0/services/gitlab_mrs.py", "/merge_requests"): (
+        "GitLab refuses a second open request for the same branches (409), and the opener finds the first"
+    ),
     ("embry0/services/unfinished_note.py", "/labels"): "adding a label the pull request has adds nothing",
     ("embry0/services/verification_publish.py", "/labels"): "adding a label the pull request has adds nothing",
     ("embry0/services/leads/reviews.py", "/graphql"): "a GraphQL query, sent as a POST: a read",
@@ -145,3 +151,81 @@ def test_every_write_that_opts_in_to_repeats_is_one_that_is_safe_to_repeat() -> 
     assert SAFE_TO_REPEAT.keys() - opted == set(), (
         f"listed but no longer opting in: {sorted(SAFE_TO_REPEAT.keys() - opted)}"
     )
+
+
+# ---- opening a pull request: a create the forge made but answered 5xx is found, not lost ---------------------
+
+
+def _a_forge_that_makes_the_pull_then_fails(answer: str) -> tuple[Callable[[httpx.Request], httpx.Response], list]:
+    """GitHub, for one branch: the first create makes the pull request and answers 502 or loses its answer; a
+    second is refused as a duplicate, as GitHub does; the lookup lists what is open."""
+    pulls: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/repos/o/r":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.method == "GET" and request.url.path == "/repos/o/r/pulls":
+            return httpx.Response(200, json=list(pulls))
+        if request.method == "POST" and request.url.path == "/repos/o/r/pulls":
+            if pulls:
+                return httpx.Response(
+                    422,
+                    json={
+                        "message": "Validation Failed",
+                        "errors": [{"message": "A pull request already exists for o:fix."}],
+                    },
+                )
+            pulls.append({"html_url": "https://github.com/o/r/pull/9", "number": 9})
+            if answer == "502":
+                return httpx.Response(502)
+            raise httpx.ReadTimeout("the answer was lost", request=request)
+        raise AssertionError(f"unexpected {request.method} {request.url}")
+
+    return handler, pulls
+
+
+@pytest.mark.parametrize("answer", ["502", "lost"])
+async def test_a_pull_request_github_made_but_answered_badly_is_found(answer: str) -> None:
+    from embry0.services.github_prs import ensure_pr_for_branch
+
+    handler, pulls = _a_forge_that_makes_the_pull_then_fails(answer)
+    url = await ensure_pr_for_branch(
+        repo="o/r",
+        branch="fix",
+        title="t",
+        body="b",
+        github_token="t",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    assert url == "https://github.com/o/r/pull/9", f"the pull request GitHub made is not found: {url}"
+    assert len(pulls) == 1
+
+
+@pytest.mark.parametrize("answer", ["502", "lost"])
+async def test_a_merge_request_gitlab_made_but_answered_badly_is_found(answer: str) -> None:
+    from embry0.execution.gitlab_client import GitLabClient
+    from embry0.services.gitlab_mrs import ensure_mr_for_branch
+
+    mrs: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            if mrs:
+                return httpx.Response(409, json={"message": ["Another open merge request already exists"]})
+            mrs.append({"web_url": "https://gitlab.com/o/r/-/merge_requests/9", "iid": 9})
+            if answer == "502":
+                return httpx.Response(502)
+            raise httpx.ReadTimeout("the answer was lost", request=request)
+        if "/merge_requests" in str(request.url):
+            return httpx.Response(200, json=list(mrs))
+        return httpx.Response(200, json={"default_branch": "main"})
+
+    async def _sleep(_seconds: float) -> None:
+        return None
+
+    client = GitLabClient(
+        default_token="t", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)), sleep=_sleep
+    )
+    url = await ensure_mr_for_branch(repo="o/r", branch="fix", title="t", body="b", client=client)
+    assert url == "https://gitlab.com/o/r/-/merge_requests/9", f"the merge request GitLab made is not found: {url}"
+    assert len(mrs) == 1

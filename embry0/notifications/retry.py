@@ -29,7 +29,7 @@ from typing import NoReturn
 import httpx
 import structlog
 
-from embry0.execution.forge_client import MAX_BACKOFF_SECONDS, rate_limited, retry_after_seconds
+from embry0.execution.forge_client import MAX_BACKOFF_SECONDS, NOT_SENT_ERRORS, rate_limited, retry_after_seconds
 
 logger = structlog.get_logger(__name__)
 
@@ -46,11 +46,17 @@ class SendError(Exception):
 
 
 class TransientSendError(SendError):
-    """Worth another attempt — a 429, a 5xx, or a dropped connection."""
+    """Worth another attempt — a 429, a 5xx, or a dropped connection.
 
-    def __init__(self, reason: str, *, retry_after: float | None = None) -> None:
+    ``refused``: the target refused the send for its rate (a 429, or a 4xx
+    carrying a rate-limit signal), so it did not act on it; after a 5xx that
+    is unknown (#45).
+    """
+
+    def __init__(self, reason: str, *, retry_after: float | None = None, refused: bool = False) -> None:
         super().__init__(reason)
         self.retry_after = retry_after
+        self.refused = refused
 
 
 class PermanentSendError(SendError):
@@ -84,8 +90,9 @@ def classify_response(response: httpx.Response) -> NoReturn:
     Call this only on a response already judged a failure — it always raises.
     """
     status = response.status_code
-    if status == 429 or status >= 500 or (400 <= status < 500 and rate_limited(response)):
-        raise TransientSendError(f"http_{status}", retry_after=advertised_delay(response))
+    refused = status == 429 or (400 <= status < 500 and rate_limited(response))
+    if refused or status >= 500:
+        raise TransientSendError(f"http_{status}", retry_after=advertised_delay(response), refused=refused)
     raise PermanentSendError(f"http_{status}")
 
 
@@ -96,6 +103,7 @@ async def send_with_retry[T](
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     backoff_seconds: float = DEFAULT_BACKOFF_SECONDS,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    repeatable: bool = True,
 ) -> T:
     """Call ``attempt`` until it succeeds or the transient budget is spent.
 
@@ -111,6 +119,12 @@ async def send_with_retry[T](
     (``permanent=True``) — an alert keyed on that event must not miss the
     drops that never got as far as a retry. Delays are capped at
     :data:`MAX_BACKOFF_SECONDS`, advertised and computed alike.
+
+    ``repeatable=False`` is for a send that must not be made twice (#45), such
+    as a GitHub comment: one the target made but answered 5xx, or whose
+    answer was lost, would be posted again. It is sent again only when the
+    target did not act on it: a rate-limit refusal, or a connection that never
+    opened (``NOT_SENT_ERRORS``).
     """
     number = 0
     while True:
@@ -128,7 +142,8 @@ async def send_with_retry[T](
             raise
         except (TransientSendError, httpx.HTTPError) as exc:
             reason = exc.reason if isinstance(exc, SendError) else type(exc).__name__
-            if number >= max_attempts:
+            not_acted_on = (isinstance(exc, TransientSendError) and exc.refused) or isinstance(exc, NOT_SENT_ERRORS)
+            if number >= max_attempts or not (repeatable or not_acted_on):
                 logger.error(
                     "notification_failed",
                     channel=channel,

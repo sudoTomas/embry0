@@ -159,6 +159,9 @@ async def ensure_mr_for_branch(
             await _labels_or_say_so(client, repo=repo, iid=found.get("iid"), labels=labels, diagnostics=diagnostics)
             return existing
 
+        # Safe to send again (#45): GitLab refuses a second open request for the same branches (the 409 below),
+        # and the opener then finds the one the first request made. Sent once, a create GitLab made but answered
+        # 502 would read as no merge request.
         resp = await client.post(
             client.project_path(repo, "/merge_requests"),
             repo=repo,
@@ -169,6 +172,7 @@ async def ensure_mr_for_branch(
                 "description": body,
                 "remove_source_branch": False,
             },
+            retry_transient=True,
         )
         if resp.status_code in (200, 201):
             created: dict[str, Any] = resp.json()

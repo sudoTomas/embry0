@@ -275,18 +275,44 @@ _RETRY_QUESTIONS = [{"question": "Q?", "input_id": "inp-1"}]
 
 
 @pytest.mark.asyncio
-async def test_github_channel_posts_once_after_two_transient_failures():
+async def test_github_channel_posts_once_after_two_rate_limit_refusals():
     import httpx
 
     sleeps = _Sleeps()
     channel, seen = _retry_channel(
-        [httpx.Response(503), httpx.Response(503), httpx.Response(201, json={"html_url": "https://x"})],
+        [httpx.Response(429), httpx.Response(429), httpx.Response(201, json={"html_url": "https://x"})],
         sleeps,
     )
     await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
 
     assert len(seen) == 3
     assert len(sleeps.delays) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["502", "503", "lost"])
+async def test_github_channel_posts_a_comment_github_may_have_made_once(answer: str):
+    """#45: GitHub may have made the comment it answered 5xx, or whose answer was lost: it is not posted twice.
+    The failure stays visible, as an exhausted budget's does."""
+    import httpx
+
+    from embry0.notifications.github_comment import GitHubCommentChannel
+    from embry0.notifications.retry import TransientSendError
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if answer == "lost":
+            raise httpx.ReadTimeout("the answer was lost", request=request)
+        return httpx.Response(int(answer))
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.github.test")
+    channel = GitHubCommentChannel(http_client=client, dashboard_base_url="https://x", sleep=_Sleeps())
+    with pytest.raises((TransientSendError, httpx.ReadTimeout)):
+        await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+
+    assert len(seen) == 1, f"a comment answered {answer} was posted {len(seen)} times"
 
 
 @pytest.mark.asyncio
@@ -328,7 +354,7 @@ async def test_github_channel_raises_once_the_transient_budget_is_spent():
     from embry0.notifications.retry import TransientSendError
 
     sleeps = _Sleeps()
-    channel, seen = _retry_channel([httpx.Response(503)], sleeps)
+    channel, seen = _retry_channel([httpx.Response(429)], sleeps)
     with pytest.raises(TransientSendError):
         await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
 

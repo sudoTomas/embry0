@@ -186,7 +186,9 @@ class GitHubCommentChannel:
             # try; a permanent 4xx is logged above and swallowed, as it was
             # before #252. Exhausted transients propagate so the failure stays
             # visible — dispatch_to_channels isolates it per channel.
-            return await send_with_retry(attempt, channel="github_comment", sleep=self._sleep)
+            # Not repeatable (#45): a comment GitHub made but answered 5xx, or whose answer was lost, would be
+            # posted twice. Sent again only after a rate-limit refusal or a connection that never opened.
+            return await send_with_retry(attempt, channel="github_comment", sleep=self._sleep, repeatable=False)
         except PermanentSendError:
             return None
         except Exception as exc:

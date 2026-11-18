@@ -241,3 +241,44 @@ async def test_send_with_retry_logs_notification_failed_when_the_budget_runs_out
     assert len(failures) == 1
     assert failures[0]["attempts"] == 3
     assert failures[0]["permanent"] is False
+
+
+# ---- #45: a send that must not be made twice ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "refused"),
+    [(429, {}, True), (403, {"X-RateLimit-Remaining": "0"}, True), (500, {}, False), (503, {}, False)],
+    ids=["429", "rate-limited-403", "500", "503"],
+)
+def test_a_transient_failure_says_whether_the_target_refused_it(status, headers, refused) -> None:
+    with pytest.raises(TransientSendError) as raised:
+        classify_response(_response(status, headers))
+    assert raised.value.refused is refused
+
+
+@pytest.mark.parametrize(
+    ("failure", "attempts"),
+    [
+        (TransientSendError("http_429", refused=True), 3),
+        (httpx.ConnectError("never connected"), 3),
+        (httpx.ConnectTimeout("never connected"), 3),
+        (TransientSendError("http_503"), 1),
+        (httpx.ReadTimeout("the answer was lost"), 1),
+        (httpx.RemoteProtocolError("the answer was dropped"), 1),
+    ],
+    ids=["429", "connect-error", "connect-timeout", "503", "read-timeout", "dropped-answer"],
+)
+async def test_a_send_that_is_not_repeatable_is_sent_again_only_when_it_was_not_acted_on(failure, attempts) -> None:
+    calls: list[int] = []
+
+    async def attempt(number: int) -> None:
+        calls.append(number)
+        raise failure
+
+    async def _sleep(_delay: float) -> None:
+        return None
+
+    with pytest.raises(type(failure)):
+        await send_with_retry(attempt, channel="test", sleep=_sleep, repeatable=False)
+    assert len(calls) == attempts, f"{type(failure).__name__}: {len(calls)} attempts"
