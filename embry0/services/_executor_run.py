@@ -198,6 +198,7 @@ async def _refuse_if_over_budget(
             error_message=decision.public_message,
             error_code=ErrorCode.BUDGET_REFUSED.value,
             finished_at=datetime.now(UTC),
+            before_start=True,
         )
         await self._finish_credential_uses(job_id, error_code=ErrorCode.BUDGET_REFUSED.value)
         await self._announce_finished(job_id)
@@ -258,6 +259,7 @@ async def _run_onboard_workflow(
         logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
 
     final_state: dict[str, Any] | None = None
+    marked_running = False
     try:
         # #348: ask the gate before the job is marked running — a refused
         # job never ran and must not carry a started_at.
@@ -267,6 +269,7 @@ async def _run_onboard_workflow(
             return
 
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+        marked_running = True
 
         initial_state: dict[str, Any] = {
             "job_id": job_id,
@@ -365,6 +368,7 @@ async def _run_onboard_workflow(
                 error_message=f"onboard workflow crashed: {exc}"[:4000],
                 error_code=crash_code,
                 finished_at=datetime.now(UTC),
+                before_start=not marked_running,
             )
             await self._finish_credential_uses(job_id, error_code=crash_code)
             await self._announce_finished(job_id)
@@ -459,7 +463,7 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
         job_row = await self._jobs.get(job_id)
     except Exception as exc:
         # The review's frozen config is its row's (#551): a review that cannot read it does not start, and fails
-        # with the read's error, below, as any storage error that escapes a run does (ERR_STORAGE).
+        # with the read's error, below, classified as what the read raised (#588).
         unread = exc
     try:
         trace_id = (job_row or {}).get("trace_id")
@@ -471,12 +475,14 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
 
     review = dict((job_row or {}).get("pipeline_config") or {})
     sink: dict[str, Any] = {}
+    marked_running = False
     try:
         if unread is not None:
             raise JobRowUnreadable(unread) from unread
         if await self._refuse_if_over_budget(job_id, actor=(job_row or {}).get("dispatched_by")):
             return
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+        marked_running = True
 
         repo = str(review.get("repo") or (job_row or {}).get("repo") or "")
         initial_state: dict[str, Any] = {
@@ -545,6 +551,7 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
                 error_message=f"pr-review workflow crashed: {exc}"[:4000],
                 error_code=crash_code,
                 finished_at=datetime.now(UTC),
+                before_start=not marked_running,
             )
             await self._finish_credential_uses(job_id, error_code=crash_code)
             await self._announce_finished(job_id)
@@ -1352,14 +1359,14 @@ async def _announce_paused(self: IssueExecutor, issue_id: str | None, job_id: st
 class JobRowUnreadable(Exception):  # noqa: N818 - says what happened, as the job's error reads
     """A run or review could not read its own job row (#551), so it never started.
 
-    A storage failure (``ERR_STORAGE``), whatever the read raised: the job goes
-    from pending straight to failed, as one too deep to read does (#527).
+    Its code is what the read raised (#588): a Postgres error or a value too
+    deep to read is a storage failure (``ERR_STORAGE``), and anything else is
+    classified as itself. The job goes from pending straight to failed either way.
     """
-
-    error_code = ErrorCode.STORAGE
 
     def __init__(self, cause: BaseException) -> None:
         super().__init__(f"the job's row could not be read: {cause}")
+        self.error_code: ErrorCode = classify_failure(exc=cause)
 
 
 async def _run_workflow(
@@ -1384,8 +1391,8 @@ async def _run_workflow(
         job_row = await self._jobs.get(job_id)
     except Exception as exc:
         # A run that cannot read its own row does not start (#551): its config (a budget cap, models, tools) would
-        # be the defaults. It fails with the read's error, below, as any storage error that escapes a run does
-        # (ERR_STORAGE); a value too deep to read is one such error (#527).
+        # be the defaults. It fails with the read's error, below, classified as what the read raised (#588): a
+        # Postgres error or a value too deep to read (#527) is a storage failure (ERR_STORAGE).
         unread = exc
     try:
         trace_id = (job_row or {}).get("trace_id")
@@ -1401,6 +1408,7 @@ async def _run_workflow(
     # one — the failure path reads the sandbox handle and the cost from here
     # instead of destroying nothing and recording $0.00 (#246).
     streamed_state: dict[str, Any] = {}
+    marked_running = False
     try:
         if unread is not None:
             raise JobRowUnreadable(unread) from unread
@@ -1413,6 +1421,7 @@ async def _run_workflow(
             return
 
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+        marked_running = True
 
         initial_state = {
             "job_id": job_id,
@@ -1664,6 +1673,7 @@ async def _run_workflow(
                 float((last_state or {}).get("total_cost_usd") or 0.0),
             ),
             budget_overrun_usd=_overrun_of(exc, last_state),
+            before_start=not marked_running,
             **({"pr_url": pr_url} if pr_url else {}),
         )
         await self._finish_credential_uses(job_id, error_code=code.value)
@@ -1914,6 +1924,7 @@ async def _run_qa_workflow(
         logger.warning("trace_id_bind_failed", job_id=job_id, exc_info=True)
 
     final_state: dict[str, Any] | None = None
+    marked_running = False
     try:
         # #348: ask the gate before the job is marked running — a refused
         # job never ran and must not carry a started_at.
@@ -1921,6 +1932,7 @@ async def _run_qa_workflow(
             return
 
         await self._jobs.update(job_id, status="running", started_at=datetime.now(UTC))
+        marked_running = True
 
         qa_block: dict[str, Any] = {
             "needs_qa": True,
@@ -2125,6 +2137,7 @@ async def _run_qa_workflow(
             error_message=str(exc),
             error_code=crash_code,
             finished_at=datetime.now(UTC),
+            before_start=not marked_running,
             **spent,
         )
         await self._finish_credential_uses(job_id, error_code=crash_code)

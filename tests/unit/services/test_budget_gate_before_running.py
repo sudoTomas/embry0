@@ -101,3 +101,63 @@ async def test_an_allowed_job_is_marked_running_after_the_gate(db_with_migration
 
     assert seen.get("status") == JobStatus.RUNNING, f"{runner}: the workflow started on a {seen.get('status')!r} job"
     assert seen.get("started_at") is not None, f"{runner}: a running job has no started_at"
+
+
+# ---- #588: any failure before the job is marked running fails it, with its own code ----
+
+
+@pytest.mark.parametrize("error", [RuntimeError("budget section failed validation"), KeyError("daily_cap_usd")])
+@pytest.mark.parametrize("runner", RUNNERS)
+async def test_a_gate_that_raises_fails_the_job_before_it_starts(
+    db_with_migrations: DatabasePool, runner: str, error: Exception
+) -> None:
+    """A failure the runner's own error handler catches before it marked the job running ends the job failed, with
+    the failure's own code; the job no longer stays pending with no code because only a refusal or a storage error
+    could take pending -> failed."""
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="acme/widgets", task="t")
+    executor = _executor(jobs, allowed=True)
+    executor._budget_gate.check = AsyncMock(side_effect=error)
+    executor._traces.total_cost_for_job = AsyncMock(return_value=0.0)
+    stream = AsyncMock(return_value=(None, False, None))
+
+    with (
+        patch.object(executor, "_execute_workflow_stream", stream),
+        patch("embry0.services.issue_executor.emit_audit", new=AsyncMock()),
+    ):
+        await _run(executor, runner, job_id)
+
+    row = await jobs.get(job_id)
+    assert row is not None
+    assert row["status"] == JobStatus.FAILED, f"{runner}: the job was left {row['status']!r}"
+    assert row["error_code"] == ErrorCode.UNKNOWN.value, f"{runner}: code {row['error_code']!r}, not the failure's own"
+    assert str(error) in str(row["error_message"]), f"{runner}: the job does not say why: {row['error_message']!r}"
+    assert row["started_at"] is None and row["finished_at"] is not None, (
+        f"{runner}: started_at={row['started_at']}, finished_at={row['finished_at']}"
+    )
+    stream.assert_not_awaited()
+
+
+async def test_the_issue_of_a_job_that_failed_before_it_started_goes_back_to_open(
+    db_with_migrations: DatabasePool,
+) -> None:
+    from embry0.storage.repositories.issues import IssuesRepository
+
+    issues = IssuesRepository(db_with_migrations)
+    issue_id = await issues.create("Fix the idle timer", repo="acme/widgets")
+    await issues.update(issue_id, status="triaging")
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="acme/widgets", task="t", issue_id=issue_id)
+    executor = _executor(jobs, allowed=True)
+    executor._issues = issues
+    executor._budget_gate.check = AsyncMock(side_effect=RuntimeError("budget section failed validation"))
+    executor._traces.total_cost_for_job = AsyncMock(return_value=0.0)
+
+    with (
+        patch.object(executor, "_execute_workflow_stream", AsyncMock(return_value=(None, False, None))),
+        patch("embry0.services.issue_executor.emit_audit", new=AsyncMock()),
+    ):
+        await executor._run_workflow(issue_id, job_id, {"title": "t", "body": "", "repo": "acme/widgets"})
+
+    assert (await jobs.get(job_id) or {}).get("status") == JobStatus.FAILED
+    assert (await issues.get(issue_id) or {}).get("status") == "open", "the issue is left triaging"

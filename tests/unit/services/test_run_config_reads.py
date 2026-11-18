@@ -4,8 +4,9 @@
 catch-all meant for binding the trace id, and went on with no row: a person's
 budget cap, the job's models and tools were the defaults. The run's read of the
 repository's preferences was fail-open too. A failed read now fails the job
-before anything starts, with the read's error, as any storage error that escapes
-a run does (``ERR_STORAGE`` for a Postgres error).
+before anything starts, with the read's error, classified as what the read raised
+(#588): ``ERR_STORAGE`` for a Postgres error or a value too deep to read, and the
+code the rest of a run gives anything else.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 import asyncpg
 import pytest
 
+from embry0.safety.error_codes import classify_failure
+from embry0.storage.database import StoredValueTooDeep
 from tests.unit.services.test_failed_job_pr import PR, _executor, _patches
 
 
@@ -41,9 +44,12 @@ def _failed(ex: Any) -> dict[str, Any]:
     ("error", "code"),
     [
         (asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed"), "ERR_STORAGE"),
-        (ConnectionResetError("pool is down"), "ERR_STORAGE"),
+        (StoredValueTooDeep("jobs"), "ERR_STORAGE"),
+        # Classified as themselves (#588), as the precheck's reads are: not a storage outage.
+        (ConnectionResetError("pool is down"), "ERR_UNKNOWN"),
+        (AttributeError("'NoneType' object has no attribute 'get'"), "ERR_UNKNOWN"),
     ],
-    ids=["postgres", "connection"],
+    ids=["postgres", "too-deep", "connection", "bug"],
 )
 async def test_a_run_that_cannot_read_its_job_row_fails_before_it_starts(error: Exception, code: str) -> None:
     ex = _executor()
@@ -57,7 +63,8 @@ async def test_a_run_that_cannot_read_its_job_row_fails_before_it_starts(error: 
     assert started == [], "the workflow started without the job's row"
     failed = _failed(ex)
     assert str(error) in str(failed.get("error_message")), failed
-    assert failed.get("error_code") == code, f"a row it could not read is not a storage failure: {failed}"
+    assert failed.get("error_code") == code, f"the read's failure is not classified as what it is: {failed}"
+    assert failed.get("error_code") == classify_failure(exc=error).value, "the row read and the rest of a run disagree"
 
 
 @pytest.mark.asyncio
