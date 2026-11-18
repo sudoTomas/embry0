@@ -1,5 +1,7 @@
 """GitHub sync service — outbound push and inbound webhook processing."""
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -57,6 +59,30 @@ def _parse_issue(payload: dict[str, Any]) -> TrackerIssue | None:
     )
 
 
+#: How long before the create an issue the lookup finds may have been made (#613): the local clock and GitHub's
+#: may differ, and the create's own retries take time. As the question comment's lookup has it.
+_LOOKUP_MARGIN = timedelta(minutes=5)
+#: The pause before the lookup, so an issue GitHub made as the answer was lost shows in its list.
+_LOOKUP_PAUSE_SECONDS = 1.5
+
+
+def _when(value: Any) -> datetime | None:
+    """A GitHub timestamp (``2026-01-01T00:00:00Z``) as an aware datetime; None for anything else."""
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _same_text(stored: Any, sent: Any) -> bool:
+    """Whether GitHub's stored text is the text sent, line endings and trailing whitespace aside."""
+
+    def norm(text: Any) -> str:
+        return "\n".join(line.rstrip() for line in str(text or "").replace("\r\n", "\n").split("\n")).strip()
+
+    return norm(stored) == norm(sent)
+
+
 class GitHubSyncService:
     """Handles two-way sync between embry0 issues and GitHub issues."""
 
@@ -65,8 +91,10 @@ class GitHubSyncService:
         github_token: str | None = None,
         client: GitHubClient | None = None,
         credential_resolver: Any | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._token = github_token
+        self._sleep = sleep
         # Spec 2026-09-29 §3.1: issue write-back resolves through the registry
         # when wired; None keeps the pre-registry env lookup.
         self._client = client or GitHubClient(default_token=github_token or "", credential_resolver=credential_resolver)
@@ -118,6 +146,7 @@ class GitHubSyncService:
             resp.raise_for_status()
             created: dict[str, Any] = resp.json()
             return created
+        await self._sleep(_LOOKUP_PAUSE_SECONDS)
         read, made = await self._issue_made_since(repo, payload, started)
         if made is not None:
             logger.info("github_issue_found_after_an_unknown_outcome", repo=repo, github_number=made.get("number"))
@@ -136,27 +165,47 @@ class GitHubSyncService:
     async def _issue_made_since(
         self, repo: str, payload: dict[str, Any], started: datetime
     ) -> tuple[bool, dict[str, Any] | None]:
-        """Whether the newest issues of ``repo`` could be read, and the one among them with ``payload``'s title and
-        body, made since ``started`` (None when there is none)."""
-        since = (started - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        """Whether the issues could be read, and the one this token created in ``repo`` with ``payload``'s title and
+        body, at most ``_LOOKUP_MARGIN`` before ``started`` (None when there is none).
+
+        As the question comment's lookup does (``embry0.notifications.github_comment``): only the token's own issue
+        counts, since a person's, or another finding's from the same template, can carry the same words; and only
+        one created in the window, since GitHub's ``since`` selects by update time, which an old issue's edit moves.
+        The match assumes GitHub stores the title and body as sent, so both sides' line endings and trailing
+        whitespace are normalised first. One page of 100 issues is read: a repository that took more in those
+        minutes is not read past them. When the token's user or the issues cannot be read, the outcome stays
+        unknown.
+        """
+        earliest = started - _LOOKUP_MARGIN
         try:
+            who = await self._client.get("/user", repo=repo)
+            login = str((who.json() or {}).get("login") or "") if who.status_code == 200 else ""
             resp = await self._client.get(
                 f"/repos/{repo}/issues",
                 repo=repo,
-                params={"state": "all", "sort": "created", "direction": "desc", "since": since, "per_page": 30},
+                params={
+                    "state": "all",
+                    "sort": "created",
+                    "direction": "desc",
+                    "since": earliest.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "per_page": 100,
+                },
             )
             listed = resp.json() if resp.status_code == 200 else None
         except Exception:
             logger.warning("github_issue_lookup_failed", repo=repo, exc_info=True)
             return False, None
-        if not isinstance(listed, list):
+        if not login or not isinstance(listed, list):
             return False, None
         for item in listed:
-            if (
-                isinstance(item, dict)
-                and "pull_request" not in item
-                and item.get("title") == payload["title"]
-                and (item.get("body") or "") == (payload.get("body") or "")
+            if not isinstance(item, dict) or "pull_request" in item:
+                continue
+            created = _when(item.get("created_at"))
+            author = str((item.get("user") or {}).get("login") or "")
+            if created is None or created < earliest or author.lower() != login.lower():
+                continue
+            if _same_text(item.get("title"), payload.get("title")) and _same_text(
+                item.get("body"), payload.get("body")
             ):
                 return True, item
         return True, None

@@ -711,6 +711,25 @@ async def test_a_merge_github_made_behind_a_failed_answer_is_recorded_merged(
 
 
 @pg
+async def test_a_pr_merged_at_another_head_is_not_this_approvals_merge(db_with_migrations, github, notifier) -> None:
+    """Someone merged the PR at a head the approval did not check: the merge call is answered 405, and the PR reads
+    merged, but not at the asked head. The approval is not recorded merged, so its checks are not attached to code
+    they did not check."""
+    svc = _svc(db_with_migrations, github, notifier, merge_approval_mode="on")
+    row = await _ask(svc)
+
+    async def merged_elsewhere(repo: str, number: int, **kwargs: Any) -> MergeResult:
+        github.merge_calls.append({"repo": repo, "number": number, **kwargs})
+        github.pr.update(merged=True, state="closed", merge_commit_sha="e" * 40, head={"sha": NEW_HEAD, "ref": "x"})
+        return MergeResult(status_code=405, merged=False, message="Pull Request is not mergeable")
+
+    github.merge_pull = merged_elsewhere  # type: ignore[method-assign]
+    result = await _approve(svc, row["id"])
+    assert result["outcome"] == "failed" and "405" in result["detail"], result
+    assert notifier.names()[-1] == "merge.failed"
+
+
+@pg
 async def test_a_merge_call_that_raised_on_a_pr_it_cannot_read_again_fails(
     db_with_migrations, github, notifier
 ) -> None:

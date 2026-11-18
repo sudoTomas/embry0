@@ -741,6 +741,13 @@ class MergeApprovalService:
             return None
         if not (fresh and fresh.get("merged")):
             return None
+        merged_head = str((fresh.get("head") or {}).get("sha") or "")
+        if merged_head != row["head_sha"]:
+            # Merged at a head this approval did not check: not its merge, and its checks are not that code's.
+            logger.warning(
+                "merge_approval_merged_at_another_head", approval_id=row["id"], head=merged_head, asked=row["head_sha"]
+            )
+            return None
         done = await self._repo.finish(
             row["id"],
             status="merged",
