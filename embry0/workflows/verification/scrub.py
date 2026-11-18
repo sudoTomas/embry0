@@ -44,7 +44,7 @@ _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{16,}")
 def _redact_private_keys(text: str) -> str:
     """Every line of a PEM private key block as ``REDACTED``, so the output keeps its lines (#57): the BEGIN line
     alone was redacted, and the key's body lines stayed readable."""
-    return PRIVATE_KEY_BLOCK.sub(lambda m: "\n".join(REDACTED for _ in m.group(0).split("\n")), text)
+    return PRIVATE_KEY_BLOCK.sub(lambda m: "\n".join(REDACTED for _ in m.group(0).splitlines()), text)
 
 
 def _redact_assignments(line: str) -> str:

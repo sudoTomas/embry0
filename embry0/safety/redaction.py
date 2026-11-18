@@ -76,9 +76,13 @@ PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL
 )
 
-# A JWT's header and payload segments are BOUNDED. Unbounded, the first segment's class (which takes "-") ran to
-# the end of a run like "-eyJ-eyJ-eyJ..." from every start in it: quadratic, about 4 s for 200 KB. A header is
-# a short JSON object, and a payload of 16 KiB is far past any token's.
+# A JWT, in two rules. One may start only where a run of base64url characters starts (after a space, a quote,
+# a dot or the text's start), so it reads each run once and needs no bound: a header carrying a certificate
+# chain (x5c) or a long key id, or a payload of many claims, is redacted whole. The other (``_JWT``) takes a
+# start inside a run, glued to a word or after a hyphen, and bounds its header to 1,024 base64url characters
+# and its payload to 16,384 (about 12 KiB of JSON). Unbounded there, the first segment's class (which takes
+# "-") ran to the end of a run like "-eyJ-eyJ-eyJ..." from every start in it: quadratic, about 5 s for 200 KB.
+_JWT_AT_RUN_START = r"(?<![A-Za-z0-9_\-])eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"
 _JWT = r"eyJ[A-Za-z0-9_\-]{8,1024}\.[A-Za-z0-9_\-]{8,16384}\.[A-Za-z0-9_\-]{8,}"
 
 #: Known token formats, wherever they turn up: the rules :func:`redact_token_shapes` applies alone, for a redactor
@@ -94,6 +98,7 @@ _TOKEN_SHAPES: tuple[tuple[re.Pattern[str], _Replacement], ...] = (
     (re.compile(r"(?<![0-9])[0-9]{6,12}:[A-Za-z0-9_\-]{35}(?![A-Za-z0-9_\-])"), REDACTED),
     # A Slack incoming-webhook URL is its own credential: the path is the secret.
     (re.compile(r"(hooks\.slack\.com/(?:services|workflows|triggers)/)[A-Za-z0-9/_\-]{1,256}"), rf"\1{REDACTED}"),
+    (re.compile(_JWT_AT_RUN_START), REDACTED),
     (re.compile(rf"\b{_JWT}"), REDACTED),
     # A token glued to the word character before it (#57): "nghp_...", "keyglpat-...", "令牌ghp_...". No word
     # boundary precedes its prefix there, so the rules above never match it. The lookbehind is \w, as \b's is: a

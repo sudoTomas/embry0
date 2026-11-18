@@ -105,3 +105,16 @@ def test_a_private_key_block_is_redacted_line_by_line() -> None:
     text = "before\n" + begin + "\nMIIEowIBAAKCAQEA\nqKmtNdVq7xYz\n" + end + "\nafter"
     scrubbed = scrub_output(text)
     assert scrubbed.splitlines() == ["before", REDACTED, REDACTED, REDACTED, REDACTED, "after"], scrubbed
+
+
+def test_an_opaque_bearer_token_is_redacted() -> None:
+    """The scrubber's own bearer rule: a token of no known shape after "Bearer"."""
+    scrubbed = scrub_output("sent Bearer Zq8opaqueValueWithNoShape0123 to the API")
+    assert "Zq8opaque" not in scrubbed and REDACTED in scrubbed
+
+
+def test_a_private_key_block_with_lone_cr_line_ends_keeps_its_lines() -> None:
+    begin, end = "-----BEGIN RSA " + "PRIVATE KEY-----", "-----END RSA " + "PRIVATE KEY-----"
+    text = "before\r" + begin + "\rMIIEowIBAAKCAQEA\r" + end + "\rafter"
+    scrubbed = scrub_output(text)
+    assert scrubbed.splitlines() == ["before", REDACTED, REDACTED, REDACTED, "after"], scrubbed
