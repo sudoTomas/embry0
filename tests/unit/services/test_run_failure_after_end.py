@@ -308,3 +308,50 @@ async def test_a_pull_request_opened_for_a_resumed_job_cancelled_meanwhile_is_ke
     row = await jobs.get(job_id) or {}
     assert (row.get("status"), row.get("pr_url")) == ("cancelled", PR), dict(row)
     assert recorded == [PR] and seen["announced"] == [] and seen["cleaned"] == [job_id], (recorded, seen)
+
+
+def _late_write_fails(jobs: JobsRepository) -> None:
+    """The write of the pull request alone onto a job found ended hits a lost connection."""
+    write = jobs.update
+
+    async def update(job_id: str, **fields: Any) -> None:
+        if set(fields) == {"pr_url"}:
+            raise asyncpg.exceptions.ConnectionDoesNotExistError(LOST)
+        await write(job_id, **fields)
+
+    jobs.update = update  # type: ignore[method-assign]
+
+
+async def test_a_late_pull_request_it_cannot_write_raises_nothing(db_with_migrations: DatabasePool) -> None:
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="acme/widgets", task="t")
+    ex = _executor(jobs, allowed=True)
+    seen = _counting(ex)
+    recorded = _cancel_while_opening(ex, jobs, job_id)
+    _late_write_fails(jobs)
+
+    with (
+        patch.object(ex, "_execute_workflow_stream", AsyncMock(side_effect=RuntimeError("the sandbox went away"))),
+        patch("embry0.services.issue_executor.emit_audit", new=AsyncMock()),
+    ):
+        await ex._run_workflow(None, job_id, {"title": "t", "body": "", "repo": "acme/widgets"})  # raised before
+
+    assert (await jobs.get(job_id) or {}).get("status") == "cancelled"
+    assert recorded == [PR] and seen["cleaned"] == [job_id], (recorded, seen)
+
+
+async def test_a_late_pull_request_a_resume_cannot_write_raises_nothing(db_with_migrations: DatabasePool) -> None:
+    issues = IssuesRepository(db_with_migrations)
+    issue_id = await issues.create("Fix the idle timer", repo="acme/widgets")
+    jobs = JobsRepository(db_with_migrations)
+    job_id = await jobs.create(repo="acme/widgets", task="t", issue_id=issue_id)
+    await jobs.update(job_id, status="running")
+    ex = _executor(jobs, allowed=True)
+    ex._issues = issues
+    seen = _counting(ex)
+    recorded = _cancel_while_opening(ex, jobs, job_id)
+    _late_write_fails(jobs)
+
+    await ex._fail_resume(issue_id, job_id, RuntimeError("the sandbox went away"), None, {})
+
+    assert recorded == [PR] and seen["cleaned"] == [job_id], (recorded, seen)

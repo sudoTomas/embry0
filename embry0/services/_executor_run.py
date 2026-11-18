@@ -1727,8 +1727,12 @@ async def _run_workflow(
         )
         if pr_url and not failed:
             # #600: the job ended while its pull request was opened (a person cancelled it): the pull request is on
-            # the forge all the same, so the job keeps it, and its case ledger says it opened.
-            await self._jobs.update(job_id, pr_url=pr_url)
+            # the forge all the same, so the job keeps it, and its case ledger says it opened. Best-effort: the run
+            # still cleans up after itself, below, and raises nothing for a job that already ended.
+            try:
+                await self._jobs.update(job_id, pr_url=pr_url)
+            except Exception:
+                logger.warning("late_pr_url_write_failed", job_id=job_id, pr_url=pr_url, exc_info=True)
         if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
         # No issue, no status change to record (see _handle_workflow_result). A job that ended meanwhile had its

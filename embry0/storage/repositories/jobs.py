@@ -548,13 +548,17 @@ class JobsRepository:
         ``before_start``: the writer never marked this job running, so a job
         still pending may go straight to failed, whatever its code (#348, #588).
 
-        ``expected_status``: the statuses the writer may replace. A job in any
-        other status raises StatusTransitionConflict, and nothing is written:
-        the same-status write (``failed -> failed``) included, which would
-        otherwise replace another writer's code and message (#600). The check
-        is the compare-and-swap's own, so nothing changes in between.
+        ``expected_status``: the statuses a status write may replace. A job in
+        any other status raises StatusTransitionConflict, and nothing is
+        written: the same-status write (``failed -> failed``) included, which
+        would otherwise replace another writer's code and message (#600). The
+        write is a compare-and-swap on the status it checked, a same-status
+        write's too, so nothing changes in between. A write without a
+        ``status`` cannot name one (ValueError).
         """
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
+        if expected_status is not None and "status" not in valid:
+            raise ValueError(f"job {job_id}: expected_status names what a status write replaces; this write has none")
         if not valid:
             return
 
@@ -642,6 +646,18 @@ class JobsRepository:
                 )
             if new_status in _TERMINAL_STATUSES:
                 self._count_finished(result_row)
+        elif expected_status is not None:
+            # A same-status write that names what it may replace (#600): a compare-and-swap on the status checked
+            # above, as a status change is, so the job cannot leave it in between.
+            args.append(current_status)
+            written = await self._db.fetchval(
+                f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = $1 AND status = ${idx} RETURNING job_id",
+                *args,
+            )
+            if written is None:
+                raise StatusTransitionConflict(
+                    f"job {job_id}: expected status={current_status!r}; status already changed by concurrent writer"
+                )
         else:
             # No status change — plain UPDATE without CAS guard.
             await self._db.execute(
