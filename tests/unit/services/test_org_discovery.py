@@ -127,7 +127,8 @@ def test_hook_points_here_matches_only_this_deployment() -> None:
         ("https://embry0.example.community/api/v1/webhook", False),
         ("https://embry0.example.com:8443/api/v1/webhook", False),
         ("https://EMBRY0.Example.com/api/v1/webhook", True),
-        ("https://embry0.example.com:443/api/v1/webhook/", True),
+        ("https://embry0.example.com:443/api/v1/webhook", True),
+        ("https://embry0.example.com/api/v1/webhook/", False),
         ("https://embry0.example.com/api/v1/webhook?source=repo", True),
         ("https://embry0.example.com./api/v1/webhook", True),
         ("https://embry0.example.com/api/v1/webhook/gitlab", False),
@@ -141,7 +142,8 @@ def test_hook_points_here_matches_only_this_deployment() -> None:
         "look-alike-host",
         "another-port",
         "host-case",
-        "default-port-and-slash",
+        "default-port",
+        "trailing-slash",
         "query-string",
         "trailing-dot",
         "gitlab-route",
@@ -427,6 +429,7 @@ async def test_an_organization_hook_here_delivers_for_every_repository() -> None
         ({**ORG_HOOK, "config": {"url": "https://embry0.example.community/api/v1/webhook"}}, "absent"),
         ({**ORG_HOOK, "config": {"url": "https://embry0.example.com:8443/api/v1/webhook"}}, "absent"),
         ({**ORG_HOOK, "config": {"url": "https://embry0.example.com/api/v1/webhook/gitlab"}}, "absent"),
+        ({**ORG_HOOK, "config": {**ORG_HOOK["config"], "url": "https://embry0.example.com/api/v1/webhook/"}}, "absent"),
         ({**ORG_HOOK, "active": False}, "inert"),
         ({**ORG_HOOK, "events": ["push"]}, "inert"),
         ({**ORG_HOOK, "events": ["issues", "pull_request"]}, "inert"),
@@ -439,6 +442,7 @@ async def test_an_organization_hook_here_delivers_for_every_repository() -> None
         "longer-host",
         "another-port",
         "gitlab-path",
+        "trailing-slash",
         "switched-off",
         "push-only",
         "no-issue-comments",
@@ -668,13 +672,13 @@ async def test_an_outage_reading_the_hooks_is_unknown_not_hidden(status: int) ->
     [
         "https://embry0.example.com/api/v1/webhook?source=org",
         "https://EMBRY0.Example.com/api/v1/webhook",
-        "https://embry0.example.com:443/api/v1/webhook/",
+        "https://embry0.example.com:443/api/v1/webhook",
     ],
-    ids=["query-string", "host-case", "default-port-and-slash"],
+    ids=["query-string", "host-case", "default-port"],
 )
 async def test_an_organization_hook_at_the_target_written_otherwise_still_delivers(url: str) -> None:
-    """#591 review: the organization's hook is matched on its target, as a URL: a query string, a host's case, a
-    default port or a trailing slash leave it the same target, so it is not read as absent."""
+    """#591 review: the organization's hook is matched on its target, as a URL: a query string, a host's case or a
+    default port leave it the same target, so it is not read as absent. A trailing slash does not (#612)."""
     f = forge_with_sites()
     f.routes["/orgs/acme/hooks"] = _Resp(200, [{**ORG_HOOK, "config": {**ORG_HOOK["config"], "url": url}}])
     found = await discover(

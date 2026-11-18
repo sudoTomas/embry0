@@ -178,12 +178,11 @@ def same_origin(url: str, origin: str) -> bool:
 
 
 def same_target(url: str, target: str) -> bool:
-    """Whether ``url`` posts to ``target``: on the same origin (:func:`same_origin`) and at the same path (a trailing
-    slash aside), whatever its query. Not a prefix: a look-alike or longer host, another port or another path (the
-    GitLab route under it) is another target."""
-    return same_origin(url, target) and urlsplit(url.strip()).path.rstrip("/") == urlsplit(target.strip()).path.rstrip(
-        "/"
-    )
+    """Whether ``url`` posts to ``target``: on the same origin (:func:`same_origin`) and at the same path, whatever
+    its query. Not a prefix: a look-alike or longer host, another port or another path (the GitLab route under it) is
+    another target, and so is the route with a trailing slash, which the app answers with a redirect GitHub does not
+    follow on a delivery (#612)."""
+    return same_origin(url, target) and urlsplit(url.strip()).path == urlsplit(target.strip()).path
 
 
 def hooks_pointing_at(hooks: list[OrgHook], target: str) -> list[OrgHook]:

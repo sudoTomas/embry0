@@ -178,7 +178,8 @@ def hook_points_here(hooks: list[Any], origins: tuple[str, ...]) -> bool:
     (``<origin>/api/v1/webhook``), matched as the organization's hook is
     (:func:`embry0.services.org_webhooks.same_target`): a longer host that starts with an origin's text is another
     host, a host in other case or with a trailing dot, or a query, the same target; and another route on the same
-    host (the GitLab or Linear one, which refuse GitHub's deliveries) is another target (#603)."""
+    host (the GitLab or Linear one, which refuse GitHub's deliveries) is another target (#603), and so is the route
+    with a trailing slash, which gets a redirect GitHub does not follow on a delivery (#612)."""
     targets = [hook_target(origin) for origin in origins if origin]
     for hook in hooks:
         if not isinstance(hook, dict):
