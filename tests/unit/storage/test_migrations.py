@@ -24,13 +24,12 @@ def test_every_migration_test_gets_a_schema_migrated_from_empty(request: pytest.
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_run_migrations_creates_tables():
-    """Running migrations creates all expected tables."""
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
+async def test_run_migrations_creates_tables(db_with_migrations: DatabasePool):
+    """Running migrations on an empty schema creates all expected tables. The shared fixture gives the database;
+    migrating the schema as found replayed every migration after a test that leaves tables and no ledger."""
+    db = db_with_migrations
+    await db.execute("DROP SCHEMA public CASCADE")
+    await db.execute("CREATE SCHEMA public")
     await run_migrations(db)
 
     # Verify core tables exist
@@ -46,25 +45,17 @@ async def test_run_migrations_creates_tables():
     assert "audit_log" in table_names
     assert "job_logs" in table_names
 
-    await db.close()
-
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_run_migrations_is_idempotent():
-    """Running migrations twice does not error."""
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
+async def test_run_migrations_is_idempotent(db_with_migrations: DatabasePool):
+    """Running migrations again on a migrated database does not error."""
+    db = db_with_migrations
     await run_migrations(db)
     await run_migrations(db)  # Second run should be no-op
 
     version = await db.fetchval("SELECT MAX(version) FROM embry0_migrations")
     assert version == len(MIGRATIONS)
-
-    await db.close()
 
 
 @pytest.mark.requires_postgres

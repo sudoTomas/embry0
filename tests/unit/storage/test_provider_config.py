@@ -1,24 +1,15 @@
 import pytest
 
 from embry0.storage.database import DatabasePool
-from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
 pytestmark = pytest.mark.requires_postgres
 
 
 @pytest.fixture
-async def provider_repo() -> ProviderConfigRepository:
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    # Reset table state so tests that check env-fallback (no DB row) pass in any order.
-    await db.execute("DELETE FROM provider_config")
-    yield ProviderConfigRepository(db)
-    await db.close()
+async def provider_repo(db_with_migrations: DatabasePool) -> ProviderConfigRepository:
+    """On the shared database fixture: no row an earlier test left, so the env fallback is what each test reads."""
+    return ProviderConfigRepository(db_with_migrations)
 
 
 @pytest.mark.asyncio

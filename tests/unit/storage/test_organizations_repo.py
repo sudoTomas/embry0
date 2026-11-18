@@ -1,39 +1,24 @@
-import os
-
 import pytest
 
 from embry0.services.org_discovery import RepoFacts
 from embry0.storage.database import DatabasePool
-from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.org_repos import WEBHOOK_DELIVERY_IDS_KEPT, OrgReposRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
 
 pytestmark = pytest.mark.requires_postgres
 
 
+# The shared database fixture (tests/fixtures/postgres.py): a schema as migrating an empty one leaves it, whatever
+# test ran before. Running the migrations on the schema as found replayed every one of them after a test that leaves
+# tables and no migration ledger, and failed at the first that cannot run twice.
 @pytest.fixture
-async def orgs_repo() -> OrganizationsRepository:
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    await db.execute("DELETE FROM org_repo_facts")
-    await db.execute("DELETE FROM org_discovery_runs")
-    await db.execute("DELETE FROM organizations")
-    yield OrganizationsRepository(db)
-    await db.close()
+async def orgs_repo(db_with_migrations: DatabasePool) -> OrganizationsRepository:
+    return OrganizationsRepository(db_with_migrations)
 
 
 @pytest.fixture
-async def facts_repo() -> OrgReposRepository:
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    await db.execute("DELETE FROM org_repo_facts")
-    await db.execute("DELETE FROM org_discovery_runs")
-    yield OrgReposRepository(db)
-    await db.close()
+async def facts_repo(db_with_migrations: DatabasePool) -> OrgReposRepository:
+    return OrgReposRepository(db_with_migrations)
 
 
 @pytest.mark.asyncio
