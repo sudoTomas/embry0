@@ -9,6 +9,8 @@ The plugin's MCP server is `<url>/mcp` with the header `Authorization: Bearer <a
 
 ## 1. Check
 
+First the URL: `claude plugin configure embry0@embry0` shows the options without the key. A `url` that starts with `http://` on any host but `localhost`, `127.0.0.1` or `[::1]` sends the key across the network in clear, in every request. Stop and tell the person: set an https origin with `/plugin configure embry0@embry0`, then revoke the key on the dashboard (Settings, then API keys) and make a new one, since it may have been seen. Claude Code does not check the option itself.
+
 Look for the plugin's tools: names that start with `mcp__plugin_embry0_embry0__` (Claude Code names them after the plugin name, then the server name in the plugin's `.mcp.json`).
 
 - They exist: call `health`, then `stats`. `health` answers when the deployment is up; `stats` needs a valid key. The server answers 401 to a request without a key, and lists its tools for any non-empty key, valid or not, so a connected server alone does not prove the key works. Report both results, the deployment's `total_jobs` and `queue_depth`, and stop here.

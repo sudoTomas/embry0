@@ -22,6 +22,10 @@ When the plugin is enabled, its dialog asks for the deployment's URL (default `h
 
 The plugin's tools are named `mcp__plugin_embry0_embry0__<tool>`, and its MCP prompt is `/mcp__plugin_embry0_embry0__setup`. To change the URL or the key later: `/plugin configure embry0@embry0`, then check with `/mcp` that the server reconnected (restart Claude Code if it did not, and always after `claude plugin configure` in a terminal). For a new host, see [provisioning](ops/provisioning.md).
 
+To uninstall: `/plugin uninstall embry0` removes the plugin and the key Claude Code stored for it. The admin key `/embry0:install` minted (named `claude-code-<host>`, valid for 365 days) stays valid on the deployment until you revoke it on the dashboard (Settings, then API keys); if you connected by hand too, run `claude mcp remove embry0` and delete `~/.config/embry0/api-key`.
+
+Claude Code sends the key to whatever `url` holds and the plugin cannot attach a check to the option, so the dialog takes plain http to any host. Use https unless the deployment is `localhost`, `127.0.0.1` or `[::1]`; `/embry0:connect` refuses any other plain http URL.
+
 ## Connect without the plugin
 
 ### What you need

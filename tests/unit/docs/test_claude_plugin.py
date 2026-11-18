@@ -630,3 +630,38 @@ def test_the_range_the_skill_names_is_the_compose_one() -> None:
     assert len(lines) == 4, f"the skill names four places in the compose file, found {len(lines)}"
     rootless = (ROOT / "infra" / "docker-compose.rootless.yml").read_text()
     assert "172.29.0." in rootless, "the rootless overlay no longer carries the range: drop it from the skill"
+
+
+def test_uninstalling_says_the_minted_key_stays_valid_until_revoked() -> None:
+    """#601 review: uninstalling the plugin deletes the key Claude Code stored, not the admin key the install minted
+    on the deployment. The README and the guide say so, with the name and the lifetime the install script gives it."""
+    script = _install_script("/api/v1/apikeys")
+    days = re.search(r'"expires_days": (\d+)', script)
+    assert days is not None and '"claude-code-' in _skill("install") + script, (
+        "the install's key name or lifetime moved"
+    )
+    for page in (PLUGIN_README.read_text(), GUIDE.read_text()):
+        uninstall = page[page.index("/plugin uninstall embry0") :]
+        for needed in (
+            "/plugin uninstall embry0",
+            "claude-code-<host>",
+            f"{days.group(1)} days",
+            "revoke",
+            "~/.config/embry0/api-key",
+        ):
+            assert needed in uninstall, f"the uninstall note lacks {needed!r}"
+
+
+def test_plain_http_to_another_host_is_refused_where_the_plugin_can_and_said_where_it_cannot() -> None:
+    """#601 review: Claude Code sends the key to whatever the url option holds, and the plugin cannot check the option.
+    The connect skill refuses plain http to any host but the machine itself; the option and the README say why."""
+    local = ("localhost", "127.0.0.1", "[::1]")
+    connect = _skill("connect")
+    check = connect[connect.index("## 1. Check") : connect.index("```bash")]
+    assert "http://" in check and all(host in check for host in local) and "Stop" in check, check
+    description = _json(PLUGIN / ".claude-plugin" / "plugin.json")["userConfig"]["url"]["description"]
+    assert "without checking it" in description and all(
+        host in description for host in ("localhost", "127.0.0.1", "[::1]")
+    )
+    readme = PLUGIN_README.read_text()
+    assert "cannot attach a check to the option" in readme and "`/embry0:connect` refuses" in readme

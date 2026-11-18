@@ -15,7 +15,7 @@
     "url": {
       "type": "string",
       "title": "embry0 URL",
-      "description": "The dashboard origin of the deployment, without a trailing slash: http://localhost:8200 on the machine that runs it, or its public origin over https (the key travels in a header). The MCP endpoint is /mcp on it.",
+      "description": "The dashboard origin of the deployment, without a trailing slash: http://localhost:8200 on the machine that runs it, or its public origin over https. The key travels in a header to this URL, and Claude Code sends it wherever the URL points without checking it: plain http is safe only to localhost, 127.0.0.1 or [::1]. The MCP endpoint is /mcp on it.",
       "default": "http://localhost:8200"
     },
     "api_key": {

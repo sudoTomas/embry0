@@ -18,7 +18,7 @@ When the plugin is enabled, its dialog asks for two options:
 
 | Option | What it is |
 |---|---|
-| `url` | The deployment's dashboard origin, without a trailing slash. Default `http://localhost:8200`, a deployment on the same machine. Use https for any other origin: the key travels in a header. |
+| `url` | The deployment's dashboard origin, without a trailing slash. Default `http://localhost:8200`, a deployment on the same machine. Use https for any other host: the key travels in a header to this URL. Claude Code sends it wherever the URL points and the plugin cannot attach a check to the option, so the dialog takes plain http to any host; `/embry0:connect` refuses one other than `localhost`, `127.0.0.1` or `[::1]`. |
 | `api_key` | An API key from the dashboard (Settings, then API keys): scope admin to set the deployment up, operate or read to use it. A sensitive option: the dialog masks it, and Claude Code keeps it out of the settings files, in the macOS keychain or elsewhere in `~/.claude/.credentials.json` (mode 600). Leave it empty if you have no deployment yet. |
 
 Change them later with `/plugin configure embry0@embry0`, then check with `/mcp` that the server reconnected; restart Claude Code if it did not. After `claude plugin configure` in a terminal, restart Claude Code.
@@ -32,6 +32,10 @@ Change them later with `/plugin configure embry0@embry0`, then check with `/mcp`
 | `/embry0:setup` | Sets a deployment up with you: model access, a forge credential, an organization and its repositories, webhooks, testing and spend limits. |
 
 The embry0 tools also answer plain requests, such as "what is in the queue" or "start a job for this issue". The guide is [docs/claude-code.md](../../docs/claude-code.md).
+
+## Uninstall
+
+`/plugin uninstall embry0` removes the plugin and the key Claude Code stored for it. The admin key the `install` skill minted stays valid on the deployment: it is named `claude-code-<host>` and expires after 365 days, so revoke it on the dashboard (Settings, then API keys). If you also connected by hand, run `claude mcp remove embry0` and delete `~/.config/embry0/api-key`.
 
 ## Change the plugin
 
