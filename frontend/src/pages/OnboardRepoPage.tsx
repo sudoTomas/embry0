@@ -197,7 +197,8 @@ export function OnboardRepoPage() {
           <div>
             <h3 className="text-sm font-semibold">Repository</h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Must be reachable with the configured GitHub token.
+              embry0 checks it on the forge it is registered on, GitHub or GitLab, with the account it has
+              there.
             </p>
           </div>
           <div className="space-y-1">
