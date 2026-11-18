@@ -682,6 +682,57 @@ async def test_a_pr_merged_outside_embry0_is_recorded_not_merged_again(db_with_m
     assert github.merge_calls == []
 
 
+# -- a merge GitHub made behind a failed answer (#613) ------------------------------------------------------
+
+
+@pg
+@pytest.mark.parametrize("answer", ["405-after-a-502", "lost-on-every-attempt"])
+async def test_a_merge_github_made_behind_a_failed_answer_is_recorded_merged(
+    db_with_migrations, github, notifier, answer: str
+) -> None:
+    """GitHub merged on the first attempt but answered 502: the retried PUT is answered 405, or every attempt's
+    answer is lost. The PR says it is merged, and the ask is recorded merged with its merge commit."""
+    import httpx
+
+    svc = _svc(db_with_migrations, github, notifier, merge_approval_mode="on")
+    row = await _ask(svc)
+
+    async def merges_then_fails(repo: str, number: int, **kwargs: Any) -> MergeResult:
+        github.merge_calls.append({"repo": repo, "number": number, **kwargs})
+        github.pr.update(merged=True, state="closed", merge_commit_sha="f" * 40)
+        if answer == "405-after-a-502":
+            return MergeResult(status_code=405, merged=False, message="Pull Request is not mergeable")
+        raise httpx.ReadTimeout("the answer was lost")
+
+    github.merge_pull = merges_then_fails  # type: ignore[method-assign]
+    result = await _approve(svc, row["id"])
+    assert (result["outcome"], result["merge_sha"]) == ("merged", "f" * 40), result
+    assert notifier.names()[-1] == "merge.completed"
+
+
+@pg
+async def test_a_merge_call_that_raised_on_a_pr_it_cannot_read_again_fails(
+    db_with_migrations, github, notifier
+) -> None:
+    import httpx
+
+    svc = _svc(db_with_migrations, github, notifier, merge_approval_mode="on")
+    row = await _ask(svc)
+
+    async def raises(repo: str, number: int, **kwargs: Any) -> MergeResult:
+        github.merge_calls.append({"repo": repo, "number": number, **kwargs})
+
+        async def unreadable(repo: str, number: int) -> dict[str, Any] | None:
+            raise httpx.ConnectError("github is gone")
+
+        github.get_pull = unreadable  # type: ignore[method-assign]
+        raise httpx.ReadTimeout("the answer was lost")
+
+    github.merge_pull = raises  # type: ignore[method-assign]
+    result = await _approve(svc, row["id"])
+    assert result["outcome"] == "failed" and "merge call failed" in result["detail"], result
+
+
 def test_an_unknown_mode_is_a_dry_run() -> None:
     svc = MergeApprovalService(repo=None, github=None, notifier=None, config=_config(merge_approval_mode="yes"))
     assert svc.mode == "dry_run"

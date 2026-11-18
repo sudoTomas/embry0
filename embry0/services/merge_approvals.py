@@ -703,6 +703,9 @@ class MergeApprovalService:
             )
         except Exception as exc:
             logger.warning("merge_approval_merge_call_failed", approval_id=approval_id, exc_info=True)
+            # #613: an answer lost in transit on every attempt may hide a merge GitHub made: the PR says.
+            if (merged := await self._merged_after_all(row, checks)) is not None:
+                return merged
             done = await self._repo.finish(approval_id, status="failed", detail=f"merge call failed: {exc}")
             self._emit("merge.failed", done or row)
             return self._result(done or row, "failed")
@@ -718,20 +721,34 @@ class MergeApprovalService:
 
         # A retried PUT can land after a merge that did go through; the PR
         # itself is the only reliable answer.
-        fresh = await self._github.get_pull(repo, number)
-        if fresh and fresh.get("merged"):
-            done = await self._repo.finish(
-                approval_id,
-                status="merged",
-                detail=checks.describe(),
-                merge_sha=str(fresh.get("merge_commit_sha") or "") or None,
-            )
-            self._emit("merge.completed", done or row, extra={"checks": checks.describe()})
-            return self._result(done or row, "merged")
+        if (merged := await self._merged_after_all(row, checks)) is not None:
+            return merged
         detail = f"GitHub refused the merge ({result.status_code}): {result.message or 'no reason given'}"
         done = await self._repo.finish(approval_id, status="failed", detail=detail)
         self._emit("merge.failed", done or row)
         return self._result(done or row, "failed")
+
+    async def _merged_after_all(self, row: dict[str, Any], checks: ChecksVerdict) -> dict[str, Any] | None:
+        """The merged result when the PR reads merged although the merge call did not say so; None otherwise.
+
+        A merge GitHub made can be answered 502, then 405 to the retried PUT, or lose its answer on every attempt:
+        the PR itself is the only reliable answer. Best-effort: a PR that cannot be read is not merged.
+        """
+        try:
+            fresh = await self._github.get_pull(row["repo"], int(row["pr_number"]))
+        except Exception:
+            logger.warning("merge_approval_reread_failed", approval_id=row["id"], exc_info=True)
+            return None
+        if not (fresh and fresh.get("merged")):
+            return None
+        done = await self._repo.finish(
+            row["id"],
+            status="merged",
+            detail=checks.describe(),
+            merge_sha=str(fresh.get("merge_commit_sha") or "") or None,
+        )
+        self._emit("merge.completed", done or row, extra={"checks": checks.describe()})
+        return self._result(done or row, "merged")
 
     async def _refuse(self, row: dict[str, Any], detail: str) -> dict[str, Any]:
         released = await self._repo.release(row["id"], detail=detail)

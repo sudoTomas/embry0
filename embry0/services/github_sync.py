@@ -1,8 +1,9 @@
 """GitHub sync service — outbound push and inbound webhook processing."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import structlog
 
 from embry0.execution.github_client import GitHubClient
@@ -85,9 +86,7 @@ class GitHubSyncService:
             return None
         repo = issue["repo"]
         payload = {"title": issue["title"], "body": issue.get("body", ""), "labels": issue.get("labels", [])}
-        resp = await self._client.post(f"/repos/{repo}/issues", repo=repo, json=payload)
-        resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
+        data = await self._create_issue(repo, payload)
         await issues_repo.update(
             issue_id,
             tracker=TRACKER,
@@ -97,6 +96,70 @@ class GitHubSyncService:
         )
         logger.info("github_issue_created", issue_id=issue_id, github_number=data["number"])
         return data
+
+    async def _create_issue(self, repo: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create the GitHub issue; the issue GitHub made.
+
+        The create is sent again only when GitHub did not act on it (#45). An unknown outcome (a 5xx, or an answer
+        lost in transit) may hide an issue GitHub made: the newest issues are read once for it (#613), and only
+        when it is not there is the create sent once more. When they cannot be read the outcome stays unknown, and
+        the create is not sent again, since it could make a second issue: the failure is raised. Raises too when
+        the create was refused, or when that last send fails.
+        """
+        started = datetime.now(UTC)
+        unknown: httpx.TransportError | None = None
+        resp: httpx.Response | None = None
+        try:
+            resp = await self._client.post(f"/repos/{repo}/issues", repo=repo, json=payload)
+        except httpx.TransportError as exc:
+            logger.warning("github_issue_create_outcome_unknown", repo=repo, exc_info=True)
+            unknown = exc
+        if resp is not None and resp.status_code < 500:
+            resp.raise_for_status()
+            created: dict[str, Any] = resp.json()
+            return created
+        read, made = await self._issue_made_since(repo, payload, started)
+        if made is not None:
+            logger.info("github_issue_found_after_an_unknown_outcome", repo=repo, github_number=made.get("number"))
+            return made
+        if not read:
+            logger.warning("github_issue_create_left_unknown", repo=repo)
+            if unknown is not None:
+                raise unknown
+            assert resp is not None  # noqa: S101 - one of the two is set
+            raise httpx.HTTPStatusError(f"GitHub answered {resp.status_code}", request=resp.request, response=resp)
+        resp = await self._client.post(f"/repos/{repo}/issues", repo=repo, json=payload)
+        resp.raise_for_status()
+        again: dict[str, Any] = resp.json()
+        return again
+
+    async def _issue_made_since(
+        self, repo: str, payload: dict[str, Any], started: datetime
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Whether the newest issues of ``repo`` could be read, and the one among them with ``payload``'s title and
+        body, made since ``started`` (None when there is none)."""
+        since = (started - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            resp = await self._client.get(
+                f"/repos/{repo}/issues",
+                repo=repo,
+                params={"state": "all", "sort": "created", "direction": "desc", "since": since, "per_page": 30},
+            )
+            listed = resp.json() if resp.status_code == 200 else None
+        except Exception:
+            logger.warning("github_issue_lookup_failed", repo=repo, exc_info=True)
+            return False, None
+        if not isinstance(listed, list):
+            return False, None
+        for item in listed:
+            if (
+                isinstance(item, dict)
+                and "pull_request" not in item
+                and item.get("title") == payload["title"]
+                and (item.get("body") or "") == (payload.get("body") or "")
+            ):
+                return True, item
+        return True, None
 
     async def push_update(self, issue_id: str, issues_repo: IssuesRepository) -> dict[str, Any] | None:
         """Push embry0 issue changes to GitHub."""
