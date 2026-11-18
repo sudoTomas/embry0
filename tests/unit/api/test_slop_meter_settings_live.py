@@ -150,6 +150,8 @@ def _meter(app: Any, clock: list[datetime]) -> SlopMeterLoop:
         token_for=token_for,
         client_for=no_client,
         bots=production._bots,  # noqa: SLF001
+        # The production reader, None if production passes none (and none before #575 took one).
+        **({"moved_bots": production._moved_bots} if hasattr(production, "_moved_bots") else {}),  # noqa: SLF001
         calls=fakes.FakeCalls(),
         limits=limits(commits_per_tick=100),
         areas_of=production._areas_of,  # noqa: SLF001 - the production reader is what this test pins
@@ -265,12 +267,16 @@ async def test_an_organization_s_bots_move_into_its_layer(app: Any, db_with_migr
     await db_with_migrations.execute(
         "UPDATE organizations SET settings = '{\"slop_meter_bots\": [\"ci-bot\"]}'::jsonb WHERE owner = 'globex'"
     )
-    read = await app.state.slop_meter._bots("globex/tools")  # noqa: SLF001 - the production bots reader
     from embry0.settings.sections.slop_meter import SLOP_METER
 
-    snapshot = await app.state.settings.snapshot()
-    listed = set(read) | set(snapshot.scoped(SLOP_METER).repo("globex/tools").bots)
+    production: SlopMeterLoop = app.state.slop_meter
+    assert production._moved_bots is not None, "production reads no organization's moved bots"  # noqa: SLF001
+    before = await app.state.settings.snapshot()
+    read = await production._moved_bots("globex/tools", before)  # noqa: SLF001 - the production moved-bots reader
+    listed = set(read) | set(before.scoped(SLOP_METER).repo("globex/tools").bots)
     assert "ci-bot" in listed, f"the owner's own bots count, from its row or its layer: {read}, {listed}"
+    after = await app.state.settings.snapshot()
+    assert "ci-bot" in after.scoped(SLOP_METER).repo("globex/tools").bots, "and its copy into its layer was retried"
 
 
 async def test_the_first_start_copies_each_organization_s_bots_into_its_layer(
@@ -314,3 +320,47 @@ async def test_a_moved_setting_the_section_refuses_is_refused_before_the_owner_i
     )
     assert posted.status_code == 422 and "slop_meter_bots" in posted.text, posted.text
     assert await app.state.organizations_repo.get("umbrella") is None, "nothing was registered"
+
+
+async def test_a_tick_scores_with_an_organization_s_bots_while_its_copy_is_retried(
+    app: Any, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#575: a tick reads its settings snapshot first, then each repository's bots. For an organization whose layer has
+    not imported its ``slop_meter_bots`` yet, the bots reader asks the budget policy, whose view retries the copy and
+    then reads the moved values from the snapshot taken after it: nothing, the layer has them now. The tick's own
+    snapshot was taken before the copy, so its section has none either, and the score was computed without them."""
+    await app.state.organizations_repo.register("globex", "github")
+    await db_with_migrations.execute(
+        "UPDATE organizations SET settings = '{\"slop_meter_bots\": [\"ci-bot\"]}'::jsonb WHERE owner = 'globex'"
+    )
+    scored_with: list[list[str]] = []
+    identities = loop_module.own_identities
+
+    def recorded(values: Any) -> Any:
+        scored_with.append(list(values))
+        return identities(values)
+
+    monkeypatch.setattr(loop_module, "own_identities", recorded)
+    meter = _meter(app, [NOW])
+
+    async def tick_inputs() -> list[str]:
+        """What a tick scores the repository with, read as a tick reads: one snapshot first, then its inputs."""
+        read = await meter._read()  # noqa: SLF001 - the production settings reader
+        take = getattr(meter, "_take", None)
+        if take is not None:
+            take(read)
+        else:  # main, before #575: the section alone
+            meter._meter = read.meter  # noqa: SLF001
+        await meter._inputs("globex/tools", read.meter.repo("globex/tools"))  # noqa: SLF001 - what a score is built from
+        return scored_with[-1]
+
+    first = await tick_inputs()
+    assert "ci-bot" in first, f"the owner's own bots are not among the bots its repository is scored with: {first}"
+    layer = await _call(app, "GET", URL, params={"owner": "globex"})
+    assert layer.json()["data"].get("slop_meter", {}).get("bots") == ["ci-bot"], "the copy was retried, and took"
+    # Once copied, the layer is what counts: an operator's change there wins over what the row still lists.
+    await _put(app, "slop_meter:\n  bots: [deploy-bot]\n", owner="globex")
+    second = await tick_inputs()
+    assert "deploy-bot" in second and "ci-bot" not in second, (
+        f"after the copy, the owner's row is read again over its layer: {second}"
+    )

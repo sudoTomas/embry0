@@ -139,6 +139,9 @@ class MeterRead:
     #: The ``slop_meter`` section: the deployment's values (whether and how often it reads), and each
     #: repository's (its organization's layer and its own over the deployment's).
     meter: PerRepository[SlopMeterSettings] = field(default_factory=_Defaults)
+    #: The snapshot all of it was read from, for what else a score reads as of it (an organization's moved bots,
+    #: #575); None when it was not read from one.
+    snapshot: Any = None
 
 
 @dataclass(frozen=True)
@@ -203,7 +206,9 @@ def meter_reader(store: Any, config: Any = None) -> Callable[[], Awaitable[Meter
                     keys=sorted(f"{SLOP_METER.name}.{key}" for key in legacy),
                     hint="read from their variables, as the release before read them, until the import succeeds",
                 )
-        return MeterRead(models=model_lookup(snapshot, "slop_judge"), enrollment=enrollment(snapshot), meter=meter)
+        return MeterRead(
+            models=model_lookup(snapshot, "slop_judge"), enrollment=enrollment(snapshot), meter=meter, snapshot=snapshot
+        )
 
     return read
 
@@ -329,21 +334,17 @@ class _Work:
     held: str = ""
 
 
-#: Reads what an organization's own settings still say of a moved key, until its layer has imported it
-#: (``BudgetView.moved_values``): ``(section, owner, settings) -> {key: value}``.
-MovedReader = Callable[[str, str, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
+#: Reads what an organization's own settings still say of a moved key as of a snapshot, until its layer has imported
+#: it there (``BudgetPolicy.moved_values_at``): ``(snapshot, section, owner, settings) -> {key: value}``.
+MovedReader = Callable[[Any, str, str, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]
 
 
-async def repo_bots(
-    repo: str, *, prefs: Any, orgs: Any, credentials: Any, moved: MovedReader | None = None
-) -> list[str]:
-    """The identities a repository's readings count as bots beyond embry0's default one and the
-    ``slop_meter.bots`` its layers list (#184).
+async def repo_bots(repo: str, *, prefs: Any, orgs: Any, credentials: Any) -> list[str]:
+    """The identities a repository's readings count as bots beyond embry0's default one, the
+    ``slop_meter.bots`` its layers list (#184) and its organization's moved bots (:func:`moved_bots`).
 
-    The addresses embry0 commits under there (the repository's preferred
-    author, the owner's credential's author), and, until the organization's
-    layer has imported it, the ``slop_meter_bots`` its own settings still
-    list (``moved``; :data:`embry0.services.organizations.MOVED_SETTINGS`).
+    The addresses embry0 commits under there: the repository's preferred
+    author, and the owner's credential's author.
     """
     out: list[str] = []
     pref = await prefs.get(repo)
@@ -355,11 +356,22 @@ async def repo_bots(
             cred = await credentials.get(org.credential_id)
             if cred and cred.get("git_author_email"):
                 out.append(str(cred["git_author_email"]))
-        if moved is not None:
-            listed = (await moved(SLOP_METER.name, org.owner, org.settings)).get("bots")
-            if isinstance(listed, list | tuple):
-                out.extend(str(v) for v in listed)
     return out
+
+
+async def moved_bots(repo: str, snapshot: Any, *, orgs: Any, moved: MovedReader) -> list[str]:
+    """The ``slop_meter_bots`` a repository's organization still lists in its own settings, as of ``snapshot``: until
+    its layer has imported them there (:data:`embry0.services.organizations.MOVED_SETTINGS`, #169).
+
+    Read against the snapshot the score's ``slop_meter`` section was read from (#575): reading them asks the
+    policy, which may copy them into the layer first, and read against the snapshot after that copy they are no
+    longer the row's, while the score's own section, read before it, does not hold them yet either.
+    """
+    org = await orgs.get(repo.split("/", 1)[0])
+    if org is None:
+        return []
+    listed = (await moved(snapshot, SLOP_METER.name, org.owner, org.settings)).get("bots")
+    return [str(v) for v in listed] if isinstance(listed, list | tuple) else []
 
 
 class SlopMeterLoop:
@@ -402,6 +414,7 @@ class SlopMeterLoop:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         http: httpx.AsyncClient | None = None,
         sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+        moved_bots: Callable[[str, Any], Awaitable[Iterable[str]]] | None = None,
     ) -> None:
         self._repos = repos
         self._read = read
@@ -414,8 +427,11 @@ class SlopMeterLoop:
         #: The tick's ``repo -> model`` and ``slop_meter`` section, read at its start.
         self._lookup: ModelLookup | None = None
         self._meter: PerRepository[SlopMeterSettings] = _Defaults()
-        #: A repository's own bots and embry0's commit identities for it (#184).
+        #: A repository's own bots and embry0's commit identities for it (#184), and its organization's moved bots
+        #: as of the snapshot the section was read from (#575).
         self._bots = bots
+        self._moved_bots = moved_bots
+        self._snapshot: Any = None
         self._calls = calls
         self._limits = limits
         self._clock = clock
@@ -468,7 +484,7 @@ class SlopMeterLoop:
         if not names:
             return False
         self._lookup = read.models
-        self._meter = read.meter
+        self._take(read)
         turn = self._turn % len(names)
         self._turn += 1
         order = names[turn:] + names[:turn]
@@ -765,8 +781,14 @@ class SlopMeterLoop:
         await self._store.set_turns({c: (turns.get(c, 0) + 1) % len(r) for c, r in by_credential.items()})
         return sorted(readers, key=lambda repo: rank[repo])
 
+    def _take(self, read: MeterRead) -> None:
+        """Score with ``read``'s ``slop_meter`` section, and read an organization's moved bots as of its snapshot
+        (#575)."""
+        self._meter, self._snapshot = read.meter, read.snapshot
+
     async def _inputs(self, repo: str, settings: SlopMeterSettings) -> Inputs:
-        bots = own_identities([*await self._bots(repo), *settings.bots])
+        moved = await self._moved_bots(repo, self._snapshot) if self._moved_bots is not None else []
+        bots = own_identities([*await self._bots(repo), *moved, *settings.bots])
         agents = agent_prefixes(settings.ai_agents)
         rows, event_rows = await self._store.commits(repo), await self._store.events(repo)
         # Building every commit of a long history takes a while: off the event loop, as the scoring is.
@@ -872,7 +894,7 @@ class SlopMeterLoop:
         if not changed:
             return []
         logger.info("slop_meter_settings_changed", repos=changed, hint="rescoring them from what was read")
-        self._meter = read.meter
+        self._take(read)
         rescored: list[str] = []
         for repo in changed:
             self._tried[repo] = versions[repo]

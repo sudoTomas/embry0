@@ -2820,6 +2820,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.orchestration import dispatch_actors as _slop_meter_actors
     from embry0.services.background_scope import registered_reader, registry_reader
     from embry0.services.slop_meter.loop import SlopMeterLoop, meter_reader, slop_meter_limits
+    from embry0.services.slop_meter.loop import moved_bots as slop_meter_moved_bots
     from embry0.services.slop_meter.loop import repo_bots as slop_meter_repo_bots
     from embry0.services.slop_meter.mirror import GitMirror
     from embry0.services.slop_meter.prune import audit_writer as _slop_meter_audit_writer
@@ -2848,22 +2849,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except HTTPException:
             return None
 
-    from types import SimpleNamespace as _SlopMeterOrg
-
-    async def _slop_meter_moved(section: str, owner: str, settings: Mapping[str, Any]) -> Mapping[str, Any]:
-        # An organization whose layer has not imported its slop_meter_bots yet (a first start whose copy
-        # failed) still reads them from its row, and its copy is tried again (#169).
-        view = await app.state.budget_policy.view([_SlopMeterOrg(owner=owner, settings=settings)])
-        moved: Mapping[str, Any] = view.moved_values(section, owner, settings)
-        return moved
-
     async def _slop_meter_bots(repo: str) -> list[str]:
         return await slop_meter_repo_bots(
             repo,
             prefs=app.state.repo_preferences_repo,
             orgs=app.state.organizations_repo,
             credentials=app.state.credentials_repo,
-            moved=_slop_meter_moved,
+        )
+
+    async def _slop_meter_moved_bots(repo: str, snapshot: Any) -> list[str]:
+        # An organization whose layer has not imported its slop_meter_bots yet (a first start whose copy failed)
+        # still reads them from its row, and its copy is tried again (#169); as of the tick's snapshot (#575).
+        return await slop_meter_moved_bots(
+            repo, snapshot, orgs=app.state.organizations_repo, moved=app.state.budget_policy.moved_values_at
         )
 
     app.state.slop_meter = SlopMeterLoop(
@@ -2883,6 +2881,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         token_for=_slop_meter_credential,
         client_for=_slop_meter_client,
         bots=_slop_meter_bots,
+        moved_bots=_slop_meter_moved_bots,
         calls=app.state.background_calls,
         limits=slop_meter_limits(config),
         # Spec 2026-11-10: each repository's areas as embry0 keeps them, scored as meters of their own.

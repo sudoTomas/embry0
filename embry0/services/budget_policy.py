@@ -59,6 +59,12 @@ class _Organization(Protocol):
     settings: Mapping[str, Any]
 
 
+@dataclass
+class _Owner:
+    owner: str
+    settings: Mapping[str, Any]
+
+
 def _path(key: str) -> str:
     return f"{BUDGET.name}.{key}"
 
@@ -241,6 +247,16 @@ class BudgetPolicy:
         keys = self._legacy_keys(snapshot)
         legacy, origins = await self._legacy(keys) if keys else ({}, {})
         return BudgetView(snapshot=snapshot, legacy=legacy, moved=self._moved, origins=origins)
+
+    async def moved_values_at(
+        self, snapshot: Snapshot | None, section: str, owner: str, settings: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """The moved settings of ``section`` that ``owner`` reads from its ``settings`` as of ``snapshot``, a reader's
+        own (#575). The organization's copy into its layer is tried again first when it is pending (:meth:`view`),
+        but the answer is read against ``snapshot``: a reader whose snapshot predates that copy has the values in
+        neither its snapshot's layer nor, read against the snapshot after the copy, the organization's row."""
+        await self.view([_Owner(owner=owner, settings=settings)])
+        return BudgetView(snapshot=snapshot, moved=self._moved).moved_values(section, owner, settings)
 
     async def _snapshot(self) -> Snapshot | None:
         try:
