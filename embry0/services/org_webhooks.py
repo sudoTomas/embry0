@@ -64,7 +64,9 @@ class OrgHook:
     content_type: str = ""
 
     def to_dict(self, *, origin_only: bool = False) -> dict[str, Any]:
-        url = origin_of(self.url) if origin_only else self.url
+        """The hook as an answer shows it: its URL never with a user, a password or a query, where a token is often
+        put (:func:`bare_url`), and only its origin when ``origin_only``."""
+        url = origin_of(self.url) if origin_only else bare_url(self.url)
         return {"id": self.id, "url": url, "events": list(self.events), "active": self.active}
 
 
@@ -99,6 +101,13 @@ def origin_of(url: str) -> str:
     except ValueError:
         port = None
     return f"{parts.scheme}://{parts.hostname}" + (f":{port}" if port else "")
+
+
+def bare_url(url: str) -> str:
+    """``url`` with no user, password, query or fragment: ``scheme://host[:port]/path``."""
+    parts = urlsplit(url)
+    origin = origin_of(url)
+    return origin + parts.path if origin else ""
 
 
 def hook_target(origin: str) -> str:

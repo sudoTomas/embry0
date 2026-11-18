@@ -883,14 +883,14 @@ async def get_organization_webhook(owner: str, request: Request) -> dict[str, An
         # An outage says nothing of what the credential may see (#579): not "hooks_visible" false.
         raise _forge_failed("organization_webhook_unreachable", org.owner, org.forge, exc, what="the request") from exc
     hook = org_webhooks.hook_pointing_at(hooks, target) if hooks and target else None
-    ours = target.rstrip("/") if target else None
     return {
         "owner": org.owner,
         "installed": hook is not None,
         "hook": hook.to_dict() if hook else None,
         "target_url": target,
         "hooks_visible": hooks is not None,
-        "hooks": [h.to_dict(origin_only=h.url.rstrip("/") != ours) for h in hooks or []],
+        # A hook at this deployment's target shows its URL bare; any other only its origin.
+        "hooks": [h.to_dict(origin_only=not (target and org_webhooks.same_target(h.url, target))) for h in hooks or []],
     }
 
 

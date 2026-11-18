@@ -700,3 +700,28 @@ async def test_a_rediscovery_that_fails_otherwise_does_not_hide_the_install(
     assert resp.status_code == 200, resp.text
     assert (resp.json()["outcome"], resp.json()["rediscovery"]) == ("done", None), resp.text
     assert len(forge.posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://hooks.example.com/api/v1/webhook?key=a-query-value",
+        "https://a-user:a-password@hooks.example.com/api/v1/webhook",
+    ],
+    ids=["query", "user-and-password"],
+)
+async def test_a_hook_here_with_a_query_or_a_password_is_shown_bare(app: Any, forge: FakeForge, url: str) -> None:
+    """#591 re-review: a hook at the target written with a query or a user and password is installed, and the answer
+    (this route is not admin-only) shows it as scheme, host and path, as the install shows it."""
+    forge.hooks.append({"id": 7, "active": True, "events": ["issues"], "config": {"url": url, "content_type": "json"}})
+    async with _client(app) as client:
+        shown = await client.get("/api/v1/orgs/acme/webhook")
+        install = await client.post("/api/v1/orgs/acme/webhook")
+    assert shown.json()["installed"] is True, shown.text
+    assert shown.json()["hook"]["url"] == TARGET, shown.text
+    assert [h["url"] for h in shown.json()["hooks"]] == [TARGET], shown.text
+    for part in ("a-query-value", "a-user", "a-password"):
+        assert part not in shown.text and part not in install.text, f"{part!r} is in an answer"
+    assert install.json()["outcome"] == "already", install.text
+    assert forge.posts == [], "a hook at the target is already there, whatever its query"
