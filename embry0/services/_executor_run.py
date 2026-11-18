@@ -23,7 +23,7 @@ from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
 from embry0.storage.database import StoredValueTooDeep
-from embry0.storage.repositories.jobs import StatusTransitionConflict
+from embry0.storage.repositories.jobs import RELEASED_JOB_STATUSES, StatusTransitionConflict
 from embry0.storage.repositories.repo_setup_proposals import RepoSetupProposalsRepository
 from embry0.trackers import forge_number_of, github_number_of, linear_identifier_of
 
@@ -200,12 +200,15 @@ async def _refuse_if_over_budget(
             finished_at=datetime.now(UTC),
             before_start=True,
         )
+        # Neither of these raises: the ledger and the announcement are best-effort.
         await self._finish_credential_uses(job_id, error_code=ErrorCode.BUDGET_REFUSED.value)
         await self._announce_finished(job_id)
     except (StatusTransitionConflict, ValueError):
         # ValueError: the job left `pending` meanwhile (cancelled) — the
         # repository refuses the transition; the job is not ours to fail.
         logger.warning("budget_refusal_status_conflict", job_id=job_id, exc_info=True)
+    # #594: from here nothing may raise into the runner's error handler, which would write its own failure over the
+    # refusal's code and message and announce the end again. The audit write is best-effort, and so is the issue's.
     await self._emit_audit(
         self._db,
         "job.budget_refused",
@@ -216,12 +219,53 @@ async def _refuse_if_over_budget(
     )
     if issue_id:
         # Never strand the issue in `triaging` — only `open` dispatches, so a
-        # stuck row would swallow every future label trigger.
-        try:
-            await self._issue_back_to_open(issue_id)
-        except (ValueError, StatusTransitionConflict):
-            logger.warning("budget_refusal_issue_revert_failed", issue_id=issue_id, exc_info=True)
+        # stuck row would swallow every future label trigger. Asked twice: a
+        # lost connection's second try gets a fresh one (#594).
+        for attempt in (1, 2):
+            try:
+                await self._issue_back_to_open(issue_id)
+                break
+            except Exception:
+                logger.warning("budget_refusal_issue_revert_failed", issue_id=issue_id, attempt=attempt, exc_info=True)
     return True
+
+
+async def _ended_meanwhile(self: IssueExecutor, job_id: str) -> str | None:
+    """The job's status when it already ended, None otherwise (#594, #595).
+
+    A run's error handler asks before it writes its failure: a job a person
+    cancelled while its run went on, or one the budget gate already failed, is
+    not the run's to fail again. ``cancelled -> failed`` is refused, and
+    ``failed -> failed`` would write over the first failure's code and message.
+    None when the status cannot be read: the failure write decides then.
+    """
+    try:
+        status = await self._jobs.status(job_id)
+    except Exception:
+        logger.warning("job_status_read_failed", job_id=job_id, exc_info=True)
+        return None
+    return status if status in RELEASED_JOB_STATUSES else None
+
+
+async def _fail_the_run(self: IssueExecutor, job_id: str, **fields: Any) -> bool:
+    """Fail the job whose run raised (``status="failed"`` and ``fields``), stamp its credential uses and announce
+    its end, unless the job already ended; True once failed.
+
+    A job that ends between the check and the write is caught by the write's own refusal (#594, #595).
+    """
+    ended = await _ended_meanwhile(self, job_id)
+    if ended is None:
+        try:
+            await self._jobs.update(job_id, status="failed", **fields)
+            await self._finish_credential_uses(job_id, error_code=fields.get("error_code"))
+            await self._announce_finished(job_id)
+            return True
+        except (ValueError, StatusTransitionConflict):
+            ended = await _ended_meanwhile(self, job_id)
+            if ended is None:
+                raise
+    logger.info("run_failed_after_its_job_ended", job_id=job_id, status=ended)
+    return False
 
 
 async def _run_onboard_workflow(
@@ -362,16 +406,14 @@ async def _run_onboard_workflow(
         if proposal_id is not None:
             await _fail_setup_proposal(self, proposal_id, job_id, f"onboard workflow crashed: {exc}")
         try:
-            await self._jobs.update(
+            await _fail_the_run(
+                self,
                 job_id,
-                status="failed",
                 error_message=f"onboard workflow crashed: {exc}"[:4000],
                 error_code=crash_code,
                 finished_at=datetime.now(UTC),
                 before_start=not marked_running,
             )
-            await self._finish_credential_uses(job_id, error_code=crash_code)
-            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             pass
     finally:
@@ -545,16 +587,14 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
         logger.error("pr_review_workflow_crashed", job_id=job_id, error=str(exc), exc_info=True)
         crash_code = classify_failure(exc=exc, stage="pr-review").value
         try:
-            await self._jobs.update(
+            await _fail_the_run(
+                self,
                 job_id,
-                status="failed",
                 error_message=f"pr-review workflow crashed: {exc}"[:4000],
                 error_code=crash_code,
                 finished_at=datetime.now(UTC),
                 before_start=not marked_running,
             )
-            await self._finish_credential_uses(job_id, error_code=crash_code)
-            await self._announce_finished(job_id)
         except StatusTransitionConflict:
             pass
     finally:
@@ -1651,9 +1691,14 @@ async def _run_workflow(
         # all. Traces are written per agent turn, so they carry the real bill
         # even though no terminal node ever ran.
         last_state = final_state or streamed_state or None
+        # #595: a job that ended while its run went on (a person cancelled it) is not the run's to fail, nor to open
+        # a pull request for; its run still cleans up after itself, below.
+        ended = await _ended_meanwhile(self, job_id)
         # #349: a run that raised after pushing its branch (a hard budget stop,
         # a sandbox that is gone) still gets its PR, so the work is not stranded.
-        pr_url, _ = await self._open_fallback_pr(issue_id, job_id, last_state or {}, error_code=code.value)
+        pr_url = None
+        if ended is None:
+            pr_url, _ = await self._open_fallback_pr(issue_id, job_id, last_state or {}, error_code=code.value)
         from embry0.services._executor_outcomes import finish_areas_map
 
         # Spec 2026-11-10: a map that raised leaves no document for a person; its proposal says why, before the
@@ -1662,9 +1707,10 @@ async def _run_workflow(
             ((job_row or {}).get("pipeline_config") or {}).get("areas_proposal_id")
         )
         await finish_areas_map(self, job_id, proposal_id, None, str(exc))
-        await self._jobs.update(
+        pr_field: dict[str, Any] = {"pr_url": pr_url} if pr_url else {}
+        failed = ended is None and await _fail_the_run(
+            self,
             job_id,
-            status="failed",
             error_message=str(exc),
             error_code=code.value,
             total_cost_usd=await resolve_job_total_cost(
@@ -1674,14 +1720,13 @@ async def _run_workflow(
             ),
             budget_overrun_usd=_overrun_of(exc, last_state),
             before_start=not marked_running,
-            **({"pr_url": pr_url} if pr_url else {}),
+            **pr_field,
         )
-        await self._finish_credential_uses(job_id, error_code=code.value)
-        await self._announce_finished(job_id)
-        if pr_url:
+        if failed and pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
-        # No issue, no status change to record (see _handle_workflow_result).
-        if issue_id is not None:
+        # No issue, no status change to record (see _handle_workflow_result). A job that ended meanwhile had its
+        # issue put back by whatever ended it.
+        if failed and issue_id is not None:
             await self._issue_back_to_open(issue_id)
             await self._emit_audit(
                 self._db,
@@ -2131,17 +2176,15 @@ async def _run_qa_workflow(
             spent["total_cost_usd"] = await resolve_job_total_cost(getattr(self, "_traces", None), job_id, 0.0)
         except Exception:
             logger.warning("qa_crash_cost_resolve_failed", job_id=job_id, exc_info=True)
-        await self._jobs.update(
+        await _fail_the_run(
+            self,
             job_id,
-            status="failed",
             error_message=str(exc),
             error_code=crash_code,
             finished_at=datetime.now(UTC),
             before_start=not marked_running,
             **spent,
         )
-        await self._finish_credential_uses(job_id, error_code=crash_code)
-        await self._announce_finished(job_id)
         await self._cleanup_sandbox(final_state, job_id)
         from embry0.orchestration.checkpoint import purge_thread as _purge
 
