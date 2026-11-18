@@ -416,6 +416,21 @@ async def test_before_start_opens_only_pending_to_failed(jobs_repo: JobsReposito
     assert (await jobs_repo.get(job_id))["status"] == "pending"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ended", ["cancelled", "completed"])
+async def test_before_start_never_fails_a_job_that_left_pending(jobs_repo: JobsRepository, ended: str):
+    """A job cancelled (or ended) meanwhile is not the writer's to fail: the flag opens failed only from pending."""
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+    if ended == "completed":
+        await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+    await jobs_repo.update(job_id, status=ended, error_message="stopped by a person")
+
+    with pytest.raises(ValueError, match=f"{ended} -> failed"):
+        await jobs_repo.update(job_id, status=JobStatus.FAILED, error_code="ERR_UNKNOWN", before_start=True)
+
+    assert (await jobs_repo.get(job_id))["status"] == ended
+
+
 def test_the_transition_table_itself_still_forbids_pending_to_failed():
     """The refusal is an exception beside the table, not an entry in it:
     readers of VALID_JOB_TRANSITIONS (cas_transition_on_conn, delivery

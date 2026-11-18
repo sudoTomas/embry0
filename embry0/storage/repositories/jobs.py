@@ -691,9 +691,10 @@ class JobsRepository:
         ``interrupted_code`` / ``interrupted_message`` when given, so a
         deploy-killed job reads as one.
 
-        Deliberately set-based and outside per-row transition validation
-        (pending -> failed is not a runtime transition): at startup nothing
-        races, and the WHERE clause is its own from-state guard. Lives here so
+        Deliberately set-based and outside per-row transition validation (a
+        runtime write takes pending -> failed only when it says the job never
+        started, #588): at startup nothing races, and the WHERE clause is its
+        own from-state guard. Lives here so
         the lifecycle knowledge stays in the repository layer (RAV-1063).
 
         Being raw SQL, it carries the terminal-status invariant itself

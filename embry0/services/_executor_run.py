@@ -158,9 +158,9 @@ async def _refuse_if_over_budget(
     Every background runner starts here, so the daily/monthly caps and the
     per-author rate limit are enforced once per dispatched job regardless of
     which entry point created it. It runs while the job is still ``pending``
-    (#348), so a refusal goes straight to ``failed`` — the one
-    pending -> failed transition the jobs repository allows — and the row
-    never gets a ``started_at``. A refusal is a terminal failure rather than
+    (#348), so a refusal goes straight to ``failed``, a write that says the
+    job never started (``before_start=True``, #588), and the row never gets
+    a ``started_at``. A refusal is a terminal failure rather than
     a silently-dropped job: the row carries ``ERR_BUDGET_REFUSED`` (its own
     code since #331 — the job never ran, unlike an in-run ``ERR_BUDGET_OVERRUN``
     hard stop, and only a refusal is exempt from rate-limit counts), an audit
