@@ -78,3 +78,15 @@ def test_job_list_gains_an_aligned_board():
 def test_non_job_payloads_pass_through_untouched():
     assert server._compact_job("not a dict") == "not a dict"
     assert server._compact_jobs({"unexpected": 1}) == {"unexpected": 1}
+
+
+def test_a_budget_that_is_not_a_number_is_left_out_of_the_summary():
+    """A stored budget past a float's range reads as its digits (#537); a config too deep to show is served as text.
+    The summary leaves either budget out instead of failing the whole read, or the whole list."""
+    past = "1" + "0" * 400 + ".5"
+    for config in ({"max_budget_usd": past}, {"max_budget_usd": True}, "[a document nested too deep to show]"):
+        out = server._compact_job({**JOB, "pipeline_config": config})
+        assert "$3.49 " in out["summary"] + " " and "/$" not in out["summary"], (config, out["summary"])
+    listed = server._compact_jobs({"jobs": [{**JOB, "pipeline_config": {"max_budget_usd": past}}, JOB], "total": 2})
+    assert [j["job_id"] for j in listed["jobs"]] == ["job-abc123", "job-abc123"]
+    assert "$3.49/$14" in listed["jobs"][1]["summary"], "a real budget is still shown"

@@ -117,7 +117,10 @@ async def carried_config(
     if "max_budget_usd" in stored:
         budget = _budget(stored["max_budget_usd"])
         if budget is None:
-            notes.append(f"max_budget_usd is not carried: it is not a number above 0 and at most {MAX_BUDGET_USD_LE}.")
+            notes.append(
+                f"max_budget_usd is not carried: it is not a number above 0 and at most {MAX_BUDGET_USD_LE} "
+                "that this deployment can read."
+            )
         else:
             out["max_budget_usd"] = budget
             if budget != stored["max_budget_usd"]:
