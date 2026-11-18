@@ -24,7 +24,14 @@ import structlog
 
 from embry0.execution.forge_client import Listing
 from embry0.json_text import json_object
-from embry0.services.org_webhooks import hook_target, hooks_pointing_at, list_org_hooks, sends_intake_events, timed
+from embry0.services.org_webhooks import (
+    hook_target,
+    hooks_pointing_at,
+    list_org_hooks,
+    same_target,
+    sends_intake_events,
+    timed,
+)
 from embry0.services.organizations import ForgeTime
 
 logger = structlog.get_logger(__name__)
@@ -167,11 +174,17 @@ def public_origin(url: str) -> str | None:
 
 
 def hook_points_here(hooks: list[Any], origins: tuple[str, ...]) -> bool:
+    """Whether one of a repository's hooks posts to this deployment's webhook route under one of ``origins``
+    (``<origin>/api/v1/webhook``), matched as the organization's hook is
+    (:func:`embry0.services.org_webhooks.same_target`): a longer host that starts with an origin's text is another
+    host, a host in other case or with a trailing dot, or a query, the same target; and another route on the same
+    host (the GitLab or Linear one, which refuse GitHub's deliveries) is another target (#603)."""
+    targets = [hook_target(origin) for origin in origins if origin]
     for hook in hooks:
         if not isinstance(hook, dict):
             continue
         url = str((hook.get("config") or {}).get("url") or "")
-        if any(origin and url.startswith(origin) for origin in origins):
+        if any(same_target(url, target) for target in targets):
             return True
     return False
 
