@@ -289,27 +289,68 @@ async def test_github_channel_posts_once_after_two_rate_limit_refusals():
     assert len(sleeps.delays) == 2
 
 
-def _comment_forge(first: str, *, unreadable: bool = False):
+_BOT = "embry0-bot"  # the login the channel's token posts as
+
+
+def _comment_forge(
+    first: str,
+    *,
+    unreadable: str = "",
+    earlier: tuple[str, ...] = ("bot-two-days-ago", "bot-two-days-ago-edited-now", "person-now"),
+):
     """GitHub for one issue. The first comment POST meets ``first``: "made-502" or "made-503" (GitHub made the
     comment and answered 5xx), "made-lost" (made, its answer lost), or "not-made-502" (answered 502 before it was
-    made). Later POSTs make the comment. ``unreadable``: the issue's comments cannot be listed."""
+    made). Later POSTs make the comment. ``earlier``: identical comments already on the issue when the first POST
+    comes: "bot-two-days-ago" (the token's own, before the window), "bot-two-days-ago-edited-now" (the same, but
+    edited now, so GitHub's ``since``, which reads the update time, lists it) and "person-now" (a person's, inside
+    the window).
+    ``unreadable``: "comments" or "user" cannot be read. The list honours ``since`` as GitHub does (updated at)."""
     import json
+    from datetime import UTC, datetime, timedelta
 
     import httpx
 
     from embry0.notifications.github_comment import GitHubCommentChannel
 
+    def stamp(when: datetime) -> str:
+        return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
     comments: list[dict] = []
     seen: list[str] = []
+    sleeps = _Sleeps()
+
+    def comment(body: str, login: str, when: datetime, edited: datetime | None = None) -> dict:
+        return {
+            "id": len(comments) + 1,
+            "body": body,
+            "user": {"login": login},
+            "html_url": "https://x",
+            "created_at": stamp(when),
+            "updated_at": stamp(edited or when),
+        }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.method)
+        seen.append(f"{request.method} {request.url.path.rsplit('/', 1)[-1]}")
+        if request.method == "GET" and request.url.path == "/user":
+            return httpx.Response(500) if unreadable == "user" else httpx.Response(200, json={"login": _BOT})
         if request.method == "GET":
-            return httpx.Response(500) if unreadable else httpx.Response(200, json=list(comments))
-        posts = seen.count("POST")
+            if unreadable == "comments":
+                return httpx.Response(500)
+            since = request.url.params.get("since") or ""
+            return httpx.Response(200, json=[c for c in comments if c["updated_at"] >= since])
+        body = json.loads(request.content)["body"]
+        posts = sum(1 for s in seen if s.startswith("POST"))
+        if posts == 1:
+            now = datetime.now(UTC)
+            if "bot-two-days-ago" in earlier:
+                comments.append(comment(body, _BOT, now - timedelta(days=2)))
+            if "bot-two-days-ago-edited-now" in earlier:
+                comments.append(comment(body, _BOT, now - timedelta(days=2), edited=now))
+            if "person-now" in earlier:
+                comments.append(comment(body, "a-person", now))
         if posts == 1 and first == "not-made-502":
             return httpx.Response(502)
-        made = {"id": len(comments) + 1, "body": json.loads(request.content)["body"], "html_url": "https://x"}
+        made = comment(body, _BOT, datetime.now(UTC))
         comments.append(made)
         if posts == 1 and first in ("made-502", "made-503"):
             return httpx.Response(int(first[-3:]))
@@ -318,40 +359,53 @@ def _comment_forge(first: str, *, unreadable: bool = False):
         return httpx.Response(201, json=made)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.github.test")
-    return GitHubCommentChannel(http_client=client, dashboard_base_url="https://x", sleep=_Sleeps()), comments, seen
+    channel = GitHubCommentChannel(http_client=client, dashboard_base_url="https://x", sleep=sleeps)
+    return channel, comments, seen, sleeps
+
+
+def _ours_in_the_window(comments: list[dict]) -> int:
+    from datetime import UTC, datetime, timedelta
+
+    recent = (datetime.now(UTC) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return sum(1 for c in comments if c["user"]["login"] == _BOT and c["created_at"] >= recent)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first", ["made-502", "made-503", "made-lost"])
 async def test_a_comment_github_made_behind_a_failed_answer_is_found_not_posted_twice(first: str):
-    """#45, #613: GitHub may have made the comment it answered 5xx, or whose answer was lost. The issue's comments
-    are read once: GitHub made it, so it is taken as posted, and not posted again."""
-    channel, comments, seen = _comment_forge(first)
+    """#45, #613: GitHub may have made the comment it answered 5xx, or whose answer was lost. The token's user and
+    the issue's comments are read once: GitHub made it, so it is taken as posted, and not posted again. Neither
+    the token's own identical comment from two days ago nor a person's identical one is taken for it."""
+    channel, comments, seen, sleeps = _comment_forge(first)
     await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
-    assert len(comments) == 1 and seen == ["POST", "GET"], f"{first}: {seen}, {len(comments)} comments"
+    assert seen == ["POST comments", "GET user", "GET comments"], f"{first}: {seen}"
+    assert _ours_in_the_window(comments) == 1
+    assert 1.5 in sleeps.delays, "the lookup does not wait for the comment to show"
 
 
 @pytest.mark.asyncio
 async def test_a_comment_github_did_not_make_is_posted_once_more():
-    """#613: a 502 for a comment GitHub did not make no longer drops it: it is not among the issue's comments, so
-    it is sent once more."""
-    channel, comments, seen = _comment_forge("not-made-502")
+    """#613: a 502 for a comment GitHub did not make no longer drops it: no comment of the token's user with its
+    body was made in the window (the token's older one and a person's do not count), so it is sent once more."""
+    channel, comments, seen, _ = _comment_forge("not-made-502")
     await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
-    assert len(comments) == 1 and seen == ["POST", "GET", "POST"], seen
+    assert seen == ["POST comments", "GET user", "GET comments", "POST comments"], seen
+    assert _ours_in_the_window(comments) == 1
 
 
 @pytest.mark.asyncio
-async def test_an_outcome_the_comments_cannot_tell_is_not_posted_again():
-    """The issue's comments cannot be read: whether GitHub made the comment stays unknown, and a second post could
-    make a second one. The failure is raised, and stays visible."""
+@pytest.mark.parametrize("unreadable", ["comments", "user"])
+async def test_an_outcome_the_comments_cannot_tell_is_not_posted_again(unreadable: str):
+    """The issue's comments, or the token's user, cannot be read: whether GitHub made the comment stays unknown,
+    and a second post could make a second one. The failure is raised, and stays visible."""
     import httpx
 
     from embry0.notifications.retry import TransientSendError
 
-    channel, comments, seen = _comment_forge("made-502", unreadable=True)
+    channel, comments, seen, _ = _comment_forge("made-502", unreadable=unreadable)
     with pytest.raises((TransientSendError, httpx.HTTPError)):
         await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
-    assert len(comments) == 1 and seen == ["POST", "GET"], seen
+    assert sum(1 for s in seen if s.startswith("POST")) == 1 and _ours_in_the_window(comments) == 1, seen
 
 
 @pytest.mark.asyncio
