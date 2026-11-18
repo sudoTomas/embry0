@@ -70,13 +70,17 @@ def test_origin_of_keeps_scheme_host_and_port_only() -> None:
     assert hook.to_dict()["url"] == "https://h.example.com/secret-path"
 
 
-def test_hook_pointing_at_ignores_a_trailing_slash_only() -> None:
+def test_hook_pointing_at_takes_the_route_itself() -> None:
+    """#612: the app answers the route with a trailing slash with a 307, and GitHub records only a 2xx as delivered,
+    so it is another target, as the GitLab route under it is."""
     hooks = [
         org_webhooks.OrgHook(1, "https://hooks.example.com/api/v1/webhook/", ("issues",), True),
         org_webhooks.OrgHook(2, "https://hooks.example.com/api/v1/webhook/gitlab", ("issues",), True),
+        org_webhooks.OrgHook(3, "https://hooks.example.com/api/v1/webhook", ("issues",), True),
     ]
     found = org_webhooks.hook_pointing_at(hooks, "https://hooks.example.com/api/v1/webhook")
-    assert found is not None and found.id == 1
+    assert found is not None and found.id == 3, found
+    assert org_webhooks.hook_pointing_at(hooks[:2], "https://hooks.example.com/api/v1/webhook") is None
     assert org_webhooks.hook_pointing_at(hooks, "https://other.example.com/api/v1/webhook") is None
 
 
@@ -618,3 +622,13 @@ async def test_the_time_kept_back_finds_a_create_that_hangs_until_the_deadline(m
     assert getattr(result, "outcome", None) == "done", (
         f"with {org_webhooks.RELIST_SECONDS} s kept back, a create GitHub made is not found: {result!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_hook_at_the_route_with_a_trailing_slash_is_not_the_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#612: the app answers <route>/ with a 307, and GitHub records only a 2xx as delivered, so a hook there is not
+    counted: the install makes the one that delivers rather than answering already."""
+    target = "https://h.example.com/api/v1/webhook"
+    client = Client(Resp(200, [_hook(target + "/", hook_id=3)]), Resp(201, _hook(target, hook_id=4)))
+    result = await org_webhooks.install_org_hook(client, "acme", target=target, secret="s")  # type: ignore[arg-type]
+    assert (result.outcome, result.hook.id if result.hook else None) == ("done", 4), result
