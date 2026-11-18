@@ -6,10 +6,7 @@ one-draft rules are the database's.
 
 from __future__ import annotations
 
-import struct
 import zoneinfo
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -32,6 +29,7 @@ from embry0.services.progression_pack_store import (
 )
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.progression_packs import KEEP_SUPERSEDED, ProgressionPacksRepository
+from tests.fixtures.timezones import PYTHON_ONLY_ZONE, python_only_zone, python_only_zone_in  # noqa: F401 - a fixture
 
 pytestmark = [pytest.mark.requires_postgres]
 
@@ -379,47 +377,11 @@ def test_a_body_that_is_not_a_pack_is_refused_by_kind(body: bytes, content_type:
 
 # ---- what Python accepts and the database does not ----
 
-#: A zone name no tz database ships, so Postgres never knows it; ``python_only_zone`` makes ``zoneinfo`` read it.
-#: No digit in it: Postgres reads a name such as ``Abc0Def`` as a POSIX zone spec (``Abc``, offset 0) and accepts it.
-PYTHON_ONLY_ZONE = "PythonOnly/Zone"
-
-#: A TZif version 1 file for UTC: no transitions, one local time type (offset 0, not DST), designation "UTC".
-UTC_TZIF = b"TZif" + b"\x00" * 16 + struct.pack(">6l", 0, 0, 0, 0, 1, 4) + struct.pack(">lBB", 0, 0, 0) + b"UTC\x00"
-
-
-@contextmanager
-def _python_only_zone(directory: Path) -> Iterator[str]:
-    """A zone ``zoneinfo`` reads and Postgres does not, on any host, until the block ends.
-
-    The case these tests measure used ``localtime``, which ``zoneinfo`` reads only where tzdata ships a file of
-    that name (Debian and Ubuntu do; Arch does not), so on other hosts the Python check refused it first and the
-    database check was never reached. A zone written to a directory put first on ``zoneinfo``'s search path is
-    read everywhere, and no database has its name. Only this zone leaves the ``ZoneInfo`` cache after: clearing
-    the whole cache would give later code new objects for zones it already holds, and ``ZoneInfo`` compares by
-    identity.
-    """
-    zone_file = directory / PYTHON_ONLY_ZONE
-    zone_file.parent.mkdir(parents=True)
-    zone_file.write_bytes(UTC_TZIF)
-    saved = zoneinfo.TZPATH
-    zoneinfo.reset_tzpath(to=[str(directory), *saved])
-    try:
-        yield PYTHON_ONLY_ZONE
-    finally:
-        zoneinfo.reset_tzpath(to=list(saved))
-        zoneinfo.ZoneInfo.clear_cache(only_keys=[PYTHON_ONLY_ZONE])
-
-
-@pytest.fixture
-def python_only_zone(tmp_path: Path) -> Iterator[str]:
-    with _python_only_zone(tmp_path) as zone:
-        yield zone
-
 
 def test_the_python_only_zone_is_gone_after_its_block(tmp_path: Path) -> None:
     utc = zoneinfo.ZoneInfo("UTC")
     saved = zoneinfo.TZPATH
-    with _python_only_zone(tmp_path) as zone:
+    with python_only_zone_in(tmp_path) as zone:
         assert zoneinfo.ZoneInfo(zone).utcoffset(None) == timedelta(0)
     assert zoneinfo.TZPATH == saved, "the search path is restored"
     with pytest.raises(zoneinfo.ZoneInfoNotFoundError):
@@ -436,9 +398,13 @@ async def _assert_only_python_knows(zone: str, repo: ProgressionPacksRepository)
 
 
 async def test_a_timezone_only_python_knows_is_refused_on_every_write(
-    store: PackStore, repo: ProgressionPacksRepository, python_only_zone: str
+    store: PackStore,
+    repo: ProgressionPacksRepository,
+    db_with_migrations: DatabasePool,
+    python_only_zone: str,  # noqa: F811 - the imported fixture
 ) -> None:
-    """A zone ``zoneinfo`` reads and Postgres does not: the facts query would fail on every read."""
+    """A zone ``zoneinfo`` reads and Postgres does not: the facts query would fail on every read. A write, a draft,
+    a preview, and the restore of an earlier version that holds one, are each refused."""
     await _assert_only_python_knows(python_only_zone, repo)
     local = read_text(COPPER.replace("timezone: UTC", f"timezone: {python_only_zone}"))
     berlin = read_text(COPPER.replace("timezone: UTC", "timezone: Europe/Berlin"))
@@ -452,12 +418,30 @@ async def test_a_timezone_only_python_knows_is_refused_on_every_write(
         assert [(p.loc, p.type) for p in refused.value.problems] == [(("timezone",), "timezone")]
         assert "database does not know" in refused.value.problems[0].msg, "refused by the database check"
         assert python_only_zone not in refused.value.problems[0].msg, "a refusal never echoes the value"
-    assert (await store.put(berlin, actor="ann")).changed, "a zone both know is stored"
+    stored = await store.put(berlin, actor="ann")
+    assert stored.changed, "a zone both know is stored"
     assert (await store.active()).timezone == "Europe/Berlin"
+
+    # The restore of an earlier version whose zone the database does not know (#367 review): superseded by the next
+    # write, then given that zone as a row written before it was refused would hold it.
+    await store.put(read_text(COPPER), actor="ann")
+    earlier = dict((await repo.get(stored.version)).document or {})
+    earlier["timezone"] = python_only_zone
+    await db_with_migrations.execute(
+        "UPDATE progression_packs SET document = $1::jsonb WHERE version = $2", earlier, stored.version
+    )
+    with pytest.raises(PackInvalid) as refused:
+        await store.restore(stored.version, actor="ann")
+    assert [(p.loc, p.type) for p in refused.value.problems] == [(("timezone",), "timezone")], refused.value
+    assert "database does not know" in refused.value.problems[0].msg, "the restore is refused by the database check"
+    assert (await store.active()).timezone == "UTC", "nothing was restored"
 
 
 async def test_a_draft_whose_timezone_the_database_no_longer_knows_is_not_activated(
-    store: PackStore, repo: ProgressionPacksRepository, db_with_migrations: DatabasePool, python_only_zone: str
+    store: PackStore,
+    repo: ProgressionPacksRepository,
+    db_with_migrations: DatabasePool,
+    python_only_zone: str,  # noqa: F811 - the imported fixture
 ) -> None:
     await _assert_only_python_knows(python_only_zone, repo)
     draft, _ = await store.save_draft(read_text(COPPER), actor="ann")
