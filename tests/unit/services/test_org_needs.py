@@ -793,3 +793,64 @@ def test_a_root_listing_read_and_empty_still_derives_its_needs() -> None:
     row = _row("acme/web", **SEEN, hook_present=True, registered=True, active=True, boot_hint=None, frontend=False)
     kinds = {need.kind for need in derive_needs("acme", [row])}
     assert {"no_qa_config", "no_log_source"} <= kinds, sorted(kinds)
+
+
+INERT_FAULTS = [{"id": 7, "active": False, "content_type": "form", "missing_events": ["pull_request"]}]
+
+
+def _inert(repo: str, hook_present: bool | None, **facts: Any) -> dict[str, Any]:
+    """A maintained repository under an organization whose webhook points here and does not deliver."""
+    return _row(
+        repo,
+        **SEEN,
+        registered=True,
+        active=True,
+        qa_config=True,
+        watcher_stack=True,
+        deploy_marker=True,
+        boot_hint="npm run dev",
+        hook_present=hook_present,
+        org_hook="inert",
+        **{"org_hook_faults": INERT_FAULTS, **facts},
+    )
+
+
+def test_an_inert_organization_hook_is_one_need_in_place_of_a_hook_per_repository() -> None:
+    """#596: the hook action skips a repository while the organization's hook is inert, since a repository hook added
+    then would double every event once that hook is fixed. So the needs list asks once for that hook to be fixed on
+    GitHub, saying what is wrong with it, rather than for a hook on each repository."""
+    rows = [_inert("acme/web", False), _inert("acme/api", False), _inert("acme/lib", True)]
+    by = _by_kind(derive_needs("acme", rows))
+    assert "no_webhook" not in by, f"the needs list still asks for a hook per repository: {sorted(by)}"
+    need = by.get("org_hook_inert")
+    assert need is not None, f"no need asks for the organization webhook to be fixed: {sorted(by)}"
+    assert need.repos == ("acme/api", "acme/web"), f"it covers the repositories waiting on it: {need.repos}"
+    assert need.action == {"type": "none", "params": {"hooks": INERT_FAULTS}}, need.action
+    assert need.title == "Fix the organization webhook on GitHub", need.title
+    for words in ("hook 7", "switched off", "pull_request", "application/json", "2 repositories"):
+        assert words in need.detail, f"{words!r} is not in: {need.detail}"
+
+
+def test_an_inert_organization_hook_read_before_its_faults_were_recorded_still_says_what_to_check() -> None:
+    """A run stored before discovery recorded what is wrong with the hook has ``org_hook`` alone: the need still
+    names the three things to check."""
+    by = _by_kind(derive_needs("acme", [_inert("acme/web", False, org_hook_faults=None)]))
+    need = by.get("org_hook_inert")
+    assert need is not None and "no_webhook" not in by, sorted(by)
+    for words in ("switched off", "issue_comment", "JSON"):
+        assert words in need.detail, f"{words!r} is not in: {need.detail}"
+
+
+def test_an_inert_organization_hook_no_repository_waits_on_is_no_need() -> None:
+    """Every repository has a hook of its own that delivers: nothing waits on the organization's, and fixing it would
+    make GitHub send each event two times, so the needs list does not ask for it."""
+    kinds = {need.kind for need in derive_needs("acme", [_inert("acme/web", True), _inert("acme/lib", True)])}
+    assert not kinds & {"org_hook_inert", "no_webhook"}, kinds
+
+
+def test_an_inert_organization_hook_need_narrows_to_a_readers_repositories() -> None:
+    need = _by_kind(derive_needs("acme", [_inert("acme/web", False), _inert("acme/api", False)]))["org_hook_inert"]
+    stored = {"kind": need.kind, "repos": list(need.repos), "action": need.action, "title": "", "detail": ""}
+    narrowed = narrow_need(stored, lambda repo: repo == "acme/web")
+    assert narrowed is not None and narrowed["repos"] == ["acme/web"], narrowed
+    assert "1 repository" in narrowed["detail"] and "hook 7" in narrowed["detail"], narrowed["detail"]

@@ -29,6 +29,7 @@ logger = structlog.get_logger(__name__)
 KINDS = (
     "not_registered",
     "no_webhook",
+    "org_hook_inert",
     "onboarding_candidate",
     "not_watched",
     "no_qa_config",
@@ -95,6 +96,27 @@ def contents_unread(facts: Mapping[str, Any]) -> bool:
     return ("root_visible" in facts and facts["root_visible"] is not True) or facts.get("contents_unread") is True
 
 
+#: What to check on an organization hook discovery read as inert, from a run that did not record what is wrong with it.
+_INERT_HOOK_CHECKS = (
+    "it is switched off, does not send issues, issue_comment and pull_request events, or posts them as form data "
+    "rather than JSON"
+)
+
+
+def _hook_fixes(hook: Mapping[str, Any]) -> str:
+    """What to change on one organization hook discovery read as inert (:func:`org_discovery.hook_faults`)."""
+    fixes = []
+    if hook.get("active") is False:
+        fixes.append("is switched off (switch it on)")
+    missing = [str(event) for event in hook.get("missing_events") or []]
+    if missing:
+        fixes.append(f"does not send {', '.join(missing)} events (add them)")
+    if hook.get("content_type") != "json":
+        fixes.append("posts form data (set its content type to application/json)")
+    said = ", ".join(fixes[:-1]) + (" and " if len(fixes) > 1 else "") + fixes[-1] if fixes else "delivers"
+    return f"hook {hook.get('id')} {said}"
+
+
 def need_text(kind: str, repos: Sequence[str], action: Mapping[str, Any]) -> tuple[str, str]:
     """A need's title and detail, from its kind, the repositories it covers and its action: the one place a need's
     words are written, by :func:`derive_needs` and again by :func:`narrow_need`, so a count in them is always the
@@ -121,6 +143,17 @@ def need_text(kind: str, repos: Sequence[str], action: Mapping[str, Any]) -> tup
             f"Add the webhook to {_n(count)}",
             "Their webhooks are visible and none points at this deployment, so issues and pull requests there "
             "reach embry0 only through polling.",
+        )
+    if kind == "org_hook_inert":
+        hooks = [hook for hook in params.get("hooks") or [] if isinstance(hook, Mapping)]
+        wrong = "; ".join(_hook_fixes(hook) for hook in hooks) if hooks else _INERT_HOOK_CHECKS
+        return (
+            "Fix the organization webhook on GitHub",
+            f"The organization's webhook points at this deployment and does not deliver what intake reads: {wrong}. "
+            f"Until it does, issues and pull requests in {_n(count)} with no webhook of "
+            f"{'its' if count == 1 else 'their'} own reach embry0 only through polling. The hook action adds no "
+            "repository hook meanwhile: GitHub would send each event two times once the organization's is fixed. "
+            "Fix it on GitHub, then run discovery again.",
         )
     if kind == "onboarding_candidate":
         return (
@@ -246,6 +279,8 @@ def derive_needs(
     env_missing: dict[str, list[str]] = {}
     limited: dict[str, list[str]] = {}
     hosts: dict[str, list[str]] = {}
+    # What discovery read of an inert organization hook: every row of a run records the same, so the first one says.
+    inert_faults: list[Any] | None = None
 
     for row in rows:
         if row.get("archived"):
@@ -261,6 +296,11 @@ def derive_needs(
             if facts.get("hook_present") is None:
                 by_kind["hook_origin_unknown"].append(repo)
                 hosts[repo] = sorted({str(h) for h in facts.get("hook_hosts") or []})
+            elif facts.get("hook_present") is False and facts.get("org_hook") == "inert":
+                # The hook action skips it while the organization's hook is inert (#596): that hook is what to fix.
+                by_kind["org_hook_inert"].append(repo)
+                if inert_faults is None and isinstance(facts.get("org_hook_faults"), list):
+                    inert_faults = list(facts["org_hook_faults"])
             elif facts.get("hook_present") is False:
                 by_kind["no_webhook"].append(repo)
         # What the root listing holds is unknown when it was not read (#625): no need is drawn from it.
@@ -323,6 +363,8 @@ def derive_needs(
         add("not_registered", _action("register"))
     if by_kind["no_webhook"]:
         add("no_webhook", _action("hook"))
+    if by_kind["org_hook_inert"]:
+        add("org_hook_inert", _action("none", hooks=inert_faults or []))
     if by_kind["onboarding_candidate"]:
         add("onboarding_candidate", _action("onboard"))
     if by_kind["no_qa_config"]:

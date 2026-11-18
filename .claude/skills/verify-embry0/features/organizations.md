@@ -37,4 +37,4 @@ Preconditions:
 ## Gotchas
 
 - The owner record's repository count can differ from what the listing returns (forks, archived, internal repositories and visibility). Compare the run summary, not the probe's count.
-- A webhook counts as pointing at this deployment only when its URL starts with `WEBHOOK_PUBLIC_URL`. A deployment whose webhooks arrive through a tunnel hostname must set `WEBHOOK_PUBLIC_URL`; unset, hooks read as unknown and the needs list asks for it (`hook_origin_unknown`).
+- A webhook counts as pointing at this deployment only when it posts to `WEBHOOK_PUBLIC_URL` + `/api/v1/webhook` itself, matched as a URL (a host's case, a trailing dot, the default port and a query aside). A deployment whose webhooks arrive through a tunnel hostname must set `WEBHOOK_PUBLIC_URL`; unset, hooks read as unknown and the needs list asks for it (`hook_origin_unknown`).

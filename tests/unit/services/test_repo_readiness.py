@@ -474,6 +474,20 @@ def test_work_from_an_issue_without_the_connection() -> None:
     assert row["trigger_label"] == "embry0"
 
 
+def test_work_from_an_issue_while_the_organization_webhook_is_inert() -> None:
+    """#596: the organization's webhook points here and does not deliver, and the hook action will not add a
+    repository hook meanwhile: the row asks for that webhook to be fixed, and says so to the admin request."""
+    row = _row(_ready(facts={**FACTS, "hook_present": False, "org_hook": "inert"}), "work_trigger")
+    assert row["state"] == "missing"
+    assert row["says"] == (
+        "GitHub does not tell embry0 about new issues here yet, so the label embry0 does nothing. "
+        "The organization's webhook points at embry0 but does not deliver what it needs: an admin can fix it on "
+        "GitHub, and Organizations says what is wrong with it."
+    ), row["says"]
+    assert row["action"] == {"kind": "copy_admin_request", "label": "Copy a request for your admin"}
+    assert row.get("org_hook") == "inert", "the admin request is written from it"
+
+
 @pytest.mark.parametrize(
     "facts",
     [None, {"hooks_visible": False, "hook_present": None}, {"hooks_visible": True, "hook_present": None}],

@@ -50,6 +50,8 @@ export interface ReadinessRow {
   proposal_id?: string;
   pr_url?: string;
   trigger_label?: string;
+  /** On the work-trigger row: the organization's webhook points at embry0 and does not deliver, so it is what to fix. */
+  org_hook?: "inert";
 }
 
 /**

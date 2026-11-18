@@ -1134,8 +1134,9 @@ async def org_needs(owner: str) -> dict[str, Any]:
     discovery run: each need's kind (not_registered, no_webhook,
     onboarding_candidate, not_watched, no_qa_config, access_limited,
     env_values_needed, no_log_source, no_deploy_marker, count_gap,
-    hook_origin_unknown), the repositories it covers, the action that answers
-    it, its status (open, done, dismissed) and its healing case. Read-only."""
+    hook_origin_unknown, org_hook_inert, repo_vanished), the repositories it
+    covers, the action that answers it, its status (open, done, dismissed)
+    and its healing case. Read-only."""
     return await _get_client().org_needs(owner)
 
 

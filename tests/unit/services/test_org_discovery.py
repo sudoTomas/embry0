@@ -464,7 +464,37 @@ async def test_an_organization_hook_that_does_not_deliver_here_does_not_count(ho
         )
         assert repo.facts["hook_present"] is False, f"{repo.repo}: only its own hooks decide, and none points here"
     rows = [{"repo": r.repo, "archived": r.archived, "facts": r.facts} for r in found.repos]
-    assert "no_webhook" in [need.kind for need in derive_needs("acme", rows)]
+    kinds = [need.kind for need in derive_needs("acme", rows)]
+    # #596: an inert hook is fixed on GitHub, once; the hook action skips each repository meanwhile.
+    wanted, unwanted = ("org_hook_inert", "no_webhook") if state == "inert" else ("no_webhook", "org_hook_inert")
+    assert wanted in kinds and unwanted not in kinds, f"{state}: {kinds}"
+
+
+@pytest.mark.asyncio
+async def test_an_inert_organization_hook_records_what_keeps_it_from_delivering() -> None:
+    """#596: what is wrong with each organization hook at the target, so the need can say what to fix on GitHub."""
+    f = forge_with_sites()
+    broken = {**ORG_HOOK, "active": False, "events": ["issues", "push"], "config": {"url": ORG_HOOK["config"]["url"]}}
+    elsewhere = {**ORG_HOOK, "id": 901, "active": False, "config": {"url": "https://ci.example.org/github"}}
+    f.routes["/orgs/acme/hooks"] = _Resp(200, [broken, elsewhere])
+    found = await discover(
+        f, "acme", owner_kind="organization", hook_origins=("https://embry0.example.com",), embry0_state=_known
+    )
+    wanted = [{"id": 900, "active": False, "content_type": "form", "missing_events": ["issue_comment", "pull_request"]}]
+    for repo in found.repos:
+        assert repo.facts.get("org_hook_faults") == wanted, f"{repo.repo}: {repo.facts.get('org_hook_faults')}"
+
+
+@pytest.mark.asyncio
+async def test_a_delivering_organization_hook_records_no_faults() -> None:
+    f = forge_with_sites()
+    f.routes["/orgs/acme/hooks"] = _Resp(200, [ORG_HOOK])
+    found = await discover(
+        f, "acme", owner_kind="organization", hook_origins=("https://embry0.example.com",), embry0_state=_known
+    )
+    assert all("org_hook_faults" not in r.facts for r in found.repos), [
+        r.facts.get("org_hook_faults") for r in found.repos
+    ]
 
 
 @pytest.mark.asyncio

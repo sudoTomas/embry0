@@ -318,6 +318,7 @@ def _work_trigger(inputs: ReadinessInputs) -> dict[str, Any]:
     facts = inputs.facts or {}
     forge = _forge(inputs)
     label = inputs.trigger_label
+    extra: dict[str, Any] = {}
     if facts.get("hook_present") is True:
         state = "done"
         says = (
@@ -325,6 +326,16 @@ def _work_trigger(inputs: ReadinessInputs) -> dict[str, Any]:
             f"{forge} tells embry0 about new issues in this repository."
         )
         action = None
+    elif facts.get("hooks_visible") is True and facts.get("hook_present") is False and facts.get("org_hook") == "inert":
+        # The hook action adds no repository hook while the organization's is inert (#596): that one is what to fix.
+        state = "missing"
+        says = (
+            f"{forge} does not tell embry0 about new issues here yet, so the label {label} does nothing. "
+            f"The organization's webhook points at embry0 but does not deliver what it needs: an admin can fix it on "
+            f"{forge}, and Organizations says what is wrong with it."
+        )
+        action = _ADMIN_REQUEST
+        extra["org_hook"] = "inert"
     elif facts.get("hooks_visible") is True and facts.get("hook_present") is False:
         state = "missing"
         says = (
@@ -339,7 +350,7 @@ def _work_trigger(inputs: ReadinessInputs) -> dict[str, Any]:
             f"embry0 cannot tell whether {forge} tells it about new issues in this repository."
         )
         action = None
-    return _row("work_trigger", title, state, says, action, required=False, trigger_label=label)
+    return _row("work_trigger", title, state, says, action, required=False, trigger_label=label, **extra)
 
 
 def _summary(code: str, testing: str, forge: str) -> str:

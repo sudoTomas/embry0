@@ -486,6 +486,16 @@ def test_org_update_names_every_setting_an_organization_accepts():
     assert missing == [], f"org_update does not name {missing}"
 
 
+def test_org_needs_names_every_need_kind():
+    """The docstring is how an MCP client learns the need kinds: it had left out repo_vanished, and #596 adds
+    org_hook_inert."""
+    from embry0.services.org_needs import KINDS
+
+    doc = server.org_needs.__doc__ or ""
+    missing = [kind for kind in KINDS if not re.search(rf"\b{kind}\b", doc)]
+    assert missing == [], f"org_needs does not name {missing}"
+
+
 def test_the_instructions_say_context_audits_exist():
     text = server.mcp.instructions or ""
     for name in ("org_update", "context_audit_status", "context_audit_run", "CLAUDE.md"):
