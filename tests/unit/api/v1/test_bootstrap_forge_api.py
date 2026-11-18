@@ -148,11 +148,14 @@ async def test_an_unregistered_repository_on_a_deployment_that_names_no_default_
     api_client, monkeypatch
 ) -> None:
     """With DEFAULT_FORGE empty an unregistered repository has no forge to be checked on: the route says to register
-    it, and asks neither GitHub nor GitLab about a path that may be another's there."""
+    it, as the QA image build does (422 ERR_REPO_UNREGISTERED), and asks neither GitHub nor GitLab about a path that
+    may be another's there."""
     monkeypatch.setattr(api_client.app.state.repos_repo, "_default_forge", "")
     monkeypatch.setenv("GITHUB_TOKEN__ACME", "github-test-token")
     seen = _forge(monkeypatch, lambda r: httpx.Response(200, json={"default_branch": "main", "private": False}))
     response = await api_client.post("/api/v1/repos/bootstrap", json={"repo": "acme/unknown"})
     assert seen == [], f"a forge was asked about an unregistered repository: {seen}"
-    assert response.status_code == 400, response.text
-    assert "is not registered" in response.json()["detail"], response.json()["detail"]
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail.startswith("ERR_REPO_UNREGISTERED: ") and "is not registered" in detail, detail
+    assert (await api_client.get("/api/v1/repos/acme/unknown/-/qa-config")).status_code == 404, "nothing is stored"

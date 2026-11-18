@@ -20,13 +20,15 @@ embry0 init acme/new-service --app web \
 What it does, in one shot:
 
 1. **Verifies the repository on its own forge**, the one the registry
-   records for it (GitHub or GitLab; `DEFAULT_FORGE` for a repository not
-   registered yet, and none at all when that is empty), with the
-   owner-routed token (a registry credential, else `GITHUB_TOKEN` /
-   `GITHUB_TOKEN__<OWNER>` or `GITLAB_TOKEN` / `GITLAB_TOKEN__<GROUP>`),
-   failing fast on bad repo names or missing access. A forge that cannot
-   answer (not reached, a server error, a rate limit) answers 502 and
-   stores nothing: that is an outage, not a missing repository.
+   records for it (GitHub or GitLab; `DEFAULT_FORGE` for a repository
+   not registered yet; when that is empty, an unregistered repository is
+   refused with 422 `ERR_REPO_UNREGISTERED` before any forge is asked),
+   with the owner-routed token (a registry credential, else
+   `GITHUB_TOKEN` / `GITHUB_TOKEN__<OWNER>` or `GITLAB_TOKEN` /
+   `GITLAB_TOKEN__<GROUP>`), failing fast on bad repo names or missing
+   access. A forge that cannot answer (not reached, a server error, a
+   rate limit) answers 502 and stores nothing: that is an outage, not a
+   missing repository.
 2. **Registers a starter qa.yaml v2** in embry0's database. With no
    `--app`, the starter sets `qa_required: never` so the QA verify stage
    skips cleanly — the first issue→PR run on an empty repo is green. With

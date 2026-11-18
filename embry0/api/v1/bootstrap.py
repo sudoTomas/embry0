@@ -11,7 +11,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.repo_path import validate_repo_path
+from embry0.safety.error_codes import ErrorCode
 from embry0.services.bootstrap import BootstrapError, BootstrapUnreachable, bootstrap_repo
+from embry0.storage.repositories.repos import UnregisteredRepoError
 
 router = APIRouter()
 
@@ -82,6 +84,9 @@ async def bootstrap(req: BootstrapRequest, request: Request) -> dict[str, Any]:
             force=req.force,
             credential_resolver=getattr(request.app.state, "credential_resolver", None),
         )
+    except UnregisteredRepoError as exc:
+        # No forge to check it on: answered as the QA image build answers it, so the condition reads the same.
+        raise HTTPException(status_code=422, detail=f"{ErrorCode.REPO_UNREGISTERED}: {exc}") from exc
     except BootstrapUnreachable as exc:
         # The forge could not answer: an outage, not a missing repository (#31, as #565 and #577 answer a probe).
         raise HTTPException(status_code=502, detail=str(exc)) from exc

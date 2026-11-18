@@ -33,7 +33,6 @@ from embry0.execution.github_client import GitHubClient
 from embry0.execution.gitlab_client import make_gitlab_client
 from embry0.services.forge_resolver import resolve_forge
 from embry0.services.organizations import outage_of
-from embry0.storage.repositories.repos import UnregisteredRepoError
 from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
 logger = structlog.get_logger(__name__)
@@ -229,18 +228,17 @@ async def bootstrap_repo(
     force: bool = False,
     credential_resolver: Any | None = None,
 ) -> BootstrapResult:
-    """Run the full bootstrap. Raises BootstrapError on caller-fixable problems.
+    """Run the full bootstrap. Raises BootstrapError on caller-fixable problems, and
+    :class:`UnregisteredRepoError` for an unregistered repository on a deployment that names no default forge.
 
     ``config`` carries the forge settings (``github_token``, ``gitlab_token``, ``gitlab_url``, ``gitlab_ca_bundle``);
     ``repos_repo`` is the registry the repository's forge is read from (:func:`resolve_forge`: GitHub with none)."""
     steps: list[str] = []
 
     # 1. The repository's own forge (#31) — fail before touching any local state. An unregistered repository on a
-    # deployment that names no default forge has none to be checked on, and is refused before any forge is asked.
-    try:
-        forge = await resolve_forge(repos_repo, repo)
-    except UnregisteredRepoError as exc:
-        raise BootstrapError(str(exc)) from exc
+    # deployment that names no default forge has none to be checked on: resolve_forge raises UnregisteredRepoError
+    # before any forge is asked, and the route answers it as every route that reads a forge does.
+    forge = await resolve_forge(repos_repo, repo)
     default_branch, private = await verify_repo(repo, forge, config=config, credential_resolver=credential_resolver)
     steps.append(
         f"{FORGE_NAMES.get(forge, forge)} connection verified (default branch: {default_branch}, private: {private})"
