@@ -321,6 +321,9 @@ async def scan_repository(
     listing = await client.get(
         f"/repos/{full}/contents/", params={"ref": facts.default_branch} if facts.default_branch else None
     )
+    # An outage says nothing of what the credential may see (#583, as #579 found for the hooks): the contents are
+    # unknown, which no need reads as a missing permission, rather than "contents not visible".
+    root_unknown = _outage(listing)
     entries = _json(listing) if listing.status_code == 200 else None
     names = (
         {str(e.get("name")): str(e.get("type")) for e in entries if isinstance(e, dict)}
@@ -328,14 +331,15 @@ async def scan_repository(
         else {}
     )
     detail: dict[str, Any] = {
-        "root_visible": bool(names),
+        "root_visible": None if root_unknown else bool(names),
         "manifests": [n for n in MANIFEST_NAMES if n in names],
         "compose": next((n for n in COMPOSE_NAMES if n in names), None),
         "tests_dir": next((n for n in TEST_DIRS if names.get(n) == "dir"), None),
         "ci": ".github" in names or ".gitlab-ci.yml" in names,
         "frontend": False,
         "boot_hint": None,
-        "env_keys": [],
+        # Unknown too when the listing is: the checklist and the needs list read an empty list as "declares none".
+        "env_keys": None if root_unknown else [],
     }
     if "package.json" in names:
         pkg = await client.get(f"/repos/{full}/contents/package.json")
