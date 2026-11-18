@@ -124,3 +124,57 @@ async def test_postgres_refuses_nan_or_infinity_in_json_text(client: AsyncClient
     db = client.app.state.db  # type: ignore[attr-defined]
     with pytest.raises(asyncpg.exceptions.InvalidTextRepresentationError):
         await db.fetchval("SELECT $1::text::jsonb", f'{{"n": {token}}}')
+
+
+async def test_the_mcp_job_tools_read_a_job_holding_one(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP job tools summarise a job's budget: one read as its digits leaves the summary out of it, instead of
+    failing ``job_get`` and dropping every job from ``job_list``."""
+    from embry0.mcp_server import server
+    from embry0.mcp_server.client import Embry0Client
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    for job_id in ("job-past", "job-other"):
+        await db.execute(
+            "INSERT INTO jobs (job_id, task, repo, status) VALUES ($1, 't', 'acme/widgets', 'completed')", job_id
+        )
+    await db.execute(
+        "UPDATE jobs SET pipeline_config = jsonb_build_object('max_budget_usd', (1e400 + 0.5)::numeric) "
+        "WHERE job_id = 'job-past'"
+    )
+    transport = ASGITransport(app=client.app, raise_app_exceptions=False)  # type: ignore[attr-defined]
+    monkeypatch.setattr(server, "_client", Embry0Client("http://test", api_key="unused", transport=transport))
+
+    one = await server.job_get("job-past")
+    assert one["pipeline_config"] == {"max_budget_usd": PAST} and "/$" not in one["summary"], one["summary"]
+    listed = await server.job_list()
+    assert {"job-past", "job-other"} <= {job["job_id"] for job in listed["jobs"]}, "job_list loses the jobs"
+
+
+@pytest.mark.parametrize("path", ["/api/v1/progression", "/api/v1/world"])
+async def test_a_cleanup_count_past_a_floats_range_is_read(client: AsyncClient, path: str) -> None:
+    """A merged slop cleanup earns per line it removed: a count past a float's range counts none, and the page
+    answers."""
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await db.execute(
+        "INSERT INTO jobs (job_id, task, repo, status, coding_agent, pr_url, finished_at) VALUES "
+        "('job-clean', 't', 'acme/widgets', 'pr_merged', 'slopmaster', 'https://forge.test/acme/widgets/pull/1', NOW())"
+    )
+    assert (await client.get(path)).status_code == 200, f"{path} answers before anything is planted"
+    await db.execute(
+        "UPDATE jobs SET work_nature = jsonb_build_object('cleanup', "
+        "jsonb_build_object('added', 1, 'removed', (1e400 + 0.5)::numeric)) WHERE job_id = 'job-clean'"
+    )
+    answer = await client.get(path)
+    assert answer.status_code == 200, f"{path} answered {answer.status_code}"
+
+
+async def test_running_a_job_holding_one_again_says_why_its_budget_is_not_carried() -> None:
+    """The budget was stored as a number: the note says it is not one this deployment can read, not that it is not
+    a number."""
+    from unittest.mock import MagicMock
+
+    from embry0.api.carried_config import carried_config
+
+    carried, notes = await carried_config(MagicMock(), {"max_budget_usd": PAST}, job={}, runner=None, repo=None)
+    assert carried == {} and len(notes) == 1, (carried, notes)
+    assert "that this deployment can read" in notes[0], notes

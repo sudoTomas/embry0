@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from embry0.orchestration.nodes.triage import build_triage_system_prompt, parse_triage_response
 from embry0.services.progression import price
 from embry0.services.progression_pack import default_rules
@@ -71,6 +73,26 @@ def test_a_merged_cleanup_is_priced_by_its_net_lines_removed() -> None:
     cleaned = rules.outcomes["cleaned"]
     assert price(event, rules=rules) == [("coding", cleaned.xp + 50 * cleaned.per_line_removed)]
     assert price(ProgressEvent("cleaned", "slopmaster", NOW, None), rules=rules) == [("coding", cleaned.xp)]
+
+
+PAST = "1" + "0" * 400 + ".5"  # a count past a float's range, as Postgres writes it (#537)
+
+
+@pytest.mark.parametrize(
+    ("report", "net"),
+    [
+        ('{"added": 0, "removed": ' + PAST + "}", 0),  # read from the report's text: inf
+        (json.dumps({"added": 0, "removed": PAST}), 0),  # read through the JSONB codec: its digits
+        (json.dumps({"added": 0, "removed": True}), 0),
+        (json.dumps({"added": 10.0, "removed": 60.5}), 50),  # a finite float counts as its integer part
+    ],
+    ids=["inf", "digits", "boolean", "finite-float"],
+)
+def test_a_cleanup_count_that_is_not_a_finite_number_counts_no_lines(report: str, net: int) -> None:
+    rules = default_rules()
+    cleaned = rules.outcomes["cleaned"]
+    event = ProgressEvent("cleaned", "slopmaster", NOW, report)
+    assert price(event, rules=rules) == [("coding", cleaned.xp + net * cleaned.per_line_removed)]
 
 
 def test_triage_is_asked_for_the_verdict_and_a_bad_one_never_fails_it() -> None:

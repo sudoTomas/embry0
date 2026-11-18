@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
@@ -57,6 +58,18 @@ def run_actions(event: ProgressEvent) -> dict[str, int]:
     return actions_from_tools(event.tools_called or {})
 
 
+def _count(value: Any) -> int:
+    """A cleanup's line count: a real integer, or a finite float as one; anything else is 0. A number past a float's
+    range reads as ``inf`` from the report's text and as its digits from the JSONB codec (#537)."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return int(value)
+    return 0
+
+
 def price(event: ProgressEvent, *, rules: Rules) -> list[tuple[str, int]]:
     """What an event earns its character under ``rules``: (skill, XP) pairs, none for work no character does."""
     if not event.agent_type:
@@ -83,7 +96,7 @@ def price(event: ProgressEvent, *, rules: Rules) -> list[tuple[str, int]]:
         except ValueError:
             counts = {}
         counts = counts if isinstance(counts, dict) else {}
-        net = max(0, int(counts.get("removed") or 0) - int(counts.get("added") or 0))
+        net = max(0, _count(counts.get("removed")) - _count(counts.get("added")))
         xp += rule.per_line_removed * min(net, rule.max_lines)
     elif event.source == "audited":
         stale, _files = report_counts(event.report)

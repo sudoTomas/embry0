@@ -144,9 +144,13 @@ def _short_pr(url: str | None) -> str:
 
 def _job_summary(job: dict[str, Any]) -> str:
     """One glanceable line: id, status, stage, spend vs budget, repo, PR, error."""
-    budget = (job.get("pipeline_config") or {}).get("max_budget_usd")
+    config = job.get("pipeline_config")
+    budget = config.get("max_budget_usd") if isinstance(config, dict) else None
     spend = job.get("total_cost_usd") or 0.0
-    cost = f"${spend:.2f}" + (f"/${budget:g}" if budget else "")
+    # Only a number: a stored budget past a float's range reads as its digits (#537), and a config too deep to
+    # show is served as text.
+    shown = isinstance(budget, int | float) and not isinstance(budget, bool) and budget
+    cost = f"${spend:.2f}" + (f"/${budget:g}" if shown else "")
     stage = job.get("current_stage") or "-"
     parts = [str(job.get("job_id", "?")), str(job.get("status", "?")), f"stage={stage}", cost]
     if job.get("repo"):
