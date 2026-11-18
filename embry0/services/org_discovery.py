@@ -179,7 +179,7 @@ def hook_points_here(hooks: list[Any], origins: tuple[str, ...]) -> bool:
     (:func:`embry0.services.org_webhooks.same_target`): a longer host that starts with an origin's text is another
     host, a host in other case or with a trailing dot, or a query, the same target; and another route on the same
     host (the GitLab or Linear one, which refuse GitHub's deliveries) is another target (#603), and so is the route
-    with a trailing slash, which gets a redirect GitHub does not follow on a delivery (#612)."""
+    with a trailing slash, which the app answers with a 307: GitHub records only a 2xx answer as a delivered webhook (#612)."""
     targets = [hook_target(origin) for origin in origins if origin]
     for hook in hooks:
         if not isinstance(hook, dict):
@@ -195,7 +195,8 @@ def hook_state(hooks: list[Any], origins: tuple[str, ...]) -> bool | None:
 
     ``origins`` is the deployment's WEBHOOK_PUBLIC_URL, or empty when it is
     unset. False when the repository has no hooks. Otherwise True when a
-    hook's URL starts with that URL and False when none does, and None when
+    hook posts to its webhook route (:func:`hook_points_here`) and False
+    when none does, and None when
     there is no URL to compare against: a webhooks tunnel hostname is
     configured outside the repository, so a hook to it would read as absent.
     Unknown is not no.

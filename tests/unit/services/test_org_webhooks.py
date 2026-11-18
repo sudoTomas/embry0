@@ -71,8 +71,8 @@ def test_origin_of_keeps_scheme_host_and_port_only() -> None:
 
 
 def test_hook_pointing_at_takes_the_route_itself() -> None:
-    """#612: the route with a trailing slash gets a redirect GitHub does not follow on a delivery, so it is another
-    target, as the GitLab route under it is."""
+    """#612: the app answers the route with a trailing slash with a 307, and GitHub records only a 2xx as delivered,
+    so it is another target, as the GitLab route under it is."""
     hooks = [
         org_webhooks.OrgHook(1, "https://hooks.example.com/api/v1/webhook/", ("issues",), True),
         org_webhooks.OrgHook(2, "https://hooks.example.com/api/v1/webhook/gitlab", ("issues",), True),
@@ -626,8 +626,8 @@ async def test_the_time_kept_back_finds_a_create_that_hangs_until_the_deadline(m
 
 @pytest.mark.asyncio
 async def test_a_hook_at_the_route_with_a_trailing_slash_is_not_the_install(monkeypatch: pytest.MonkeyPatch) -> None:
-    """#612: the app answers <route>/ with a redirect GitHub does not follow on a delivery, so a hook there delivers
-    nothing: the install makes the one that does rather than answering already."""
+    """#612: the app answers <route>/ with a 307, and GitHub records only a 2xx as delivered, so a hook there is not
+    counted: the install makes the one that delivers rather than answering already."""
     target = "https://h.example.com/api/v1/webhook"
     client = Client(Resp(200, [_hook(target + "/", hook_id=3)]), Resp(201, _hook(target, hook_id=4)))
     result = await org_webhooks.install_org_hook(client, "acme", target=target, secret="s")  # type: ignore[arg-type]

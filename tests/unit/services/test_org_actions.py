@@ -295,9 +295,9 @@ async def test_hook_already_comes_from_the_live_listing_on_the_webhook_route() -
     ids=["gitlab", "linear", "trailing-slash"],
 )
 async def test_a_repository_hook_on_another_route_of_the_host_is_not_this_one(route: str) -> None:
-    """#604 review: the GitLab and Linear routes refuse GitHub's deliveries, and the route with a trailing slash gets a
-    redirect GitHub does not follow on a delivery (#612), so a hook there delivers nothing: the action adds the one
-    that does (only /api/v1/webhook takes them, so this makes no duplicate)."""
+    """#604 review: the GitLab and Linear routes refuse GitHub's deliveries, and the app answers the route with a
+    trailing slash with a 307 where GitHub records only a 2xx as delivered (#612), so a hook there is not counted: the
+    action adds the one that delivers (only /api/v1/webhook takes them, so this makes no duplicate)."""
     forge = FakeForge([{"config": {"url": f"https://hooks.example.com{route}"}}])
     results = await run_action(context(forge_client=forge), "hook", ["acme/widgets"])
     assert outcomes(results) == [("acme/widgets", "done")], results
