@@ -16,6 +16,7 @@ import pytest
 from httpx import AsyncClient
 
 from embry0.services.progression_pack import default_text
+from tests.fixtures.timezones import python_only_zone  # noqa: F401 - a fixture
 
 pytestmark = [pytest.mark.requires_postgres]
 
@@ -306,10 +307,22 @@ async def test_a_number_yaml_or_json_cannot_read_is_a_422_at_its_key(client: Asy
     assert (await client.get(PACK)).json()["version"] == 0, "a refused pack stores nothing"
 
 
-async def test_a_timezone_postgres_does_not_know_is_a_422_on_timezone(client: AsyncClient) -> None:
-    resp = await client.put(PACK, content=COPPER.replace("timezone: UTC", "timezone: localtime"), headers=YAML)
+async def test_a_timezone_postgres_does_not_know_is_a_422_on_timezone(
+    client: AsyncClient,
+    python_only_zone: str,  # noqa: F811 - the imported fixture
+) -> None:
+    """A zone Python reads and the database does not (#362): ``localtime`` was one only where tzdata ships that file,
+    and elsewhere the Python check gave the same 422, so the database's was never reached."""
+    import zoneinfo
+
+    zoneinfo.ZoneInfo(python_only_zone)  # Python reads it: the refusal can only be the database's
+    resp = await client.put(
+        PACK, content=COPPER.replace("timezone: UTC", f"timezone: {python_only_zone}"), headers=YAML
+    )
     assert resp.status_code == 422, resp.text
-    assert [item["loc"] for item in resp.json()["detail"]] == [["timezone"]]
+    detail = resp.json()["detail"]
+    assert [item["loc"] for item in detail] == [["timezone"]], detail
+    assert "database does not know" in detail[0]["msg"], f"refused by the database check: {detail}"
 
 
 async def test_a_pack_past_the_limit_is_refused_before_it_is_read(client: AsyncClient) -> None:

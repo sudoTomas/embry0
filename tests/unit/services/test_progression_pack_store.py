@@ -6,6 +6,9 @@ one-draft rules are the database's.
 
 from __future__ import annotations
 
+import zoneinfo
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -26,6 +29,7 @@ from embry0.services.progression_pack_store import (
 )
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.progression_packs import KEEP_SUPERSEDED, ProgressionPacksRepository
+from tests.fixtures.timezones import PYTHON_ONLY_ZONE, python_only_zone, python_only_zone_in  # noqa: F401 - a fixture
 
 pytestmark = [pytest.mark.requires_postgres]
 
@@ -374,9 +378,35 @@ def test_a_body_that_is_not_a_pack_is_refused_by_kind(body: bytes, content_type:
 # ---- what Python accepts and the database does not ----
 
 
-async def test_a_timezone_only_python_knows_is_refused_on_every_write(store: PackStore) -> None:
-    """``localtime`` is a zone ``zoneinfo`` reads and Postgres does not: the facts query would fail on every read."""
-    local = read_text(COPPER.replace("timezone: UTC", "timezone: localtime"))
+def test_the_python_only_zone_is_gone_after_its_block(tmp_path: Path) -> None:
+    utc = zoneinfo.ZoneInfo("UTC")
+    saved = zoneinfo.TZPATH
+    with python_only_zone_in(tmp_path) as zone:
+        assert zoneinfo.ZoneInfo(zone).utcoffset(None) == timedelta(0)
+    assert zoneinfo.TZPATH == saved, "the search path is restored"
+    with pytest.raises(zoneinfo.ZoneInfoNotFoundError):
+        zoneinfo.ZoneInfo(zone)
+    assert zoneinfo.ZoneInfo("UTC") is utc, "zones cached before the block are the same objects after it"
+
+
+async def _assert_only_python_knows(zone: str, repo: ProgressionPacksRepository) -> None:
+    try:
+        zoneinfo.ZoneInfo(zone)
+    except zoneinfo.ZoneInfoNotFoundError:
+        pytest.fail(f"zoneinfo cannot read {zone}, so the Python check would refuse it before the database is asked")
+    assert not await repo.timezone_known(zone), f"the database knows {zone}, so this test measures nothing"
+
+
+async def test_a_timezone_only_python_knows_is_refused_on_every_write(
+    store: PackStore,
+    repo: ProgressionPacksRepository,
+    db_with_migrations: DatabasePool,
+    python_only_zone: str,  # noqa: F811 - the imported fixture
+) -> None:
+    """A zone ``zoneinfo`` reads and Postgres does not: the facts query would fail on every read. A write, a draft,
+    a preview, and the restore of an earlier version that holds one, are each refused."""
+    await _assert_only_python_knows(python_only_zone, repo)
+    local = read_text(COPPER.replace("timezone: UTC", f"timezone: {python_only_zone}"))
     berlin = read_text(COPPER.replace("timezone: UTC", "timezone: Europe/Berlin"))
     for write in (
         store.put(local, actor="ann"),
@@ -386,23 +416,44 @@ async def test_a_timezone_only_python_knows_is_refused_on_every_write(store: Pac
         with pytest.raises(PackInvalid) as refused:
             await write
         assert [(p.loc, p.type) for p in refused.value.problems] == [(("timezone",), "timezone")]
-        assert "localtime" not in refused.value.problems[0].msg, "a refusal never echoes the value"
-    assert (await store.put(berlin, actor="ann")).changed, "a zone both know is stored"
+        assert "database does not know" in refused.value.problems[0].msg, "refused by the database check"
+        assert python_only_zone not in refused.value.problems[0].msg, "a refusal never echoes the value"
+    stored = await store.put(berlin, actor="ann")
+    assert stored.changed, "a zone both know is stored"
     assert (await store.active()).timezone == "Europe/Berlin"
+
+    # The restore of an earlier version whose zone the database does not know (#367 review): superseded by the next
+    # write, then given that zone as a row written before it was refused would hold it.
+    await store.put(read_text(COPPER), actor="ann")
+    earlier = dict((await repo.get(stored.version)).document or {})
+    earlier["timezone"] = python_only_zone
+    await db_with_migrations.execute(
+        "UPDATE progression_packs SET document = $1::jsonb WHERE version = $2", earlier, stored.version
+    )
+    with pytest.raises(PackInvalid) as refused:
+        await store.restore(stored.version, actor="ann")
+    assert [(p.loc, p.type) for p in refused.value.problems] == [(("timezone",), "timezone")], refused.value
+    assert "database does not know" in refused.value.problems[0].msg, "the restore is refused by the database check"
+    assert (await store.active()).timezone == "UTC", "nothing was restored"
 
 
 async def test_a_draft_whose_timezone_the_database_no_longer_knows_is_not_activated(
-    store: PackStore, db_with_migrations: DatabasePool
+    store: PackStore,
+    repo: ProgressionPacksRepository,
+    db_with_migrations: DatabasePool,
+    python_only_zone: str,  # noqa: F811 - the imported fixture
 ) -> None:
+    await _assert_only_python_knows(python_only_zone, repo)
     draft, _ = await store.save_draft(read_text(COPPER), actor="ann")
     document = dict(draft.document or {})
-    document["timezone"] = "localtime"
+    document["timezone"] = python_only_zone
     await db_with_migrations.execute(
         "UPDATE progression_packs SET document = $1::jsonb WHERE version = $2", document, draft.version
     )
     with pytest.raises(PackInvalid) as refused:
         await store.activate_draft(actor="ann")
     assert refused.value.problems[0].loc == ("timezone",)
+    assert "database does not know" in refused.value.problems[0].msg, "refused by the database check"
     assert (await store.effective()).version == 0, "nothing was activated"
 
 
