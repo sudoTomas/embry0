@@ -140,31 +140,45 @@ def test_redact_event_scrubs_strings_recursively_and_leaves_correlation_keys() -
 
 # ---- #57: a provider token glued to the word before it ------------------------------------------------------
 
-#: Fake token values only, each glued to the character before it.
+#: Fake token values only: (the text, the token in it). Each is glued to the character before it.
+_GH36 = "ghp_" + "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIj"  # 36 letters, no digit: the generic rule misses it
+_GH36_DIGITS = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+_GLPAT = "glpat-" + "abcdefghijklmnopqrst"  # 20 characters: too short for the generic rule
+_JWT_FAKE = "eyJhbGciOiJIUzI1NiJ9" + ".eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
 GLUED = [
-    "n" + "ghp_" + "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIj",  # 36 letters, no digit: the generic rule misses it
-    "n" + "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
-    "_" + "ghs_" + "Zz" * 18,
-    "x" + "github_pat_" + "11ABCDEFG0" + "_" + "abcdefghij" * 6,
-    "n" + "glpat-" + "abcdefghijklmnopqrst",  # 20 characters: too short for the generic rule
-    "z" + "sk-ant-oat01-" + "Zx9_" * 12,
-    "z" + "sk-proj-" + "AbCd" * 8,
-    "k" + "xai-" + "q" * 40,
-    "m" + "lin_api_" + "k" * 40,
-    "w" + "xoxb-" + "123456789012-123456789012-AbCdEfGhIjKlMnOpQrStUvWx",
+    ("n" + _GH36, _GH36),
+    ("n" + _GH36_DIGITS, _GH36_DIGITS),
+    ("_" + "ghs_" + "Zz9" * 12, "ghs_" + "Zz9" * 12),
+    ("n" + _GH36_DIGITS + "x", _GH36_DIGITS),  # glued on both sides
+    ("x" + "github_pat_" + "11ABCDEFG0_" + "abcdefghij" * 6, "github_pat_" + "11ABCDEFG0_" + "abcdefghij" * 6),
+    ("n" + _GLPAT, _GLPAT),
+    ("z" + "sk-ant-oat01-" + "Zx9_" * 12, "sk-ant-oat01-" + "Zx9_" * 12),
+    ("z" + "sk-proj-" + "Ab1c" * 12, "sk-proj-" + "Ab1c" * 12),
+    ("z" + "sk-svcacct-" + "Ab1c" * 12, "sk-svcacct-" + "Ab1c" * 12),
+    ("z" + "sk-admin-" + "Ab1c" * 12, "sk-admin-" + "Ab1c" * 12),
+    ("z" + "sk-or-v1-" + "0a1b2c3d" * 8, "sk-or-v1-" + "0a1b2c3d" * 8),  # OpenRouter
+    ("k" + "xai-" + "q" * 40, "xai-" + "q" * 40),
+    ("m" + "lin_api_" + "k" * 40, "lin_api_" + "k" * 40),
+    ("m" + "lin_oauth_" + "k" * 40, "lin_oauth_" + "k" * 40),
+    *[("w" + f"xox{kind}-" + "123456789012-AbCdEfGh", f"xox{kind}-" + "123456789012-AbCdEfGh") for kind in "abprs"],
+    ("token" + _JWT_FAKE, _JWT_FAKE),
+    # A word of another script before it: \b takes it for a word character too.
+    ("令牌" + _GH36_DIGITS, _GH36_DIGITS),
+    ("トークン" + _GLPAT, _GLPAT),
+    ("ключ" + "sk-ant-oat01-" + "Zx9_" * 12, "sk-ant-oat01-" + "Zx9_" * 12),
+    ("clé" + _GH36, _GH36),
 ]
 
 
-@pytest.mark.parametrize("glued", GLUED, ids=lambda t: t[1:8])
+@pytest.mark.parametrize(("text", "token"), GLUED, ids=[f"{i}-{t[:9]}" for i, (_, t) in enumerate(GLUED)])
 @pytest.mark.parametrize(
     "redact",
     [lambda t: redact_secrets(t), lambda t: redact_log_text(t), lambda t: redact_bounded(t, 2000)],
     ids=["redact_secrets", "redact_log_text", "redact_bounded"],
 )
-def test_a_token_glued_to_the_word_before_it_is_redacted(glued: str, redact) -> None:
-    token = glued[1:]
-    out = redact(f"token {glued} rejected")
-    assert token not in out and token[4:] not in out, f"left readable: {out}"
+def test_a_token_glued_to_the_word_before_it_is_redacted(text: str, token: str, redact) -> None:
+    out = redact(f"token {text} rejected")
+    assert token not in out and token[-20:] not in out, f"left readable: {out}"
     assert REDACTED in out
 
 
@@ -179,6 +193,11 @@ def test_a_token_glued_to_the_word_before_it_is_redacted(glued: str, redact) -> 
         "thighs_" + "a" * 35,  # one short of a token's 36
         "EASTASIAPACIFICREGIONSX",  # an AWS key id's prefix inside an uppercase word
         "maxai-gateway-configuration",
+        "helpdesk-admin-panel-settings",  # sk-admin- inside a word, too short and no digit
+        "test_github_pat_with_no_owner_is_refused",
+        "test_github_pat_with_no_owner_is_refused_when_the_registry_has_none",  # 40+, but no digit
+        "callbacks-proj-milestone-review-checklist-for-the-quarter",  # sk-proj-? no: "ks-proj" is not "sk-proj"
+        "desk-proj-alpha-beta-gamma-delta-epsilon-zeta-eta",  # sk-proj- inside a word, no digit
     ],
 )
 def test_an_identifier_that_only_holds_a_prefix_is_left_alone(text: str) -> None:

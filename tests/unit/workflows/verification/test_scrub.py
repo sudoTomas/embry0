@@ -74,3 +74,34 @@ def test_known_values_are_redacted_verbatim_longest_first() -> None:
     scrubbed = scrub_output(text, known_values=["s3cr3t-nonstandard-value", "s3cr3t-nonstandard-value-long"])
     assert "s3cr3t" not in scrubbed, scrubbed
     assert scrubbed == f"echo {REDACTED} and {REDACTED}"
+
+
+# ---- #57: one set of token rules ----------------------------------------------------------------------------
+
+_GH = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"  # fake
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"AssertionError: expected token{_GH}",  # glued to the word before it
+        f"assert 'x' == '令牌{_GH}'",  # glued to a word of another script
+        f"lin_api_{'k' * 40} rejected",  # a token shape this scrubber did not know
+        f"{'1234567890'}:{'A' * 35} sent",  # a Telegram bot token
+    ],
+)
+def test_a_token_shape_the_redactor_knows_is_caught(line: str) -> None:
+    scrubbed = scrub_output(line)
+    assert (
+        REDACTED in scrubbed
+        and "A1b2C3d4" not in scrubbed
+        and "kkkkkkkk" not in scrubbed
+        and "AAAAAAAA" not in scrubbed
+    )
+
+
+def test_a_private_key_block_is_redacted_line_by_line() -> None:
+    begin, end = "-----BEGIN RSA " + "PRIVATE KEY-----", "-----END RSA " + "PRIVATE KEY-----"
+    text = "before\n" + begin + "\nMIIEowIBAAKCAQEA\nqKmtNdVq7xYz\n" + end + "\nafter"
+    scrubbed = scrub_output(text)
+    assert scrubbed.splitlines() == ["before", REDACTED, REDACTED, REDACTED, REDACTED, "after"], scrubbed

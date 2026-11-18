@@ -210,6 +210,10 @@ def test_diagnostics_do_not_gain_the_pii_rules() -> None:
         "kxai-" * 40_000,
         "mlin_api_" * 25_000,
         "nxoxb-" * 30_000,
+        "-eyJ" * 50_000,  # a JWT start after a separator, over and over: quadratic before its segments were bounded
+        "aeyJ" * 50_000,  # the same, glued
+        "令ghp_" * 40_000,  # a glued prefix after a letter of another script
+        "xgithub_pat_" + "a" * 200_000,  # a glued github_pat_ with no digit to find
     ],
     ids=[
         "dots",
@@ -228,6 +232,10 @@ def test_diagnostics_do_not_gain_the_pii_rules() -> None:
         "glued-xai",
         "glued-lin",
         "glued-xox",
+        "jwt-starts",
+        "glued-jwt-starts",
+        "glued-other-script",
+        "glued-github-pat-no-digit",
     ],
 )
 def test_matching_stays_linear(hostile: str, fields) -> None:
