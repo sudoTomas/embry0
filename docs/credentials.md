@@ -110,7 +110,7 @@ To move the env tokens into the registry, run the importer once, from inside the
 docker exec embry0-orchestrator embry0 credentials import-env
 # or
 curl -X POST http://localhost:8200/api/v1/credentials/import-env \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"replace": false}'
@@ -174,18 +174,18 @@ Binding a repo and checking the result:
 
 ```bash
 curl -X POST http://localhost:8200/api/v1/credentials \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"kind": "forge_token", "provider": "github", "label": "alice", "secret": "github_pat_...",
        "git_author_name": "Alice", "git_author_email": "alice@example.com"}'
 
 curl -X PUT http://localhost:8200/api/v1/repos/acme/widgets/-/credentials \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"bindings": [{"credential_id": "cred-0123456789ab", "role": "forge"}]}'
 
 curl "http://localhost:8200/api/v1/credentials/resolve?repo=acme/gadgets&role=forge" \
-  -H "Authorization: Bearer $API_KEY"
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY")
 ```
 
 The dry run for `acme/gadgets`, which has no repo binding but whose owner is bound:

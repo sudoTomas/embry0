@@ -46,19 +46,19 @@ A tailnet is read with a credential of kind `tailnet_api_key` in the [credential
 
 ```bash
 curl -X POST http://localhost:8200/api/v1/credentials \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"kind": "tailnet_api_key", "provider": "tailscale", "label": "tailnet",
        "secret": "tskey-client-...", "metadata": {"tailnet": "-"}}'
 
 curl -s "http://localhost:8200/api/v1/credentials/bindings?scope_kind=global&scope_value=" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   | jq '{scope_kind: "global", scope_value: "",
          bindings: ([.bindings[] | select(.role != "tailnet") | {credential_id, role, pinned, priority}]
                     + [{credential_id: "cred-0123456789ab", role: "tailnet"}])}' > global-bindings.json
 
 curl -X PUT http://localhost:8200/api/v1/credentials/bindings \
-  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d @global-bindings.json
 ```

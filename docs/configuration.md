@@ -360,8 +360,8 @@ The deployment's document sets the default of every repository no layer decides 
 
 **Which layer wins.** A repository's own layer outranks its organization's, which outranks the deployment's. The upgrade (below) writes `true` into the layer of each repository the scout or the meter read before, so `slop_meter: false` in an organization's layer or the deployment's document does not reach those: their own `true` wins. To take such repositories out, take the key out of each one's layer, or set it to false there: `embry0 settings set background slop_meter=null --repo acme/widgets` (`null` takes the key out, so the repository inherits its organization's value again), or `PATCH /api/v1/config/settings/background?repo=acme/widgets` with `{"slop_meter": null}`. Each is one revision of that repository's layer, undoable. There is no one call for many repositories; `GET /api/v1/config/settings/layers` lists every layer with the keys it sets, so for every repository of `acme`:
 
-```sh
-curl -s -H "Authorization: Bearer $EMBRY0_API_KEY" "$EMBRY0_API_URL/api/v1/config/settings/layers" \
+```bash
+curl -s -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY") "$EMBRY0_API_URL/api/v1/config/settings/layers" \
   | jq -r '.layers[] | select(.layer == "repository" and .owner == "acme" and (.keys | index("background.slop_meter"))) | .repo' \
   | while read -r repo; do embry0 settings set background slop_meter=null --repo "$repo" --yes; done
 ```
