@@ -23,7 +23,7 @@ from embry0.services._cost import resolve_job_total_cost
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
 from embry0.storage.database import StoredValueTooDeep
-from embry0.storage.repositories.jobs import RELEASED_JOB_STATUSES, StatusTransitionConflict
+from embry0.storage.repositories.jobs import FAILABLE_JOB_STATUSES, RELEASED_JOB_STATUSES, StatusTransitionConflict
 from embry0.storage.repositories.repo_setup_proposals import RepoSetupProposalsRepository
 from embry0.trackers import forge_number_of, github_number_of, linear_identifier_of
 
@@ -251,16 +251,15 @@ async def _fail_the_run(self: IssueExecutor, job_id: str, **fields: Any) -> bool
     """Fail the job whose run raised (``status="failed"`` and ``fields``), stamp its credential uses and announce
     its end, unless the job already ended; True once failed.
 
-    A job cancelled (or otherwise ended in a status that cannot go to failed) between the check and the write is
-    caught by the write's own refusal (#594, #595). One failed in that gap is not: ``failed -> failed`` is a
-    same-status write, so this failure's code and message replace that one's and the end is announced again. Only
-    ``JobsRepository.fail_jobs`` fails a job from outside its run (at boot, and for an area map's job that could not
-    start), so that gap is narrow.
+    The write replaces only a status a run may fail from (``FAILABLE_JOB_STATUSES``, and ``pending`` before start),
+    checked by its own compare-and-swap (#600): a job cancelled or failed by another writer between the check and
+    the write is left as it ended, and its end is not announced again (#594, #595).
     """
+    expected = FAILABLE_JOB_STATUSES | ({"pending"} if fields.get("before_start") else set())
     ended = await _ended_meanwhile(self, job_id)
     if ended is None:
         try:
-            await self._jobs.update(job_id, status="failed", **fields)
+            await self._jobs.update(job_id, status="failed", expected_status=expected, **fields)
             await self._finish_credential_uses(job_id, error_code=fields.get("error_code"))
             await self._announce_finished(job_id)
             return True
@@ -1726,7 +1725,15 @@ async def _run_workflow(
             before_start=not marked_running,
             **pr_field,
         )
-        if failed and pr_url:
+        if pr_url and not failed:
+            # #600: the job ended while its pull request was opened (a person cancelled it): the pull request is on
+            # the forge all the same, so the job keeps it, and its case ledger says it opened. Best-effort: the run
+            # still cleans up after itself, below, and raises nothing for a job that already ended.
+            try:
+                await self._jobs.update(job_id, pr_url=pr_url)
+            except Exception:
+                logger.warning("late_pr_url_write_failed", job_id=job_id, pr_url=pr_url, exc_info=True)
+        if pr_url:
             await self._record_pr_opened(issue_id, job_id, pr_url)
         # No issue, no status change to record (see _handle_workflow_result). A job that ended meanwhile had its
         # issue put back by whatever ended it.

@@ -1572,9 +1572,16 @@ class IssueExecutor:
             budget_overrun_usd=_executor_run._overrun_of(exc, last_state),
             **pr_field,
         )
+        if pr_url and not failed:
+            # #600: the job ended while its pull request was opened: the job keeps the pull request all the same.
+            # Best-effort: the sandbox is still freed, below.
+            try:
+                await self._jobs.update(job_id, pr_url=pr_url)
+            except Exception:
+                logger.warning("late_pr_url_write_failed", job_id=job_id, pr_url=pr_url, exc_info=True)
+        if pr_url:
+            await self._record_pr_opened(issue_id, job_id, pr_url)
         if failed:
-            if pr_url:
-                await self._record_pr_opened(issue_id, job_id, pr_url)
             await self._issue_back_to_open(issue_id)
         # A resumed job owns a sandbox too, and this path never destroyed
         # it — invisible until `hard` mode started raising mid-run.

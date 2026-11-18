@@ -431,6 +431,80 @@ async def test_before_start_never_fails_a_job_that_left_pending(jobs_repo: JobsR
     assert (await jobs_repo.get(job_id))["status"] == ended
 
 
+@pytest.mark.asyncio
+async def test_an_expected_status_keeps_another_writers_failure(jobs_repo: JobsRepository):
+    """#600: a write that names the statuses it may replace leaves a job in any other one as it is, the same-status
+    ``failed -> failed`` included."""
+    from embry0.storage.repositories.jobs import FAILABLE_JOB_STATUSES, StatusTransitionConflict
+
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+    await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+    await jobs_repo.update(job_id, status=JobStatus.FAILED, error_code="ERR_ORPHANED", error_message="first")
+
+    with pytest.raises(StatusTransitionConflict, match="is failed"):
+        await jobs_repo.update(
+            job_id,
+            status=JobStatus.FAILED,
+            error_code="ERR_UNKNOWN",
+            error_message="second",
+            expected_status=FAILABLE_JOB_STATUSES,
+        )
+
+    job = await jobs_repo.get(job_id)
+    assert (job["error_code"], job["error_message"]) == ("ERR_ORPHANED", "first")
+
+    other = await jobs_repo.create(repo="a/b", task="t")
+    await jobs_repo.update(other, status=JobStatus.RUNNING)
+    await jobs_repo.update(
+        other, status=JobStatus.FAILED, error_code="ERR_UNKNOWN", expected_status=FAILABLE_JOB_STATUSES
+    )
+    assert (await jobs_repo.get(other))["status"] == "failed", "a status it expects is replaced"
+
+
+@pytest.mark.asyncio
+async def test_an_expected_status_needs_a_status_write(jobs_repo: JobsRepository):
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+
+    with pytest.raises(ValueError, match="expected_status"):
+        await jobs_repo.update(job_id, error_message="x", expected_status={JobStatus.PENDING})
+
+    assert (await jobs_repo.get(job_id))["error_message"] is None
+
+
+class _StatusMovesAfterTheCheck:
+    """A pool on which another writer moves the job's status right after ``update`` checks it."""
+
+    def __init__(self, db, job_id: str, then: str) -> None:
+        self._db, self._job_id, self._then = db, job_id, then
+
+    async def fetchrow(self, query: str, *args):
+        row = await self._db.fetchrow(query, *args)
+        if query.startswith("SELECT status FROM jobs"):
+            await self._db.execute("UPDATE jobs SET status = $2 WHERE job_id = $1", self._job_id, self._then)
+        return row
+
+    def __getattr__(self, name: str):
+        return getattr(self._db, name)
+
+
+@pytest.mark.asyncio
+async def test_a_same_status_write_naming_its_statuses_is_a_compare_and_swap(jobs_repo: JobsRepository):
+    """#600: the job's status cannot change between the check and the write, a same-status write's included."""
+    from embry0.storage.repositories.jobs import StatusTransitionConflict
+
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+    await jobs_repo.update(job_id, status=JobStatus.RUNNING)
+    racing = JobsRepository(_StatusMovesAfterTheCheck(jobs_repo._db, job_id, "paused"))
+
+    with pytest.raises(StatusTransitionConflict, match="concurrent writer"):
+        await racing.update(
+            job_id, status=JobStatus.RUNNING, error_message="written over", expected_status={JobStatus.RUNNING}
+        )
+
+    job = await jobs_repo.get(job_id)
+    assert (job["status"], job["error_message"]) == ("paused", None), f"written in between: {dict(job)}"
+
+
 def test_the_transition_table_itself_still_forbids_pending_to_failed():
     """The refusal is an exception beside the table, not an entry in it:
     readers of VALID_JOB_TRANSITIONS (cas_transition_on_conn, delivery

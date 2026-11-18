@@ -105,6 +105,13 @@ TERMINAL_JOB_STATUSES: frozenset[str] = _TERMINAL_STATUSES
 #: it holds is kept (the retention sweeps, ADR 0017).
 RELEASED_JOB_STATUSES: frozenset[str] = frozenset(_TERMINAL_STATUSES | {JobStatus.PR_MERGED, JobStatus.PR_CLOSED})
 
+#: The statuses a run's failure may replace: those the table lets go to failed (#600). ``pending`` joins them only
+#: for a failure before start (``before_start``). Never ``failed`` itself: a same-status write would replace another
+#: writer's failure.
+FAILABLE_JOB_STATUSES: frozenset[str] = frozenset(
+    status for status, allowed in VALID_JOB_TRANSITIONS.items() if JobStatus.FAILED in allowed
+)
+
 # What a terminal UPDATE returns, for the outcome metrics (#285).
 _FINISHED_COLUMNS = "job_id, status, pipeline_template, error_code, created_at, started_at, finished_at"
 
@@ -522,7 +529,14 @@ class JobsRepository:
         count = await self._db.fetchval(f"SELECT COUNT(*) FROM jobs j {join} WHERE {' AND '.join(conditions)}", *args)
         return int(count or 0)
 
-    async def update(self, job_id: str, *, before_start: bool = False, **fields: Any) -> None:
+    async def update(
+        self,
+        job_id: str,
+        *,
+        before_start: bool = False,
+        expected_status: Collection[str] | None = None,
+        **fields: Any,
+    ) -> None:
         """Update specific fields on a job. Validates status transitions.
 
         When a status transition is requested, uses a compare-and-swap UPDATE
@@ -532,8 +546,18 @@ class JobsRepository:
 
         ``before_start``: the writer never marked this job running, so a job
         still pending may go straight to failed, whatever its code (#348, #588).
+
+        ``expected_status``: the statuses a status write may replace. A job in
+        any other status raises StatusTransitionConflict, and nothing is
+        written: the same-status write (``failed -> failed``) included, which
+        would otherwise replace another writer's code and message (#600). The
+        write is a compare-and-swap on the status it checked, a same-status
+        write's too, so nothing changes in between. A write without a
+        ``status`` cannot name one (ValueError).
         """
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
+        if expected_status is not None and "status" not in valid:
+            raise ValueError(f"job {job_id}: expected_status names what a status write replaces; this write has none")
         if not valid:
             return
 
@@ -547,6 +571,10 @@ class JobsRepository:
                 # Job does not exist — skip silently (existing behaviour).
                 return
             current_status = row["status"]
+            if expected_status is not None and current_status not in expected_status:
+                raise StatusTransitionConflict(
+                    f"job {job_id} is {current_status}, not {', '.join(sorted(expected_status))}"
+                )
 
             if current_status == new_status:
                 # No-op: same status; still apply other fields if any.
@@ -617,6 +645,18 @@ class JobsRepository:
                 )
             if new_status in _TERMINAL_STATUSES:
                 self._count_finished(result_row)
+        elif expected_status is not None:
+            # A same-status write that names what it may replace (#600): a compare-and-swap on the status checked
+            # above, as a status change is, so the job cannot leave it in between.
+            args.append(current_status)
+            written = await self._db.fetchval(
+                f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = $1 AND status = ${idx} RETURNING job_id",
+                *args,
+            )
+            if written is None:
+                raise StatusTransitionConflict(
+                    f"job {job_id}: expected status={current_status!r}; status already changed by concurrent writer"
+                )
         else:
             # No status change — plain UPDATE without CAS guard.
             await self._db.execute(
