@@ -251,7 +251,11 @@ async def _fail_the_run(self: IssueExecutor, job_id: str, **fields: Any) -> bool
     """Fail the job whose run raised (``status="failed"`` and ``fields``), stamp its credential uses and announce
     its end, unless the job already ended; True once failed.
 
-    A job that ends between the check and the write is caught by the write's own refusal (#594, #595).
+    A job cancelled (or otherwise ended in a status that cannot go to failed) between the check and the write is
+    caught by the write's own refusal (#594, #595). One failed in that gap is not: ``failed -> failed`` is a
+    same-status write, so this failure's code and message replace that one's and the end is announced again. Only
+    ``JobsRepository.fail_jobs`` fails a job from outside its run (at boot, and for an area map's job that could not
+    start), so that gap is narrow.
     """
     ended = await _ended_meanwhile(self, job_id)
     if ended is None:
