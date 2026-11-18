@@ -31,7 +31,7 @@ Claude Code sends the key to whatever `url` holds and the plugin cannot attach a
 ### What you need
 
 - A running deployment you can reach. The MCP endpoint is `/mcp` on the dashboard's origin.
-- An API key with the admin tier. Make one on the dashboard under Settings, then API keys, with the scope `admin`, and copy the key. Do not run the `claude mcp add` command the tab shows: it puts the key on a command line.
+- An API key with the admin tier. Make one on the dashboard under Settings, then API keys, with the scope `admin`, and copy the key. The tab then shows the two blocks of the next section, with the deployment's origin filled in.
 - Claude Code and `jq`.
 
 ### Connect the session

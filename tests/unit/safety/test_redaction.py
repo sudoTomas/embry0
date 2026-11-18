@@ -13,6 +13,7 @@ from embry0.safety.redaction import (
     secret_env_values,
     tail_bytes,
 )
+from embry0.workflows.verification.scrub import scrub_output
 
 _GH = "ghp_" + "a1B2" * 9
 _ANT = "sk-ant-oat01-" + "Zx9_" * 12
@@ -227,7 +228,152 @@ def test_a_jwt_past_the_bounds_of_a_glued_one_is_redacted_whole(header: int, pay
         assert part[-40:] not in out, f"left readable: {len(part)} characters of a {header}/{payload} JWT"
 
 
+def test_a_glued_jwt_with_a_payload_of_many_claims_is_redacted_whole() -> None:
+    """The glued rule bounds only its header: a payload past 16 KiB is redacted with the rest."""
+    token = _jwt(400, 21_355)
+    out = redact_secrets(f"token{token} rejected")
+    for part in token.split("."):
+        assert part[-40:] not in out, f"left readable: {len(part)} characters"
+
+
 def test_a_glued_jwt_with_a_longer_header_is_redacted() -> None:
     token = _jwt(400, 300)
     out = redact_secrets(f"token{token} rejected")
     assert token.split(".")[0][-40:] not in out and token.split(".")[2] not in out, out[:80]
+
+
+# ---- a JWE, an OpenPGP private key, a token glued to what follows it --------------------------------------------
+
+#: A JWE in compact form, header.key.iv.ciphertext.tag: with "alg": "dir" the key part is empty (an Auth.js session
+#: cookie is one), with "RSA-OAEP" it is the wrapped content key. Fake segments only.
+_JWE_IV, _JWE_TAG = "AbCdEfGhIjKlMnOp", "QrStUvWxYzAbCdEfGhIjKl"
+_JWE_CIPHERTEXT = "CiPhErTeXt0_-" * 30
+_JWE_WRAPPED = "WrApPeD0_-" * 34
+_JWE_DIR = "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0" + ".." + f"{_JWE_IV}.{_JWE_CIPHERTEXT}.{_JWE_TAG}"
+_JWE_LONG_HEADER = "eyJ" + "hbGci" * 240 + ".." + f"{_JWE_IV}.{_JWE_CIPHERTEXT}.{_JWE_TAG}"
+_JWE_RSA = "eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00ifQ" + f".{_JWE_WRAPPED}.{_JWE_IV}.{_JWE_CIPHERTEXT}.{_JWE_TAG}"
+_PGP_BODY = [
+    "",
+    "lQVYBGNfAkEBDADExAmPlEbOdY0aBcDeFgHiJkLmNoPqRsTuVwXyZ",
+    "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    "=AbCd",
+]
+# Split, as the other key blocks in these tests are, so a secret scanner reading this file sees no key block.
+_PGP_SECRET_KEY = "\n".join(
+    ["-----BEGIN PGP " + "SECRET KEY BLOCK-----", *_PGP_BODY, "-----END PGP " + "SECRET KEY BLOCK-----"]
+)
+_PGP_KEY = "\n".join(
+    ["-----BEGIN PGP " + "PRIVATE KEY BLOCK-----", *_PGP_BODY, "-----END PGP " + "PRIVATE KEY BLOCK-----"]
+)
+_TELEGRAM = "123456789:AAH" + "AbCdEfGhIjKlMnOpQrStUvWxYz012345"  # its secret: "AA" and 33 more
+_AKIA = "AKIA" + "ABCDEFGH2JKLMNOP"  # a key id's 16 are base32: a digit among them
+
+#: "<digits>:AA..." that is no bot token: an SSH key blob, uppercase hex, base64 with a leading zero byte, and
+#: "<epoch>:<base64url>" log lines whose data begins "AA".
+_LOOKALIKES = [
+    "534823407285:AAAAB3NzaC1yc2EAAAADAQABAAABAQ"
+    + "S1UlcWgF7F8je3UF0xDzki41D26AyCuQomdjVHaV33oxIeVh6/ATMQTOo/y+nTyfnx",
+    "322399564144:AA5BC1DDF190D13EB9FBCD33109C762718F2C437AFC9DFB9D08241A01995C28BAAD973BCC728BBF5AA",
+    "433756004771:AAC24F182FAC3B026B2C4EE59162A544ECDC5815051692BB24092F962CA41DD66266D06D20EFBC4E4F",
+    "861906601359:AAcHAizkoj04WKeflyqzuqWLiAEYTEFdyHTdhgARKyJ9ZwSfhtPL+IF4VnjVBAYPOeiugvseZBgvdHGbuQ",
+    "1618631893:AAbOg-4q55R7ZhZTx9hFW65Xy1GWJJmpsUY1A6j4J1wWLUZZgyzJptCOaEhezw5SE5Az4g2ZOhNV info plain limit",
+    "1768619833:AAVrm_xR0iejA_FV5ZrkpxlLkpYCKRi7eZ8HdmZuucHlQf9XjboRk0EG5w4z3p57IVRpa37igNzXJvbTwKd_kyuRCYG9wPzk im",
+    "1748944116:AAdLITdPEpkXoNw93jMCkc8SKRfv7gO-t6cDRKcSD33mDcqtg69uEEqbPVSoQNKon06kvGEMAgwuFHJ1TWNyBBEOUA== bind",
+    "1699001604:AABIlr8kQ1pnSdt3-BOu7xwn-bJP-ypR4_9HWW4gaKgwFvyqxkrejiO7DnczJV__K3fEcnhKXgC-KXwQMNGwvWBE2q6gfw== or",
+    # Short ones, whose rest after 35 characters is as short as a glued word's: uppercase only (a SHA-1 in hex),
+    # and base64 that goes on with "=" or "+".
+    "1700000000:AAEF29DFD07532CD54A5ABAA6580A831ADAD2E55 commit",
+    "1700000001:AA81nWtUBtlUxQdNsu1ueUW5bukCtuaG0Rxh6w== sent",
+    "1700000002:AA9vyKwWnvMvcYl9ORRbcqlk4ArqKwkFIfrH4+uX sent",
+]
+
+REDACTORS = [
+    lambda t: redact_secrets(t),
+    lambda t: redact_log_text(t),
+    lambda t: redact_bounded(t, 4000),
+    lambda t: scrub_output(t),
+]
+REDACTOR_IDS = ["redact_secrets", "redact_log_text", "redact_bounded", "scrub_output"]
+
+#: (the text, the parts of it that must not stay readable)
+WHOLE = [
+    (f"session {_JWE_DIR} set", [_JWE_IV, _JWE_CIPHERTEXT[:40], _JWE_TAG]),
+    (f"session {_JWE_RSA} set", [_JWE_WRAPPED[:40], _JWE_IV, _JWE_CIPHERTEXT[:40], _JWE_TAG]),
+    (f"seen sessn{_JWE_DIR}", [_JWE_IV, _JWE_CIPHERTEXT[:40], _JWE_TAG]),  # glued to the word before it
+    # A header past the glued rule's 1,024 characters: the rule at a run's start takes it, its empty key part too.
+    (f"session {_JWE_LONG_HEADER} set", [_JWE_LONG_HEADER[1000:1040], _JWE_IV, _JWE_CIPHERTEXT[:40], _JWE_TAG]),
+    (f"key:\n{_PGP_SECRET_KEY}\ndone", [line for line in _PGP_BODY if line]),  # the older name of a PGP key block
+    (f"key:\n{_PGP_KEY}\ndone", [line for line in _PGP_BODY if line]),
+    (f"bot {_TELEGRAM}x rejected", [_TELEGRAM[10:]]),  # glued on the right: a letter
+    (f"bot {_TELEGRAM}9 rejected", [_TELEGRAM[10:]]),  # a digit
+    (f"set {_TELEGRAM}_bot_token rejected", [_TELEGRAM[10:]]),  # an underscore and a short word
+    (f"https://api.telegram.org/bot{_TELEGRAM}/getMe", [_TELEGRAM[10:]]),  # in a Bot API URL, not glued
+    (f"aws {_AKIA}x rejected", [_AKIA]),  # glued on the right: a lowercase letter
+    (f"aws {_AKIA}_profile rejected", [_AKIA]),
+]
+
+
+@pytest.mark.parametrize(("text", "secrets"), WHOLE, ids=[f"{i}" for i in range(len(WHOLE))])
+@pytest.mark.parametrize("redact", REDACTORS, ids=REDACTOR_IDS)
+def test_a_jwe_a_pgp_private_key_and_a_token_glued_on_its_right_are_redacted(text: str, secrets, redact) -> None:
+    out = redact(text)
+    left = [secret for secret in secrets if secret in out]
+    assert not left, f"left readable: {left} in {out!r}"
+    assert REDACTED in out
+
+
+def test_the_scrubber_keeps_a_pgp_private_key_block_s_lines() -> None:
+    text = f"key:\n{_PGP_KEY}\ndone"
+    assert scrub_output(text).splitlines() == ["key:", *[REDACTED] * (len(_PGP_BODY) + 2), "done"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQENBGNfAkEBCADExAmPlE\n-----END PGP PUBLIC KEY BLOCK-----",
+        "-----BEGIN PGP SIGNATURE-----\niQEzBAEBCAAdFiEExAmPlE\n-----END PGP SIGNATURE-----",
+        "AKIA" + "ABCDEFGHIJKLMNOP" + "Q",  # 21 capitals and digits: an uppercase word, not a key id
+        "AKIA" + "ABCDEFGHIJKLMNOP" + "7",
+        "ASIA" + "NDEVELOPMENTBANK" + "reports",  # 20 capitals glued to a lowercase word, no digit among them
+        "AKIA" + "ABCDEFGHIJKLMNOP" + "_x",
+        *_LOOKALIKES,
+        "1700000000:" + "build_cache_key_for_the_nightly_runs",  # 35 characters glued on, but no "AA"
+        "release 2026.11.18..2026.11.19 notes",
+        "see eyJhbGciOiJIUzI1NiJ9..",  # a header and two dots: no third part
+    ],
+)
+def test_near_misses_of_these_shapes_are_left_alone(text: str) -> None:
+    assert redact_secrets(text) == text
+    assert scrub_output(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        " eyJ" + "a" * 20 + ".." + "b" * 200_000,
+        (" eyJ" + "a" * 8 + "..") * 14_000,
+        (" eyJ" + "a" * 8 + "." + "b" * 8 + "." + "c" * 8 + ".") * 6_000,
+        " x" + "aeyJ" * 255 + "." + "b" * 200_000,  # every glued start reads the same payload, which has no end
+        "-----BEGIN PGP PRIVATE KEY BLOCK " * 6_000,
+        "-----BEGIN " + "A" * 200_000,
+        "1234567:AA" + "a" * 200_000,
+        "AKIA" + "A" * 200_000,
+    ],
+    ids=[
+        "jwe-run",
+        "jwe-repeated",
+        "five-parts-repeated",
+        "glued-starts-one-payload",
+        "pgp-repeated",
+        "begin-caps",
+        "telegram-run",
+        "akia-run",
+    ],
+)
+def test_the_new_shapes_stay_linear(text: str) -> None:
+    import time
+
+    start = time.perf_counter()
+    redact_secrets(text)
+    scrub_output(text)
+    assert time.perf_counter() - start < 5.0
