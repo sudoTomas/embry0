@@ -732,7 +732,10 @@ class MergeApprovalService:
         """The merged result when the PR reads merged although the merge call did not say so; None otherwise.
 
         A merge GitHub made can be answered 502, then 405 to the retried PUT, or lose its answer on every attempt:
-        the PR itself is the only reliable answer. Best-effort: a PR that cannot be read is not merged.
+        the PR itself is the only reliable answer. Merged at a head other than the approved one, it is not this
+        approval's merge, since the merge call pins the head: someone merged it outside embry0, and it is recorded
+        as an outside merge found before the call is (#620), without the checks, which are not that code's.
+        Best-effort: a PR that cannot be read is not merged.
         """
         try:
             fresh = await self._github.get_pull(row["repo"], int(row["pr_number"]))
@@ -741,19 +744,17 @@ class MergeApprovalService:
             return None
         if not (fresh and fresh.get("merged")):
             return None
+        merge_sha = str(fresh.get("merge_commit_sha") or "") or None
         merged_head = str((fresh.get("head") or {}).get("sha") or "")
         if merged_head != row["head_sha"]:
-            # Merged at a head this approval did not check: not its merge, and its checks are not that code's.
             logger.warning(
                 "merge_approval_merged_at_another_head", approval_id=row["id"], head=merged_head, asked=row["head_sha"]
             )
-            return None
-        done = await self._repo.finish(
-            row["id"],
-            status="merged",
-            detail=checks.describe(),
-            merge_sha=str(fresh.get("merge_commit_sha") or "") or None,
-        )
+            detail = f"merged outside embry0 at {_short(merged_head) or 'an unknown commit'}, not the approved head"
+            done = await self._repo.finish(row["id"], status="merged", detail=detail, merge_sha=merge_sha)
+            self._emit("merge.completed", done or row, extra={"external": True})
+            return self._result(done or row, "merged")
+        done = await self._repo.finish(row["id"], status="merged", detail=checks.describe(), merge_sha=merge_sha)
         self._emit("merge.completed", done or row, extra={"checks": checks.describe()})
         return self._result(done or row, "merged")
 

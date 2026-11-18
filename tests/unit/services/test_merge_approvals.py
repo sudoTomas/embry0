@@ -711,22 +711,33 @@ async def test_a_merge_github_made_behind_a_failed_answer_is_recorded_merged(
 
 
 @pg
-async def test_a_pr_merged_at_another_head_is_not_this_approvals_merge(db_with_migrations, github, notifier) -> None:
-    """Someone merged the PR at a head the approval did not check: the merge call is answered 405, and the PR reads
-    merged, but not at the asked head. The approval is not recorded merged, so its checks are not attached to code
-    they did not check."""
+@pytest.mark.parametrize("answer", ["405", "lost"])
+async def test_a_pr_merged_at_another_head_is_recorded_merged_outside_embry0(
+    db_with_migrations, github, notifier, answer: str
+) -> None:
+    """Someone merged the PR at a head the approval did not check while the merge call ran: the call is answered
+    405, or its answer is lost, and the PR reads merged, but not at the approved head. It is not this approval's
+    merge (#620): it is recorded as one made outside embry0, as before the call, naming the head, and the
+    approval's checks are not attached to code they did not check. It is not reported as a refused merge."""
+    import httpx
+
     svc = _svc(db_with_migrations, github, notifier, merge_approval_mode="on")
     row = await _ask(svc)
 
     async def merged_elsewhere(repo: str, number: int, **kwargs: Any) -> MergeResult:
         github.merge_calls.append({"repo": repo, "number": number, **kwargs})
         github.pr.update(merged=True, state="closed", merge_commit_sha="e" * 40, head={"sha": NEW_HEAD, "ref": "x"})
+        if answer == "lost":
+            raise httpx.ReadTimeout("the answer was lost")
         return MergeResult(status_code=405, merged=False, message="Pull Request is not mergeable")
 
     github.merge_pull = merged_elsewhere  # type: ignore[method-assign]
     result = await _approve(svc, row["id"])
-    assert result["outcome"] == "failed" and "405" in result["detail"], result
-    assert notifier.names()[-1] == "merge.failed"
+    expected = f"merged outside embry0 at {NEW_HEAD[:10]}, not the approved head"
+    assert (result["outcome"], result["detail"], result["merge_sha"]) == ("merged", expected, "e" * 40), result
+    event, data = notifier.events[-1]
+    assert (event, data["external"], data["detail"]) == ("merge.completed", True, expected), notifier.events[-1]
+    assert "checks" not in data, "the approval's checks were attached to a head they did not check"
 
 
 @pg
