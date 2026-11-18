@@ -28,7 +28,11 @@ What it does, in one shot:
    `GITLAB_TOKEN__<GROUP>`), failing fast on bad repo names or missing
    access. A forge that cannot answer (not reached, a server error, a
    rate limit) answers 502 and stores nothing: that is an outage, not a
-   missing repository.
+   missing repository. A redirect in place of the repository's record is
+   refused with what to check (a renamed GitHub repository, a
+   `GITLAB_URL` that is not the instance's API), and when embry0 cannot
+   read its own registry or the GitLab CA bundle it is configured with,
+   it answers 503 rather than guess the forge.
 2. **Registers a starter qa.yaml v2** in embry0's database. With no
    `--app`, the starter sets `qa_required: never` so the QA verify stage
    skips cleanly — the first issue→PR run on an empty repo is green. With

@@ -31,8 +31,9 @@ import structlog
 
 from embry0.execution.github_client import GitHubClient
 from embry0.execution.gitlab_client import make_gitlab_client
-from embry0.services.forge_resolver import resolve_forge
+from embry0.execution.tls import CABundleError
 from embry0.services.organizations import outage_of
+from embry0.storage.repositories.repos import DEFAULT_FORGE, UnregisteredRepoError
 from embry0.workflows.qa.qa_yaml_v2 import parse_qa_yaml_v2
 
 logger = structlog.get_logger(__name__)
@@ -46,6 +47,12 @@ _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 class BootstrapError(Exception):
     """Bootstrap failed for a caller-fixable reason (bad repo, no token, …)."""
+
+
+class BootstrapUnavailable(BootstrapError):
+    """embry0 cannot check the repository now, for a reason of its own: its registry could not be read, so the
+    forge the repository is on is unknown, or the GitLab CA bundle it is configured with could not be read. Nothing is
+    written; the route answers 503."""
 
 
 class BootstrapUnreachable(BootstrapError):
@@ -153,9 +160,52 @@ async def _require_token(repo: str, forge: str, default_token: str, credential_r
         )
 
 
-async def _ask(repo: str, forge: str, request: Awaitable[httpx.Response]) -> httpx.Response:
-    """The forge's answer about ``repo``: an outage raises :class:`BootstrapUnreachable`, any other status is returned
-    for the caller to read."""
+#: What a redirect in place of a repository's record says, by forge: GitHub answers a renamed or transferred
+#: repository with a 301, and a GITLAB_URL that is not the instance's API often answers with a sign-in redirect.
+_REDIRECT_MEANS = {
+    "github": "the repository was renamed or moved; bootstrap it under its current name",
+    "gitlab": "check GITLAB_URL (a redirect to a sign-in page means it is not the instance's API) and whether the "
+    "project moved",
+}
+
+
+async def repository_forge(repos_repo: Any | None, repo: str) -> str:
+    """The forge ``repo`` is registered on, read from the registry itself (``repos_repo.forge_for``): an unregistered
+    repository's is the configured default, and :class:`UnregisteredRepoError` when the deployment names none. A
+    registry that cannot be read raises :class:`BootstrapUnavailable`: unlike ``resolve_forge``, it never falls back
+    to the default forge, which would check a GitLab repository on GitHub, where another repository of that path may
+    exist and be stored as verified (#31). With no registry (a caller that wires none) the forge is GitHub."""
+    if repos_repo is None:
+        return DEFAULT_FORGE
+    try:
+        return str(await repos_repo.forge_for(repo))
+    except UnregisteredRepoError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a registry that cannot be read leaves the forge unknown, never guessed
+        logger.warning("bootstrap_registry_unreadable", repo=repo, error=type(exc).__name__)
+        raise BootstrapUnavailable(
+            f"The repository registry could not be read, so the forge {repo!r} is on is unknown; try again"
+        ) from exc
+
+
+def _record(response: httpx.Response, repo: str, forge: str) -> dict[str, Any]:
+    """The repository's record in ``response``; a body that is not a JSON object raises BootstrapError."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        hint = ": check GITLAB_URL" if forge == "gitlab" else ""
+        raise BootstrapError(
+            f"{FORGE_NAMES[forge]} answered the check of {repo!r} ({response.status_code}) with something other than "
+            f"its record{hint}"
+        )
+    return body
+
+
+async def _ask(repo: str, forge: str, request: Awaitable[httpx.Response]) -> dict[str, Any]:
+    """The forge's record of ``repo``: an outage raises :class:`BootstrapUnreachable`; a redirect, a missing
+    repository, a refusal or a body that is no record raises BootstrapError."""
     name = FORGE_NAMES[forge]
     try:
         response = await request
@@ -166,6 +216,11 @@ async def _ask(repo: str, forge: str, request: Awaitable[httpx.Response]) -> htt
     if outage is not None:
         logger.warning("bootstrap_forge_unreachable", repo=repo, forge=forge, status=outage.status, error=None)
         raise BootstrapUnreachable(f"Checking {repo!r}: {outage.says(name, what='the request')}")
+    if 300 <= response.status_code < 400:
+        raise BootstrapError(
+            f"{name} answered the check of {repo!r} with a redirect ({response.status_code}) rather than its record: "
+            f"{_REDIRECT_MEANS[forge]}"
+        )
     if response.status_code == 404:
         raise BootstrapError(
             f"{name} reports {repo!r} not found for the resolved token — check the repo name "
@@ -173,7 +228,7 @@ async def _ask(repo: str, forge: str, request: Awaitable[httpx.Response]) -> htt
         )
     if response.status_code >= 400:
         raise BootstrapError(f"{name} verification of {repo!r} failed ({response.status_code}): {response.text[:200]}")
-    return response
+    return _record(response, repo, forge)
 
 
 async def _verify_github_repo(
@@ -182,7 +237,7 @@ async def _verify_github_repo(
     """Return (default_branch, private) from GitHub or raise BootstrapError."""
     await _require_token(repo, "github", default_token, credential_resolver)
     client = GitHubClient(default_token=default_token, credential_resolver=credential_resolver, sleep=_sleep)
-    data = (await _ask(repo, "github", client.get(f"/repos/{repo}", repo=repo))).json()
+    data = await _ask(repo, "github", client.get(f"/repos/{repo}", repo=repo))
     return data.get("default_branch"), data.get("private")
 
 
@@ -192,8 +247,15 @@ async def _verify_gitlab_repo(
     """Return (default_branch, private) from GitLab or raise BootstrapError. ``private`` follows GitHub's own reading
     of visibility: an internal project, which only the instance's signed-in users see, is private too."""
     await _require_token(repo, "gitlab", str(getattr(config, "gitlab_token", "") or ""), credential_resolver)
-    client = make_gitlab_client(config, credential_resolver=credential_resolver, sleep=_sleep)
-    data = (await _ask(repo, "gitlab", client.get(client.project_path(repo), repo=repo))).json()
+    try:
+        client = make_gitlab_client(config, credential_resolver=credential_resolver, sleep=_sleep)
+    except CABundleError as exc:
+        logger.warning("bootstrap_gitlab_ca_bundle_unreadable", repo=repo, error=type(exc).__name__)
+        raise BootstrapUnavailable(
+            f"GitLab cannot be asked about {repo!r}: the CA bundle GITLAB_CA_BUNDLE names could not be read as "
+            "certificates; fix it, or unset it to use the system trust store"
+        ) from exc
+    data = await _ask(repo, "gitlab", client.get(client.project_path(repo), repo=repo))
     visibility = data.get("visibility")
     return data.get("default_branch"), None if visibility is None else visibility != "public"
 
@@ -232,13 +294,14 @@ async def bootstrap_repo(
     :class:`UnregisteredRepoError` for an unregistered repository on a deployment that names no default forge.
 
     ``config`` carries the forge settings (``github_token``, ``gitlab_token``, ``gitlab_url``, ``gitlab_ca_bundle``);
-    ``repos_repo`` is the registry the repository's forge is read from (:func:`resolve_forge`: GitHub with none)."""
+    ``repos_repo`` is the registry the repository's forge is read from (:func:`repository_forge`)."""
     steps: list[str] = []
 
     # 1. The repository's own forge (#31) — fail before touching any local state. An unregistered repository on a
-    # deployment that names no default forge has none to be checked on: resolve_forge raises UnregisteredRepoError
-    # before any forge is asked, and the route answers it as every route that reads a forge does.
-    forge = await resolve_forge(repos_repo, repo)
+    # deployment that names no default forge has none to be checked on: UnregisteredRepoError, raised before any forge
+    # is asked, which the route answers as every route that reads a forge does. A registry that cannot be read is
+    # BootstrapUnavailable, never the default forge.
+    forge = await repository_forge(repos_repo, repo)
     default_branch, private = await verify_repo(repo, forge, config=config, credential_resolver=credential_resolver)
     steps.append(
         f"{FORGE_NAMES.get(forge, forge)} connection verified (default branch: {default_branch}, private: {private})"

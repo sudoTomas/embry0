@@ -159,3 +159,107 @@ async def test_an_unregistered_repository_on_a_deployment_that_names_no_default_
     detail = response.json()["detail"]
     assert detail.startswith("ERR_REPO_UNREGISTERED: ") and "is not registered" in detail, detail
     assert (await api_client.get("/api/v1/repos/acme/unknown/-/qa-config")).status_code == 404, "nothing is stored"
+
+
+async def _stored(api_client: httpx.AsyncClient, repo: str) -> bool:
+    return await api_client.app.state.qa_configs_repo.get(repo) is not None
+
+
+async def _bootstrap(api_client: httpx.AsyncClient, repo: str) -> httpx.Response:
+    """The route's answer for ``repo``: one it raises instead of answering (a 500 in production) fails the test."""
+    try:
+        return await api_client.post("/api/v1/repos/bootstrap", json={"repo": repo})
+    except Exception as exc:  # noqa: BLE001 - what the route raised is the finding
+        pytest.fail(f"the route raised {type(exc).__name__} rather than answering: {exc}")
+
+
+async def test_a_registry_that_cannot_be_read_asks_no_forge(api_client, monkeypatch) -> None:
+    """#616 review: the forge a repository is on is read from the registry itself. When that read fails the forge is
+    unknown, and the route answers 503: falling back to the default forge checked a GitLab repository on GitHub, where
+    a repository of the same path was stored as verified (#31 again)."""
+    await _register(api_client, GITLAB_REPO, "gitlab")
+    monkeypatch.setenv("GITHUB_TOKEN__GROUP", "github-test-token")
+    monkeypatch.setenv("GITLAB_TOKEN__GROUP", "gitlab-test-token")
+
+    async def unreadable(repo: str) -> str:
+        raise ConnectionError("the database closed the connection")
+
+    monkeypatch.setattr(api_client.app.state.repos_repo, "forge_for", unreadable)
+    seen = _forge(monkeypatch, lambda r: httpx.Response(200, json={"default_branch": "main", "private": False}))
+    response = await _bootstrap(api_client, GITLAB_REPO)
+    assert seen == [], f"a forge was asked while the registry could not say which: {seen}"
+    assert response.status_code == 503, f"{response.status_code}: {response.text}"
+    assert response.json()["detail"] == (
+        f"The repository registry could not be read, so the forge {GITLAB_REPO!r} is on is unknown; try again"
+    ), response.json()["detail"]
+    assert not await _stored(api_client, GITLAB_REPO), "nothing is stored"
+
+
+@pytest.mark.parametrize(
+    ("forge", "repo", "answer", "means"),
+    [
+        (
+            "github",
+            "acme/widgets",
+            lambda r: httpx.Response(301, json={"message": "Moved Permanently", "url": "https://api.github.com/x"}),
+            "the repository was renamed or moved",
+        ),
+        (
+            "gitlab",
+            GITLAB_REPO,
+            lambda r: httpx.Response(
+                302, headers={"location": "https://sso.example.org/login"}, text="<html>in</html>"
+            ),
+            "check GITLAB_URL",
+        ),
+    ],
+    ids=["github-renamed", "gitlab-sign-in"],
+)
+async def test_a_redirect_in_place_of_the_record_is_refused_and_says_why(
+    api_client, monkeypatch, forge, repo, answer, means
+) -> None:
+    """#616 review: a 3xx is no record. GitHub's 301 for a renamed repository was stored as verified with nothing
+    read, and a self-hosted GitLab redirecting to sign-in failed as a 500."""
+    await _register(api_client, repo, forge)
+    monkeypatch.setenv("GITLAB_TOKEN__GROUP", "gitlab-test-token")
+    monkeypatch.setenv("GITHUB_TOKEN__ACME", "github-test-token")
+    _forge(monkeypatch, answer)
+    response = await _bootstrap(api_client, repo)
+    name = {"github": "GitHub", "gitlab": "GitLab"}[forge]
+    assert response.status_code == 400, f"{response.status_code}: {response.text}"
+    detail = response.json()["detail"]
+    assert detail.startswith(f"{name} answered the check of {repo!r} with a redirect (3"), detail
+    assert means in detail, detail
+    assert not await _stored(api_client, repo), "nothing is stored"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [lambda r: httpx.Response(200, text="<html>welcome</html>"), lambda r: httpx.Response(200, json=[])],
+    ids=["a-page", "a-list"],
+)
+async def test_an_answer_that_is_not_a_record_is_refused_and_says_why(api_client, monkeypatch, answer) -> None:
+    """#616 review: a GITLAB_URL that serves a page, not the API, answers 200 with HTML: that is no record, and nor
+    is JSON that is not an object."""
+    await _register(api_client, GITLAB_REPO, "gitlab")
+    monkeypatch.setenv("GITLAB_TOKEN__GROUP", "gitlab-test-token")
+    _forge(monkeypatch, answer)
+    response = await _bootstrap(api_client, GITLAB_REPO)
+    assert response.status_code == 400, f"{response.status_code}: {response.text}"
+    assert response.json()["detail"] == (
+        f"GitLab answered the check of {GITLAB_REPO!r} (200) with something other than its record: check GITLAB_URL"
+    ), response.json()["detail"]
+    assert not await _stored(api_client, GITLAB_REPO), "nothing is stored"
+
+
+async def test_an_unreadable_gitlab_ca_bundle_is_a_503_naming_it(api_client, monkeypatch, tmp_path) -> None:
+    """#616 review: a CA bundle that cannot be read is the deployment's to fix, and was a bare 500."""
+    await _register(api_client, GITLAB_REPO, "gitlab")
+    monkeypatch.setenv("GITLAB_TOKEN__GROUP", "gitlab-test-token")
+    monkeypatch.setattr(api_client.app.state.config, "gitlab_ca_bundle", str(tmp_path / "missing.pem"))
+    seen = _forge(monkeypatch, lambda r: httpx.Response(200, json={"default_branch": "main", "visibility": "private"}))
+    response = await _bootstrap(api_client, GITLAB_REPO)
+    assert seen == [], f"GitLab was asked without the CA bundle: {seen}"
+    assert response.status_code == 503, f"{response.status_code}: {response.text}"
+    assert "GITLAB_CA_BUNDLE" in response.json()["detail"], response.json()["detail"]
+    assert not await _stored(api_client, GITLAB_REPO), "nothing is stored"
