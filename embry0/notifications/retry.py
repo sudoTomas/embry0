@@ -96,6 +96,12 @@ def classify_response(response: httpx.Response) -> NoReturn:
     raise PermanentSendError(f"http_{status}")
 
 
+def not_acted_on(exc: BaseException) -> bool:
+    """Whether a failed send proves the target did not act on it (#45): a rate-limit refusal, or a connection that
+    never opened. After any other failure (a 5xx, an answer lost in transit) the outcome is unknown."""
+    return (isinstance(exc, TransientSendError) and exc.refused) or isinstance(exc, NOT_SENT_ERRORS)
+
+
 async def send_with_retry[T](
     attempt: Callable[[int], Awaitable[T]],
     *,
@@ -142,8 +148,7 @@ async def send_with_retry[T](
             raise
         except (TransientSendError, httpx.HTTPError) as exc:
             reason = exc.reason if isinstance(exc, SendError) else type(exc).__name__
-            not_acted_on = (isinstance(exc, TransientSendError) and exc.refused) or isinstance(exc, NOT_SENT_ERRORS)
-            if number >= max_attempts or not (repeatable or not_acted_on):
+            if number >= max_attempts or not (repeatable or not_acted_on(exc)):
                 logger.error(
                     "notification_failed",
                     channel=channel,

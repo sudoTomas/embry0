@@ -289,30 +289,69 @@ async def test_github_channel_posts_once_after_two_rate_limit_refusals():
     assert len(sleeps.delays) == 2
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("answer", ["502", "503", "lost"])
-async def test_github_channel_posts_a_comment_github_may_have_made_once(answer: str):
-    """#45: GitHub may have made the comment it answered 5xx, or whose answer was lost: it is not posted twice.
-    The failure stays visible, as an exhausted budget's does."""
+def _comment_forge(first: str, *, unreadable: bool = False):
+    """GitHub for one issue. The first comment POST meets ``first``: "made-502" or "made-503" (GitHub made the
+    comment and answered 5xx), "made-lost" (made, its answer lost), or "not-made-502" (answered 502 before it was
+    made). Later POSTs make the comment. ``unreadable``: the issue's comments cannot be listed."""
+    import json
+
     import httpx
 
     from embry0.notifications.github_comment import GitHubCommentChannel
-    from embry0.notifications.retry import TransientSendError
 
-    seen: list[httpx.Request] = []
+    comments: list[dict] = []
+    seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if answer == "lost":
+        seen.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(500) if unreadable else httpx.Response(200, json=list(comments))
+        posts = seen.count("POST")
+        if posts == 1 and first == "not-made-502":
+            return httpx.Response(502)
+        made = {"id": len(comments) + 1, "body": json.loads(request.content)["body"], "html_url": "https://x"}
+        comments.append(made)
+        if posts == 1 and first in ("made-502", "made-503"):
+            return httpx.Response(int(first[-3:]))
+        if posts == 1 and first == "made-lost":
             raise httpx.ReadTimeout("the answer was lost", request=request)
-        return httpx.Response(int(answer))
+        return httpx.Response(201, json=made)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://api.github.test")
-    channel = GitHubCommentChannel(http_client=client, dashboard_base_url="https://x", sleep=_Sleeps())
-    with pytest.raises((TransientSendError, httpx.ReadTimeout)):
-        await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+    return GitHubCommentChannel(http_client=client, dashboard_base_url="https://x", sleep=_Sleeps()), comments, seen
 
-    assert len(seen) == 1, f"a comment answered {answer} was posted {len(seen)} times"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first", ["made-502", "made-503", "made-lost"])
+async def test_a_comment_github_made_behind_a_failed_answer_is_found_not_posted_twice(first: str):
+    """#45, #613: GitHub may have made the comment it answered 5xx, or whose answer was lost. The issue's comments
+    are read once: GitHub made it, so it is taken as posted, and not posted again."""
+    channel, comments, seen = _comment_forge(first)
+    await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+    assert len(comments) == 1 and seen == ["POST", "GET"], f"{first}: {seen}, {len(comments)} comments"
+
+
+@pytest.mark.asyncio
+async def test_a_comment_github_did_not_make_is_posted_once_more():
+    """#613: a 502 for a comment GitHub did not make no longer drops it: it is not among the issue's comments, so
+    it is sent once more."""
+    channel, comments, seen = _comment_forge("not-made-502")
+    await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+    assert len(comments) == 1 and seen == ["POST", "GET", "POST"], seen
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_the_comments_cannot_tell_is_not_posted_again():
+    """The issue's comments cannot be read: whether GitHub made the comment stays unknown, and a second post could
+    make a second one. The failure is raised, and stays visible."""
+    import httpx
+
+    from embry0.notifications.retry import TransientSendError
+
+    channel, comments, seen = _comment_forge("made-502", unreadable=True)
+    with pytest.raises((TransientSendError, httpx.HTTPError)):
+        await channel.dispatch(_RETRY_ISSUE, _RETRY_QUESTIONS)
+    assert len(comments) == 1 and seen == ["POST", "GET"], seen
 
 
 @pytest.mark.asyncio

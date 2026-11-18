@@ -220,10 +220,15 @@ dashboard's integration settings, or with `WEBHOOK_NOTIFY_URL` and
 saved there). Delivery is best effort: each attempt is logged, and a failed
 delivery never changes a job.
 
-Each POST is JSON, `{"event", "ts", "data"}`. With a secret set it carries
+Each POST is JSON, `{"event", "delivery", "ts", "data"}`. `delivery` is the
+delivery's id, the same on every retry of one event, and is sent as the
+`X-Webhook-Delivery` header too. An attempt answered 5xx, or whose answer was
+lost, may have been taken, so a retry can repeat a delivery: a receiver drops a
+`delivery` it has seen. With a secret set it carries
 `X-Webhook-Timestamp` (unix seconds, stamped again on every retry),
 `X-Webhook-Signature-V2`, the HMAC-SHA256 hex digest of `"{timestamp}.{body}"`,
-and `X-Webhook-Signature`, the HMAC-SHA256 hex digest of the body alone.
+and `X-Webhook-Signature`, the HMAC-SHA256 hex digest of the body alone. The
+body, and so its `delivery`, is the same on every retry.
 
 A `job.<status>` event's `data` holds `job_id`, `issue_id`, `title`, `kind`,
 `repo`, `pr_url`, `summary` (a one-line summary), `result_summary` (the raw

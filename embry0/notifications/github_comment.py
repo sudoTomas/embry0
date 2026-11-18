@@ -13,12 +13,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import structlog
 
 from embry0.notifications.inbound_parser import is_directive_line
-from embry0.notifications.retry import PermanentSendError, classify_response, send_with_retry
+from embry0.notifications.retry import (
+    PermanentSendError,
+    TransientSendError,
+    classify_response,
+    not_acted_on,
+    send_with_retry,
+)
 from embry0.trackers import github_number_of
 
 logger = structlog.get_logger(__name__)
@@ -181,6 +189,7 @@ class GitHubCommentChannel:
             )
             return created
 
+        started = datetime.now(UTC)
         try:
             # Transient failures (429, 5xx, dropped connections) get another
             # try; a permanent 4xx is logged above and swallowed, as it was
@@ -192,6 +201,31 @@ class GitHubCommentChannel:
         except PermanentSendError:
             return None
         except Exception as exc:
+            if not_acted_on(exc) or not isinstance(exc, (TransientSendError, httpx.HTTPError)):
+                logger.warning(
+                    "github_comment_post_exception",
+                    repo=repo,
+                    issue_number=issue_number,
+                    error=str(exc),
+                )
+                raise
+            unknown = exc
+        # #613: the outcome is unknown, so GitHub may hold the comment: the issue's newest comments are read once
+        # for it, and only when it is not there is it sent once more, under the same rule. When they cannot be
+        # read the outcome stays unknown, and the comment is not sent again, since it could post a second one.
+        read, made = await self._comment_made_since(repo, issue_number, body, started, post_kwargs.get("headers"))
+        if made is not None:
+            logger.info("github_comment_found_after_an_unknown_outcome", repo=repo, issue_number=issue_number)
+            return made
+        if not read:
+            logger.warning("github_comment_left_unknown", repo=repo, issue_number=issue_number, error=str(unknown))
+            raise unknown
+        logger.info("github_comment_sent_again_after_an_unknown_outcome", repo=repo, error=str(unknown))
+        try:
+            return await send_with_retry(attempt, channel="github_comment", sleep=self._sleep, repeatable=False)
+        except PermanentSendError:
+            return None
+        except Exception as exc:
             logger.warning(
                 "github_comment_post_exception",
                 repo=repo,
@@ -199,6 +233,30 @@ class GitHubCommentChannel:
                 error=str(exc),
             )
             raise
+
+    async def _comment_made_since(
+        self, repo: str, issue_number: int, body: str, started: datetime, headers: dict[str, str] | None
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Whether the issue's newest comments could be read, and the one among them whose body is ``body``, made
+        since ``started`` (None when there is none)."""
+        since = (started - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            resp = await self._client.get(
+                f"/repos/{repo}/issues/{issue_number}/comments",
+                params={"since": since, "per_page": 100},
+                headers=headers or {},
+            )
+            listed = resp.json() if resp.status_code == 200 else None
+        except Exception:
+            logger.warning("github_comment_lookup_failed", repo=repo, issue_number=issue_number, exc_info=True)
+            return False, None
+        if not isinstance(listed, list):
+            return False, None
+        wanted = body.replace("\r\n", "\n").strip()
+        for item in listed:
+            if isinstance(item, dict) and str(item.get("body") or "").replace("\r\n", "\n").strip() == wanted:
+                return True, item
+        return True, None
 
     async def _record_rendered_order(self, comment_id: Any, questions: list[dict[str, Any]]) -> None:
         """Pin each question to its 1-based position in the comment just
