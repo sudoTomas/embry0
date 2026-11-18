@@ -693,6 +693,30 @@ async def test_an_outage_reading_the_contents_is_unknown_not_hidden(answer: _Res
     assert "access_limited" not in kinds, f"the needs list asks for access an outage says nothing of: {kinds}"
 
 
+@pytest.mark.parametrize("answer", [_Resp(503), _Resp(429), _RateLimited()], ids=["503", "429", "403-limited"])
+@pytest.mark.asyncio
+async def test_an_outage_reading_the_env_example_leaves_its_keys_unknown(answer: _Resp) -> None:
+    """#626 review: the root lists an env example and reading it meets an outage. Its keys are unknown: an empty list
+    read as "declares none", so no env_values_needed need, and the setup checklist's settings row said done."""
+    f = forge_with_sites()
+    f.routes["/repos/acme/site/contents/"] = _Resp(200, [{"name": ".env.example", "type": "file"}])
+    f.routes["/repos/acme/site/contents/.env.example"] = answer
+    seen = await scan_repository(f, "acme", SITE, hook_origins=("https://hooks.example.net",))
+    assert seen.facts["root_visible"] is True, seen.facts["root_visible"]
+    assert seen.facts["env_keys"] is None, (
+        f"an outage on the env example is unknown, not none: {seen.facts['env_keys']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_env_example_read_declares_its_keys() -> None:
+    f = forge_with_sites()
+    f.routes["/repos/acme/site/contents/"] = _Resp(200, [{"name": ".env.example", "type": "file"}])
+    f.routes["/repos/acme/site/contents/.env.example"] = _file("API_URL=\nTOKEN=x\n")
+    seen = await scan_repository(f, "acme", SITE, hook_origins=("https://hooks.example.net",))
+    assert seen.facts["env_keys"] == ["API_URL", "TOKEN"], seen.facts["env_keys"]
+
+
 @pytest.mark.parametrize("status", [403, 404])
 @pytest.mark.asyncio
 async def test_a_contents_listing_the_forge_refuses_is_not_visible(status: int) -> None:

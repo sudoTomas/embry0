@@ -368,8 +368,12 @@ async def scan_repository(
     env_name = next((n for n in ENV_EXAMPLE_NAMES if n in names), None)
     if env_name:
         env = await client.get(f"/repos/{full}/contents/{quote(env_name)}")
-        text = _decode_content(_json(env)) if env.status_code == 200 else None
-        detail["env_keys"] = env_keys(text) if text else []
+        if _outage(env):
+            # As the root listing (#583): the keys the env example declares are unknown, not "declares none".
+            detail["env_keys"] = None
+        else:
+            text = _decode_content(_json(env)) if env.status_code == 200 else None
+            detail["env_keys"] = env_keys(text) if text else []
     hooks_resp = await client.get(f"/repos/{full}/hooks")
     if _outage(hooks_resp):
         # An outage says nothing of what the credential may see (#579): unknown, which no need reads as a missing

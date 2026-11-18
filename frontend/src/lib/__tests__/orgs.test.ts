@@ -78,6 +78,9 @@ describe("senses", () => {
     expect(senseState(repo("a", { boot_hint: "npm run dev" }), sense("boot"))).toBe("on");
     expect(senseState(repo("a", { boot_hint: null }), sense("boot"))).toBe("off");
     expect(senseState(repo("a", { boot_hint: null, root_visible: false }), sense("boot"))).toBe("unknown");
+    // #626 review: an outage on the root listing records it as unknown (null): the boot command is unknown too.
+    expect(senseState(repo("a", { boot_hint: null, root_visible: null }), sense("boot"))).toBe("unknown");
+    expect(senseState(repo("a", { boot_hint: null, root_visible: true }), sense("boot"))).toBe("off");
   });
 
   it("treats an archived repository as missing nothing", () => {
