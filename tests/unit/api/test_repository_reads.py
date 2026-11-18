@@ -228,6 +228,39 @@ OWNER_READS = {
 }
 
 
+async def test_a_checklist_names_the_organization_s_webhook_only_to_a_key_covering_the_owner_as_a_whole(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#615 review: the checklist is read on the repository alone, and the organization's webhook is the owner's,
+    which a key covering acme in part reads nowhere else (``GET /orgs/acme/webhook`` answers it 404). To that key the
+    work-trigger row says the webhook delivering its repository's events needs fixing, and nothing of the
+    organization's; a key covering acme as a whole reads the organization's webhook as before."""
+    db = db_with_migrations
+    async with repository_reads_app(db, monkeypatch) as (app, keys, _values):
+        await db.execute(
+            "UPDATE org_repo_facts SET facts = facts || $2::jsonb WHERE repo = $1",
+            COVERED,
+            {"hooks_visible": True, "hook_present": False, "org_hook": "inert", "org_hook_faults": []},
+        )
+        whole = await _whole_owner_key(db)
+        rows = {}
+        for caller, token in (("whole", whole), ("limited", keys.limited)):
+            answer = await call(app, "GET", f"/api/v1/repos/{COVERED}/-/readiness", token)
+            assert answer.status_code == 200, f"{caller}: {answer.status_code} {answer.text[:200]}"
+            rows[caller] = next(row for row in answer.json()["rows"] if row["key"] == "work_trigger")
+    limited, whole_row = rows["limited"], rows["whole"]
+    assert "org_hook" not in limited and "organization" not in limited["says"].lower(), (
+        f"a key covering acme in part reads acme's organization webhook: {limited}"
+    )
+    assert limited["says"].endswith("An admin needs to fix the webhook that delivers this repository's events."), (
+        limited["says"]
+    )
+    assert limited.get("webhook") == "fix", limited
+    assert whole_row.get("org_hook") == "inert" and "The organization's webhook" in whole_row["says"], (
+        f"a key covering acme as a whole reads the organization's webhook: {whole_row}"
+    )
+
+
 async def test_what_belongs_to_an_owner_as_a_whole_reads_only_to_a_key_covering_it_as_a_whole(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:

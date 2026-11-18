@@ -55,6 +55,10 @@ function adminRequest(row: ReadinessRow, repo: string, forge: Forge): string {
         `open Organizations, choose ${owner}, and read the need Fix the organization webhook on GitHub.`
       );
     }
+    if (row.webhook === "fix") {
+      // A reader who does not read the owner as a whole is not told whose webhook it is.
+      return `Please fix the webhook that delivers the events of ${repo} to embry0: open Organizations and choose ${owner}.`;
+    }
     return `Please add the embry0 connection for ${repo}: open Organizations, choose ${owner}, and use Add webhook.`;
   }
   return (

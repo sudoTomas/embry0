@@ -375,3 +375,17 @@ def test_an_inert_organization_hook_is_fixed_on_github_not_by_a_repository_step(
     assert hint.steps == (), f"steps {hint.steps}: {hint.hint}"
     assert hint.hint.endswith("so fix the organization webhook on GitHub."), hint.hint
     assert "org_hook_inert" in hint.rules and not {"no_webhook", "no_webhook_without_hook_admin"} & set(hint.rules)
+
+
+def test_an_inert_organization_hook_and_contents_nobody_could_read_say_both() -> None:
+    """#615 on #627: the organization's webhook is fixed on GitHub, and the contents are read again; neither is a step
+    the actions take."""
+    facts = {**MAINTAINED, "hook_present": False, "org_hook": "inert", "root_visible": None}
+    facts.update(qa_config=False, watcher_stack=False)
+    hint = maintain_hint(_row(**facts), HOOKS_OK)
+    assert hint.hint == (
+        "Registered; no QA config; no webhook, and the organization webhook points here but does not deliver; "
+        "not watched; its contents could not be read this time, so fix the organization webhook on GitHub, then run "
+        "discovery again."
+    ), hint.hint
+    assert hint.steps == (), hint.steps

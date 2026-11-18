@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Any
 
 import pytest
@@ -485,7 +485,23 @@ def test_work_from_an_issue_while_the_organization_webhook_is_inert() -> None:
         "GitHub, and Organizations says what is wrong with it."
     ), row["says"]
     assert row["action"] == {"kind": "copy_admin_request", "label": "Copy a request for your admin"}
-    assert row.get("org_hook") == "inert", "the admin request is written from it"
+    assert (row.get("webhook"), row.get("org_hook")) == ("fix", "inert"), "the admin request is written from them"
+
+
+def test_work_from_an_issue_while_the_organization_webhook_is_inert_to_a_reader_of_the_repository_alone() -> None:
+    """#615 review: the organization's webhook is the owner's, which a key covering the repository but not the owner
+    reads nowhere else. The row tells it the webhook delivering its repository's events needs fixing, and nothing of
+    the organization's."""
+    assert "owner_visible" in {f.name for f in fields(ReadinessInputs)}, "the checklist cannot tell whom it answers"
+    facts = {**FACTS, "hook_present": False, "org_hook": "inert"}
+    row = _row(_ready(facts=facts, owner_visible=False), "work_trigger")
+    assert row["state"] == "missing"
+    assert row["says"] == (
+        "GitHub does not tell embry0 about new issues here yet, so the label embry0 does nothing. "
+        "An admin needs to fix the webhook that delivers this repository's events."
+    ), row["says"]
+    assert "org_hook" not in row and row.get("webhook") == "fix", row
+    assert row["action"] == {"kind": "copy_admin_request", "label": "Copy a request for your admin"}
 
 
 @pytest.mark.parametrize(

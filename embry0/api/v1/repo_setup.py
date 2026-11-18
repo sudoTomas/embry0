@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from embry0.api.actor_visibility import actor_shown, with_actors
 from embry0.api.deps import request_actor
 from embry0.api.repo_allowlist import covered_slugs, enforce_repo_allowlist, key_covers, restricted_key_name
-from embry0.api.repository_reads import covered
+from embry0.api.repository_reads import covered, owner_hidden
 from embry0.api.resolution_view import scopes_read
 from embry0.api.schemas import RunWithRequest
 from embry0.api.served import ServedRoute
@@ -215,6 +215,8 @@ async def get_readiness(full_repo: str, request: Request) -> dict[str, Any]:
         trigger_label=labels[0] if labels else "embry0",
         # The forge account names no credential of a scope the caller's key does not read (resolution_view).
         read=await scopes_read(request, full_repo),
+        # The organization's webhook is the owner's: named only to a key that reads the owner as a whole (#596).
+        owner_visible=not await owner_hidden(request, full_repo.split("/", 1)[0]),
     )
     return build_readiness(inputs)
 
