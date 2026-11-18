@@ -34,11 +34,13 @@ export const SENSES: readonly Sense[] = [
   { key: "boot", label: "boot", fact: "boot_hint", on: "a boot command was found", off: "no boot command found" },
 ];
 
-/** `unknown` is a fact the credential could not see (stored as null). */
+/** `unknown` is a fact the credential could not see (stored as null). A missing boot command is unknown when the
+ * root listing it is drawn from was refused (`root_visible` false) or met an outage (null, #583). */
 export function senseState(row: OrgRepoFacts, sense: Sense): SenseState {
   const value = row.facts[sense.fact];
   if (sense.key === "boot") {
-    if (value === null || value === undefined) return row.facts.root_visible === false ? "unknown" : "off";
+    const unread = row.facts.root_visible === false || row.facts.root_visible === null;
+    if (value === null || value === undefined) return unread ? "unknown" : "off";
     return typeof value === "string" && value.trim() !== "" ? "on" : "off";
   }
   if (value === true) return "on";
