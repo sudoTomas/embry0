@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from embry0.api.repo_allowlist import enforce_repo_allowlist
 from embry0.api.schemas.repo_path import validate_repo_path
-from embry0.services.bootstrap import BootstrapError, bootstrap_repo
+from embry0.services.bootstrap import BootstrapError, BootstrapUnreachable, bootstrap_repo
 
 router = APIRouter()
 
@@ -69,8 +69,9 @@ async def bootstrap(req: BootstrapRequest, request: Request) -> dict[str, Any]:
     try:
         result = await bootstrap_repo(
             req.repo,
-            github_token=getattr(config, "github_token", "") or "",
+            config=config,
             qa_configs_repo=request.app.state.qa_configs_repo,
+            repos_repo=getattr(request.app.state, "repos_repo", None),
             prefs_repo=getattr(request.app.state, "repo_preferences_repo", None),
             profiles_repo=getattr(request.app.state, "profiles_repo", None),
             app=req.app,
@@ -81,6 +82,9 @@ async def bootstrap(req: BootstrapRequest, request: Request) -> dict[str, Any]:
             force=req.force,
             credential_resolver=getattr(request.app.state, "credential_resolver", None),
         )
+    except BootstrapUnreachable as exc:
+        # The forge could not answer: an outage, not a missing repository (#31, as #565 and #577 answer a probe).
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except BootstrapError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except (yaml.YAMLError, ValidationError) as exc:

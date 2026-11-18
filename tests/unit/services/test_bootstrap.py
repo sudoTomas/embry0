@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import httpx
 import pytest
 
@@ -77,6 +79,11 @@ class _FakeConfigs:
         return self.rows[repo]
 
 
+#: The forge settings the route passes (``Embry0Config``), as far as a GitHub check reads them.
+GH = SimpleNamespace(github_token="tok")
+NO_TOKEN = SimpleNamespace(github_token="")
+
+
 @pytest.fixture
 def configs():
     return _FakeConfigs()
@@ -109,7 +116,7 @@ class _FakeProfiles:
 
 
 async def test_bootstrap_minimal_writes_db(configs, github_ok):
-    result = await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs)
+    result = await bootstrap_repo("acme/newrepo", config=GH, qa_configs_repo=configs)
     row = configs.rows["acme/newrepo"]
     assert row["updated_by"] == "bootstrap"
     parse_qa_yaml_v2(row["yaml_text"])
@@ -120,15 +127,15 @@ async def test_bootstrap_minimal_writes_db(configs, github_ok):
 
 
 async def test_bootstrap_refuses_existing_without_force(configs, github_ok):
-    await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs)
+    await bootstrap_repo("acme/newrepo", config=GH, qa_configs_repo=configs)
     with pytest.raises(BootstrapError) as exc_info:
-        await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs)
+        await bootstrap_repo("acme/newrepo", config=GH, qa_configs_repo=configs)
     assert str(exc_info.value) == (
         "This repository already has a test setup. Replacing it keeps the current one in History "
         "(send force=true, or --force on the command line)."
     )
     # force overwrites
-    result = await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs, app="web", force=True)
+    result = await bootstrap_repo("acme/newrepo", config=GH, qa_configs_repo=configs, app="web", force=True)
     assert result.qa_required == "auto"
 
 
@@ -136,7 +143,7 @@ async def test_bootstrap_seeds_prefs_with_valid_profile(configs, github_ok):
     prefs = _FakePrefs()
     await bootstrap_repo(
         "acme/newrepo",
-        github_token="tok",
+        config=GH,
         qa_configs_repo=configs,
         prefs_repo=prefs,
         profiles_repo=_FakeProfiles({"slim"}),
@@ -153,7 +160,7 @@ async def test_bootstrap_rejects_unknown_profile_before_writing_the_setup(config
     with pytest.raises(BootstrapError) as exc_info:
         await bootstrap_repo(
             "acme/newrepo",
-            github_token="tok",
+            config=GH,
             qa_configs_repo=configs,
             prefs_repo=_FakePrefs(),
             profiles_repo=_FakeProfiles(set()),
@@ -176,14 +183,14 @@ async def test_bootstrap_fails_before_db_write_on_github_404(configs, monkeypatc
 
     monkeypatch.setattr("embry0.services.bootstrap.httpx.AsyncClient", _client)
     with pytest.raises(BootstrapError, match="not found"):
-        await bootstrap_repo("acme/ghost", github_token="tok", qa_configs_repo=configs)
+        await bootstrap_repo("acme/ghost", config=GH, qa_configs_repo=configs)
     assert configs.rows == {}
 
 
 async def test_bootstrap_requires_token(configs, monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN__ACME", raising=False)
     with pytest.raises(BootstrapError, match="no GitHub token"):
-        await bootstrap_repo("acme/newrepo", github_token="", qa_configs_repo=configs)
+        await bootstrap_repo("acme/newrepo", config=NO_TOKEN, qa_configs_repo=configs)
 
 
 @pytest.mark.asyncio
@@ -197,7 +204,7 @@ async def test_bootstrap_surfaces_an_unregisterable_repo_as_a_caller_error(confi
 
     configs.upsert = refusing_upsert
     with pytest.raises(BootstrapError, match="is not registered"):
-        await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs)
+        await bootstrap_repo("acme/newrepo", config=GH, qa_configs_repo=configs)
 
 
 async def test_verify_maps_an_unavailable_pinned_credential_to_bootstrap_error():
@@ -221,6 +228,17 @@ async def test_verify_without_any_token_mentions_the_registry(monkeypatch):
         await _verify_github_repo("acme/newrepo", "")
 
 
+async def test_a_forge_embry0_cannot_check_is_refused_before_anything_is_asked():
+    """The registry's forges are GitHub and GitLab (its CHECK constraint); a configured default naming another is
+    refused, not checked on GitHub."""
+    import embry0.services.bootstrap as bootstrap
+
+    verify = getattr(bootstrap, "verify_repo", None)
+    assert verify is not None, "no verify_repo: a repository cannot be checked on its own forge"
+    with pytest.raises(BootstrapError, match="a forge embry0 cannot check"):
+        await verify("acme/widgets", "bitbucket", config=GH)
+
+
 async def test_bootstrap_repo_forwards_the_credential_resolver(configs, monkeypatch):
     seen = {}
 
@@ -230,5 +248,5 @@ async def test_bootstrap_repo_forwards_the_credential_resolver(configs, monkeypa
 
     monkeypatch.setattr("embry0.services.bootstrap._verify_github_repo", _fake)
     resolver = object()
-    await bootstrap_repo("acme/newrepo", github_token="tok", qa_configs_repo=configs, credential_resolver=resolver)
+    await bootstrap_repo("acme/newrepo", config=GH, qa_configs_repo=configs, credential_resolver=resolver)
     assert seen["resolver"] is resolver

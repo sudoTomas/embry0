@@ -1062,9 +1062,9 @@ def main() -> None:
     # init (EMB-49)
     init_p = subparsers.add_parser(
         "init",
-        help="One-command bootstrap: verify GitHub access + register a starter QA config for a new repo.",
+        help="One-command bootstrap: verify access on the repo's forge + register a starter QA config for a new repo.",
     )
-    init_p.add_argument("repo", help="GitHub repo in owner/name form")
+    init_p.add_argument("repo", help="Repo path: owner/name on GitHub, group[/subgroup]/project on GitLab")
     init_p.add_argument("--app", default=None, help="Declare an app skeleton (lowercase slug)")
     init_p.add_argument("--boot-command", default=None, help="App boot command (default: npm ci && npm run dev)")
     init_p.add_argument("--frontend-url", default=None, help="App URL in-sandbox (default: http://localhost:3000)")
