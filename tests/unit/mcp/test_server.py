@@ -862,4 +862,5 @@ def test_the_new_credential_tools_say_they_never_return_a_secret():
 def test_the_instructions_point_at_the_setup_prompt():
     text = server.mcp.instructions or ""
     assert "the prompt setup" in text
-    assert "No tool takes a secret" in text
+    # Scoped to the setup tools: env_set takes a value (#599 review).
+    assert "No setup tool takes a secret" in text and "never through env_set" in text

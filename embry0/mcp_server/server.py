@@ -64,7 +64,8 @@ mcp = MCPServer(
         "To set up a deployment (model access, a forge credential, an organization and its repositories, "
         "webhooks, testing), the prompt setup gives the procedure step by step; provider_status, org_probe, "
         "org_discover, org_runs, credential_bindings_get, credential_bindings_set and repo_skip_testing are "
-        "steps of it. No tool takes a secret: a person adds credentials on the dashboard or the API. "
+        "steps of it. No setup tool takes a secret: a person adds credentials on the dashboard or the API, and "
+        "sets a secret environment value on the dashboard, never through env_set with a value typed in the chat. "
         "Destructive tools require confirm=true after explicit user approval. "
         'Two lists answer "what is open?", and they are different things: '
         'issue_list(status="open") is the work on the Issues page of the dashboard; '

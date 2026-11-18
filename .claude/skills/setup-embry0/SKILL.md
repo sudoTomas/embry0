@@ -11,6 +11,6 @@ Before the procedure:
 
 1. Check the MCP connection. If tools named `mcp__embry0__*` are available, call `health` through them. If they are not, the person connects the server in their own terminal, as "Connect the session" in `docs/claude-code.md` shows, and starts a new session. Never take the API key in this chat: a key typed here is kept in the transcript.
 2. If this checkout is the deployment's own and the stack is not running (`docker compose -f infra/docker-compose.yml ps` lists no `embry0-orchestrator`), stand it up with the person first: the quick start in `README.md`, or `docs/ops/provisioning.md` for a new host.
-3. Settings in the root `.env` (`WEBHOOK_PUBLIC_URL`, `GITHUB_WEBHOOK_SECRET`, `DEFAULT_AUTH_MODE`) take a restart. Change them only on the person's word, back the file up first, and never print a value from it.
+3. Settings in the root `.env` (`WEBHOOK_PUBLIC_URL`, `GITHUB_WEBHOOK_SECRET`, `DEFAULT_AUTH_MODE`) take a restart, and the file holds every secret of the deployment. The person changes them in their own terminal: never open, read, grep or edit `.env` from this session, not even to back it up or check one value, since whatever you read goes into the transcript. Tell the person which line to change and why.
 
 Secrets never pass through this session: the person adds each credential on the dashboard or with the API from their own terminal, and you bind it by id.

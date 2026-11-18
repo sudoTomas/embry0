@@ -63,15 +63,20 @@ _KEY_LINES = {
     _ADD_JSON.format(scope="local"),  # the project-only variant the guide describes in prose
     'claude mcp add --scope user embry0 --env EMBRY0_API_URL="$EMBRY0_URL" -- '
     "sh -c 'EMBRY0_API_KEY=$(cat ~/.config/embry0/api-key); export EMBRY0_API_KEY; exec embry0-mcp'",
-    "jq -n --rawfile secret ./token.txt "
-    '\'{kind: "forge_token", provider: "github", label: "acme-bot", secret: ($secret | rtrimstr("\\n"))}\' | '
-    'curl -sS -X POST "$EMBRY0_URL/api/v1/credentials" '
-    "-H @<(jq -Rr '\"Authorization: Bearer \" + .' ~/.config/embry0/api-key) "
-    '-H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" --data-binary @-',
+    # The credential upload: the secret from read into a pipe through printf, the key's header through a pipe.
+    "read -rs EMBRY0_SECRET",
+    "unset EMBRY0_SECRET",
+    (
+        "printf '%s' \"$EMBRY0_SECRET\" | "
+        'jq -Rs \'{kind: "forge_token", provider: "github", label: "acme-bot", secret: .}\' | '
+        'curl -sS -X POST "$EMBRY0_URL/api/v1/credentials" '
+        "-H @<(jq -Rr '\"Authorization: Bearer \" + .' ~/.config/embry0/api-key) "
+        '-H "Content-Type: application/json" -H "X-Requested-With: XMLHttpRequest" --data-binary @-'
+    ),
     "~/.config/embry0/api-key",  # the path alone, in prose
     "EMBRY0_API_KEY",  # the variable's name alone, in prose
 }
-_KEY_MENTION = re.compile(r"EMBRY0_API_KEY|api-key|HELPER|\.config/embry0")
+_KEY_MENTION = re.compile(r"EMBRY0_API_KEY|EMBRY0_SECRET|api-key|HELPER|\.config/embry0")
 
 
 def _logical_lines(code: str) -> list[str]:
@@ -330,15 +335,19 @@ def test_the_stdio_connection_reads_the_key_from_the_file_when_it_starts(
 def test_the_credential_upload_sends_the_key_and_the_secret_through_files(
     stand_ins: tuple[dict[str, str], Path, Path], tmp_path: Path
 ) -> None:
+    """The secret is typed at read and goes through a pipe: no file holds it, no argument carries it (#599 review)."""
     env, calls, home = stand_ins
     key, secret = "canary-upload-key", "canary-forge-secret"
     _key_file(home).parent.mkdir(parents=True, mode=0o700)
     _key_file(home).write_text(key)
-    (tmp_path / "token.txt").write_text(secret + "\n")
-    recipe = _guide_recipe("/api/v1/credentials")
-    assert "read " not in recipe, "the upload reads the key from the file: a second read swallows a pasted line"
-    run = _run_recipe(recipe, {**env, "EMBRY0_URL": GUIDE_URL}, cwd=tmp_path)
-    assert key not in run.stdout + run.stderr
+    upload = _guide_recipe("/api/v1/credentials")
+    assert "read " not in upload, "the secret is read in a block of its own: a read in a pasted block swallows a line"
+    recipe = _guide_recipe("read -rs EMBRY0_SECRET") + "\n" + upload
+    work = tmp_path / "work"
+    work.mkdir()
+    run = _run_recipe(recipe, {**env, "EMBRY0_URL": GUIDE_URL}, typed=secret + "\n", cwd=work)
+    assert key not in run.stdout + run.stderr and secret not in run.stdout + run.stderr
+    assert list(work.iterdir()) == [], "the upload left a file behind"
     (curl,) = _calls(calls)
     assert curl["name"] == "curl"
     assert key not in json.dumps(curl["args"]) and secret not in json.dumps(curl["args"])

@@ -35,7 +35,7 @@ claude mcp list
 
 `claude mcp list` should say embry0 is connected.
 
-The key goes from `read` to the file through `printf`, a shell builtin, and the file is made new (`rm -f`) so the umask gives it mode 600. With no key read (the first block not run in this shell), that line writes nothing and a saved key file stays as it is. No command gets the key as an argument: while a command runs, every local user can read its arguments (`ps`, `/proc/<pid>/cmdline`). Claude Code's settings hold the `headersHelper` command, not the key; Claude Code runs that command each time it connects, and the command prints the header from the file. The key is not exported and is unset, so a Claude Code session started from this shell does not carry it in its environment, where a command the session runs could print it.
+The key goes from `read` to the file through `printf`, a shell builtin, and the file is made new (`rm -f`) so the umask gives it mode 600. With no key read (the first block not run in this shell), that line writes nothing and a saved key file stays as it is. No command gets the key as an argument: while a command runs, every local user can read its arguments (`ps`, `/proc/<pid>/cmdline`). Claude Code's settings hold the `headersHelper` command, not the key; Claude Code runs that command each time it connects, and the command prints the header from the file. The key is not exported and is unset, so a Claude Code session started from this shell does not carry it in its environment, where a command the session runs could print it by accident. That is all it protects: the session runs as you, and can read the key file like any other file of yours.
 
 The `remove` line drops a user-scope `embry0` entry an earlier connection left; with none, it prints nothing. An entry made by an earlier version of this page kept the key in Claude Code's settings: revoke that key on the dashboard. If that page added embry0 to one project only, its entry hides the new one in that project: run `claude mcp remove --scope local embry0` in that project's folder.
 
@@ -52,17 +52,26 @@ Then start `claude`, check `/mcp` lists embry0 with its tools, and type `/mcp__e
 
 ## Secrets stay out of the chat
 
-No MCP tool takes a secret, by design. Add each credential on the dashboard (Infra, then Credentials), or with the API from your terminal, reading the secret from a file so it is never shown:
+No setup tool takes a secret, by design. Add each credential on the dashboard (Infra, then Credentials), or with the API from your terminal. A secret environment value a job needs (a token or a password) goes in on the dashboard's Environments page, never through `env_set` with a value typed in the chat.
+
+From your terminal, first the secret. At the empty prompt, paste it and press Enter; nothing is shown:
 
 ```bash
-jq -n --rawfile secret ./token.txt \
-  '{kind: "forge_token", provider: "github", label: "acme-bot", secret: ($secret | rtrimstr("\n"))}' |
+read -rs EMBRY0_SECRET
+```
+
+Then send it:
+
+```bash
+printf '%s' "$EMBRY0_SECRET" |
+  jq -Rs '{kind: "forge_token", provider: "github", label: "acme-bot", secret: .}' |
   curl -sS -X POST "$EMBRY0_URL/api/v1/credentials" \
     -H @<(jq -Rr '"Authorization: Bearer " + .' ~/.config/embry0/api-key) -H "Content-Type: application/json" \
     -H "X-Requested-With: XMLHttpRequest" --data-binary @-
+unset EMBRY0_SECRET
 ```
 
-It reads the key from the file of the connection above. curl reads the header from a file (`-H @file`), here a pipe that `jq` fills, so neither the key nor the secret is an argument. This needs bash or zsh. The answer carries a masked preview, never the secret. Tell the session the label; it finds the id with `credential_list` and does the binding. [credentials.md](credentials.md) has every kind and field.
+It reads the key from the file of the connection above. The secret goes from `read` into a pipe through `printf`, a shell builtin, and no file holds it. curl reads the header from a file (`-H @file`), here a pipe that `jq` fills, so neither the key nor the secret is an argument. This needs bash or zsh. The answer carries a masked preview, never the secret. Tell the session the label; it finds the id with `credential_list` and does the binding. [credentials.md](credentials.md) has every kind and field.
 
 | Credential | `kind` | What it needs |
 |---|---|---|
@@ -94,7 +103,7 @@ Some settings live in the root `.env` on the host and take a restart, so no MCP 
 - `DEFAULT_AUTH_MODE`, for a deployment whose Claude account is an API key.
 - The tunnels and what each one exposes ([deploy](ops/deploy.md)).
 
-A session opened in the deploy checkout on the host can make these changes with you. [configuration.md](configuration.md) lists every variable.
+Change them in your own terminal, on the host. The file holds every secret of the deployment, so do not ask a Claude Code session to open, read or edit it: whatever a session reads goes into its transcript and to the model provider. [configuration.md](configuration.md) lists every variable.
 
 ## In an embry0 checkout
 
