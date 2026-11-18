@@ -55,6 +55,10 @@ describes what embry0 does rather than listing changes.
   is off until `OPENAI_COMPATIBLE_PROVIDERS` names it
   ([docs/providers.md](docs/providers.md#openai-compatible-providers)).
 - **MCP server** (`embry0-mcp`, and `embry0-mcp-http` for the hosted endpoint).
+- **Claude Code plugin** ([plugins/embry0](plugins/embry0/README.md)), with this
+  repository as its marketplace: it stands up a deployment, connects to its MCP
+  server with the URL and key asked in the plugin dialog, and sets it up from the
+  chat window ([docs/claude-code.md](docs/claude-code.md)).
 - **Code retention.** `JOB_LOG_RETENTION_DAYS` removes the code from ended
   jobs' events after that many days; `AGENT_SESSION_RETENTION_DAYS` deletes
   ended jobs' saved agent sessions (and with them the resume of a pull request
