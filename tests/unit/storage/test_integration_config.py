@@ -4,24 +4,15 @@ import pytest
 import structlog
 
 from embry0.storage.database import DatabasePool
-from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.integration_config import IntegrationConfigRepository, _mask
 
 pytestmark = pytest.mark.requires_postgres
 
 
 @pytest.fixture
-async def integration_repo() -> IntegrationConfigRepository:
-    import os
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
-    await run_migrations(db)
-    # Reset table state so tests that check env-fallback (no DB row) pass in any order.
-    await db.execute("DELETE FROM integration_config")
-    yield IntegrationConfigRepository(db)
-    await db.close()
+async def integration_repo(db_with_migrations: DatabasePool) -> IntegrationConfigRepository:
+    """On the shared database fixture: no row an earlier test left, so the env fallback is what each test reads."""
+    return IntegrationConfigRepository(db_with_migrations)
 
 
 # --- _mask unit tests (pure, no DB needed) ---

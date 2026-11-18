@@ -7,8 +7,6 @@ fake cannot drift from the class it stands in for.
 
 from __future__ import annotations
 
-import os
-from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -16,7 +14,6 @@ import pytest
 from embry0.services.org_actions import ActionContext, run_action
 from embry0.services.watcher_stacks import WatcherStack
 from embry0.storage.database import DatabasePool
-from embry0.storage.migrations.runner import run_migrations
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.repo_qa_configs import RepoQAConfigsRepository
 from embry0.storage.repositories.repos import ReposRepository
@@ -27,21 +24,10 @@ pytestmark = pytest.mark.requires_postgres
 REPOS = ("acme/actions-widgets", "Acme/Actions-Gadgets", "acme/actions-gadgets")
 
 
-async def _clean(db: DatabasePool) -> None:
-    for table in ("jobs", "watcher_stacks", "repo_qa_configs", "repos"):
-        await db.execute(f"DELETE FROM {table} WHERE repo = ANY($1::text[])", list(REPOS))  # noqa: S608
-
-
 @pytest.fixture
-async def db() -> AsyncIterator[DatabasePool]:
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    pool = DatabasePool(url)
-    await pool.connect()
-    await run_migrations(pool)
-    await _clean(pool)
-    yield pool
-    await _clean(pool)
-    await pool.close()
+async def db(db_with_migrations: DatabasePool) -> DatabasePool:
+    """The shared database fixture: no row an earlier test left, whatever ran before."""
+    return db_with_migrations
 
 
 class _Starter:

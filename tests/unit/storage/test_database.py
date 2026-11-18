@@ -106,7 +106,7 @@ async def test_transaction_rolls_back_on_exception():
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_handle_needs_info_end_to_end_against_real_db():
+async def test_handle_needs_info_end_to_end_against_real_db(db_with_migrations: DatabasePool):
     """End-to-end proof that _handle_needs_info's transactional boundary works
     against a real PostgreSQL — inputs persist AND job/issue transition to
     awaiting_input atomically on success.
@@ -114,16 +114,11 @@ async def test_handle_needs_info_end_to_end_against_real_db():
     Complements the mock-based sequencing test in test_issue_executor.py by
     exercising the actual BEGIN/COMMIT semantics on real Postgres data.
     """
-    import os
     import uuid as uuid_mod
 
-    from embry0.storage.migrations.runner import run_migrations
-
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://embry0:embry0@localhost:5432/embry0_test")
-    db = DatabasePool(url)
-    await db.connect()
-    # pg_pool fixture creates the database; we need the schema too
-    await run_migrations(db)
+    # The shared database fixture: migrating the schema as found replayed every migration after a test that leaves
+    # tables and no ledger.
+    db = db_with_migrations
 
     # Setup: create the foreign-key targets so INSERTs + UPDATEs succeed
     iss_id = f"iss-{uuid_mod.uuid4().hex[:10]}"
@@ -196,8 +191,6 @@ async def test_handle_needs_info_end_to_end_against_real_db():
         await db.execute("DELETE FROM issue_inputs WHERE issue_id = $1", iss_id)
         await db.execute("DELETE FROM jobs WHERE job_id = $1", job_id)
         await db.execute("DELETE FROM issues WHERE id = $1", iss_id)
-
-    await db.close()
 
 
 @pytest.mark.requires_postgres
