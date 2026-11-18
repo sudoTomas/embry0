@@ -86,6 +86,14 @@ _PER_REPO_PARAMS = {"access_limited": "missing", "env_values_needed": "keys", "h
 _GATHERED_PARAMS = {"hook_origin_unknown": ("hosts", "hosts_by_repo")}
 
 
+def contents_unread(facts: Mapping[str, Any]) -> bool:
+    """Whether discovery listed the repository's root and could not read it: refused (``root_visible`` false) or an
+    outage (null, #583). What the listing holds, something to boot, a UI, the manifests, is then unknown, not absent
+    (#625), and no need is drawn from it. A row without the fact was not listed at all: one only the webhook receiver
+    wrote, or one discovery skipped."""
+    return "root_visible" in facts and facts["root_visible"] is not True
+
+
 def need_text(kind: str, repos: Sequence[str], action: Mapping[str, Any]) -> tuple[str, str]:
     """A need's title and detail, from its kind, the repositories it covers and its action: the one place a need's
     words are written, by :func:`derive_needs` and again by :func:`narrow_need`, so a count in them is always the
@@ -254,14 +262,16 @@ def derive_needs(
                 hosts[repo] = sorted({str(h) for h in facts.get("hook_hosts") or []})
             elif facts.get("hook_present") is False:
                 by_kind["no_webhook"].append(repo)
-        if not facts.get("qa_config"):
+        # What the root listing holds is unknown when it was not read (#625): no need is drawn from it.
+        read = not contents_unread(facts)
+        if not facts.get("qa_config") and read:
             # Something to boot, or a UI to serve (a static site has no start
             # script): the onboard pipeline can write the QA configuration.
             if runnable or has_ui:
                 by_kind["onboarding_candidate"].append(repo)
             elif registered:
                 by_kind["no_qa_config"].append(repo)
-        if registered and not facts.get("watcher_stack"):
+        if registered and not facts.get("watcher_stack") and read:
             if runnable:
                 by_kind["not_watched"].append(repo)
             else:

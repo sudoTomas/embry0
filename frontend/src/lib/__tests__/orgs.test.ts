@@ -83,6 +83,16 @@ describe("senses", () => {
     expect(senseState(repo("a", { boot_hint: null, root_visible: true }), sense("boot"))).toBe("off");
   });
 
+  it("reads what the root listing holds as unknown when it was not read (#625)", () => {
+    // Refused (false) or met an outage (null): the boot command and the UI are drawn from that listing.
+    for (const root_visible of [false, null]) {
+      expect(senseState(repo("a", { boot_hint: null, root_visible }), sense("boot"))).toBe("unknown");
+      expect(senseState(repo("a", { frontend: false, root_visible }), sense("ui"))).toBe("unknown");
+    }
+    expect(senseState(repo("a", { frontend: false, root_visible: true }), sense("ui"))).toBe("off");
+    expect(senseState(repo("a", { boot_hint: null, root_visible: true }), sense("boot"))).toBe("off");
+  });
+
   it("treats an archived repository as missing nothing", () => {
     expect(isMissing(repo("a"), "registry")).toBe(true);
     expect(isMissing(repo("a", {}, { archived: true }), "registry")).toBe(false);

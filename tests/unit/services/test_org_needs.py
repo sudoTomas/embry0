@@ -754,3 +754,42 @@ def test_a_narrowed_hook_need_names_only_the_hosts_of_the_repositories_it_keeps(
     from_before = narrow_need(old, lambda repo: repo == "acme/web")
     assert from_before is not None and from_before["action"]["params"]["hosts"] == [], from_before
     assert "hidden.test" not in str(from_before), from_before
+
+
+#: The needs drawn from what a repository's root listing holds: something to boot, a UI, a log source.
+CONTENT_KINDS = {"onboarding_candidate", "no_qa_config", "not_watched", "no_log_source"}
+
+
+@pytest.mark.parametrize("root", [False, None], ids=["refused", "outage"])
+def test_a_root_listing_not_read_derives_no_content_need(root: bool | None) -> None:
+    """#625: discovery draws the boot command, the UI and the manifests from the root listing; when it was not read,
+    a refusal or an outage, they are unknown, not absent. The needs list asked to write the QA config by hand and to
+    name a log source for a repository whose contents nobody had seen."""
+    row = _row(
+        "acme/web",
+        root_visible=root,
+        hooks_visible=True,
+        hook_present=True,
+        registered=True,
+        active=True,
+        boot_hint=None,
+        frontend=False,
+        env_keys=None if root is None else [],
+    )
+    kinds = {need.kind for need in derive_needs("acme", [row])}
+    assert not kinds & CONTENT_KINDS, f"needs drawn from contents nobody read: {sorted(kinds & CONTENT_KINDS)}"
+    assert ("access_limited" in kinds) is (root is False), f"a refusal still asks for the contents: {sorted(kinds)}"
+
+
+def test_a_row_discovery_never_listed_keeps_its_needs() -> None:
+    """Only a listing that was refused or met an outage leaves the contents unknown: a row without the fact, one
+    discovery never listed (written before the fact existed, or by the webhook receiver), reads as before."""
+    row = _row("acme/web", hooks_visible=True, hook_present=True, registered=True, active=True, boot_hint=None)
+    kinds = {need.kind for need in derive_needs("acme", [row])}
+    assert {"no_qa_config", "no_log_source"} <= kinds, sorted(kinds)
+
+
+def test_a_root_listing_read_and_empty_still_derives_its_needs() -> None:
+    row = _row("acme/web", **SEEN, hook_present=True, registered=True, active=True, boot_hint=None, frontend=False)
+    kinds = {need.kind for need in derive_needs("acme", [row])}
+    assert {"no_qa_config", "no_log_source"} <= kinds, sorted(kinds)

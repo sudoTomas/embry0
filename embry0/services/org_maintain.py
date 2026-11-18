@@ -21,6 +21,8 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from embry0.services.org_needs import contents_unread
+
 #: The order steps are taken in, a subset of the needs actions
 #: (``org_needs.ACTIONS``; ``none`` is never a step). A repository is
 #: registered first, because the onboard action skips an unregistered one; the
@@ -65,6 +67,11 @@ class Reading:
     def servable(self) -> bool:
         """Something the onboard pipeline can boot, or a UI it can serve."""
         return self.runnable or self.has("frontend")
+
+    @property
+    def contents_read(self) -> bool:
+        """Whether what the root listing holds is known: not when it was refused or met an outage (#625)."""
+        return not contents_unread(self.facts)
 
     @property
     def hook_missing(self) -> bool:
@@ -169,14 +176,14 @@ RULES: tuple[Rule, ...] = (
     Rule("qa_configured", lambda r: r.has("qa_config"), "QA configured"),
     Rule(
         "onboarding_candidate",
-        lambda r: not r.has("qa_config") and r.servable,
+        lambda r: not r.has("qa_config") and r.contents_read and r.servable,
         _what_runs,
         step="onboard",
         does="onboard to draft QA",
     ),
     Rule(
         "no_qa_config",
-        lambda r: r.registered and not r.has("qa_config") and not r.servable,
+        lambda r: r.registered and not r.has("qa_config") and r.contents_read and not r.servable,
         "no QA config and nothing to boot or serve",
         step="setting",
         does="write the QA config by hand",
@@ -204,14 +211,14 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         "not_watched",
-        lambda r: r.registered and not r.watched and r.runnable,
+        lambda r: r.registered and not r.watched and r.contents_read and r.runnable,
         "not watched",
         step="watch",
         does="add a watcher stack",
     ),
     Rule(
         "no_log_source",
-        lambda r: r.registered and not r.watched and not r.runnable,
+        lambda r: r.registered and not r.watched and r.contents_read and not r.runnable,
         "no log source found",
         step="setting",
         does="name the logs a watcher stack should read",
