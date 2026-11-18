@@ -1,7 +1,9 @@
 """GitHub sync service — outbound push and inbound webhook processing."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import os
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -87,6 +89,24 @@ def _mirrors_this_create(row: dict[str, Any], started: datetime) -> bool:
     )
 
 
+def several_workers(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether uvicorn was asked for more than one worker process: ``WEB_CONCURRENCY``, the variable its
+    ``--workers`` reads when the command passes none, as the orchestrator image's does (``infra/Dockerfile.orchestrator``).
+    """
+    value = (os.environ if environ is None else environ).get("WEB_CONCURRENCY", "").strip()
+    return value.isdigit() and int(value) > 1
+
+
+@dataclass(frozen=True, eq=False)
+class _Push:
+    """One create under way: the embry0 issue it pushes, what it sent, and when it started (the local clock)."""
+
+    issue_id: str
+    title: str
+    body: str
+    started: datetime
+
+
 def _same_text(stored: Any, sent: Any) -> bool:
     """Whether GitHub's stored text is the text sent, line endings and trailing whitespace aside."""
 
@@ -111,6 +131,18 @@ class GitHubSyncService:
         # Spec 2026-09-29 §3.1: issue write-back resolves through the registry
         # when wired; None keeps the pre-registry env lookup.
         self._client = client or GitHubClient(default_token=github_token or "", credential_resolver=credential_resolver)
+        # The creates under way, by repository (#622): GitHub sends ``issues.opened`` as it makes the issue, and the
+        # webhook links the embry0 issue being pushed rather than making a second one. They are kept in memory: the
+        # orchestrator runs as one process, and a restart loses a create under way only in its seconds-long window.
+        # A delivery another process handled would not see them, and would track the issue as before.
+        self._pushing: dict[str, list[_Push]] = {}
+        if several_workers():
+            logger.warning(
+                "github_sync_several_workers",
+                web_concurrency=os.environ.get("WEB_CONCURRENCY"),
+                msg="the orchestrator runs as one process: with several, a webhook for an issue another worker is "
+                "pushing can make a second embry0 issue (#622)",
+            )
 
     @property
     def name(self) -> str:
@@ -139,16 +171,59 @@ class GitHubSyncService:
                 return False
             return not _mirrors_this_create(row, started)
 
-        data = await self._create_issue(repo, payload, started, pushed_by_another)
-        await issues_repo.update(
-            issue_id,
-            tracker=TRACKER,
-            tracker_key=str(data["number"]),
-            tracker_url=data["html_url"],
-            github_synced_at=datetime.now(UTC),
-        )
+        push = _Push(issue_id, str(payload["title"] or ""), str(payload["body"] or ""), started)
+        pushes = self._pushing.setdefault(repo.lower(), [])
+        pushes.append(push)
+        try:
+            data = await self._create_issue(repo, payload, started, pushed_by_another)
+            # When the webhook came first it linked this issue already: the same link written again changes nothing.
+            await issues_repo.update(
+                issue_id,
+                tracker=TRACKER,
+                tracker_key=str(data["number"]),
+                tracker_url=data["html_url"],
+                github_synced_at=datetime.now(UTC),
+            )
+        finally:
+            pushes.remove(push)
+            if not pushes:
+                self._pushing.pop(repo.lower(), None)
         logger.info("github_issue_created", issue_id=issue_id, github_number=data["number"])
         return data
+
+    async def _pushes_of(self, issue: TrackerIssue, payload: dict[str, Any]) -> tuple[list[_Push], bool]:
+        """The creates under way that may have made ``issue``, which the issues webhook reports as opened, and
+        whether the token's user was read to say so.
+
+        Matched as the create's own lookup matches what GitHub made (``_issue_made_since``, #613, #620): the token's
+        own issue (its user, read from GitHub), with the title and body sent, created no earlier than the window
+        before the create started (``embry0.forge_lookup.made_since``). When the token's user cannot be read, the
+        creates the rest matches are answered unconfirmed (False): the issue may be theirs, so the webhook leaves it
+        to them rather than make an embry0 issue the create's link would then meet (#628 review).
+        """
+        sent = payload.get("issue") or {}
+        created = forge_time(sent.get("created_at"))
+        if created is None:
+            return [], True
+        candidates = [
+            push
+            for push in self._pushing.get(issue.repo.lower(), ())
+            if _same_text(sent.get("title"), push.title)
+            and _same_text(sent.get("body"), push.body)
+            and created >= made_since(push.started, None)
+        ]
+        if not candidates:
+            return [], True
+        try:
+            who = await self._client.get("/user", repo=issue.repo)
+            login = str((who.json() or {}).get("login") or "") if who.status_code == 200 else ""
+        except Exception:  # noqa: BLE001 - an unread user confirms no push: the creates link what they made
+            logger.warning("github_push_user_unreadable", repo=issue.repo, exc_info=True)
+            login = ""
+        if not login:
+            return candidates, False
+        author = str((sent.get("user") or {}).get("login") or "")
+        return (candidates, True) if author.lower() == login.lower() else ([], True)
 
     async def _create_issue(
         self,
@@ -305,6 +380,30 @@ class GitHubSyncService:
         issues_repo = ctx.issues_repo
         existing = await issues_repo.get_by_tracker_ref(TRACKER, issue.repo, issue.key)
         triggers = ctx.trigger_labels or set()
+
+        if not existing and action in ("opened", "labeled"):
+            # GitHub sends these as it makes the issue a create asked for, labels included, and either can be handled
+            # before the create's answer (#622): the issue is the pushed embry0 issue's, never a second one's.
+            pushes, confirmed = await self._pushes_of(issue, payload)
+            if len(pushes) > 1 or (pushes and not confirmed):
+                # Two creates under way sent the same words, or the token's user could not be read to confirm one: which
+                # made this issue, only the creates' answers say (or their lookups). Each links the one it made, and no
+                # second embry0 issue is made meanwhile.
+                logger.info("webhook_issue_left_to_its_push", repo=issue.repo, github_number=issue.key)
+                return {"status": "ignored", "reason": "an issue a create under way made; the create links it"}
+            if pushes:
+                # The issue a create under way made (#622): it is that embry0 issue's, linked now. No second embry0
+                # issue is made, and no triage started for one.
+                push = pushes[0]
+                await issues_repo.update(
+                    push.issue_id,
+                    tracker=TRACKER,
+                    tracker_key=issue.key,
+                    tracker_url=issue.url,
+                    github_synced_at=datetime.now(UTC),
+                )
+                logger.info("webhook_issue_linked_to_its_push", issue_id=push.issue_id, github_number=issue.key)
+                return {"status": "accepted", "action": "issue_linked", "issue_id": push.issue_id, "dispatched": False}
 
         if action == "opened":
             if existing:
