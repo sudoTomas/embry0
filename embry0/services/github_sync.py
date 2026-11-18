@@ -191,33 +191,39 @@ class GitHubSyncService:
         logger.info("github_issue_created", issue_id=issue_id, github_number=data["number"])
         return data
 
-    async def _pushes_of(self, issue: TrackerIssue, payload: dict[str, Any]) -> list[_Push]:
-        """The creates under way that may have made ``issue``, which the issues webhook reports as opened.
+    async def _pushes_of(self, issue: TrackerIssue, payload: dict[str, Any]) -> tuple[list[_Push], bool]:
+        """The creates under way that may have made ``issue``, which the issues webhook reports as opened, and
+        whether the token's user was read to say so.
 
         Matched as the create's own lookup matches what GitHub made (``_issue_made_since``, #613, #620): the token's
         own issue (its user, read from GitHub), with the title and body sent, created no earlier than the window
-        before the create started (``embry0.forge_lookup.made_since``). When the token's user cannot be read, none
-        matches, and the issue is tracked as any other.
+        before the create started (``embry0.forge_lookup.made_since``). When the token's user cannot be read, the
+        creates the rest matches are answered unconfirmed (False): the issue may be theirs, so the webhook leaves it
+        to them rather than make an embry0 issue the create's link would then meet (#628 review).
         """
         sent = payload.get("issue") or {}
+        created = forge_time(sent.get("created_at"))
+        if created is None:
+            return [], True
         candidates = [
             push
             for push in self._pushing.get(issue.repo.lower(), ())
-            if _same_text(sent.get("title"), push.title) and _same_text(sent.get("body"), push.body)
+            if _same_text(sent.get("title"), push.title)
+            and _same_text(sent.get("body"), push.body)
+            and created >= made_since(push.started, None)
         ]
-        created = forge_time(sent.get("created_at"))
-        if not candidates or created is None:
-            return []
+        if not candidates:
+            return [], True
         try:
             who = await self._client.get("/user", repo=issue.repo)
             login = str((who.json() or {}).get("login") or "") if who.status_code == 200 else ""
-        except Exception:  # noqa: BLE001 - an unread user matches no push: the issue is tracked as before
+        except Exception:  # noqa: BLE001 - an unread user confirms no push: the creates link what they made
             logger.warning("github_push_user_unreadable", repo=issue.repo, exc_info=True)
-            return []
+            login = ""
+        if not login:
+            return candidates, False
         author = str((sent.get("user") or {}).get("login") or "")
-        if not login or author.lower() != login.lower():
-            return []
-        return [push for push in candidates if created >= made_since(push.started, None)]
+        return (candidates, True) if author.lower() == login.lower() else ([], True)
 
     async def _create_issue(
         self,
@@ -378,10 +384,11 @@ class GitHubSyncService:
         if not existing and action in ("opened", "labeled"):
             # GitHub sends these as it makes the issue a create asked for, labels included, and either can be handled
             # before the create's answer (#622): the issue is the pushed embry0 issue's, never a second one's.
-            pushes = await self._pushes_of(issue, payload)
-            if len(pushes) > 1:
-                # Two creates under way sent the same words: which made this issue, only their answers say. Each links
-                # the one it made, and no second embry0 issue is made meanwhile.
+            pushes, confirmed = await self._pushes_of(issue, payload)
+            if len(pushes) > 1 or (pushes and not confirmed):
+                # Two creates under way sent the same words, or the token's user could not be read to confirm one: which
+                # made this issue, only the creates' answers say (or their lookups). Each links the one it made, and no
+                # second embry0 issue is made meanwhile.
                 logger.info("webhook_issue_left_to_its_push", repo=issue.repo, github_number=issue.key)
                 return {"status": "ignored", "reason": "an issue a create under way made; the create links it"}
             if pushes:

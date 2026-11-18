@@ -66,12 +66,16 @@ def _github(
     also: dict[str, Any] | None = None,
     together: asyncio.Barrier | None = None,
     events: tuple[str, ...] = ("opened",),
+    user_status: int = 200,
+    reached: asyncio.Event | None = None,
 ) -> tuple[GitHubSyncService, list[dict[str, Any]], list[dict[str, Any]]]:
     """GitHub, whose create makes the issue and delivers its ``issues.opened`` webhook before it answers: 201, or
     ``answer`` "lost" (the answer never arrives). ``also``: another issue's webhook, delivered first. ``together``:
-    each create waits there, after making its issue, so the webhooks come while every create is under way.
+    each create waits there after making its issue, and again after its webhooks, so every webhook comes while every
+    create is under way.
     ``events``: the deliveries GitHub sends for the issue it made, in order (``labeled`` for each label it was made
-    with, which can come first)."""
+    with, which can come first). ``user_status``: what ``GET /user`` answers. ``answer`` "refused": the create is
+    answered 422 and nothing is made; "hang": the create never answers, and ``reached`` is set when it is sent."""
     made: list[dict[str, Any]] = []
     webhooks: list[dict[str, Any]] = []
     holder: list[GitHubSyncService] = []
@@ -88,10 +92,16 @@ def _github(
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path == "/user":
-            return httpx.Response(200, json={"login": BOT})
+            return httpx.Response(user_status, json={"login": BOT} if user_status == 200 else {"message": "down"})
         if request.method == "GET" and request.url.path == f"/repos/{REPO}/issues":
             return httpx.Response(200, json=list(reversed(made)))
         if request.method == "POST" and request.url.path == f"/repos/{REPO}/issues":
+            if answer == "refused":
+                return httpx.Response(422, json={"message": "Validation Failed"})
+            if answer == "hang":
+                assert reached is not None
+                reached.set()
+                await asyncio.Event().wait()
             sent = json.loads(request.content)
             number = 7 + len(made)
             issue = {
@@ -112,6 +122,9 @@ def _github(
                 await deliver(also)
             for action in events:
                 await deliver(issue, action)
+            if together is not None:
+                # And no create answers until every webhook was handled: they all come while every create is under way.
+                await together.wait()
             if answer == "lost":
                 raise httpx.ReadTimeout("the answer was lost", request=request)
             return httpx.Response(201, json=issue)
@@ -273,3 +286,41 @@ def test_several_workers_are_warned_of_at_startup(
         GitHubSyncService(github_token="t")
     events = [entry["event"] for entry in logs]
     assert ("github_sync_several_workers" in events) is warned, f"WEB_CONCURRENCY={value}: {events}"
+
+
+async def test_an_unread_token_user_leaves_the_issue_to_the_create(db_with_migrations: DatabasePool) -> None:
+    """#628 review: the title, the body and the window match a create under way, and the token's user cannot be read
+    to confirm the author. The webhook made an embry0 issue the create's link then met (#622 again); it leaves the
+    issue to the create, which links what it made."""
+    issues, pushed = await _pushed(db_with_migrations)
+    sync, _made, webhooks = _github(issues, _Executor(), user_status=500)
+    try:
+        await sync.push_create(pushed, issues)
+    except Exception as exc:  # noqa: BLE001 - what the create raised is the finding
+        pytest.fail(f"the create's link failed after the webhook came first: {type(exc).__name__}: {exc}")
+    assert webhooks and webhooks[0].get("status") == "ignored", webhooks
+    rows = await db_with_migrations.fetch("SELECT id FROM issues")
+    assert [r["id"] for r in rows] == [pushed], f"the webhook made a second embry0 issue: {[dict(r) for r in rows]}"
+    linked = await issues.get_by_tracker_ref("github", REPO, "7")
+    assert linked is not None and linked["id"] == pushed, linked
+
+
+async def test_a_refused_create_leaves_no_create_under_way(db_with_migrations: DatabasePool) -> None:
+    issues, pushed = await _pushed(db_with_migrations)
+    sync, _made, _webhooks = _github(issues, _Executor(), answer="refused")
+    with pytest.raises(httpx.HTTPStatusError):
+        await sync.push_create(pushed, issues)
+    assert sync._pushing == {}, f"a refused create is still recorded as under way: {sync._pushing}"
+
+
+async def test_a_cancelled_create_leaves_no_create_under_way(db_with_migrations: DatabasePool) -> None:
+    issues, pushed = await _pushed(db_with_migrations)
+    reached = asyncio.Event()
+    sync, _made, _webhooks = _github(issues, _Executor(), answer="hang", reached=reached)
+    task = asyncio.create_task(sync.push_create(pushed, issues))
+    await asyncio.wait_for(reached.wait(), timeout=5)
+    assert sync._pushing, "the create was not recorded as under way while it was"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert sync._pushing == {}, f"a cancelled create is still recorded as under way: {sync._pushing}"
