@@ -341,17 +341,26 @@ async def scan_repository(
         # Unknown too when the listing is: the checklist and the needs list read an empty list as "declares none".
         "env_keys": None if root_unknown else [],
     }
+    # An outage on a read under the root listing (#627 review): what it would have shown, a boot command or a UI, is
+    # unknown, and ``contents_unread`` says so (``org_needs.contents_unread``).
+    below_unread = False
     if "package.json" in names:
         pkg = await client.get(f"/repos/{full}/contents/package.json")
-        text = _decode_content(_json(pkg)) if pkg.status_code == 200 else None
-        if text:
-            detail.update(manifest_facts(text))
+        if _outage(pkg):
+            below_unread = True
+        else:
+            text = _decode_content(_json(pkg)) if pkg.status_code == 200 else None
+            if text:
+                detail.update(manifest_facts(text))
     static_index: str | None = None
     if not detail["frontend"] and (facts.language or "").lower() != "html" and names.get("index.html") != "file":
         for directory in STATIC_DIRS:
             if names.get(directory) != "dir":
                 continue
             listing = await client.get(f"/repos/{full}/contents/{directory}")
+            if _outage(listing):
+                below_unread = True
+                break
             entries = _json(listing) if listing.status_code == 200 else None
             if isinstance(entries, list) and any(
                 isinstance(e, dict) and e.get("name") == "index.html" and e.get("type") == "file" for e in entries
@@ -363,6 +372,10 @@ async def scan_repository(
     )
     detail["frontend"] = evidence is not None
     detail["ui_evidence"] = evidence
+    if below_unread:
+        detail["contents_unread"] = True
+        if evidence is None:
+            detail["frontend"] = None
     if detail["compose"] and not detail["boot_hint"]:
         detail["boot_hint"] = f"docker compose -f {detail['compose']} up"
     env_name = next((n for n in ENV_EXAMPLE_NAMES if n in names), None)

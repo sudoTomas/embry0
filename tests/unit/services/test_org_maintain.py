@@ -110,6 +110,27 @@ CASES: dict[str, tuple[dict[str, Any], dict[str, Any], frozenset[str] | None, st
         "credential",
         "no webhook (the probe found the token cannot manage hooks)",
     ),
+    "qa_config_absent_contents_unread": (
+        _row(**{**MAINTAINED, "root_visible": None, "qa_config": False}),
+        HOOKS_OK,
+        None,
+        None,
+        "no QA config",
+    ),
+    "unwatched_contents_unread": (
+        _row(**{**MAINTAINED, "root_visible": None, "watcher_stack": False}),
+        HOOKS_OK,
+        None,
+        None,
+        "not watched",
+    ),
+    "contents_unanswered": (
+        _row(**{**MAINTAINED, "root_visible": None}),
+        HOOKS_OK,
+        None,
+        None,
+        "its contents could not be read this time",
+    ),
     "hook_origin_unknown": (
         _row(**{**MAINTAINED, "hook_present": None}),
         HOOKS_OK,
@@ -292,6 +313,8 @@ def test_steps_are_the_actions_of_the_needs_that_cover_the_repository() -> None:
             ("worker", {**MAINTAINED, "deploy_marker": False, "hooks_visible": False, "hook_present": None}),
             ("svc", {**MAINTAINED, "watcher_stack": False, "env_keys": ["A", "B"], "env_keys_set": []}),
             ("blind", {"root_visible": False, "hooks_visible": False, "hook_present": None, "registered": True}),
+            ("unread", {**MAINTAINED, "root_visible": False, "qa_config": False, "watcher_stack": False}),
+            ("unanswered", {**MAINTAINED, "root_visible": None, "qa_config": False, "watcher_stack": False}),
         ]
     ]
     rows.append(_row("acme/old", archived=True, skipped="archived"))
@@ -302,3 +325,34 @@ def test_steps_are_the_actions_of_the_needs_that_cover_the_repository() -> None:
         steps = maintain_hint(row, HOOKS_OK).steps
         assert set(steps) == wanted, f"{row['repo']}: steps {steps}, needs ask for {sorted(wanted)}"
         assert list(steps) == sorted(steps, key=STEP_ORDER.index)
+
+
+@pytest.mark.parametrize(("root", "steps"), [(False, ("credential",)), (None, ())], ids=["refused", "outage"])
+def test_a_root_listing_not_read_asks_for_no_step_drawn_from_it(root: bool | None, steps: tuple[str, ...]) -> None:
+    """#625: what the root listing holds is unknown when it was not read, so the hint asks neither to write the QA
+    config by hand nor to name a log source; a refusal still asks to widen the credential."""
+    facts = {**MAINTAINED, "root_visible": root, "qa_config": False, "watcher_stack": False, "boot_hint": None}
+    hint = maintain_hint(_row(**facts), HOOKS_OK)
+    assert hint.steps == steps, f"steps {hint.steps}: {hint.hint}"
+    # What embry0 knows of it stays, without a step: "no QA config", "not watched" (#627 review).
+    for said in ("nothing to boot or serve", "no log source found"):
+        assert said not in hint.hint, f"{said!r} drawn from contents nobody read: {hint.hint}"
+
+
+def test_a_root_listing_that_met_an_outage_says_so_and_keeps_what_embry0_knows() -> None:
+    """#627 review: after an outage the hint read "Registered; nothing to do." for a repository nobody could read. It
+    says its contents could not be read this time, and keeps what embry0 knows of it, without a step."""
+    facts = {**MAINTAINED, "root_visible": None, "qa_config": False, "watcher_stack": False}
+    hint = maintain_hint(_row(**facts), HOOKS_OK)
+    assert hint.hint == (
+        "Registered; no QA config; not watched; its contents could not be read this time, so run discovery again."
+    ), hint.hint
+    assert hint.steps == (), hint.steps
+
+
+def test_a_root_listing_the_forge_refused_says_what_embry0_knows_and_asks_for_the_credential() -> None:
+    facts = {**MAINTAINED, "root_visible": False, "qa_config": False, "watcher_stack": False}
+    hint = maintain_hint(_row(**facts), HOOKS_OK)
+    assert hint.hint == (
+        "Registered; no QA config; not watched; the credential cannot read its contents, so widen the credential."
+    ), hint.hint

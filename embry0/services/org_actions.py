@@ -21,6 +21,7 @@ import structlog
 
 from embry0.services import org_webhooks
 from embry0.services.org_discovery import OrgHookState, hook_points_here, public_origin
+from embry0.services.org_needs import contents_unread
 from embry0.services.org_webhooks import RELIST_SECONDS, send_create, timed
 from embry0.services.organizations import CreateUnanswered, ForgeOutage, ForgeTime, ProbeOutOfTime, outage_of
 from embry0.services.watcher_stacks import WatcherStack
@@ -361,6 +362,14 @@ async def _onboard(ctx: ActionContext, repo: str, facts: dict[str, Any], dry_run
             f"onboard job {last.get('job_id')} completed without storing a QA config; pass force=true to start another",
         )
     if not facts.get("boot_hint"):
+        if contents_unread(facts):
+            # #627 review: nobody read its contents, so whether there is something to start is not known.
+            return ActionResult(
+                repo,
+                "skipped",
+                "its contents could not be read, so whether the onboard job has something to start is unknown; "
+                "run discovery again",
+            )
         return ActionResult(repo, "skipped", "no boot hint was found, so the onboard job has nothing to start")
     branch = str(facts.get("default_branch") or "main")
     if ctx.job_starter is None:
