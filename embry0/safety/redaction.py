@@ -106,6 +106,21 @@ _PATTERNS: tuple[tuple[re.Pattern[str], _Replacement], ...] = (
     (re.compile(r"\blin_(?:api|oauth)_[A-Za-z0-9]{16,}"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
     (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), REDACTED),
+    # A token glued to a word character before it (#57): "nghp_...", "keyglpat-...". No word boundary precedes
+    # its prefix there, so the rules above never match it. Each glued rule takes only its token's own shape, so
+    # an identifier that merely holds a prefix ("berlin_api_...", "task-...", "thighs_...") is left alone. A
+    # bare "rk-" or "sk-" and an AWS key id ("ASIA..." inside an uppercase word) are not matched glued.
+    (
+        re.compile(r"(?<=[A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{36}(?![A-Za-z0-9])|github_pat_[A-Za-z0-9_]{20,})"),
+        REDACTED,
+    ),
+    (re.compile(r"(?<=[A-Za-z0-9_])glpat-[A-Za-z0-9_\-]{20,}"), REDACTED),
+    (
+        re.compile(r"(?<=[A-Za-z0-9_])(?:sk-(?:ant|proj|svcacct|admin)-[A-Za-z0-9_\-]{12,}|xai-[A-Za-z0-9]{40,})"),
+        REDACTED,
+    ),
+    (re.compile(r"(?<=[A-Za-z0-9_])lin_(?:api|oauth)_[A-Za-z0-9]{40,}"), REDACTED),
+    (re.compile(r"(?<=[A-Za-z0-9_])xox[abprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
     # Telegram bot tokens, bare or inside a Bot API URL (".../bot<id>:<secret>/").
     (re.compile(r"(?<![0-9])[0-9]{6,12}:[A-Za-z0-9_\-]{35}(?![A-Za-z0-9_\-])"), REDACTED),
     # A Slack incoming-webhook URL is its own credential: the path is the secret.
