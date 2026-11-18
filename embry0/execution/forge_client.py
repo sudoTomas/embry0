@@ -37,6 +37,19 @@ DEFAULT_TIMEOUT = 15.0
 # least as often as it means rate limiting, and retrying that burns quota.
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
+# #45: what proves the forge did not act on a request, so that sending it again
+# cannot do anything twice, whatever its method. A 429 is a refusal for its
+# rate. A connect error, a connect timeout or a pool timeout: the request was
+# never sent. Every other transient failure (a 5xx, a read timeout, an answer
+# lost in transit) leaves it unknown whether the forge acted.
+NOT_PROCESSED_STATUSES = frozenset({429})
+NOT_SENT_ERRORS: tuple[type[httpx.TransportError], ...] = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+# Methods whose effect is the same however often they are sent (RFC 9110
+# §9.2.2): a request of one of them is sent again on any transient failure.
+# POST and PATCH are not among them: a create sent twice makes two.
+IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
+
 # Never sleep longer than this for one attempt, however far out the advertised
 # reset is — a webhook handler must not block for an hour.
 MAX_BACKOFF_SECONDS = 30.0
@@ -266,17 +279,26 @@ class ForgeClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         extra_headers: Mapping[str, str] | None = None,
-        retry_transient: bool = True,
+        retry_transient: bool | None = None,
         **header_kwargs: Any,
     ) -> httpx.Response:
-        """Issue one request, retrying transient failures.
+        """Issue one request, retrying the failures it is safe to retry (#45).
 
-        Returns the response whatever its status. Raises only when every
-        attempt failed at the transport layer, which retrying will not fix.
+        Returns the response whatever its status. Raises the transport error
+        of the last attempt when no attempt was answered.
 
-        ``retry_transient=False`` sends the request once: a write the forge
-        accepted can still be answered 5xx or lose its answer in transit, and
-        sending it again would post it twice.
+        Any request is sent again on a failure that proves the forge did not
+        act on it: a 429, or a request that never reached it (a connect error,
+        a connect or pool timeout). On any other transient failure (a 5xx, a
+        read timeout, an answer lost in transit) the forge may have acted, so
+        only a request that is safe to repeat is sent again:
+
+        - ``retry_transient=None`` (the default): one of an idempotent method
+          (GET, HEAD, OPTIONS, PUT, DELETE). A POST or a PATCH is not: a write
+          the forge accepted and answered 502 must not be posted twice;
+        - ``retry_transient=True``: the caller says it is safe to repeat (a
+          GraphQL query, a label added, a field set);
+        - ``retry_transient=False``: none, whatever its method.
         """
         self._check_chosen_path(path)
         headers = self.headers(repo, token=await self.token_for(repo), **header_kwargs)
@@ -286,7 +308,8 @@ class ForgeClient:
         client = self._http or httpx.AsyncClient(timeout=self._timeout, verify=self._verify)
         owned = self._http is None
         try:
-            attempts = self._max_attempts if retry_transient else 1
+            repeatable = method.upper() in IDEMPOTENT_METHODS if retry_transient is None else retry_transient
+            attempts = self._max_attempts
             for attempt in range(1, attempts + 1):
                 try:
                     response = await client.request(
@@ -297,13 +320,16 @@ class ForgeClient:
                         json=json,
                         timeout=self._timeout,
                     )
-                except httpx.TransportError:
-                    if attempt == attempts:
+                except httpx.TransportError as exc:
+                    if attempt == attempts or not (repeatable or isinstance(exc, NOT_SENT_ERRORS)):
                         raise
                     await self._backoff(attempt, None, method=method, path=path, reason="transport")
                     continue
 
-                if response.status_code in RETRY_STATUSES and attempt < attempts:
+                retry = response.status_code in NOT_PROCESSED_STATUSES or (
+                    repeatable and response.status_code in RETRY_STATUSES
+                )
+                if retry and attempt < attempts:
                     await self._backoff(
                         attempt,
                         response,

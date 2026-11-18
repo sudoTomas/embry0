@@ -159,23 +159,20 @@ async def test_a_review_write_whose_answer_was_lost_is_not_sent_again(write) -> 
     assert calls == ["POST"], "a lost answer may follow an accepted write: re-sending it would post it twice"
 
 
-async def test_other_gitlab_posts_still_retry_a_502() -> None:
+@pytest.mark.parametrize("note", ["issue", "merge_request"])
+@pytest.mark.parametrize(("first", "sent"), [(502, 1), (429, 2)], ids=["502", "429"])
+async def test_a_note_is_sent_again_only_when_gitlab_did_not_act_on_it(note: str, first: int, sent: int) -> None:
+    """#45: a note answered 502 may be one GitLab made, and is not posted twice; one refused with a 429 is sent
+    again. ``create_mr_note`` no longer keeps the retries its callers had."""
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.method)
-        return httpx.Response(502) if len(calls) == 1 else httpx.Response(201, json={})
+        return httpx.Response(first) if len(calls) == 1 else httpx.Response(201, json={})
 
-    assert await _client(handler).create_issue_note("acme/products/web", 5, "b") is True
-    assert len(calls) == 2, "the default retry policy must be unchanged"
-
-
-async def test_the_existing_mr_note_api_keeps_retrying_a_502() -> None:
-    calls: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request.method)
-        return httpx.Response(502) if len(calls) == 1 else httpx.Response(201, json={})
-
-    assert await _client(handler).create_mr_note("acme/products/web", 5, "b") is True
-    assert len(calls) == 2, "create_mr_note's callers keep the retry policy they had"
+    client = _client(handler)
+    if note == "issue":
+        await client.create_issue_note("acme/products/web", 5, "b")
+    else:
+        await client.create_mr_note("acme/products/web", 5, "b")
+    assert len(calls) == sent, f"a note answered {first} was sent {len(calls)} times"

@@ -71,8 +71,12 @@ async def post_unfinished_note(pr_url: str, parts: list[str], *, human_merge_onl
             github_token=access.github_token, repo=repo, issue_number=number, body=body, client=client, marker=MARKER
         )
         if human_merge_only:
+            # Safe to send again (#45): a label the pull request already has is not added twice.
             resp = await client.post(
-                f"/repos/{repo}/issues/{number}/labels", repo=repo, json={"labels": [HUMAN_MERGE_LABEL]}
+                f"/repos/{repo}/issues/{number}/labels",
+                repo=repo,
+                json={"labels": [HUMAN_MERGE_LABEL]},
+                retry_transient=True,
             )
             resp.raise_for_status()
         return True

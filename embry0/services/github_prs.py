@@ -291,10 +291,14 @@ async def ensure_pr_for_branch(
             )
             return url
 
+        # Safe to send again (#45): GitHub refuses a second open request for the same head and base (the 422
+        # below), and the opener then finds the one the first request made. Sent once, a create GitHub made but
+        # answered 502 would read as no pull request.
         create = await client.post(
             f"/repos/{repo}/pulls",
             repo=repo,
             json={"title": title, "head": branch, "base": base, "body": body},
+            retry_transient=True,
         )
         if create.status_code == 422 and _says_already_exists(create):
             # Opened between the lookup and the create (the developer, a person, another outcome of the job):
@@ -431,6 +435,7 @@ async def _apply_pr_labels(
             f"/repos/{repo}/issues/{pr_number}/labels",
             repo=repo,
             json={"labels": list(labels)},
+            retry_transient=True,  # safe to send again (#45): a label it already has is not added twice
         )
         resp.raise_for_status()
     except Exception as exc:
