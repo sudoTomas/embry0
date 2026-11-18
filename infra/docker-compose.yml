@@ -486,8 +486,8 @@ services:
     restart: "no"
 
   # Hosted MCP endpoint (streamable HTTP): the embry0 MCP server as a
-  # service, so clients need no local clone — `claude mcp add --transport
-  # http embry0 https://<host>/mcp --header "Authorization: Bearer <key>"`.
+  # service, so clients need no local clone. The dashboard's API keys tab
+  # shows how to connect Claude Code without the key on a command line.
   # Reuses the orchestrator image (same package, console script
   # embry0-mcp-http). Holds NO credential: each request's own bearer is
   # forwarded to the orchestrator, which enforces key + scope.
