@@ -18,7 +18,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-REDACTED = "***REDACTED***"
+from embry0.safety.redaction import PRIVATE_KEY_BLOCK, redact_token_shapes
+from embry0.safety.redaction import REDACTED as REDACTED  # the one placeholder; render.py reads it from here
 
 # A name means "this value is a credential" when its LAST underscore-delimited
 # word is one of these — so API_KEY, GITHUB_TOKEN and embry0_secret_key match
@@ -34,17 +35,16 @@ def _is_secret_name(name: str) -> bool:
 
 # `KEY=value`, `KEY: value`, optionally quoted, optionally behind `declare -x`.
 _ASSIGNMENT_RE = re.compile(r"""([A-Za-z_][A-Za-z0-9_]*)\s*(=|:\s)\s*("[^"]*"|'[^']*'|\S+)""")
-# Credential shapes that are secret wherever they appear, named or not.
-_VALUE_RES = (
-    re.compile(r"\bxai-[A-Za-z0-9_-]{16,}"),
-    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{8,}"),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}"),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\b-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-)
+# Credential shapes that are secret wherever they appear, named or not, come from the one set of token rules
+# (``embry0.safety.redaction.redact_token_shapes``, #57): a token glued to the word before it included. Only the
+# bearer rule is this scrubber's own, kept narrower than the redactor's ("Basic" in a test log is a word).
+_BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{16,}")
+
+
+def _redact_private_keys(text: str) -> str:
+    """Every line of a PEM private key block as ``REDACTED``, so the output keeps its lines (#57): the BEGIN line
+    alone was redacted, and the key's body lines stayed readable."""
+    return PRIVATE_KEY_BLOCK.sub(lambda m: "\n".join(REDACTED for _ in m.group(0).splitlines()), text)
 
 
 def _redact_assignments(line: str) -> str:
@@ -74,11 +74,10 @@ def scrub_output(text: str, known_values: Iterable[str] = ()) -> str:
         return text
     values = sorted({v for v in known_values if v}, key=len, reverse=True)
     lines = []
-    for line in text.splitlines():
+    for line in _redact_private_keys(text).splitlines():
         for value in values:
             line = line.replace(value, REDACTED)
         scrubbed = _redact_assignments(line)
-        for rx in _VALUE_RES:
-            scrubbed = rx.sub(REDACTED, scrubbed)
+        scrubbed = redact_token_shapes(_BEARER_RE.sub(REDACTED, scrubbed))
         lines.append(scrubbed)
     return "\n".join(lines)

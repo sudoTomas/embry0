@@ -201,8 +201,48 @@ def test_diagnostics_do_not_gain_the_pii_rules() -> None:
         "token" * 40_000,  # a secret key name with no separator
         "phone" * 40_000,
         "token" + " " * 200_000,  # a key name whose separator never comes
+        # #57: the glued token rules, each prefix repeated glued, or one prefix before a long run.
+        "aghp_" * 40_000,
+        "a" + "ghp_" + "a" * 200_000,
+        "x" + "github_pat_" * 20_000,
+        "xglpat-" * 30_000,
+        "xsk-ant-" * 25_000,
+        "kxai-" * 40_000,
+        "mlin_api_" * 25_000,
+        "nxoxb-" * 30_000,
+        "-eyJ" * 50_000,  # a JWT start after a separator, over and over: quadratic before its segments were bounded
+        "aeyJ" * 50_000,  # the same, glued
+        "令ghp_" * 40_000,  # a glued prefix after a letter of another script
+        "xgithub_pat_" + "a" * 200_000,  # a glued github_pat_ with no digit to find
+        ".eyJ" * 50_000,  # a JWT start at every run's start
+        "eyJ" * 67_000,  # one run of starts
+        "x eyJ" + "a" * 8 + "." + "a" * 200_000,  # a JWT start whose second dot never comes
     ],
-    ids=["dots", "ats", "domains", "word", "digits", "keyname", "fieldname", "spaces"],
+    ids=[
+        "dots",
+        "ats",
+        "domains",
+        "word",
+        "digits",
+        "keyname",
+        "fieldname",
+        "spaces",
+        "glued-gh",
+        "glued-gh-run",
+        "glued-github-pat",
+        "glued-glpat",
+        "glued-sk-ant",
+        "glued-xai",
+        "glued-lin",
+        "glued-xox",
+        "jwt-starts",
+        "glued-jwt-starts",
+        "glued-other-script",
+        "glued-github-pat-no-digit",
+        "jwt-run-starts",
+        "jwt-one-run",
+        "jwt-no-second-dot",
+    ],
 )
 def test_matching_stays_linear(hostile: str, fields) -> None:
     fields("phone")

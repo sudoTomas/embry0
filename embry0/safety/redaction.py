@@ -71,12 +71,69 @@ def _keep_quotes(match: re.Match[str]) -> str:
 
 _Replacement = str | Callable[[re.Match[str]], str]
 
-_PATTERNS: tuple[tuple[re.Pattern[str], _Replacement], ...] = (
-    # PEM blocks first — they span lines.
+#: A PEM private key block, across its lines; one with no END line runs to the end of the text.
+PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL
+)
+
+# A JWT, in two rules. One may start only where a run of base64url characters starts (after a space, a quote,
+# a dot or the text's start), so it reads each run once and needs no bound: a header carrying a certificate
+# chain (x5c) or a long key id, or a payload of many claims, is redacted whole. The other (``_JWT``) takes a
+# start inside a run, glued to a word or after a hyphen, and bounds its header to 1,024 base64url characters
+# and its payload to 16,384 (about 12 KiB of JSON). Unbounded there, the first segment's class (which takes
+# "-") ran to the end of a run like "-eyJ-eyJ-eyJ..." from every start in it: quadratic, about 5 s for 200 KB.
+_JWT_AT_RUN_START = r"(?<![A-Za-z0-9_\-])eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"
+_JWT = r"eyJ[A-Za-z0-9_\-]{8,1024}\.[A-Za-z0-9_\-]{8,16384}\.[A-Za-z0-9_\-]{8,}"
+
+#: Known token formats, wherever they turn up: the rules :func:`redact_token_shapes` applies alone, for a redactor
+#: that keeps its own rules for names (the verification scrubber, #299).
+_TOKEN_SHAPES: tuple[tuple[re.Pattern[str], _Replacement], ...] = (
+    (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), REDACTED),
+    (re.compile(r"\bglpat-[A-Za-z0-9_\-]{16,}"), REDACTED),
+    (re.compile(r"\b(?:sk|xai|rk)-[A-Za-z0-9_\-]{12,}"), REDACTED),
+    (re.compile(r"\blin_(?:api|oauth)_[A-Za-z0-9]{16,}"), REDACTED),
+    (re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), REDACTED),
+    # Telegram bot tokens, bare or inside a Bot API URL (".../bot<id>:<secret>/").
+    (re.compile(r"(?<![0-9])[0-9]{6,12}:[A-Za-z0-9_\-]{35}(?![A-Za-z0-9_\-])"), REDACTED),
+    # A Slack incoming-webhook URL is its own credential: the path is the secret.
+    (re.compile(r"(hooks\.slack\.com/(?:services|workflows|triggers)/)[A-Za-z0-9/_\-]{1,256}"), rf"\1{REDACTED}"),
+    (re.compile(_JWT_AT_RUN_START), REDACTED),
+    (re.compile(rf"\b{_JWT}"), REDACTED),
+    # A token glued to the word character before it (#57): "nghp_...", "keyglpat-...", "令牌ghp_...". No word
+    # boundary precedes its prefix there, so the rules above never match it. The lookbehind is \w, as \b's is: a
+    # letter of any script. Each glued rule takes only its token's own shape, so an identifier that merely holds a
+    # prefix is left alone ("berlin_api_...", "task-...", "thighs_...", "helpdesk-admin-panel-settings",
+    # "test_github_pat_with_no_owner_is_refused"):
+    # - a GitHub token: its exact 36 characters, then no letter or digit; or, glued on both sides too, 36
+    #   characters holding a digit;
+    # - github_pat_, sk-ant-/-proj-/-svcacct-/-admin-/-or-v1-: 40 or more characters, holding a digit;
+    # - glpat-: 20 or more; xai-, lin_api_/lin_oauth_: 40 or more; xox?-: 10 or more; a JWT: its own shape.
+    # Not matched glued: a bare "sk-" or "rk-" ("disk-...", "network-...") and an AWS key id ("ASIA..." inside an
+    # uppercase word).
     (
-        re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL),
+        re.compile(
+            r"(?<=\w)(?:gh[pousr]_(?:[A-Za-z0-9]{36}(?![A-Za-z0-9])|(?=[A-Za-z0-9]{0,35}[0-9])[A-Za-z0-9]{36})"
+            r"|github_pat_(?=[A-Za-z0-9_]{0,255}[0-9])[A-Za-z0-9_]{40,})"
+        ),
         REDACTED,
     ),
+    (re.compile(r"(?<=\w)glpat-[A-Za-z0-9_\-]{20,}"), REDACTED),
+    (
+        re.compile(
+            r"(?<=\w)(?:sk-(?:ant|proj|svcacct|admin|or-v1)-(?=[A-Za-z0-9_\-]{0,255}[0-9])[A-Za-z0-9_\-]{40,}"
+            r"|xai-[A-Za-z0-9]{40,})"
+        ),
+        REDACTED,
+    ),
+    (re.compile(r"(?<=\w)lin_(?:api|oauth)_[A-Za-z0-9]{40,}"), REDACTED),
+    (re.compile(r"(?<=\w)xox[abprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
+    (re.compile(rf"(?<=\w){_JWT}"), REDACTED),
+)
+
+_PATTERNS: tuple[tuple[re.Pattern[str], _Replacement], ...] = (
+    # PEM blocks first — they span lines.
+    (PRIVATE_KEY_BLOCK, REDACTED),
     # The runner's --config payload carries prompts and per-sandbox bearers.
     (re.compile(r"(--config(?:-json)?[= ]+)[^\n]+"), rf"\1{REDACTED}"),
     # HTTP auth headers, any scheme: "Authorization: Bearer x", "x-api-key: y".
@@ -99,19 +156,18 @@ _PATTERNS: tuple[tuple[re.Pattern[str], _Replacement], ...] = (
         re.compile(rf"(?i)([\"']?{_SECRET_KEY_NAME}[\"']?\s*[:=]\s*)(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;&\"']+)"),
         _keep_quotes,
     ),
-    # Known token formats, wherever they turn up.
-    (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), REDACTED),
-    (re.compile(r"\bglpat-[A-Za-z0-9_\-]{16,}"), REDACTED),
-    (re.compile(r"\b(?:sk|xai|rk)-[A-Za-z0-9_\-]{12,}"), REDACTED),
-    (re.compile(r"\blin_(?:api|oauth)_[A-Za-z0-9]{16,}"), REDACTED),
-    (re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
-    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), REDACTED),
-    # Telegram bot tokens, bare or inside a Bot API URL (".../bot<id>:<secret>/").
-    (re.compile(r"(?<![0-9])[0-9]{6,12}:[A-Za-z0-9_\-]{35}(?![A-Za-z0-9_\-])"), REDACTED),
-    # A Slack incoming-webhook URL is its own credential: the path is the secret.
-    (re.compile(r"(hooks\.slack\.com/(?:services|workflows|triggers)/)[A-Za-z0-9/_\-]{1,256}"), rf"\1{REDACTED}"),
-    (re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"), REDACTED),
+    *_TOKEN_SHAPES,
 )
+
+
+def redact_token_shapes(text: str) -> str:
+    """``text`` with every known token format replaced, glued to the word before it or not (#57). The token rules
+    alone, without the ones for names, headers and URLs, for a redactor with its own (the verification scrubber,
+    #299), so there is one set of token rules."""
+    for pattern, replacement in _TOKEN_SHAPES:
+        text = pattern.sub(replacement, text)
+    return text
+
 
 _SECRET_ENV_NAME = re.compile(r"(?i)token|secret|passw|api_?key|credential|private_?key|database_url|dsn")
 # A short value ("true", "1", "dev") would redact ordinary words all over the text.
