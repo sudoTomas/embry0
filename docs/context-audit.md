@@ -44,7 +44,7 @@ context_audit:
 
 ```bash
 curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"files": ["**/CLAUDE.md", "**/AGENTS.md", "**/CONVENTIONS.md", ".roo/rules/**/*.md"]}'
@@ -86,7 +86,7 @@ The setting is the [settings document](configuration.md#settings-document)'s `co
 
 ```bash
 curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"days": 7}'
@@ -111,7 +111,7 @@ They are written with the `admin` tier, as the rest of the document is; taking a
 
 ```bash
 curl -X PATCH "http://localhost:8200/api/v1/config/settings/budget?owner=acme" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"context_audit_job_usd": 5, "context_audit_max_jobs_per_tick": 2}'
@@ -127,7 +127,7 @@ The fleet-wide caps still apply to every job: the `budget` section's `max_budget
 
 ```bash
 curl http://localhost:8200/api/v1/orgs/acme/context-audit \
-  -H "Authorization: Bearer $API_KEY"
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY")
 ```
 
 The answer lists each active registered repository with at least one instruction file: how many it has, the fingerprint and head it was read at, its newest context-audit job (id, status, date; never a finding's fix job), whether the schedule would start one now and why (`first`, `changed`, `aged`, `live`, `current`, or `off` while the setting is off). Repositories the forge did not answer for are listed under `unread`, with why. The read reads the forge and starts nothing, and works with the setting off. Field by field: [api.md](api.md#organizations).
@@ -143,14 +143,14 @@ An audit can be started by hand, whether or not the schedule is on, with the tie
 ```bash
 # Every due repository of the owner, at most its cap per tick (or "limit": N, 1 to 50)
 curl -X POST http://localhost:8200/api/v1/orgs/acme/context-audit/run \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{}'
 
 # One repository: when it is due, or whatever the due rule says with "force": true
 curl -X POST http://localhost:8200/api/v1/orgs/acme/context-audit/run \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"repo": "acme/widgets", "force": true}'
@@ -166,7 +166,7 @@ Each audit's fixes can be opened as a pull request ([ADR 0022](adr/0022-context-
 
 ```bash
 curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"open_prs": true}'
@@ -222,7 +222,7 @@ Set `days` to `false` in the organization's layer, which turns it off there what
 
 ```bash
 curl -X PATCH "http://localhost:8200/api/v1/config/settings/context_audit?owner=acme" \
-  -H "Authorization: Bearer $API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"days": false}'

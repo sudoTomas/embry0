@@ -2,7 +2,7 @@
 
 Two-level API: **low-level graph execution** + **high-level job management**. All endpoints live under `/api/v1/` behind the frontend's nginx on port 8200.
 
-Authentication: send `Authorization: Bearer <API_KEY>` on every request (omitted from the examples below for brevity). An empty `API_KEY` is only tolerated when a dev-mode flag is set — see [configuration.md](configuration.md).
+Authentication: send `Authorization: Bearer <API_KEY>` on every request (omitted from the examples below for brevity). An empty `API_KEY` is only tolerated when a dev-mode flag is set — see [configuration.md](configuration.md). Where an example does send it, curl reads the header from a pipe, `-H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY")`, so the key is never one of curl's arguments, which other local users can read while it runs; `printf` is a shell builtin, and `<(…)` needs bash or zsh. A key kept in a file reads the same way: `-H @<(jq -Rr '"Authorization: Bearer " + .' ~/.config/embry0/api-key)`.
 
 See [architecture.md](architecture.md#api-structure) for the full route map.
 
@@ -937,7 +937,7 @@ was, and the answer carries `warnings`, a sentence naming those globs
 ```bash
 # Put back the test setup the newest change replaced
 curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/-/history/42/undo \
-  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY") \
   -H "X-Requested-With: XMLHttpRequest"
 # -> {"revision_id": 43}
 ```
@@ -1023,13 +1023,13 @@ admin grants.
 ```bash
 # Start a setup run, then apply the proposal it leaves
 curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/-/setup/propose \
-  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"confirm_spend": true}'
 # -> {"proposal_id": "prop-0123456789ab", "job_id": "job-0123456789ab"}
 curl -X POST http://localhost:8200/api/v1/repos/acme/widgets/-/setup/proposal/prop-0123456789ab/apply \
-  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY") \
   -H "Content-Type: application/json" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"acknowledged": ["live_address"]}'
@@ -1081,7 +1081,7 @@ what they would remove is every repository's.
 
 ```bash
 curl "http://localhost:8200/api/v1/admin/retention/preview?job_log_days=30&agent_session_days=30&qa_image_days=30" \
-  -H "Authorization: Bearer $EMBRY0_API_KEY"
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY")
 # -> {"job_logs": {"configured_days": null, "retention_days": 30, "jobs": 412,
 #      "events": 9031, "bytes": 21400000},
 #     "agent_sessions": {"configured_days": null, "retention_days": 30,
@@ -1707,13 +1707,13 @@ that should only dispatch, mint an `operate` key with the list.
 ```bash
 # Mint a key that may only start work on acme/widgets
 curl -X POST http://localhost:8200/api/v1/apikeys \
-  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY") \
   -H "Content-Type: application/json" \
   -d '{"name": "dispatch-bot", "scope": "operate", "allowed_repos": ["acme/widgets"]}'
 
 # Replace the list (or send {"allowed_repos": []} to lift it). Effective at once.
 curl -X PUT http://localhost:8200/api/v1/apikeys/key-0123456789ab/allowed-repos \
-  -H "Authorization: Bearer $EMBRY0_API_KEY" \
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY") \
   -H "Content-Type: application/json" \
   -d '{"allowed_repos": ["acme/widgets", "acme/widgets-docs"]}'
 ```
@@ -1727,12 +1727,12 @@ before and after.
 # Newest-first rows; admins see every row, other callers the rows they wrote, and a key with a repository
 # allowlist only the rows about its repositories
 curl "http://localhost:8200/api/v1/audit?action=qa.job_created&limit=50" \
-  -H "Authorization: Bearer $EMBRY0_API_KEY"
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY")
 
 # Every action a row can carry, with its label (the dashboard's filter list); to a key with a repository
 # allowlist, the actions of the rows it reads
 curl http://localhost:8200/api/v1/audit/actions \
-  -H "Authorization: Bearer $EMBRY0_API_KEY"
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY")
 # -> {"actions": [{"action": "user.login", "label": "Signed in", "replaced_by": null}, ...]}
 ```
 
@@ -1744,7 +1744,7 @@ issue sees who acted, embry0's own actors as before.
 
 ```bash
 curl "http://localhost:8200/api/v1/issues/$ISSUE_ID/activity?limit=50" \
-  -H "Authorization: Bearer $EMBRY0_API_KEY"
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY")
 # -> [{"id": 41, "action": "issue.triaged", "actor": "sam@example.com", "details": {...}, "issue_id": "...", "created_at": "..."}, ...]
 ```
 

@@ -47,7 +47,7 @@ A detail record (`details["<id>"]`), every field optional:
 
 ```bash
 gzip -c map.json | curl -sf -X PUT "http://<embry0-host>:8200/api/v1/maps/<slug>" \
-  -H "Authorization: Bearer $EMBRY0_KEY" -H "Content-Type: application/json" -H "Content-Encoding: gzip" \
+  -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_KEY") -H "Content-Type: application/json" -H "Content-Encoding: gzip" \
   -H "X-Requested-With: XMLHttpRequest" --data-binary @-
 ```
 

@@ -69,9 +69,9 @@ it:
 
 ```bash
 API=http://localhost:8200/api/v1/repos/acme/backend/-/preferences
-AUTH=(-H "Authorization: Bearer $API_KEY" -H "X-Requested-With: XMLHttpRequest")
 jq '{verification: .}' verification.json \
-  | curl -s -X PUT "${AUTH[@]}" -H 'Content-Type: application/json' -d @- "$API"
+  | curl -s -X PUT -H @<(printf 'Authorization: Bearer %s' "$API_KEY") -H "X-Requested-With: XMLHttpRequest" \
+      -H 'Content-Type: application/json' -d @- "$API"
 ```
 
 No config, no targets, or a stored object that no longer validates → the gate

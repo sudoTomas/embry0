@@ -130,10 +130,10 @@ so in place of that step instead of failing; any other error is shown.
 ## Editing a stored config later
 
 ```bash
-curl -H "Authorization: Bearer $API_KEY" \
+curl -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   http://localhost:8200/api/v1/repos/<owner>/<repo>/-/qa-config          # read
 # edit, then:
-curl -X PUT -H "Authorization: Bearer $API_KEY" \
+curl -X PUT -H @<(printf 'Authorization: Bearer %s' "$API_KEY") \
   -H 'X-Requested-With: XMLHttpRequest' --data-binary @qa.yaml \
   http://localhost:8200/api/v1/repos/<owner>/<repo>/-/qa-config          # write (schema-validated)
 ```

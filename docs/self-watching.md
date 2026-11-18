@@ -255,15 +255,15 @@ deployment's fork or clone of this repository.
    enabling — a token that returns 404 for the repo files nothing and every
    tick ends with a deferred finding:
    ```bash
-   docker exec embry0-orchestrator sh -c 'curl -s -o /dev/null -w "%{http_code}\n" \
-     -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/<owner>/embry0'
+   docker exec embry0-orchestrator sh -c 'printf "Authorization: Bearer %s" "$GITHUB_TOKEN" \
+     | curl -s -o /dev/null -w "%{http_code}\n" -H @- https://api.github.com/repos/<owner>/embry0'
    ```
 2. **Register the repo** (`POST /api/v1/repos`, `repo_register` over MCP, or
    the dashboard).
 3. **Write the stack row.** `tracker: github` files into the stack repo
    itself; `tracker_target` may name another repo to file into.
    ```bash
-   curl -X PUT -H "Authorization: Bearer $API_KEY" -H "X-Requested-With: XMLHttpRequest" \
+   curl -X PUT -H @<(printf 'Authorization: Bearer %s' "$API_KEY") -H "X-Requested-With: XMLHttpRequest" \
      -H "Content-Type: application/json" \
      http://localhost:8200/api/v1/watcher/stacks/<owner>/embry0 -d '{
        "logql": "{compose_project=\"embry0\"} |~ \"\\\"level\\\": \\\"(error|critical)\\\"|Traceback\" !~ \"\\\"event\\\": \\\"(watcher_|log_signatures_|log_clustering_)\" != \"/api/v1/logs/query?\" !~ \"\\\"event\\\": \\\"(logs_queried)\\\"\"",

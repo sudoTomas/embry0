@@ -27,7 +27,7 @@ Pushes do not start a review. The command is matched case-insensitively at the s
 To review one pull request now, use `embry0 review <repo> <number>` (on GitLab the number is the merge request iid), or call the API it wraps:
 
 ```bash
-curl -X POST "$EMBRY0_API_URL/api/v1/jobs" -H "Authorization: Bearer $EMBRY0_API_KEY" \
+curl -X POST "$EMBRY0_API_URL/api/v1/jobs" -H @<(printf 'Authorization: Bearer %s' "$EMBRY0_API_KEY") \
   -H 'Content-Type: application/json' \
   -d '{"pipeline": "pr-review", "repo": "acme/widgets", "number": 7}'
 ```
