@@ -169,3 +169,20 @@ async def test_honours_retry_after_on_429():
     notifier = _notifier(handler, backoff_seconds=10.0, sleep=record)
     assert await notifier.emit("job.completed", {}) is True
     assert delays == [2.0]
+
+
+async def test_every_attempt_of_one_delivery_carries_its_one_delivery_id():
+    """#613: an attempt answered 5xx may have been taken, so a retry can repeat a delivery. Every attempt of one
+    event carries the same ``delivery`` id, in the signed body and as a header, so the receiver drops a repeat; two
+    events carry two ids."""
+    handler = _capture([502, 503, 200])
+    notifier = _notifier(handler)
+    assert await notifier.emit("job.completed", {"job_id": "j1"}) is True
+    assert len(handler.seen) == 3
+    ids = {json.loads(request.content)["delivery"] for request in handler.seen}
+    headers = {request.headers["X-Webhook-Delivery"] for request in handler.seen}
+    assert len(ids) == 1 and ids == headers, (ids, headers)
+    assert len(next(iter(ids))) == 32, "a uuid4's hex"
+
+    await notifier.emit("job.failed", {"job_id": "j2"})
+    assert json.loads(handler.seen[-1].content)["delivery"] not in ids, "a second event reuses the first's id"

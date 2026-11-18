@@ -13,12 +13,20 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import structlog
 
 from embry0.notifications.inbound_parser import is_directive_line
-from embry0.notifications.retry import PermanentSendError, classify_response, send_with_retry
+from embry0.notifications.retry import (
+    PermanentSendError,
+    TransientSendError,
+    classify_response,
+    not_acted_on,
+    send_with_retry,
+)
 from embry0.trackers import github_number_of
 
 logger = structlog.get_logger(__name__)
@@ -53,6 +61,21 @@ _ZERO_WIDTH_SPACE = "\u200b"
 def _defuse(text: str) -> str:
     """Neutralise a line of agent-authored text that would parse as a directive."""
     return f"{_ZERO_WIDTH_SPACE}{text}" if is_directive_line(text) else text
+
+
+#: How long before the post a comment the lookup finds may have been made (#613): the local clock and GitHub's may
+#: differ, and the post's own retries take time.
+_LOOKUP_MARGIN = timedelta(minutes=5)
+#: The pause before the lookup, so a comment GitHub made as the answer was lost shows in its list.
+_LOOKUP_PAUSE_SECONDS = 1.5
+
+
+def _when(value: Any) -> datetime | None:
+    """A GitHub timestamp (``2026-01-01T00:00:00Z``) as an aware datetime; None for anything else."""
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class GitHubCommentChannel:
@@ -181,6 +204,7 @@ class GitHubCommentChannel:
             )
             return created
 
+        started = datetime.now(UTC)
         try:
             # Transient failures (429, 5xx, dropped connections) get another
             # try; a permanent 4xx is logged above and swallowed, as it was
@@ -192,6 +216,32 @@ class GitHubCommentChannel:
         except PermanentSendError:
             return None
         except Exception as exc:
+            if not_acted_on(exc) or not isinstance(exc, (TransientSendError, httpx.HTTPError)):
+                logger.warning(
+                    "github_comment_post_exception",
+                    repo=repo,
+                    issue_number=issue_number,
+                    error=str(exc),
+                )
+                raise
+            unknown = exc
+        # #613: the outcome is unknown, so GitHub may hold the comment: the issue's newest comments are read once
+        # for it, and only when it is not there is it sent once more, under the same rule. When they cannot be
+        # read the outcome stays unknown, and the comment is not sent again, since it could post a second one.
+        await self._sleep(_LOOKUP_PAUSE_SECONDS)
+        read, made = await self._comment_made_since(repo, issue_number, body, started, post_kwargs.get("headers"))
+        if made is not None:
+            logger.info("github_comment_found_after_an_unknown_outcome", repo=repo, issue_number=issue_number)
+            return made
+        if not read:
+            logger.warning("github_comment_left_unknown", repo=repo, issue_number=issue_number, error=str(unknown))
+            raise unknown
+        logger.info("github_comment_sent_again_after_an_unknown_outcome", repo=repo, error=str(unknown))
+        try:
+            return await send_with_retry(attempt, channel="github_comment", sleep=self._sleep, repeatable=False)
+        except PermanentSendError:
+            return None
+        except Exception as exc:
             logger.warning(
                 "github_comment_post_exception",
                 repo=repo,
@@ -199,6 +249,45 @@ class GitHubCommentChannel:
                 error=str(exc),
             )
             raise
+
+    async def _comment_made_since(
+        self, repo: str, issue_number: int, body: str, started: datetime, headers: dict[str, str] | None
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Whether the comments could be read, and the one this channel's token posted on the issue with ``body``,
+        made since a margin before ``started`` (None when there is none).
+
+        Only the token's own comment counts: a person's comment with the same words is not this post. The margin
+        (``_LOOKUP_MARGIN``) allows for the local clock and GitHub's differing, and for the post's own retries; a
+        comment made before it is an earlier post. One page of up to 100 comments is read: an issue that took more
+        in those minutes is not read past them. When the token's user or the comments cannot be read, the outcome
+        stays unknown.
+        """
+        earliest = started - _LOOKUP_MARGIN
+        try:
+            who = await self._client.get("/user", headers=headers or {})
+            login = str((who.json() or {}).get("login") or "") if who.status_code == 200 else ""
+            resp = await self._client.get(
+                f"/repos/{repo}/issues/{issue_number}/comments",
+                params={"since": earliest.strftime("%Y-%m-%dT%H:%M:%SZ"), "per_page": 100},
+                headers=headers or {},
+            )
+            listed = resp.json() if resp.status_code == 200 else None
+        except Exception:
+            logger.warning("github_comment_lookup_failed", repo=repo, issue_number=issue_number, exc_info=True)
+            return False, None
+        if not login or not isinstance(listed, list):
+            return False, None
+        wanted = body.replace("\r\n", "\n").strip()
+        for item in listed:
+            if not isinstance(item, dict):
+                continue
+            created = _when(item.get("created_at"))
+            author = str((item.get("user") or {}).get("login") or "")
+            if created is None or created < earliest or author.lower() != login.lower():
+                continue
+            if str(item.get("body") or "").replace("\r\n", "\n").strip() == wanted:
+                return True, item
+        return True, None
 
     async def _record_rendered_order(self, comment_id: Any, questions: list[dict[str, Any]]) -> None:
         """Pin each question to its 1-based position in the comment just

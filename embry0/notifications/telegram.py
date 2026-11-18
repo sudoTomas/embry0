@@ -101,6 +101,9 @@ async def send_message(
         return int(message_id) if message_id is not None else None
 
     try:
+        # Repeatable on purpose (#613): a message Telegram took but answered 5xx, or whose answer was lost, is
+        # sent again and can show twice. The Bot API gives a bot no way to read back what it sent, so the outcome
+        # cannot be found out, and a question shown twice is a smaller harm than one a person never sees.
         return await send_with_retry(attempt, channel="telegram", sleep=sleep)
     except SendError:
         return None  # logged by the attempt and by notification_failed

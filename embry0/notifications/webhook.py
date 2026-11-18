@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -87,11 +88,15 @@ class WebhookNotifier:
             logger.debug("webhook_skipped_unconfigured", webhook_event=event)
             return False
 
-        envelope = {"event": event, "ts": datetime.now(UTC).isoformat(), "data": data}
+        # One id for the delivery, the same on every attempt (#613): an attempt answered 5xx or whose answer was
+        # lost may have been taken, so a retry can repeat a delivery, and the receiver drops one it has seen. In
+        # the body, so the signature covers it, and in a header.
+        delivery = uuid.uuid4().hex
+        envelope = {"event": event, "delivery": delivery, "ts": datetime.now(UTC).isoformat(), "data": data}
         body = json.dumps(envelope, separators=(",", ":"), default=str).encode()
 
         async def attempt(number: int) -> bool:
-            headers = {"Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json", "X-Webhook-Delivery": delivery}
             # Fresh timestamp per attempt so retries stay inside the
             # receiver's ±300s replay window — which is why the whole
             # request is built here rather than once outside the loop.
