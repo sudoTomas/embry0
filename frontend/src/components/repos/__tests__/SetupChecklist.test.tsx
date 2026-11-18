@@ -342,6 +342,35 @@ describe("SetupChecklist", () => {
     );
   });
 
+  it("asks an admin to fix the organization webhook while it points here and does not deliver", async () => {
+    // #596: the hook action adds no repository hook while the organization's is inert, so Add webhook would do nothing.
+    const user = userEvent.setup();
+    await renderWith({
+      ...NEEDS_ADMIN,
+      rows: NEEDS_ADMIN.rows.map((r) => (r.key === "work_trigger" ? { ...r, org_hook: "inert" as const } : r)),
+    });
+    await user.click(within(rowEl("work_trigger")).getByRole("button", { name: "Copy a request for your admin" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(await navigator.clipboard.readText()).toBe(
+      "Please fix the organization webhook of acme on GitHub so it delivers to embry0: open Organizations, choose " +
+        "acme, and read the need Fix the organization webhook on GitHub.",
+    );
+  });
+
+  it("asks an admin to fix the repository's webhook without naming the organization to a reader of the repository alone", async () => {
+    // #615 review: a key covering the repository but not its owner is not told the webhook is the organization's.
+    const user = userEvent.setup();
+    await renderWith({
+      ...NEEDS_ADMIN,
+      rows: NEEDS_ADMIN.rows.map((r) => (r.key === "work_trigger" ? { ...r, webhook: "fix" as const } : r)),
+    });
+    await user.click(within(rowEl("work_trigger")).getByRole("button", { name: "Copy a request for your admin" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(await navigator.clipboard.readText()).toBe(
+      "Please fix the webhook that delivers the events of acme/widgets to embry0: open Organizations and choose acme.",
+    );
+  });
+
   it("names GitLab in the request for a GitLab repository", async () => {
     const user = userEvent.setup();
     mockFetchReadiness.mockResolvedValue({ ...NEEDS_ADMIN, repo: "group/sub/project" });

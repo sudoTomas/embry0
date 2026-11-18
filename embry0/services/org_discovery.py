@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import base64
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
@@ -25,9 +25,11 @@ import structlog
 from embry0.execution.forge_client import Listing
 from embry0.json_text import json_object
 from embry0.services.org_webhooks import (
+    OrgHook,
     hook_target,
     hooks_pointing_at,
     list_org_hooks,
+    missing_intake_events,
     same_target,
     sends_intake_events,
     timed,
@@ -214,9 +216,38 @@ def hook_state(hooks: list[Any], origins: tuple[str, ...]) -> bool | None:
 OrgHookState = Literal["delivers", "inert", "absent"]
 
 
+@dataclass(frozen=True)
+class OrgHookReading:
+    """What the organization's own webhook does for this deployment, and, when it is ``inert``, what keeps each hook
+    at the target from delivering: its id, whether it is active, its content type and the intake events it does not
+    send (:func:`hook_faults`)."""
+
+    state: OrgHookState
+    faults: tuple[dict[str, Any], ...] = ()
+
+
+def hook_faults(hook: OrgHook) -> dict[str, Any]:
+    """What a person reads off ``hook`` to fix it on GitHub: the three things the receiver needs of it."""
+    return {
+        "id": hook.id,
+        "active": hook.active,
+        "content_type": hook.content_type,
+        "missing_events": list(missing_intake_events(hook)),
+    }
+
+
 async def organization_hook_state(
     client: _Client, owner: str, origins: tuple[str, ...], *, forge_time: ForgeTime | None = None
 ) -> OrgHookState | None:
+    """What the organization's own webhook does for this deployment (ADR 0012): :func:`read_organization_hook`'s
+    state."""
+    reading = await read_organization_hook(client, owner, origins, forge_time=forge_time)
+    return None if reading is None else reading.state
+
+
+async def read_organization_hook(
+    client: _Client, owner: str, origins: tuple[str, ...], *, forge_time: ForgeTime | None = None
+) -> OrgHookReading | None:
     """What the organization's own webhook does for this deployment (ADR 0012).
 
     GitHub sends an organization webhook every event of every repository
@@ -243,11 +274,12 @@ async def organization_hook_state(
         return None
     here = [hook for target in targets for hook in hooks_pointing_at(hooks, target)]
     if not here:
-        return "absent"
+        return OrgHookReading("absent")
     # The receiver reads JSON only: a hook posting form data (GitHub's default for one made through its API) reaches
     # it with nothing it can read.
-    delivering = any(hook.active and hook.content_type == "json" and sends_intake_events(hook) for hook in here)
-    return "delivers" if delivering else "inert"
+    if any(hook.active and hook.content_type == "json" and sends_intake_events(hook) for hook in here):
+        return OrgHookReading("delivers")
+    return OrgHookReading("inert", tuple(hook_faults(hook) for hook in here))
 
 
 def hook_hosts(hooks: list[Any]) -> list[str]:
@@ -288,6 +320,7 @@ async def scan_repository(
     *,
     hook_origins: tuple[str, ...],
     org_hook: OrgHookState | None = None,
+    org_hook_faults: Sequence[Mapping[str, Any]] = (),
 ) -> RepoFacts:
     """Facts for one repository from its forge record plus a few file reads.
 
@@ -295,6 +328,8 @@ async def scan_repository(
     is unset; see :func:`hook_state`. ``org_hook`` is the owner's
     :func:`organization_hook_state`: when it delivers, the repository's events
     reach this deployment whatever its own hooks are, so its hook is present.
+    When it is inert, ``org_hook_faults`` (:attr:`OrgHookReading.faults`) is
+    recorded with it, so the needs list can say what to fix on GitHub.
     """
     full = str(record.get("full_name") or f"{owner}/{record.get('name', '')}")
     facts = RepoFacts(
@@ -410,6 +445,8 @@ async def scan_repository(
     detail["org_hook"] = org_hook
     if org_hook == "delivers":
         detail["hook_present"] = True
+    elif org_hook == "inert":
+        detail["org_hook_faults"] = [dict(fault) for fault in org_hook_faults]
     facts.facts = detail
     return facts
 
@@ -478,10 +515,17 @@ async def discover(
     records = listing.items
     total = len(records)
     # Only an organization carries hooks of its own; a user's repositories have theirs alone.
-    org_hook = await organization_hook_state(client, owner, hook_origins) if owner_kind == "organization" else None
+    org = await read_organization_hook(client, owner, hook_origins) if owner_kind == "organization" else None
     out: list[RepoFacts] = []
     for index, record in enumerate(records, start=1):
-        facts = await scan_repository(client, owner, record, hook_origins=hook_origins, org_hook=org_hook)
+        facts = await scan_repository(
+            client,
+            owner,
+            record,
+            hook_origins=hook_origins,
+            org_hook=org.state if org is not None else None,
+            org_hook_faults=org.faults if org is not None else (),
+        )
         if not facts.archived:
             facts.facts.update(await embry0_state(facts.repo))
         out.append(facts)

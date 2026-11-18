@@ -46,6 +46,10 @@ class ReadinessInputs:
     test setup (``check_qa_config``), None when none is stored. ``proposal``
     is the latest setup proposal, a ``running`` one whose job ended already
     finished as failed. ``pr_url`` is the newest pull request a job opened.
+    ``owner_visible`` is whether the reader reads what belongs to the
+    repository's owner as a whole (``embry0.api.repository_reads.owner_hidden``):
+    the organization's webhook is the owner's, so the checklist names it only
+    then.
     """
 
     repo: str
@@ -59,10 +63,17 @@ class ReadinessInputs:
     proposal: Mapping[str, Any] | None = None
     pr_url: str | None = None
     trigger_label: str = "embry0"
+    owner_visible: bool = True
 
 
 async def readiness_inputs(
-    app_state: Any, repo: str, registered: Mapping[str, Any], *, trigger_label: str, read: Read = None
+    app_state: Any,
+    repo: str,
+    registered: Mapping[str, Any],
+    *,
+    trigger_label: str,
+    read: Read = None,
+    owner_visible: bool = True,
 ) -> ReadinessInputs:
     """Gather ``repo``'s facts from embry0's own tables. ``registered`` is its
     repos row. Reads only: the forge account resolves from the registry and
@@ -111,6 +122,7 @@ async def readiness_inputs(
         proposal=proposal,
         pr_url=str(pr_url) if pr_url else None,
         trigger_label=trigger_label,
+        owner_visible=owner_visible,
     )
 
 
@@ -318,6 +330,7 @@ def _work_trigger(inputs: ReadinessInputs) -> dict[str, Any]:
     facts = inputs.facts or {}
     forge = _forge(inputs)
     label = inputs.trigger_label
+    extra: dict[str, Any] = {}
     if facts.get("hook_present") is True:
         state = "done"
         says = (
@@ -325,6 +338,21 @@ def _work_trigger(inputs: ReadinessInputs) -> dict[str, Any]:
             f"{forge} tells embry0 about new issues in this repository."
         )
         action = None
+    elif facts.get("hooks_visible") is True and facts.get("hook_present") is False and facts.get("org_hook") == "inert":
+        # The hook action adds no repository hook while the organization's is inert (#596): that one is what to fix.
+        # It is the owner's, so only a reader of the owner as a whole is told whose webhook it is.
+        state = "missing"
+        says = f"{forge} does not tell embry0 about new issues here yet, so the label {label} does nothing. "
+        if inputs.owner_visible:
+            says += (
+                f"The organization's webhook points at embry0 but does not deliver what it needs: an admin can fix "
+                f"it on {forge}, and Organizations says what is wrong with it."
+            )
+            extra["org_hook"] = "inert"
+        else:
+            says += "An admin needs to fix the webhook that delivers this repository's events."
+        action = _ADMIN_REQUEST
+        extra["webhook"] = "fix"
     elif facts.get("hooks_visible") is True and facts.get("hook_present") is False:
         state = "missing"
         says = (
@@ -339,7 +367,7 @@ def _work_trigger(inputs: ReadinessInputs) -> dict[str, Any]:
             f"embry0 cannot tell whether {forge} tells it about new issues in this repository."
         )
         action = None
-    return _row("work_trigger", title, state, says, action, required=False, trigger_label=label)
+    return _row("work_trigger", title, state, says, action, required=False, trigger_label=label, **extra)
 
 
 def _summary(code: str, testing: str, forge: str) -> str:

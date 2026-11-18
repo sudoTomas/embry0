@@ -12,7 +12,10 @@ The rules mirror the needs kinds of :mod:`embry0.services.org_needs`, so a
 repository's steps are the actions of the needs that cover it, with one
 refinement the probe allows: a missing webhook is the ``hook`` step only when
 the probe found hook administration, and ``credential`` otherwise, because the
-hook action is skipped without it.
+hook action is skipped without it. While the organization's own webhook is
+inert, a missing webhook is no step at all: the hook action skips the
+repository, and the need ``org_hook_inert`` asks for that webhook to be fixed
+on GitHub.
 """
 
 from __future__ import annotations
@@ -77,6 +80,12 @@ class Reading:
     def hook_missing(self) -> bool:
         """The hooks are visible and none points at this deployment."""
         return self.facts.get("hooks_visible") is True and self.facts.get("hook_present") is False
+
+    @property
+    def org_hook_inert(self) -> bool:
+        """The organization's own webhook points here and does not deliver (``org_discovery.organization_hook_state``),
+        so the hook action adds no repository hook: one would double every event once that webhook is fixed."""
+        return self.facts.get("org_hook") == "inert"
 
     @property
     def hook_target_unknown(self) -> bool:
@@ -194,15 +203,21 @@ RULES: tuple[Rule, ...] = (
         "no QA config",
     ),
     Rule(
+        "org_hook_inert",
+        lambda r: r.hook_missing and r.org_hook_inert,
+        "no webhook, and the organization webhook points here but does not deliver",
+        does="fix the organization webhook on GitHub",
+    ),
+    Rule(
         "no_webhook",
-        lambda r: r.hook_missing and r.hooks_allowed is True,
+        lambda r: r.hook_missing and not r.org_hook_inert and r.hooks_allowed is True,
         "no webhook (the token can manage hooks)",
         step="hook",
         does="add the webhook",
     ),
     Rule(
         "no_webhook_without_hook_admin",
-        lambda r: r.hook_missing and r.hooks_allowed is not True,
+        lambda r: r.hook_missing and not r.org_hook_inert and r.hooks_allowed is not True,
         _no_hook_admin,
         step="credential",
         does="give the credential hook administration and probe the owner again",

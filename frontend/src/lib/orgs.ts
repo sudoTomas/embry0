@@ -73,6 +73,7 @@ export function isMissing(row: OrgRepoFacts, key: SenseKey): boolean {
 export const NEED_KINDS: readonly { kind: string; label: string }[] = [
   { kind: "not_registered", label: "Not registered" },
   { kind: "no_webhook", label: "No webhook" },
+  { kind: "org_hook_inert", label: "Organization webhook not delivering" },
   { kind: "onboarding_candidate", label: "Ready to onboard" },
   { kind: "not_watched", label: "Not watched" },
   { kind: "no_qa_config", label: "No QA config" },

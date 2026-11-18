@@ -48,6 +48,17 @@ const STATES: Record<ReadinessRowState, { icon: LucideIcon; tone: string; label:
 function adminRequest(row: ReadinessRow, repo: string, forge: Forge): string {
   if (row.key === "work_trigger") {
     const owner = repo.split("/")[0];
+    if (row.org_hook === "inert") {
+      // The hook action adds no repository hook while the organization's is inert: that one is what to fix.
+      return (
+        `Please fix the organization webhook of ${owner} on ${providerLabel(forge)} so it delivers to embry0: ` +
+        `open Organizations, choose ${owner}, and read the need Fix the organization webhook on GitHub.`
+      );
+    }
+    if (row.webhook === "fix") {
+      // A reader who does not read the owner as a whole is not told whose webhook it is.
+      return `Please fix the webhook that delivers the events of ${repo} to embry0: open Organizations and choose ${owner}.`;
+    }
     return `Please add the embry0 connection for ${repo}: open Organizations, choose ${owner}, and use Add webhook.`;
   }
   return (

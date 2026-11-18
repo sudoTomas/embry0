@@ -50,6 +50,11 @@ export interface ReadinessRow {
   proposal_id?: string;
   pr_url?: string;
   trigger_label?: string;
+  /** On the work-trigger row: the webhook that delivers this repository's events is there and needs fixing. */
+  webhook?: "fix";
+  /** With it, to a reader of the owner as a whole: that webhook is the organization's, pointing at embry0 and not
+   * delivering. */
+  org_hook?: "inert";
 }
 
 /**

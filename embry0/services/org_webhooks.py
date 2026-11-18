@@ -150,9 +150,16 @@ async def list_org_hooks(client: _Reader, owner: str) -> list[OrgHook] | None:
     return [hook for hook in (_hook(item) for item in body) if hook is not None]
 
 
+def missing_intake_events(hook: OrgHook) -> tuple[str, ...]:
+    """The events intake reads that ``hook`` does not send, in :data:`INTAKE_EVENTS` order; none when it sends ``*``."""
+    if "*" in hook.events:
+        return ()
+    return tuple(event for event in INTAKE_EVENTS if event not in hook.events)
+
+
 def sends_intake_events(hook: OrgHook) -> bool:
     """Whether ``hook`` sends every event intake reads, GitHub's ``*`` included."""
-    return "*" in hook.events or set(INTAKE_EVENTS) <= set(hook.events)
+    return not missing_intake_events(hook)
 
 
 def _place(url: str) -> tuple[str, str, int | None] | None:

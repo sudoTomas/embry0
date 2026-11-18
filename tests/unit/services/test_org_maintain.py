@@ -131,6 +131,13 @@ CASES: dict[str, tuple[dict[str, Any], dict[str, Any], frozenset[str] | None, st
         None,
         "its contents could not be read this time",
     ),
+    "org_hook_inert": (
+        _row(**{**MAINTAINED, "hook_present": False, "org_hook": "inert"}),
+        HOOKS_OK,
+        None,
+        None,
+        "no webhook, and the organization webhook points here but does not deliver",
+    ),
     "hook_origin_unknown": (
         _row(**{**MAINTAINED, "hook_present": None}),
         HOOKS_OK,
@@ -315,6 +322,7 @@ def test_steps_are_the_actions_of_the_needs_that_cover_the_repository() -> None:
             ("blind", {"root_visible": False, "hooks_visible": False, "hook_present": None, "registered": True}),
             ("unread", {**MAINTAINED, "root_visible": False, "qa_config": False, "watcher_stack": False}),
             ("unanswered", {**MAINTAINED, "root_visible": None, "qa_config": False, "watcher_stack": False}),
+            ("inert", {**MAINTAINED, "hook_present": False, "org_hook": "inert"}),
         ]
     ]
     rows.append(_row("acme/old", archived=True, skipped="archived"))
@@ -356,3 +364,28 @@ def test_a_root_listing_the_forge_refused_says_what_embry0_knows_and_asks_for_th
     assert hint.hint == (
         "Registered; no QA config; not watched; the credential cannot read its contents, so widen the credential."
     ), hint.hint
+
+
+@pytest.mark.parametrize("access", [HOOKS_OK, {"hooks": False}, {}], ids=["hook-admin", "no-hook-admin", "not-probed"])
+def test_an_inert_organization_hook_is_fixed_on_github_not_by_a_repository_step(access: dict[str, Any]) -> None:
+    """#596: the hook action skips a repository while the organization's hook is inert, so the hint asks for that
+    hook to be fixed on GitHub and names no step: neither the hook nor, for a token that cannot manage hooks, the
+    credential that would only let it add the repository hook the action will not add."""
+    hint = maintain_hint(_row(**{**MAINTAINED, "hook_present": False, "org_hook": "inert"}), access)
+    assert hint.steps == (), f"steps {hint.steps}: {hint.hint}"
+    assert hint.hint.endswith("so fix the organization webhook on GitHub."), hint.hint
+    assert "org_hook_inert" in hint.rules and not {"no_webhook", "no_webhook_without_hook_admin"} & set(hint.rules)
+
+
+def test_an_inert_organization_hook_and_contents_nobody_could_read_say_both() -> None:
+    """#615 on #627: the organization's webhook is fixed on GitHub, and the contents are read again; neither is a step
+    the actions take."""
+    facts = {**MAINTAINED, "hook_present": False, "org_hook": "inert", "root_visible": None}
+    facts.update(qa_config=False, watcher_stack=False)
+    hint = maintain_hint(_row(**facts), HOOKS_OK)
+    assert hint.hint == (
+        "Registered; no QA config; no webhook, and the organization webhook points here but does not deliver; "
+        "not watched; its contents could not be read this time, so fix the organization webhook on GitHub, then run "
+        "discovery again."
+    ), hint.hint
+    assert hint.steps == (), hint.steps
