@@ -262,6 +262,11 @@ class JobsRepository:
         logger.info("job_created", job_id=job_id, repo=repo, trace_id=trace_id)
         return job_id
 
+    async def status(self, job_id: str) -> str | None:
+        """The job's status alone, None for a job that is gone: no JSONB column is read."""
+        status = await self._db.fetchval("SELECT status FROM jobs WHERE job_id = $1", job_id)
+        return None if status is None else str(status)
+
     async def get(self, job_id: str) -> dict[str, Any] | None:
         """Fetch a single job by ID."""
         row = await self._db.fetchrow("SELECT * FROM jobs WHERE job_id = $1", job_id)

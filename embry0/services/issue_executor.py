@@ -1546,17 +1546,22 @@ class IssueExecutor:
 
         code = classify_failure(exc=exc, stage=(final_state or streamed_state or {}).get("current_stage"))
         last_state = final_state or streamed_state or None
+        # #595: a job that ended while its resumed run went on (a person cancelled it) is not the run's to fail, nor
+        # to open a pull request for; its sandbox is still freed, below.
+        ended = await _executor_run._ended_meanwhile(self, job_id)
         # #349: a resumed run that raised after pushing its branch still
         # gets its PR; the carried facts (#482) name the branch.
-        pr_url, _ = await self._open_fallback_pr(issue_id, job_id, last_state or {}, error_code=code.value)
+        pr_url = None
+        if ended is None:
+            pr_url, _ = await self._open_fallback_pr(issue_id, job_id, last_state or {}, error_code=code.value)
         pr_field: dict[str, Any] = {"pr_url": pr_url} if pr_url else {}
         # Spec 2026-11-10: a resumed map that raised leaves no document; its proposal says why first.
         await _executor_outcomes.finish_areas_map(
             self, job_id, (last_state or {}).get("areas_proposal_id"), None, str(exc)
         )
-        await self._jobs.update(
+        failed = ended is None and await _executor_run._fail_the_run(
+            self,
             job_id,
-            status="failed",
             error_message=str(exc),
             error_code=code.value,
             total_cost_usd=await resolve_job_total_cost(
@@ -1567,11 +1572,10 @@ class IssueExecutor:
             budget_overrun_usd=_executor_run._overrun_of(exc, last_state),
             **pr_field,
         )
-        await self._finish_credential_uses(job_id, error_code=code.value)
-        await self._announce_finished(job_id)
-        if pr_url:
-            await self._record_pr_opened(issue_id, job_id, pr_url)
-        await self._issue_back_to_open(issue_id)
+        if failed:
+            if pr_url:
+                await self._record_pr_opened(issue_id, job_id, pr_url)
+            await self._issue_back_to_open(issue_id)
         # A resumed job owns a sandbox too, and this path never destroyed
         # it — invisible until `hard` mode started raising mid-run.
         await self._cleanup_sandbox(last_state, job_id)
