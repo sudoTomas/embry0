@@ -40,16 +40,54 @@ const SCOPE_TONES: Record<ApiKey["scope"], BadgeTone> = {
  * after creation — copy it or lose it.
  */
 
-/** The `claude mcp add` command for this deployment, with the fresh key inline.
- * Points at the hosted MCP endpoint (/mcp) — nothing to clone or install.
- * Origin comes from the browser so the snippet is correct on any deployment —
- * no environment-specific strings live in the repo. */
-function mcpAddCommand(key: string): string {
+/** The commands that connect Claude Code to this deployment's hosted MCP
+ * endpoint (/mcp), as the Claude Code guide (docs/claude-code.md) gives them.
+ * Neither holds the key: the first reads it at a prompt that shows nothing,
+ * the second writes it to a file only its owner can read and adds the server
+ * with a headersHelper that reads that file, so the key is never a command's
+ * argument and never in Claude Code's settings. Two blocks, not one: pasted
+ * together, `read` would take the next pasted line as the key. The origin
+ * comes from the browser, so no deployment's address lives in the repo. */
+function connectCommands(origin: string): [string, string] {
   return [
-    "claude mcp add --transport http embry0 \\",
-    `  ${window.location.origin}/mcp \\`,
-    `  --header "Authorization: Bearer ${key}"`,
-  ].join("\n");
+    [`EMBRY0_URL=${origin}`, "read -rs EMBRY0_API_KEY"].join("\n"),
+    [
+      "mkdir -p ~/.config/embry0",
+      "chmod 700 ~/.config/embry0",
+      `[ -n "$EMBRY0_API_KEY" ] && rm -f ~/.config/embry0/api-key && (umask 077; printf '%s' "$EMBRY0_API_KEY" > ~/.config/embry0/api-key)`,
+      "unset EMBRY0_API_KEY",
+      `HELPER="jq -Rs '{Authorization: (\\"Bearer \\" + .)}' ~/.config/embry0/api-key"`,
+      "claude mcp remove --scope user embry0 2>/dev/null",
+      `claude mcp add-json --scope user embry0 "$(jq -n --arg url "$EMBRY0_URL/mcp" --arg helper "$HELPER" \\`,
+      `  '{type: "http", url: $url, headersHelper: $helper}')"`,
+      "claude mcp list",
+    ].join("\n"),
+  ];
+}
+
+/** One command block with its copy button. */
+function CommandBlock({ testId, text }: { testId: string; text: string }) {
+  return (
+    <div className="flex items-start gap-2">
+      <pre
+        data-testid={testId}
+        className="flex-1 overflow-x-auto whitespace-pre rounded bg-black/40 px-3 py-2 font-mono text-xs"
+      >
+        {text}
+      </pre>
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label="Copy the commands"
+        onClick={() => {
+          void navigator.clipboard.writeText(text);
+          toast.success("Copied");
+        }}
+      >
+        <Copy size={14} />
+      </Button>
+    </div>
+  );
 }
 
 export default function ApiKeysTab() {
@@ -214,28 +252,25 @@ export default function ApiKeysTab() {
             <div className="space-y-2 border-t border-border pt-3">
               <p className="text-sm font-medium text-foreground">Connect Claude Code</p>
               <p className="text-xs text-muted-foreground">
-                Registers this deployment&apos;s hosted MCP server — nothing to install:
+                Registers this deployment&apos;s hosted MCP server. Run these in your own terminal (bash or
+                zsh, with Claude Code and <code>jq</code>), not in a Claude Code chat, which keeps what you
+                type in its transcript. First this; at the empty prompt, paste the key above and press
+                Enter (nothing is shown):
               </p>
-              <div className="flex items-start gap-2">
-                <pre
-                  data-testid="mcp-command"
-                  className="flex-1 overflow-x-auto whitespace-pre rounded bg-black/40 px-3 py-2 font-mono text-xs"
-                >
-                  {mcpAddCommand(minted.key)}
-                </pre>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(mcpAddCommand(minted.key));
-                    toast.success("Copied");
-                  }}
-                >
-                  <Copy size={14} />
-                </Button>
-              </div>
+              <CommandBlock testId="mcp-command-key" text={connectCommands(window.location.origin)[0]} />
               <p className="text-xs text-muted-foreground">
-                Then ask Claude Code to list embry0 jobs to verify the connection.
+                Then this. It writes the key to <code>~/.config/embry0/api-key</code>, a file only you can
+                read, and adds the server; <code>claude mcp list</code> should say embry0 is connected:
+              </p>
+              <CommandBlock testId="mcp-command" text={connectCommands(window.location.origin)[1]} />
+              <p className="text-xs text-muted-foreground">
+                No command gets the key as an argument, and Claude Code&apos;s settings hold a{" "}
+                <code>headersHelper</code> command that reads the file, not the key.
+              </p>
+              <p data-testid="mcp-old-command" className="text-xs text-muted-foreground">
+                Connected before with a <code>claude mcp add</code> command that carried the key? Revoke that
+                key below: the <code>remove</code> line drops its settings entry, but the key stays valid until
+                it is revoked.
               </p>
             </div>
           </CardContent>

@@ -105,17 +105,46 @@ describe("ApiKeysTab", () => {
     expect(await screen.findByTestId("minted-key")).toHaveTextContent("emb_SHOWN-ONCE-TOKEN");
   });
 
-  it("shows a Claude Code MCP command with the fresh key and this origin", async () => {
+  it("shows the Claude Code connection for this origin, the key in no command", async () => {
     mockFetch.mockResolvedValue([]);
     mockCreate.mockResolvedValue({ ...KEY, key: "emb_SHOWN-ONCE-TOKEN" });
     renderTab();
     const user = userEvent.setup();
+    // After setup, which puts its own clipboard in place.
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
     await user.type(await screen.findByLabelText("Name"), "laptop-cli");
     await user.click(screen.getByRole("button", { name: /create key/i }));
-    const cmd = await screen.findByTestId("mcp-command");
-    expect(cmd).toHaveTextContent("claude mcp add --transport http embry0");
-    expect(cmd).toHaveTextContent(`${window.location.origin}/mcp`);
-    expect(cmd).toHaveTextContent('--header "Authorization: Bearer emb_SHOWN-ONCE-TOKEN"');
+    // The key is read at a prompt that shows nothing, then written to a file only its owner reads; the server's
+    // entry holds a headersHelper that reads the file: no command takes the key, no setting holds it.
+    expect((await screen.findByTestId("mcp-command-key")).textContent).toBe(
+      `EMBRY0_URL=${window.location.origin}\nread -rs EMBRY0_API_KEY`,
+    );
+    expect(screen.getByTestId("mcp-command").textContent).toBe(
+      [
+        "mkdir -p ~/.config/embry0",
+        "chmod 700 ~/.config/embry0",
+        `[ -n "$EMBRY0_API_KEY" ] && rm -f ~/.config/embry0/api-key && (umask 077; printf '%s' "$EMBRY0_API_KEY" > ~/.config/embry0/api-key)`,
+        "unset EMBRY0_API_KEY",
+        `HELPER="jq -Rs '{Authorization: (\\"Bearer \\" + .)}' ~/.config/embry0/api-key"`,
+        "claude mcp remove --scope user embry0 2>/dev/null",
+        `claude mcp add-json --scope user embry0 "$(jq -n --arg url "$EMBRY0_URL/mcp" --arg helper "$HELPER" \\`,
+        `  '{type: "http", url: $url, headersHelper: $helper}')"`,
+        "claude mcp list",
+      ].join("\n"),
+    );
+    expect(screen.getByTestId("mcp-old-command")).toHaveTextContent(
+      "Connected before with a claude mcp add command that carried the key? Revoke that key below",
+    );
+    const shown = document.body.textContent ?? "";
+    expect(shown.split("emb_SHOWN-ONCE-TOKEN").length - 1).toBe(1);
+    expect(screen.getByTestId("minted-key")).toHaveTextContent("emb_SHOWN-ONCE-TOKEN");
+    for (const button of screen.getAllByRole("button", { name: "Copy the commands" })) {
+      await user.click(button);
+    }
+    expect(writeText).toHaveBeenCalledTimes(2);
+    for (const [copied] of writeText.mock.calls) {
+      expect(copied).not.toContain("emb_SHOWN-ONCE-TOKEN");
+    }
   });
 
   it("revokes with confirmation", async () => {

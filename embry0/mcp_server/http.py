@@ -1,8 +1,11 @@
 """Hosted MCP endpoint — the embry0 MCP server over streamable HTTP.
 
 Runs inside the deployment (compose service ``mcp``) so a client needs no
-local clone of this repo: ``claude mcp add --transport http embry0
-https://<host>/mcp --header "Authorization: Bearer <key>"``.
+local clone of this repo. The dashboard's API keys tab (Settings, then API
+keys) shows the commands that connect Claude Code: the key goes to a file
+only its owner can read, and Claude Code's settings hold a
+``headersHelper`` command that reads it, so the key is never a command's
+argument and never in those settings.
 
 Auth model: the service itself holds NO credential. Every incoming MCP
 request must carry ``Authorization: Bearer <key>``; the middleware stashes
