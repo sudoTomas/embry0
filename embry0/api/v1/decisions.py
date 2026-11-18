@@ -13,7 +13,6 @@ job's card is labelled ``Job done`` instead of ``Quest done``.
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -26,6 +25,7 @@ from embry0.api.v1.ui import ui_settings
 from embry0.services.decisions import Decision, done, offered, ordered
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.leads import LeadsSettings
+from embry0.storage.database import read_jsonb_text
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -48,7 +48,7 @@ async def _empty() -> dict[str, Any]:
 def _json(value: Any) -> Any:
     if isinstance(value, str):
         try:
-            return json.loads(value)
+            return read_jsonb_text(value)  # as the codec reads it, not a second copy (#597)
         except ValueError:
             return None
     return value

@@ -7,13 +7,12 @@ leads of a repository and kind that a whole read no longer saw.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Any
 
 from embry0.services.leads import Lead
-from embry0.storage.database import DatabasePool
+from embry0.storage.database import DatabasePool, read_jsonb_text
 
 _COLUMNS = (
     "id, kind, repo, source_key, title, summary, details, url, severity, effort, action, area, data, state,"
@@ -25,7 +24,7 @@ def _row(record: Any) -> dict[str, Any]:
     row = dict(record)
     # The pool decodes JSONB; a pool without the codec hands back its text.
     if isinstance(row.get("data"), str):
-        row["data"] = json.loads(row["data"])
+        row["data"] = read_jsonb_text(row["data"])  # as the codec reads it, not a second copy (#597)
     return row
 
 

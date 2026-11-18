@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import math
 import time
 from collections.abc import Callable, Collection, Iterable
@@ -36,6 +35,7 @@ from embry0.execution.skill_actions import actions_from_tools, current_actions
 from embry0.services.context_audit import report_counts
 from embry0.services.progression_pack import PackSource, Rules, rules_for
 from embry0.services.quests import Reward, evaluate_diaries, evaluate_quests, quest_rewards, run_agents
+from embry0.storage.database import read_jsonb_text
 from embry0.storage.repositories.progression import Fact, FactFragment, Journal, ProgressEvent
 
 if TYPE_CHECKING:
@@ -92,7 +92,7 @@ def price(event: ProgressEvent, *, rules: Rules) -> list[tuple[str, int]]:
     if event.source == "cleaned":
         # Slop dungeon: a merged cleanup earns per net line it removed (its report holds the counts).
         try:
-            counts = json.loads(event.report or "{}")
+            counts = read_jsonb_text(event.report or "{}")  # as the codec reads it, not a second copy (#597)
         except ValueError:
             counts = {}
         counts = counts if isinstance(counts, dict) else {}

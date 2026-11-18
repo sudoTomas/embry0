@@ -104,8 +104,13 @@ def _jsonb_decoder_for_display(value: str) -> Any:
 
 
 def read_jsonb_text(text: str) -> Any:
-    """A JSONB value's stored text, read as the codec reads it: for a query that selected it ``::text`` because the
-    codec raised :class:`StoredValueTooDeep` for its row (#527), to read the other columns."""
+    """A JSONB value's text, read as the codec reads it: a number past a float's range or an integer past ``int``'s
+    digit limit as its digits, a value nested too deep for ``json.loads`` by its own reader.
+
+    For a query that selected a value ``::text`` because the codec raised :class:`StoredValueTooDeep` for its row
+    (#527), and for a reader that takes a value arriving as a ``str`` for text to decode (a value stored encoded
+    twice, or a pool without the codec): a ``json.loads`` of its own read such a number back as ``inf`` (#597).
+    """
     return _jsonb_decoder(text)
 
 

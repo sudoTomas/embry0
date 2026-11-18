@@ -178,3 +178,36 @@ async def test_running_a_job_holding_one_again_says_why_its_budget_is_not_carrie
     carried, notes = await carried_config(MagicMock(), {"max_budget_usd": PAST}, job={}, runner=None, repo=None)
     assert carried == {} and len(notes) == 1, (carried, notes)
     assert "that this deployment can read" in notes[0], notes
+
+
+async def test_a_verification_report_that_is_only_such_a_number_is_served_as_its_digits(client: AsyncClient) -> None:
+    """``GET /jobs/{id}/verification`` decodes a report arriving as text itself: as the codec does, not into inf
+    (#597)."""
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await db.execute("INSERT INTO jobs (job_id, task, repo, status) VALUES ('job-v', 't', 'acme/widgets', 'completed')")
+    await db.execute(
+        "INSERT INTO job_verifications (job_id, tier, gate_verdict, browser_qa, report) "
+        "VALUES ('job-v', 'light', 'pass', 'skipped', (1e400 + 0.5)::numeric::text::jsonb)"
+    )
+    answer = await client.get("/api/v1/jobs/job-v/verification")
+    assert answer.status_code == 200, f"answered {answer.status_code}"
+    assert answer.json()["report"] == PAST, f"served as {str(answer.json().get('report'))[:40]}"
+
+
+async def test_a_done_when_list_stored_encoded_twice_keeps_the_digits(client: AsyncClient) -> None:
+    """``done_when.current`` reads a list stored as a JSON string (encoded twice) holding such a number: the number
+    keeps its digits, as the codec reads it (#597)."""
+    from embry0.services.done_when import current
+    from embry0.storage.repositories.jobs import JobsRepository
+
+    db = client.app.state.db  # type: ignore[attr-defined]
+    await db.execute("INSERT INTO jobs (job_id, task, repo, status) VALUES ('job-dw', 't', 'acme/widgets', 'running')")
+    await db.execute(
+        "UPDATE jobs SET done_when = to_jsonb("
+        '\'{"items": [{"id": "d1", "done": "it builds", "n": \' || (1e400 + 0.5)::numeric::text || \'}]}\')'
+        " WHERE job_id = 'job-dw'"
+    )
+    assert await db.fetchval("SELECT jsonb_typeof(done_when) FROM jobs WHERE job_id = 'job-dw'") == "string"
+
+    listed = await current(JobsRepository(db), "job-dw", None)
+    assert listed is not None and listed["items"][0]["n"] == PAST, f"read as {str(listed)[:60]}"

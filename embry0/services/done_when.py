@@ -195,10 +195,10 @@ def edited(raw: Any, *, by: str, now: datetime | None = None) -> dict[str, Any] 
 def as_list(value: Any) -> dict[str, Any] | None:
     """A ``jobs.done_when`` value as a dict: the pool may hand JSONB back as text."""
     if isinstance(value, str):
-        import json
+        from embry0.storage.database import read_jsonb_text
 
         try:
-            value = json.loads(value)
+            value = read_jsonb_text(value)  # as the codec reads it, not a second copy (#597)
         except ValueError:
             return None
     return dict(value) if isinstance(value, Mapping) and items_of(value) else None
