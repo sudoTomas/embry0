@@ -87,11 +87,12 @@ _GATHERED_PARAMS = {"hook_origin_unknown": ("hosts", "hosts_by_repo")}
 
 
 def contents_unread(facts: Mapping[str, Any]) -> bool:
-    """Whether discovery listed the repository's root and could not read it: refused (``root_visible`` false) or an
-    outage (null, #583). What the listing holds, something to boot, a UI, the manifests, is then unknown, not absent
-    (#625), and no need is drawn from it. A row without the fact was not listed at all: one only the webhook receiver
-    wrote, or one discovery skipped."""
-    return "root_visible" in facts and facts["root_visible"] is not True
+    """Whether discovery could not read what a repository's contents hold: its root listing refused (``root_visible``
+    false) or met an outage (null, #583), or a read under it met one (``contents_unread``, the package.json or a
+    static directory). Something to boot, a UI, the manifests are then unknown, not absent (#625), and no need is
+    drawn from them. A row without ``root_visible`` was not listed at all: one only the webhook receiver wrote, or one
+    discovery skipped."""
+    return ("root_visible" in facts and facts["root_visible"] is not True) or facts.get("contents_unread") is True
 
 
 def need_text(kind: str, repos: Sequence[str], action: Mapping[str, Any]) -> tuple[str, str]:

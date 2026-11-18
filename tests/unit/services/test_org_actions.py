@@ -966,3 +966,14 @@ def test_slowness_is_noted_only_for_the_repositories_a_request_tried(monkeypatch
     monkeypatch.setattr(actions, "SLOW_REPOS_CAP", 3)
     note_slowness(slow, [ActionResult(f"acme/x{n}", "failed", "no answer", timing="slow") for n in range(3)])
     assert list(slow) == ["acme/x0", "acme/x1", "acme/x2"], f"the set holds the cap, the oldest dropped: {slow}"
+
+
+@pytest.mark.parametrize("unread", [{"root_visible": None}, {"root_visible": False}, {"contents_unread": True}])
+@pytest.mark.asyncio
+async def test_onboard_says_the_contents_could_not_be_read_when_they_could_not(unread: dict[str, Any]) -> None:
+    """#627 review: "no boot hint was found" for a repository whose contents nobody could read says what is not known."""
+    ctx = context(registry=FakeRegistry("acme/gadgets"))
+    ctx.facts["acme/gadgets"]["facts"].update(unread)
+    results = await run_action(ctx, "onboard", ["acme/gadgets"])
+    assert outcomes(results) == [("acme/gadgets", "skipped")], results
+    assert "could not be read" in results[0].detail and "boot hint was found" not in results[0].detail, results[0]

@@ -90,6 +90,8 @@ describe("senses", () => {
       expect(senseState(repo("a", { frontend: false, root_visible }), sense("ui"))).toBe("unknown");
     }
     expect(senseState(repo("a", { frontend: false, root_visible: true }), sense("ui"))).toBe("off");
+    // #627 review: a read under the root listing met an outage.
+    expect(senseState(repo("a", { boot_hint: null, root_visible: true, contents_unread: true }), sense("boot"))).toBe("unknown");
     expect(senseState(repo("a", { boot_hint: null, root_visible: true }), sense("boot"))).toBe("off");
   });
 

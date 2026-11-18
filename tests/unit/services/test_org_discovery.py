@@ -749,3 +749,38 @@ async def test_an_organization_hook_at_the_target_written_otherwise_still_delive
         f, "acme", owner_kind="organization", hook_origins=("https://embry0.example.com",), embry0_state=_known
     )
     assert [r.facts["org_hook"] for r in found.repos] == ["delivers", "delivers"], url
+
+
+@pytest.mark.parametrize("answer", [_Resp(503), _Resp(429), _RateLimited()], ids=["503", "429", "403-limited"])
+@pytest.mark.parametrize("read", ["package.json", "static-directory"])
+@pytest.mark.asyncio
+async def test_an_outage_reading_under_the_root_leaves_what_it_would_show_unknown(read: str, answer: _Resp) -> None:
+    """#627 review: the root listing read, and a read under it met an outage: the package.json that names a boot
+    command or a UI dependency, or a static directory that would show an index.html. A boot command or a UI it would
+    have shown is unknown, not absent: the needs list asked for a QA config written by hand and a log source."""
+    f = forge_with_sites()
+    if read == "package.json":
+        f.routes["/repos/acme/site/contents/"] = _Resp(200, [{"name": "package.json", "type": "file"}])
+        f.routes["/repos/acme/site/contents/package.json"] = answer
+    else:
+        f.routes["/repos/acme/site/contents/"] = _Resp(200, [{"name": "public", "type": "dir"}])
+        f.routes["/repos/acme/site/contents/public"] = answer
+    record = {**SITE, "language": "Python"}
+    seen = await scan_repository(f, "acme", record, hook_origins=("https://hooks.example.net",))
+    assert seen.facts["root_visible"] is True, seen.facts["root_visible"]
+    assert seen.facts.get("contents_unread") is True, f"an outage under the root left no mark: {seen.facts}"
+    assert seen.facts["frontend"] is None, f"the UI is unknown, not absent: {seen.facts['frontend']!r}"
+    row = {"repo": seen.repo, "archived": False, "facts": {**seen.facts, "registered": True}}
+    kinds = {need.kind for need in derive_needs("acme", [row])}
+    assert not kinds & {"no_qa_config", "no_log_source", "onboarding_candidate", "not_watched"}, sorted(kinds)
+
+
+@pytest.mark.parametrize("status", [403, 404])
+@pytest.mark.asyncio
+async def test_a_read_under_the_root_the_forge_refuses_is_an_answer(status: int) -> None:
+    """A package.json the forge answers 403 or 404 for holds nothing to read: no mark, and no UI."""
+    f = forge_with_sites()
+    f.routes["/repos/acme/site/contents/"] = _Resp(200, [{"name": "package.json", "type": "file"}])
+    f.routes["/repos/acme/site/contents/package.json"] = _Resp(status)
+    seen = await scan_repository(f, "acme", {**SITE, "language": "Python"}, hook_origins=("https://hooks.example.net",))
+    assert "contents_unread" not in seen.facts and seen.facts["frontend"] is False, seen.facts

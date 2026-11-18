@@ -38,11 +38,13 @@ export const SENSES: readonly Sense[] = [
 const FROM_THE_ROOT_LISTING: ReadonlySet<SenseKey> = new Set(["boot", "ui"]);
 
 /** `unknown` is a fact the credential could not see (stored as null), and what the root listing holds when it was
- * refused (`root_visible` false) or met an outage (null): unknown, not absent (#625). */
+ * refused (`root_visible` false) or met an outage (null), or a read under it met one (`contents_unread`): unknown,
+ * not absent (#625). */
 export function senseState(row: OrgRepoFacts, sense: Sense): SenseState {
   const value = row.facts[sense.fact];
   const root = row.facts.root_visible;
-  const unread = FROM_THE_ROOT_LISTING.has(sense.key) && (root === false || root === null);
+  const unread =
+    FROM_THE_ROOT_LISTING.has(sense.key) && (root === false || root === null || row.facts.contents_unread === true);
   if (sense.key === "boot") {
     if (typeof value === "string" && value.trim() !== "") return "on";
     return unread ? "unknown" : "off";

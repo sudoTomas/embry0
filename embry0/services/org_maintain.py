@@ -189,6 +189,11 @@ RULES: tuple[Rule, ...] = (
         does="write the QA config by hand",
     ),
     Rule(
+        "qa_config_absent_contents_unread",
+        lambda r: r.registered and not r.has("qa_config") and not r.contents_read,
+        "no QA config",
+    ),
+    Rule(
         "no_webhook",
         lambda r: r.hook_missing and r.hooks_allowed is True,
         "no webhook (the token can manage hooks)",
@@ -217,6 +222,11 @@ RULES: tuple[Rule, ...] = (
         does="add a watcher stack",
     ),
     Rule(
+        "unwatched_contents_unread",
+        lambda r: r.registered and not r.watched and not r.contents_read,
+        "not watched",
+    ),
+    Rule(
         "no_log_source",
         lambda r: r.registered and not r.watched and r.contents_read and not r.runnable,
         "no log source found",
@@ -236,6 +246,12 @@ RULES: tuple[Rule, ...] = (
         lambda r: f"the credential cannot read its {' and '.join(r.unreadable)}",
         step="credential",
         does="widen the credential",
+    ),
+    Rule(
+        "contents_unanswered",
+        lambda r: not r.contents_read and r.facts.get("root_visible") is not False,
+        "its contents could not be read this time",
+        does="run discovery again",
     ),
     Rule(
         "env_values_needed",
