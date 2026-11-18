@@ -28,7 +28,7 @@ from embry0.services.org_webhooks import (
     hook_target,
     hooks_pointing_at,
     list_org_hooks,
-    same_origin,
+    same_target,
     sends_intake_events,
     timed,
 )
@@ -174,15 +174,17 @@ def public_origin(url: str) -> str | None:
 
 
 def hook_points_here(hooks: list[Any], origins: tuple[str, ...]) -> bool:
-    """Whether one of a repository's hooks posts to one of ``origins``, whatever its path, as it always has. The
-    origin is matched as a URL (:func:`embry0.services.org_webhooks.same_origin`), not as a prefix of the hook's
-    text: a longer host that starts with an origin's text is another host, and a host in other case is the same
-    (#603)."""
+    """Whether one of a repository's hooks posts to this deployment's webhook route under one of ``origins``
+    (``<origin>/api/v1/webhook``), matched as the organization's hook is
+    (:func:`embry0.services.org_webhooks.same_target`): a longer host that starts with an origin's text is another
+    host, a host in other case or with a trailing dot, or a query, the same target; and another route on the same
+    host (the GitLab or Linear one, which refuse GitHub's deliveries) is another target (#603)."""
+    targets = [hook_target(origin) for origin in origins if origin]
     for hook in hooks:
         if not isinstance(hook, dict):
             continue
         url = str((hook.get("config") or {}).get("url") or "")
-        if any(origin and same_origin(url, origin) for origin in origins):
+        if any(same_target(url, target) for target in targets):
             return True
     return False
 

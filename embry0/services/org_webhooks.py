@@ -165,7 +165,9 @@ def _place(url: str) -> tuple[str, str, int | None] | None:
     if not parts.hostname:
         return None
     scheme = parts.scheme.lower()
-    return scheme, parts.hostname, port if port is not None else {"https": 443, "http": 80}.get(scheme)
+    # A fully qualified name's trailing dot names the same host (hooks.example.com. is hooks.example.com).
+    host = parts.hostname.rstrip(".")
+    return scheme, host, port if port is not None else {"https": 443, "http": 80}.get(scheme)
 
 
 def same_origin(url: str, origin: str) -> bool:

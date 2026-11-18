@@ -281,11 +281,22 @@ async def test_hook_dry_run_posts_nothing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hook_already_comes_from_the_live_listing_on_the_webhook_origin() -> None:
-    ctx = context(forge_client=FakeForge([{"config": {"url": "https://hooks.example.com/api/v1/webhook/gitlab"}}]))
+async def test_hook_already_comes_from_the_live_listing_on_the_webhook_route() -> None:
+    ctx = context(forge_client=FakeForge([{"config": {"url": "https://hooks.example.com/api/v1/webhook"}}]))
     results = await run_action(ctx, "hook", ["acme/widgets"])
     assert outcomes(results) == [("acme/widgets", "already")]
     assert ctx.forge_client.posts == []  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["/api/v1/webhook/gitlab", "/api/v1/webhook/linear"], ids=["gitlab", "linear"])
+async def test_a_repository_hook_on_another_route_of_the_host_is_not_this_one(route: str) -> None:
+    """#604 review: the GitLab and Linear routes refuse GitHub's deliveries, so a hook there delivers nothing: the
+    action adds the one that does (only /api/v1/webhook takes them, so this makes no duplicate)."""
+    forge = FakeForge([{"config": {"url": f"https://hooks.example.com{route}"}}])
+    results = await run_action(context(forge_client=forge), "hook", ["acme/widgets"])
+    assert outcomes(results) == [("acme/widgets", "done")], results
+    assert len(forge.posts) == 1
 
 
 @pytest.mark.asyncio

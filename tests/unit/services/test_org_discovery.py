@@ -129,14 +129,56 @@ def test_hook_points_here_matches_only_this_deployment() -> None:
         ("https://EMBRY0.Example.com/api/v1/webhook", True),
         ("https://embry0.example.com:443/api/v1/webhook/", True),
         ("https://embry0.example.com/api/v1/webhook?source=repo", True),
+        ("https://embry0.example.com./api/v1/webhook", True),
+        ("https://embry0.example.com/api/v1/webhook/gitlab", False),
+        ("https://embry0.example.com/api/v1/webhook/linear", False),
+        ("https://embry0.example.com/", False),
+        ("http://embry0.example.com/api/v1/webhook", False),
+        ("http://embry0.example.com:443/api/v1/webhook", False),
     ],
-    ids=["longer-host", "look-alike-host", "another-port", "host-case", "default-port-and-slash", "query-string"],
+    ids=[
+        "longer-host",
+        "look-alike-host",
+        "another-port",
+        "host-case",
+        "default-port-and-slash",
+        "query-string",
+        "trailing-dot",
+        "gitlab-route",
+        "linear-route",
+        "the-origin-alone",
+        "http-for-https",
+        "http-on-the-https-port",
+    ],
 )
-def test_a_repository_hook_is_matched_on_its_origin_as_a_url(url: str, here: bool) -> None:
+def test_a_repository_hook_is_matched_on_its_target_as_a_url(url: str, here: bool) -> None:
     """#603: a repository's hook was matched by a case-sensitive prefix of the origin, so a longer host starting with
-    its text pointed here and a host in other case did not. The origin is matched as the organization's hook's is
-    (#591); any path on it still counts."""
+    its text pointed here and a host in other case did not. It is matched as the organization's hook is (#591): at
+    the webhook route itself, the only one that takes GitHub's deliveries (#604 review)."""
     assert hook_points_here([{"config": {"url": url}}], ("https://embry0.example.com",)) is here, url
+
+
+@pytest.mark.parametrize(
+    ("url", "here"),
+    [
+        ("http://hooks.internal/api/v1/webhook", True),
+        ("http://hooks.internal:80/api/v1/webhook", True),
+        ("https://hooks.internal/api/v1/webhook", False),
+        ("http://hooks.internal:8080/api/v1/webhook", False),
+    ],
+    ids=["as-written", "default-port", "https-for-http", "another-port"],
+)
+def test_an_http_origin_is_matched_by_scheme_and_its_default_port(url: str, here: bool) -> None:
+    """#604 review: the scheme and http's default port were untested."""
+    assert hook_points_here([{"config": {"url": url}}], ("http://hooks.internal",)) is here, url
+
+
+def test_a_webhook_url_with_a_path_is_matched_under_that_path() -> None:
+    """#604 review: with WEBHOOK_PUBLIC_URL carrying a path (a reverse proxy's prefix), a hook elsewhere on the shared
+    host is not this deployment's; main read it as a prefix."""
+    origin = ("https://shared.example.com/embry0",)
+    assert hook_points_here([{"config": {"url": "https://shared.example.com/embry0/api/v1/webhook"}}], origin)
+    assert not hook_points_here([{"config": {"url": "https://shared.example.com/other/api/v1/webhook"}}], origin)
 
 
 @pytest.mark.asyncio
