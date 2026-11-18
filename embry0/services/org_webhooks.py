@@ -155,25 +155,32 @@ def sends_intake_events(hook: OrgHook) -> bool:
     return "*" in hook.events or set(INTAKE_EVENTS) <= set(hook.events)
 
 
-def same_target(url: str, target: str) -> bool:
-    """Whether ``url`` posts to ``target``: the same scheme, host and port (a host's case and a default port aside)
-    and the same path (a trailing slash aside), whatever its query. Not a prefix: a look-alike or longer host, another
-    port or another path (the GitLab route under it) is another target."""
-    one, two = urlsplit(url.strip()), urlsplit(target.strip())
+def _place(url: str) -> tuple[str, str, int | None] | None:
+    """``url``'s scheme, host and port, a host's case and a default port aside; None for no host or a bad port."""
+    parts = urlsplit(url.strip())
     try:
-        ports = (one.port, two.port)
+        port = parts.port
     except ValueError:
-        return False
+        return None
+    if not parts.hostname:
+        return None
+    scheme = parts.scheme.lower()
+    return scheme, parts.hostname, port if port is not None else {"https": 443, "http": 80}.get(scheme)
 
-    def port(scheme: str, number: int | None) -> int | None:
-        return number if number is not None else {"https": 443, "http": 80}.get(scheme.lower())
 
-    return (
-        one.scheme.lower() == two.scheme.lower()
-        and (one.hostname or "") == (two.hostname or "")
-        and bool(one.hostname)
-        and port(one.scheme, ports[0]) == port(two.scheme, ports[1])
-        and one.path.rstrip("/") == two.path.rstrip("/")
+def same_origin(url: str, origin: str) -> bool:
+    """Whether ``url`` is on ``origin``: the same scheme, host and port, a host's case and a default port aside,
+    whatever its path. Not a prefix: a longer host that starts with the origin's text is another host."""
+    place = _place(url)
+    return place is not None and place == _place(origin)
+
+
+def same_target(url: str, target: str) -> bool:
+    """Whether ``url`` posts to ``target``: on the same origin (:func:`same_origin`) and at the same path (a trailing
+    slash aside), whatever its query. Not a prefix: a look-alike or longer host, another port or another path (the
+    GitLab route under it) is another target."""
+    return same_origin(url, target) and urlsplit(url.strip()).path.rstrip("/") == urlsplit(target.strip()).path.rstrip(
+        "/"
     )
 
 

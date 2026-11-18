@@ -24,7 +24,14 @@ import structlog
 
 from embry0.execution.forge_client import Listing
 from embry0.json_text import json_object
-from embry0.services.org_webhooks import hook_target, hooks_pointing_at, list_org_hooks, sends_intake_events, timed
+from embry0.services.org_webhooks import (
+    hook_target,
+    hooks_pointing_at,
+    list_org_hooks,
+    same_origin,
+    sends_intake_events,
+    timed,
+)
 from embry0.services.organizations import ForgeTime
 
 logger = structlog.get_logger(__name__)
@@ -167,11 +174,15 @@ def public_origin(url: str) -> str | None:
 
 
 def hook_points_here(hooks: list[Any], origins: tuple[str, ...]) -> bool:
+    """Whether one of a repository's hooks posts to one of ``origins``, whatever its path, as it always has. The
+    origin is matched as a URL (:func:`embry0.services.org_webhooks.same_origin`), not as a prefix of the hook's
+    text: a longer host that starts with an origin's text is another host, and a host in other case is the same
+    (#603)."""
     for hook in hooks:
         if not isinstance(hook, dict):
             continue
         url = str((hook.get("config") or {}).get("url") or "")
-        if any(origin and url.startswith(origin) for origin in origins):
+        if any(origin and same_origin(url, origin) for origin in origins):
             return True
     return False
 

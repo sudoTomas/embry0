@@ -120,6 +120,25 @@ def test_hook_points_here_matches_only_this_deployment() -> None:
     assert hook_points_here(hooks, ("",)) is False
 
 
+@pytest.mark.parametrize(
+    ("url", "here"),
+    [
+        ("https://embry0.example.com.other.net/api/v1/webhook", False),
+        ("https://embry0.example.community/api/v1/webhook", False),
+        ("https://embry0.example.com:8443/api/v1/webhook", False),
+        ("https://EMBRY0.Example.com/api/v1/webhook", True),
+        ("https://embry0.example.com:443/api/v1/webhook/", True),
+        ("https://embry0.example.com/api/v1/webhook?source=repo", True),
+    ],
+    ids=["longer-host", "look-alike-host", "another-port", "host-case", "default-port-and-slash", "query-string"],
+)
+def test_a_repository_hook_is_matched_on_its_origin_as_a_url(url: str, here: bool) -> None:
+    """#603: a repository's hook was matched by a case-sensitive prefix of the origin, so a longer host starting with
+    its text pointed here and a host in other case did not. The origin is matched as the organization's hook's is
+    (#591); any path on it still counts."""
+    assert hook_points_here([{"config": {"url": url}}], ("https://embry0.example.com",)) is here, url
+
+
 @pytest.mark.asyncio
 async def test_scan_reads_manifest_env_and_hooks() -> None:
     f = forge()
