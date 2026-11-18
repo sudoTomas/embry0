@@ -33,8 +33,11 @@ def _is_secret_name(name: str) -> bool:
     return _OWNER_SUFFIX_RE.sub("", name).lower().rsplit("_", 1)[-1] in _SECRET_WORDS
 
 
-# `KEY=value`, `KEY: value`, optionally quoted, optionally behind `declare -x`.
-_ASSIGNMENT_RE = re.compile(r"""([A-Za-z_][A-Za-z0-9_]*)\s*(=|:\s)\s*("[^"]*"|'[^']*'|\S+)""")
+# `KEY=value`, `KEY: value`, optionally quoted, optionally behind `declare -x`. Tried only where a word starts, past
+# any digits it starts with (group 1, kept): tried from every character of a long word, the name ran to the word's
+# end from each and the line took time quadratic in its length (a 40,000-character word, about 10 s). Within a word
+# the match could only ever begin at its first letter or "_", so what it matches is unchanged.
+_ASSIGNMENT_RE = re.compile(r"""(?<![A-Za-z0-9_])([0-9]*)([A-Za-z_][A-Za-z0-9_]*)\s*(=|:\s)\s*("[^"]*"|'[^']*'|\S+)""")
 # Credential shapes that are secret wherever they appear, named or not, come from the one set of token rules
 # (``embry0.safety.redaction.redact_token_shapes``, #57): a token glued to the word before it included. Only the
 # bearer rule is this scrubber's own, kept narrower than the redactor's ("Basic" in a test log is a word).
@@ -49,11 +52,11 @@ def _redact_private_keys(text: str) -> str:
 
 def _redact_assignments(line: str) -> str:
     def replace(match: re.Match[str]) -> str:
-        name, sep, value = match.group(1), match.group(2), match.group(3)
+        digits, name, sep, value = match.group(1), match.group(2), match.group(3), match.group(4)
         if not _is_secret_name(name) or not value.strip("\"'"):
             return match.group(0)
         quote = value[0] if value[:1] in ("'", '"') else ""
-        return f"{name}{sep}{quote}{REDACTED}{quote}"
+        return f"{digits}{name}{sep}{quote}{REDACTED}{quote}"
 
     return _ASSIGNMENT_RE.sub(replace, line)
 

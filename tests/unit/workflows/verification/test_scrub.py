@@ -118,3 +118,31 @@ def test_a_private_key_block_with_lone_cr_line_ends_keeps_its_lines() -> None:
     text = "before\r" + begin + "\rMIIEowIBAAKCAQEA\r" + end + "\rafter"
     scrubbed = scrub_output(text)
     assert scrubbed.splitlines() == ["before", REDACTED, REDACTED, REDACTED, "after"], scrubbed
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["a" * 200_000, "a1" * 100_000, "9" * 100_000 + "a" * 100_000, ("x" * 50 + " ") * 4_000],
+    ids=["one-word", "letters-and-digits", "digits-then-letters", "many-words"],
+)
+def test_a_long_word_is_scrubbed_in_linear_time(text: str) -> None:
+    """A name was tried from every character of a word, and ran to the word's end from each: a 40,000-character
+    word took about 10 s. It is tried where a word starts now."""
+    import time
+
+    start = time.perf_counter()
+    assert scrub_output(text) == text
+    assert time.perf_counter() - start < 5.0
+
+
+@pytest.mark.parametrize(
+    ("line", "scrubbed"),
+    [
+        ("9API_KEY=hunter2 next", f"9API_KEY={REDACTED} next"),  # a word that starts with digits: kept
+        ("export2 GITHUB_TOKEN='abc def'", f"export2 GITHUB_TOKEN='{REDACTED}'"),
+        ("xAPI_KEY=hunter2", f"xAPI_KEY={REDACTED}"),
+        ("path=/usr/bin api_key: s3cr3t", f"path=/usr/bin api_key: {REDACTED}"),
+    ],
+)
+def test_an_assignment_is_found_where_its_word_starts(line: str, scrubbed: str) -> None:
+    assert scrub_output(line) == scrubbed

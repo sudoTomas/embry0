@@ -71,19 +71,28 @@ def _keep_quotes(match: re.Match[str]) -> str:
 
 _Replacement = str | Callable[[re.Match[str]], str]
 
-#: A PEM private key block, across its lines; one with no END line runs to the end of the text.
+#: A private key block, across its lines: a PEM one (its BEGIN line names an RSA, EC, OPENSSH or other PRIVATE KEY)
+#: or an OpenPGP one (a PGP PRIVATE KEY BLOCK, or a PGP SECRET KEY BLOCK, as older tools name it). One with no END
+#: line runs to the end of the text.
+_PRIVATE_KEY_LABEL = r"(?:[A-Z ]*PRIVATE KEY(?: BLOCK)?|PGP SECRET KEY BLOCK)"
 PRIVATE_KEY_BLOCK = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL
+    rf"-----BEGIN {_PRIVATE_KEY_LABEL}-----.*?(?:-----END {_PRIVATE_KEY_LABEL}-----|\Z)", re.DOTALL
 )
 
 # A JWT, in two rules. One may start only where a run of base64url characters starts (after a space, a quote,
 # a dot or the text's start), so it reads each run once and needs no bound: a header carrying a certificate
 # chain (x5c) or a long key id, or a payload of many claims, is redacted whole. The other (``_JWT``) takes a
-# start inside a run, glued to a word or after a hyphen, and bounds its header to 1,024 base64url characters
-# and its payload to 16,384 (about 12 KiB of JSON). Unbounded there, the first segment's class (which takes
-# "-") ran to the end of a run like "-eyJ-eyJ-eyJ..." from every start in it: quadratic, about 5 s for 200 KB.
-_JWT_AT_RUN_START = r"(?<![A-Za-z0-9_\-])eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"
-_JWT = r"eyJ[A-Za-z0-9_\-]{8,1024}\.[A-Za-z0-9_\-]{8,16384}\.[A-Za-z0-9_\-]{8,}"
+# start inside a run, glued to a word or after a hyphen, and bounds its header to 1,024 base64url characters.
+# Unbounded there, the first segment's class (which takes "-") ran to the end of a run like "-eyJ-eyJ-eyJ..."
+# from every start in it: quadratic, about 5 s for 200 KB. The header's bound alone keeps it linear: a later
+# part is read only from the starts at most 1,024 characters before it, so its payload needs none.
+# Both take a JWE in compact form too, five parts, header.key.iv.ciphertext.tag, whose key part is empty when
+# the content key is the shared one ("alg": "dir", as an Auth.js session cookie is): the second part may be
+# empty, and up to two more parts follow the third. No part holds a ".", so each ends where the next begins and
+# the optional parts add no backtracking.
+_JWE_TAIL = r"(?:\.[A-Za-z0-9_\-]{8,}){0,2}"
+_JWT_AT_RUN_START = rf"(?<![A-Za-z0-9_\-])eyJ[A-Za-z0-9_\-]{{8,}}\.[A-Za-z0-9_\-]*\.[A-Za-z0-9_\-]{{8,}}{_JWE_TAIL}"
+_JWT = rf"eyJ[A-Za-z0-9_\-]{{8,1024}}\.[A-Za-z0-9_\-]*\.[A-Za-z0-9_\-]{{8,}}{_JWE_TAIL}"
 
 #: Known token formats, wherever they turn up: the rules :func:`redact_token_shapes` applies alone, for a redactor
 #: that keeps its own rules for names (the verification scrubber, #299).
@@ -93,9 +102,25 @@ _TOKEN_SHAPES: tuple[tuple[re.Pattern[str], _Replacement], ...] = (
     (re.compile(r"\b(?:sk|xai|rk)-[A-Za-z0-9_\-]{12,}"), REDACTED),
     (re.compile(r"\blin_(?:api|oauth)_[A-Za-z0-9]{16,}"), REDACTED),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
+    # An AWS key id: its 20 characters. Glued to a lowercase word or a "_" on its right ("...MNOP2key",
+    # "...MNOP2_x"), it is matched when its 16 hold a digit, as nearly every key id's do (they are base32): an
+    # uppercase word of 20 letters glued to a lowercase one ("ASIAN" and "DEVELOPMENTBANKreports" as one word) is
+    # left alone.
     (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), REDACTED),
+    (re.compile(r"\b(?:AKIA|ASIA)(?=[A-Z]{0,15}[0-9])[0-9A-Z]{16}(?=[a-z_])"), REDACTED),
     # Telegram bot tokens, bare or inside a Bot API URL (".../bot<id>:<secret>/").
     (re.compile(r"(?<![0-9])[0-9]{6,12}:[A-Za-z0-9_\-]{35}(?![A-Za-z0-9_\-])"), REDACTED),
+    # One glued to a short word after it ("...:AAH...xyz"): its secret's 35 characters, when they begin "AA" and
+    # hold a lowercase letter, as a bot token's secret does, and what follows them runs at most 16 more
+    # characters, none of them "+", "/" or "=". Base64 or hex after "<digits>:" (an SSH key blob, a payload with
+    # leading zero bytes, "<epoch>:<data>" in a log) runs on past that, or is uppercase only, and is left alone.
+    (
+        re.compile(
+            r"(?<![0-9])[0-9]{6,12}:AA(?=[A-Za-z0-9_\-]{0,32}[a-z])[A-Za-z0-9_\-]{33}"
+            r"(?=[A-Za-z0-9_\-]{1,16}(?![A-Za-z0-9_\-+/=]))"
+        ),
+        REDACTED,
+    ),
     # A Slack incoming-webhook URL is its own credential: the path is the secret.
     (re.compile(r"(hooks\.slack\.com/(?:services|workflows|triggers)/)[A-Za-z0-9/_\-]{1,256}"), rf"\1{REDACTED}"),
     (re.compile(_JWT_AT_RUN_START), REDACTED),
