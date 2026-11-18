@@ -883,14 +883,14 @@ async def get_organization_webhook(owner: str, request: Request) -> dict[str, An
         # An outage says nothing of what the credential may see (#579): not "hooks_visible" false.
         raise _forge_failed("organization_webhook_unreachable", org.owner, org.forge, exc, what="the request") from exc
     hook = org_webhooks.hook_pointing_at(hooks, target) if hooks and target else None
-    ours = target.rstrip("/") if target else None
     return {
         "owner": org.owner,
         "installed": hook is not None,
         "hook": hook.to_dict() if hook else None,
         "target_url": target,
         "hooks_visible": hooks is not None,
-        "hooks": [h.to_dict(origin_only=h.url.rstrip("/") != ours) for h in hooks or []],
+        # A hook at this deployment's target shows its URL bare; any other only its origin.
+        "hooks": [h.to_dict(origin_only=not (target and org_webhooks.same_target(h.url, target))) for h in hooks or []],
     }
 
 
@@ -949,7 +949,29 @@ async def install_organization_webhook(owner: str, request: Request) -> dict[str
     )
     if result.outcome == "failed":
         raise HTTPException(status_code=502, detail=result.detail)
-    return {"owner": org.owner, "target_url": target, **result.to_dict()}
+    # The needs list reads the newest discovery run, which still says no repository has a hook.
+    rediscovery = (
+        await rediscover(request, org, event="org_webhook_rediscovery_not_started")
+        if result.outcome == "done"
+        else None
+    )
+    return {"owner": org.owner, "target_url": target, **result.to_dict(), "rediscovery": rediscovery}
+
+
+async def rediscover(request: Request, org: Organization, *, event: str) -> str | None:
+    """Start a discovery run for ``org`` after a change to it (an action, the organization webhook installed); None
+    when one is already running or it cannot start, logged as ``event``, which never hides the change it follows."""
+    try:
+        if await _facts_repo(request).running_run(org.owner) is not None:
+            return None
+        run = await start_discovery(request, org)
+    except HTTPException as exc:
+        logger.warning(event, owner=org.owner, detail=str(exc.detail))
+        return None
+    except Exception as exc:  # noqa: BLE001 - the change it follows is done; its answer must not be lost to this
+        logger.warning(event, owner=org.owner, error=type(exc).__name__, exc_info=True)
+        return None
+    return str(run["id"])
 
 
 @router.get("/orgs/{owner}/repos")

@@ -281,6 +281,50 @@ async def test_install_creates_the_hook_once_and_then_answers_already(app: Any, 
     assert app.state.tokens == ["env-token", "env-token"]
 
 
+class FakeFacts:
+    def __init__(self, running: dict[str, Any] | None = None) -> None:
+        self.running = running
+
+    async def running_run(self, owner: str) -> dict[str, Any] | None:
+        return self.running
+
+
+@pytest.mark.asyncio
+async def test_a_new_hook_starts_a_rediscovery_so_the_needs_follow(
+    app: Any, forge: FakeForge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The needs list reads the newest discovery run: without one after the install it keeps asking for a
+    webhook per repository that the organization's now stands in for."""
+    started: list[str] = []
+
+    async def fake_start(request: Any, org: Organization, *, actor: str | None = None) -> dict[str, Any]:
+        started.append(org.owner)
+        return {"id": f"odr-{len(started)}"}
+
+    monkeypatch.setattr(organizations_api, "start_discovery", fake_start)
+    app.state.org_repos_repo = FakeFacts()
+    async with _client(app) as client:
+        first = await client.post("/api/v1/orgs/acme/webhook")
+        second = await client.post("/api/v1/orgs/acme/webhook")
+        app.state.org_repos_repo = FakeFacts(running={"id": "odr-busy"})
+        forge.hooks.clear()
+        busy = await client.post("/api/v1/orgs/acme/webhook")
+    assert first.json()["outcome"] == "done" and first.json()["rediscovery"] == "odr-1"
+    assert second.json()["outcome"] == "already" and second.json()["rediscovery"] is None
+    assert busy.json()["outcome"] == "done" and busy.json()["rediscovery"] is None, "one run per owner at a time"
+    assert started == ["acme"]
+
+
+@pytest.mark.asyncio
+async def test_a_rediscovery_that_cannot_start_does_not_hide_the_install(app: Any, forge: FakeForge) -> None:
+    """No organization storage here: the install is still reported as done."""
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["outcome"] == "done" and resp.json()["rediscovery"] is None
+    assert len(forge.posts) == 1
+
+
 @pytest.mark.asyncio
 async def test_the_response_never_carries_the_secret(app: Any) -> None:
     async with _client(app) as client:
@@ -638,3 +682,46 @@ async def test_a_create_unanswered_says_it_may_have_been_made(app: Any, monkeypa
         "GitHub did not answer the create in time, nor list the webhook after it: it may have been made; "
         "install again to see (a webhook already there is kept)",
     ), resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_rediscovery_that_fails_otherwise_does_not_hide_the_install(
+    app: Any, forge: FakeForge, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#591 review: an install that made the hook answers it, whatever starting the rediscovery after it raises."""
+
+    class RunsUnreadable:
+        async def running_run(self, owner: str) -> None:
+            raise RuntimeError("the runs table cannot be read")
+
+    monkeypatch.setattr(organizations_api, "_facts_repo", lambda request: RunsUnreadable())
+    async with _client(app) as client:
+        resp = await client.post("/api/v1/orgs/acme/webhook")
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["outcome"], resp.json()["rediscovery"]) == ("done", None), resp.text
+    assert len(forge.posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://hooks.example.com/api/v1/webhook?key=a-query-value",
+        "https://a-user:a-password@hooks.example.com/api/v1/webhook",
+    ],
+    ids=["query", "user-and-password"],
+)
+async def test_a_hook_here_with_a_query_or_a_password_is_shown_bare(app: Any, forge: FakeForge, url: str) -> None:
+    """#591 re-review: a hook at the target written with a query or a user and password is installed, and the answer
+    (this route is not admin-only) shows it as scheme, host and path, as the install shows it."""
+    forge.hooks.append({"id": 7, "active": True, "events": ["issues"], "config": {"url": url, "content_type": "json"}})
+    async with _client(app) as client:
+        shown = await client.get("/api/v1/orgs/acme/webhook")
+        install = await client.post("/api/v1/orgs/acme/webhook")
+    assert shown.json()["installed"] is True, shown.text
+    assert shown.json()["hook"]["url"] == TARGET, shown.text
+    assert [h["url"] for h in shown.json()["hooks"]] == [TARGET], shown.text
+    for part in ("a-query-value", "a-user", "a-password"):
+        assert part not in shown.text and part not in install.text, f"{part!r} is in an answer"
+    assert install.json()["outcome"] == "already", install.text
+    assert forge.posts == [], "a hook at the target is already there, whatever its query"
