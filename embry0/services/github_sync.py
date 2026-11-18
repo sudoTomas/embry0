@@ -3,7 +3,7 @@
 import asyncio
 import os
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -11,7 +11,7 @@ import httpx
 import structlog
 
 from embry0.execution.github_client import GitHubClient
-from embry0.forge_lookup import LOOKUP_PAUSE_SECONDS, answered_at, forge_time, made_since
+from embry0.forge_lookup import LOOKUP_MARGIN, LOOKUP_PAUSE_SECONDS, answered_at, forge_time, made_since
 from embry0.services.trigger_labels import matching_triggers, normalize_labels
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.schemas import IssueStatus
@@ -97,14 +97,47 @@ def several_workers(environ: Mapping[str, str] | None = None) -> bool:
     return value.isdigit() and int(value) > 1
 
 
-@dataclass(frozen=True, eq=False)
+#: How long the record of a create whose outcome stayed unknown is kept (#629): its lookup could not read GitHub, so
+#: the issue it may have made is linked by a late webhook, or found by the next push of the same embry0 issue, while
+#: it is kept. Past it, a webhook tracks the issue and a push creates, as before.
+UNKNOWN_OUTCOME_KEPT = timedelta(minutes=10)
+
+
+def _now() -> datetime:
+    """The local clock, which the kept records are timed by."""
+    return datetime.now(UTC)
+
+
+class CreateOutcomeUnknown(Exception):
+    """A push found an earlier create of the same embry0 issue whose outcome is still unknown, and GitHub could not
+    be read to say whether it made the issue: nothing is created meanwhile, since that could make a second (#629)."""
+
+
+class _OutcomeUnknown(Exception):
+    """The create's outcome stayed unknown: its lookup could not read GitHub. ``error`` is what the create met."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+@dataclass(eq=False)
 class _Push:
-    """One create under way: the embry0 issue it pushes, what it sent, and when it started (the local clock)."""
+    """One create under way: the embry0 issue it pushes, what it sent, and when it started (the local clock).
+    ``kept_until``: set when its outcome stayed unknown, how long it is kept (#629). ``claimed``: the GitHub issue its
+    lookup took, which no other create's lookup takes (#629). ``left``: the deliveries the webhook left to it."""
 
     issue_id: str
     title: str
     body: str
     started: datetime
+    kept_until: datetime | None = None
+    #: When its outcome became unknown: an issue it made was made before then (#630 review).
+    unknown_at: datetime | None = None
+    claimed: str | None = None
+    #: The deliveries the webhook left to this create (#628 review): an issue that may be its own, which it could not
+    #: tell. They are handled again once the create resolves (:meth:`GitHubSyncService._resolve`).
+    left: list[tuple[dict[str, Any], TriggerContext]] = field(default_factory=list)
 
 
 def _same_text(stored: Any, sent: Any) -> bool:
@@ -160,36 +193,129 @@ class GitHubSyncService:
         repo = issue["repo"]
         payload = {"title": issue["title"], "body": issue.get("body", ""), "labels": issue.get("labels", [])}
 
-        started = datetime.now(UTC)
+        def pushed_by_another_since(started: datetime) -> Callable[[Any], Awaitable[bool]]:
+            async def pushed_by_another(number: Any) -> bool:
+                # #620: another embry0 issue with the same title and body, pushed by the same token minutes before,
+                # holds that GitHub issue: it is not this create. The issues webhook's mirror of the issue this create
+                # made is not that: when this create made it, the webhook can have come first (#622).
+                row = await issues_repo.get_by_tracker_ref(TRACKER, repo, str(number))
+                if row is None or row.get("id") == issue_id:
+                    return False
+                return not _mirrors_this_create(row, started)
 
-        async def pushed_by_another(number: Any) -> bool:
-            # #620: another embry0 issue with the same title and body, pushed by the same token minutes before,
-            # holds that GitHub issue: it is not this create. The issues webhook's mirror of the issue this create
-            # made is not that: when this create made it, the webhook can have come first (#622).
-            row = await issues_repo.get_by_tracker_ref(TRACKER, repo, str(number))
-            if row is None or row.get("id") == issue_id:
-                return False
-            return not _mirrors_this_create(row, started)
+            return pushed_by_another
 
-        push = _Push(issue_id, str(payload["title"] or ""), str(payload["body"] or ""), started)
-        pushes = self._pushing.setdefault(repo.lower(), [])
-        pushes.append(push)
-        try:
-            data = await self._create_issue(repo, payload, started, pushed_by_another)
-            # When the webhook came first it linked this issue already: the same link written again changes nothing.
-            await issues_repo.update(
-                issue_id,
-                tracker=TRACKER,
-                tracker_key=str(data["number"]),
-                tracker_url=data["html_url"],
-                github_synced_at=datetime.now(UTC),
+        kept = next((p for p in self._live(repo) if p.issue_id == issue_id and p.kept_until is not None), None)
+        if kept is not None:
+            # #629: an earlier create of this issue whose outcome stayed unknown. What it may have made is looked for
+            # first, with what it sent and its window; only when the issues are read and it is not there is the
+            # issue created again.
+            sent = {"title": kept.title, "body": kept.body}
+            earlier = await self._issue_made_since(
+                repo,
+                sent,
+                made_since(kept.started, None),
+                pushed_by_another_since(kept.started),
+                self._claim(repo, kept),
+                latest=kept.unknown_at + LOOKUP_MARGIN if kept.unknown_at is not None else None,
             )
+            read, found = earlier
+            if found is not None:
+                await self._link(issues_repo, issue_id, found)
+                await self._resolve(repo, kept)
+                logger.info(
+                    "github_issue_found_after_a_kept_unknown_outcome", issue_id=issue_id, number=found["number"]
+                )
+                return found
+            if not read:
+                raise CreateOutcomeUnknown(
+                    f"an earlier create of {issue_id} may have made a GitHub issue, and GitHub could not be read to say: "
+                    f"try again in a few minutes; after {int(UNKNOWN_OUTCOME_KEPT.total_seconds() // 60)} minutes the "
+                    "sync creates the issue again"
+                )
+            await self._resolve(repo, kept)
+
+        started = _now()
+        push = _Push(issue_id, str(payload["title"] or ""), str(payload["body"] or ""), started)
+        self._pushing.setdefault(repo.lower(), []).append(push)
+        kept_unknown = False
+        try:
+            data = await self._create_issue(
+                repo, payload, started, pushed_by_another_since(started), self._claim(repo, push)
+            )
+            # When the webhook came first it linked this issue already: the same link written again changes nothing.
+            await self._link(issues_repo, issue_id, data)
+        except _OutcomeUnknown as exc:
+            # #629: kept a while, so a late webhook links what the create made, or the next push finds it.
+            push.unknown_at = _now()
+            push.kept_until, push.claimed, kept_unknown = push.unknown_at + UNKNOWN_OUTCOME_KEPT, None, True
+            logger.warning("github_issue_create_kept_unknown", issue_id=issue_id, repo=repo)
+            raise exc.error from None
         finally:
-            pushes.remove(push)
-            if not pushes:
-                self._pushing.pop(repo.lower(), None)
+            if not kept_unknown:
+                await self._resolve(repo, push)
         logger.info("github_issue_created", issue_id=issue_id, github_number=data["number"])
         return data
+
+    @staticmethod
+    async def _link(issues_repo: Any, issue_id: str, made: dict[str, Any]) -> None:
+        await issues_repo.update(
+            issue_id,
+            tracker=TRACKER,
+            tracker_key=str(made["number"]),
+            tracker_url=made["html_url"],
+            github_synced_at=datetime.now(UTC),
+        )
+
+    def _live(self, repo: str) -> list[_Push]:
+        """The creates under way in ``repo``, and those kept after an unknown outcome until their time. Kept records
+        past their time are forgotten here, in every repository, on any repository's event (#630 review)."""
+        now = _now()
+        for key in list(self._pushing):
+            live = [push for push in self._pushing[key] if push.kept_until is None or push.kept_until > now]
+            if live:
+                self._pushing[key] = live
+            else:
+                del self._pushing[key]
+        return self._pushing.get(repo.lower(), [])
+
+    async def _resolve(self, repo: str, push: _Push) -> None:
+        """Forget ``push``, which has resolved, then handle again each delivery the webhook left to it (#628 review).
+        The create has linked what it made by then, so a delivery of that issue finds it tracked; one of another issue
+        (a person's with the same words, opened while the token's user could not be read) is tracked as the webhook
+        would have, its trigger label starting a triage; and one another create under way may still have made is
+        left to that one again, or linked to it. A kept record forgotten when its time runs out
+        (:data:`UNKNOWN_OUTCOME_KEPT`) is not resolved: what was left to it is dropped with it, and that issue is
+        tracked only by a later delivery of it."""
+        self._forget(repo, push)
+        left, push.left = push.left, []
+        for payload, ctx in left:
+            try:
+                await self.handle_webhook_event(payload, ctx)
+            except Exception:  # noqa: BLE001 - one delivery handled again must not fail the create that resolved
+                logger.warning("github_left_delivery_failed", repo=repo, exc_info=True)
+
+    def _forget(self, repo: str, push: _Push) -> None:
+        pushes = self._pushing.get(repo.lower(), [])
+        if push in pushes:
+            pushes.remove(push)
+        if not pushes:
+            self._pushing.pop(repo.lower(), None)
+
+    def _claim(self, repo: str, push: _Push) -> Callable[[Any], bool]:
+        """Whether ``push``'s lookup may take the GitHub issue numbered so, which it then holds: not when another
+        create's lookup took it (#629). Two creates that sent the same words and lost both answers read the same
+        newest issue at once; without the claim both took it, and the second link failed. Synchronous, so nothing
+        runs between the check and the claim."""
+
+        def claim(number: Any) -> bool:
+            taken = str(number)
+            if any(other.claimed == taken for other in self._live(repo) if other is not push):
+                return False
+            push.claimed = taken
+            return True
+
+        return claim
 
     async def _pushes_of(self, issue: TrackerIssue, payload: dict[str, Any]) -> tuple[list[_Push], bool]:
         """The creates under way that may have made ``issue``, which the issues webhook reports as opened, and
@@ -207,10 +333,11 @@ class GitHubSyncService:
             return [], True
         candidates = [
             push
-            for push in self._pushing.get(issue.repo.lower(), ())
+            for push in self._live(issue.repo)
             if _same_text(sent.get("title"), push.title)
             and _same_text(sent.get("body"), push.body)
             and created >= made_since(push.started, None)
+            and (push.unknown_at is None or created <= push.unknown_at + LOOKUP_MARGIN)
         ]
         if not candidates:
             return [], True
@@ -231,6 +358,7 @@ class GitHubSyncService:
         payload: dict[str, Any],
         started: datetime,
         pushed_by_another: Callable[[Any], Awaitable[bool]],
+        claim: Callable[[Any], bool] = lambda _number: True,
     ) -> dict[str, Any]:
         """Create the GitHub issue; the issue GitHub made.
 
@@ -254,7 +382,7 @@ class GitHubSyncService:
             return created
         await self._sleep(LOOKUP_PAUSE_SECONDS)
         read, made = await self._issue_made_since(
-            repo, payload, made_since(started, answered_at(resp)), pushed_by_another
+            repo, payload, made_since(started, answered_at(resp)), pushed_by_another, claim
         )
         if made is not None:
             logger.info("github_issue_found_after_an_unknown_outcome", repo=repo, github_number=made.get("number"))
@@ -262,9 +390,11 @@ class GitHubSyncService:
         if not read:
             logger.warning("github_issue_create_left_unknown", repo=repo)
             if unknown is not None:
-                raise unknown
+                raise _OutcomeUnknown(unknown)
             assert resp is not None  # noqa: S101 - one of the two is set
-            raise httpx.HTTPStatusError(f"GitHub answered {resp.status_code}", request=resp.request, response=resp)
+            raise _OutcomeUnknown(
+                httpx.HTTPStatusError(f"GitHub answered {resp.status_code}", request=resp.request, response=resp)
+            )
         resp = await self._client.post(f"/repos/{repo}/issues", repo=repo, json=payload)
         resp.raise_for_status()
         again: dict[str, Any] = resp.json()
@@ -276,6 +406,8 @@ class GitHubSyncService:
         payload: dict[str, Any],
         earliest: datetime,
         pushed_by_another: Callable[[Any], Awaitable[bool]],
+        claim: Callable[[Any], bool] = lambda _number: True,
+        latest: datetime | None = None,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Whether the issues could be read, and the one this token created in ``repo`` with ``payload``'s title and
         body, no earlier than ``earliest`` (``embry0.forge_lookup.made_since``), and that no other embry0 issue
@@ -315,6 +447,9 @@ class GitHubSyncService:
                 author = str((item.get("user") or {}).get("login") or "")
                 if created is None or created < earliest or author.lower() != login.lower():
                     continue
+                if latest is not None and created > latest:
+                    # Made after the create this lookup is for could have made it (#630 review).
+                    continue
                 if not (
                     _same_text(item.get("title"), payload.get("title"))
                     and _same_text(item.get("body"), payload.get("body"))
@@ -322,6 +457,10 @@ class GitHubSyncService:
                     continue
                 if await pushed_by_another(item.get("number")):
                     logger.info("github_issue_lookup_skipped_linked_elsewhere", repo=repo, number=item.get("number"))
+                    continue
+                if not claim(item.get("number")):
+                    # Another create's lookup under way took it (#629).
+                    logger.info("github_issue_lookup_skipped_claimed", repo=repo, number=item.get("number"))
                     continue
                 return True, item
         except Exception:
@@ -389,6 +528,10 @@ class GitHubSyncService:
                 # Two creates under way sent the same words, or the token's user could not be read to confirm one: which
                 # made this issue, only the creates' answers say (or their lookups). Each links the one it made, and no
                 # second embry0 issue is made meanwhile.
+                # Handled again once the creates it was left to resolve (#628 review): an issue none of them made, a
+                # person's with the same words, is then tracked as any other.
+                for push in pushes:
+                    push.left.append((payload, ctx))
                 logger.info("webhook_issue_left_to_its_push", repo=issue.repo, github_number=issue.key)
                 return {"status": "ignored", "reason": "an issue a create under way made; the create links it"}
             if pushes:
@@ -402,6 +545,9 @@ class GitHubSyncService:
                     tracker_url=issue.url,
                     github_synced_at=datetime.now(UTC),
                 )
+                if push.kept_until is not None:
+                    # A create whose outcome stayed unknown (#629): what it made is linked now, so it is not kept.
+                    await self._resolve(issue.repo, push)
                 logger.info("webhook_issue_linked_to_its_push", issue_id=push.issue_id, github_number=issue.key)
                 return {"status": "accepted", "action": "issue_linked", "issue_id": push.issue_id, "dispatched": False}
 

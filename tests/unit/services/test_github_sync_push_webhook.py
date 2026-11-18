@@ -324,3 +324,34 @@ async def test_a_cancelled_create_leaves_no_create_under_way(db_with_migrations:
     with pytest.raises(asyncio.CancelledError):
         await task
     assert sync._pushing == {}, f"a cancelled create is still recorded as under way: {sync._pushing}"
+
+
+async def test_an_issue_left_to_a_push_it_was_not_is_tracked_once_the_push_links_its_own(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """#628 review: while the token's user cannot be read, a person's issue with the same words, opened during a push,
+    is left to the push, whose link and lookup take only the issue it made. Once the push has linked its own, the
+    issue left to it is handled again: tracked as any other, its trigger label starting a triage."""
+    issues, pushed = await _pushed(db_with_migrations)
+    executor = _Executor()
+    persons = {
+        "number": 3,
+        "title": TITLE,
+        "body": BODY,
+        "user": {"login": "a-person"},
+        "labels": [{"name": "embry0"}],
+        "state": "open",
+        "created_at": _stamp(datetime.now(UTC)),
+        "updated_at": _stamp(datetime.now(UTC)),
+        "html_url": f"https://github.com/{REPO}/issues/3",
+    }
+    sync, _made, webhooks = _github(issues, executor, also=persons, user_status=500)
+    await sync.push_create(pushed, issues)
+    assert [w.get("status") for w in webhooks] == ["ignored", "ignored"], webhooks
+    tracked = await issues.get_by_tracker_ref("github", REPO, "3")
+    assert tracked is not None and tracked["id"] != pushed and tracked["created_by"] == "webhook", (
+        f"the person's issue left to the push is tracked by nobody: {tracked}"
+    )
+    assert executor.started == [tracked["id"]], f"its trigger label started no triage: {executor.started}"
+    linked = await issues.get_by_tracker_ref("github", REPO, "7")
+    assert linked is not None and linked["id"] == pushed, linked
