@@ -80,6 +80,9 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         node=str(cfg.get("node") or ""),
         skill_mounts=tuple(cfg.get("skill_mounts") or ()),
         skills_hidden=cfg.get("skills_hidden") is True,
+        # #58: a config without the key reads the workspace (an orchestrator that predates it); one
+        # with it reads the workspace only on an exact True, so a value of another type keeps it out.
+        workspace_config="workspace_config" not in cfg or cfg["workspace_config"] is True,
         pricing_usd_per_mtok=_rates_from_config(cfg.get("pricing_usd_per_mtok")),
     )
 

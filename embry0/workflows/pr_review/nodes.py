@@ -451,6 +451,9 @@ async def review_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
             credentials=credentials,
             config=config,
             resume_session=resume,
+            # #58: the checked-out head is the pull request author's: a review that runs nothing reads none of its
+            # Claude configuration (the checkout also deletes it, a second layer).
+            workspace_config=not _runs_nothing(rv),
         )
     except Exception as exc:  # noqa: BLE001 — a crashed run must still reach cleanup
         crash = redact_bounded(f"{type(exc).__name__}: {exc}", 2000)

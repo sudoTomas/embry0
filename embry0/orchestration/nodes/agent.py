@@ -755,6 +755,7 @@ async def run_agent_node(
     config: Any | None = None,
     resume_session: AgentSession | None = None,
     node: str | None = None,
+    workspace_config: bool = True,
     _account_moves: int = 0,
 ) -> dict[str, Any]:
     """Resolve an AgentInvocation and run it via the sandbox executor.
@@ -767,6 +768,10 @@ async def run_agent_node(
     ``node`` is the graph node id this run executes under, stamped on every
     event the sandbox emits; it defaults to ``agent_type`` for the nodes
     named after their agent.
+
+    ``workspace_config``: False when the workspace is not this run's to trust
+    (``AgentInvocation.workspace_config``, #58); the CLI then reads no
+    configuration from it.
 
     Returns a LangGraph state update dict. Does NOT return a Command here;
     Command returns live in the workflow nodes (see Task 16).
@@ -1037,7 +1042,13 @@ async def run_agent_node(
         # (test doubles that only run) mounts nothing.
         skill_mounts_of = getattr(agent_runner, "skill_mounts", None)
         skill_mounts = await skill_mounts_of(state.get("sandbox_container_id", "")) if skill_mounts_of else []
-        invocation = replace(invocation, run_id=run_id, node=node or agent_type, skill_mounts=tuple(skill_mounts))
+        invocation = replace(
+            invocation,
+            run_id=run_id,
+            node=node or agent_type,
+            skill_mounts=tuple(skill_mounts),
+            workspace_config=workspace_config,
+        )
 
         # Build the serialized invocation dict the sandbox runner receives.
         serialized = {
@@ -1060,6 +1071,8 @@ async def run_agent_node(
         }
         if invocation.skills_hidden:
             serialized["skills_hidden"] = True
+        if not invocation.workspace_config:
+            serialized["workspace_config"] = False
         if invocation.pricing_usd_per_mtok is not None:
             # A model of OpenRouter's live catalog: the sandbox has no copy of it.
             serialized["pricing_usd_per_mtok"] = list(invocation.pricing_usd_per_mtok)
@@ -1266,6 +1279,7 @@ async def run_agent_node(
                 config=config,
                 resume_session=resume_session,
                 node=node,
+                workspace_config=workspace_config,
                 _account_moves=_account_moves + 1,
             )
             # Both attempts, the one that ran last last (as triage's decide-now
