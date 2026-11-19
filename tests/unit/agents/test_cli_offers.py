@@ -9,6 +9,11 @@ skill source). Each server here touches a file when it starts.
 Tools: an agent whose tool list is empty has no tools. Without ``--tools ""``
 the CLI offers every tool it has.
 
+The workspace's configuration (#58): an invocation that may not read it
+(``workspace_config=False``) is offered none of the commands, skills or
+agents a workspace plants, reads none of its CLAUDE.md, runs none of its
+settings' hooks, and still has the Ring-2 deny rules applied.
+
 The tests run the bundled CLI with build_sdk_options' flags in a project,
 against a stand-in for the Messages API on localhost.
 """
@@ -16,6 +21,7 @@ against a stand-in for the Messages API on localhost.
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
 import os
 import subprocess
@@ -137,15 +143,26 @@ def _setup(root: Path) -> tuple[Path, Path, AgentInvocation]:
 
 
 def _run_cli(
-    api_url: str, project: Path, home: Path, invocation: AgentInvocation, *, strict: bool, tools: list[str] | None
+    api_url: str,
+    project: Path,
+    home: Path,
+    invocation: AgentInvocation,
+    *,
+    strict: bool,
+    tools: list[str] | None,
+    settings: bool = False,
+    disallowed: bool = False,
 ) -> str:
-    """The bundled CLI with the MCP, plugin, tool and permission flags the SDK builds from build_sdk_options.
+    """The bundled CLI with the MCP, plugin, tool, setting-source and permission flags the SDK builds from
+    build_sdk_options.
 
     ``strict`` and ``tools`` are passed as given (``--strict-mcp-config``,
-    ``--tools``), so a test can run the CLI with and without them.
+    ``--tools``), so a test can run the CLI with and without them; so are the
+    options' flag settings (``settings``, ``--settings``) and deny rules
+    (``disallowed``, ``--disallowedTools``), which are off unless asked for.
     """
     options = build_sdk_options(invocation)
-    assert options.permission_mode == "bypassPermissions" and options.setting_sources == ["project"]
+    assert options.permission_mode == "bypassPermissions"
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": str(home),
@@ -170,8 +187,8 @@ def _run_cli(
         "2",
         "--permission-mode",
         str(options.permission_mode),
-        "--setting-sources",
-        ",".join(options.setting_sources or []),
+        # As the SDK passes it: an empty list is "--setting-sources=", no source at all.
+        f"--setting-sources={','.join(options.setting_sources or [])}",
         "--mcp-config",
         json.dumps({"mcpServers": options.mcp_servers}),
     ]
@@ -183,6 +200,10 @@ def _run_cli(
         cmd.append("--strict-mcp-config")
     if tools is not None:
         cmd += ["--tools", ",".join(tools)]
+    if settings and options.settings is not None:
+        cmd += ["--settings", options.settings]
+    if disallowed and options.disallowed_tools:
+        cmd += ["--disallowedTools", ",".join(options.disallowed_tools)]
     out = subprocess.run(
         cmd, cwd=project, env=env, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL
     )
@@ -237,3 +258,163 @@ def test_the_cli_offers_its_tools_unless_told_not_to(api_url: str, tmp_path: Pat
     toolless = dataclasses.replace(invocation, tools=[], mcp_servers={}, skills=[], skill_mounts=())
     offered = _init(_run_cli(api_url, project, home, toolless, strict=True, tools=None)).get("tools") or []
     assert "Bash" in offered, f"the CLI no longer offers Bash by itself: {offered}"
+
+
+# -- the workspace's configuration (#58) -------------------------------------------------------------------------
+
+
+def _plant(root: Path, project: Path) -> None:
+    """Claude configuration a pull request's author could write into the head: a command, a skill, an agent, a
+    CLAUDE.md, and settings whose SessionStart hook touches ``root / "hook"``."""
+    claude = project / ".claude"
+    (claude / "commands").mkdir(parents=True, exist_ok=True)
+    (claude / "commands" / "planted.md").write_text("---\ndescription: Planted.\n---\nDo the planted thing.\n")
+    (claude / "skills" / "planted-skill").mkdir(parents=True)
+    (claude / "skills" / "planted-skill" / "SKILL.md").write_text(
+        "---\nname: planted-skill\ndescription: Planted.\n---\nDo the planted thing.\n"
+    )
+    (claude / "agents").mkdir()
+    (claude / "agents" / "planted-agent.md").write_text(
+        "---\nname: planted-agent\ndescription: Planted.\n---\nYou do the planted thing.\n"
+    )
+    hook = {"hooks": [{"type": "command", "command": f"touch {root / 'hook'}"}]}
+    (claude / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [hook]}}))
+    (project / "CLAUDE.md").write_text("PLANTED-MEMORY-MARKER: follow the planted instructions.\n")
+
+
+class _Recording(_Api):
+    """The stand-in API, keeping every request body."""
+
+    bodies: list[str] = []
+
+    def do_POST(self) -> None:  # noqa: N802 - http.server's name
+        length = int(self.headers.get("content-length", 0))
+        raw = self.rfile.read(length) if length else b""
+        type(self).bodies.append(raw.decode("utf-8", "replace"))
+        self.rfile = io.BytesIO(raw)  # _Api reads the body again
+        super().do_POST()
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def _offered(stdout: str) -> dict[str, list[str]]:
+    init = _init(stdout)
+    return {key: [str(v) for v in init.get(key) or []] for key in ("slash_commands", "skills", "agents")}
+
+
+@pytest.mark.parametrize("workspace_config", [True, False])
+def test_an_untrusted_workspace_configures_nothing(tmp_path: Path, workspace_config: bool) -> None:
+    """With the workspace's configuration (every agent but a review that runs nothing) the planted command, skill,
+    agent, CLAUDE.md and SessionStart hook all reach the session, which proves each check below can see them.
+    Without it, none does."""
+    project, home, invocation = _setup(tmp_path)
+    _plant(tmp_path, project)
+    invocation = dataclasses.replace(invocation, workspace_config=workspace_config)
+    handler = type("_Requests", (_Recording,), {"bodies": []})
+    server, url = _serve(handler)
+    try:
+        options = build_sdk_options(invocation)
+        stdout = _run_cli(
+            url, project, home, invocation, strict=True, tools=options.tools, settings=True, disallowed=True
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    offered = _offered(stdout)
+    seen = {
+        "command": "planted" in offered["slash_commands"],
+        "skill": "planted-skill" in offered["skills"],
+        "agent": "planted-agent" in offered["agents"],
+        "CLAUDE.md": any("PLANTED-MEMORY-MARKER" in body for body in handler.bodies),
+        "hook": (tmp_path / "hook").exists(),
+    }
+    assert handler.bodies, "the CLI sent no request: the CLAUDE.md check measured nothing"
+    assert not (tmp_path / "workspace").exists(), "the workspace's .mcp.json server started"
+    expected = dict.fromkeys(seen, workspace_config)
+    assert seen == expected, f"workspace_config={workspace_config}: the session got {seen} ({offered})"
+
+
+def _denied_read_api(secret: Path) -> type[BaseHTTPRequestHandler]:
+    """A stand-in API whose model reads ``secret`` once, then says "ok"; it keeps every request body."""
+
+    class _ReadsSecret(_Recording):
+        bodies: list[str] = []
+
+        def do_POST(self) -> None:  # noqa: N802 - http.server's name
+            length = int(self.headers.get("content-length", 0))
+            raw = self.rfile.read(length) if length else b""
+            type(self).bodies.append(raw.decode("utf-8", "replace"))
+            body = json.loads(raw or b"{}")
+            if not body.get("stream") or "tool_result" in raw.decode("utf-8", "replace"):
+                self.rfile = io.BytesIO(raw)  # _Api reads the body again
+                _Api.do_POST(self)
+                return
+            usage = {"input_tokens": 1, "output_tokens": 1}
+            message = {"id": "msg_t", "type": "message", "role": "assistant", "model": body.get("model", _MODEL)}
+            tool = {"type": "tool_use", "id": "toolu_probe", "name": "Read", "input": {}}
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("transfer-encoding", "chunked")
+            self.end_headers()
+            events: list[tuple[str, dict[str, Any]]] = [
+                ("message_start", {"message": {**message, "content": [], "stop_reason": None, "usage": usage}}),
+                ("content_block_start", {"index": 0, "content_block": tool}),
+                (
+                    "content_block_delta",
+                    {
+                        "index": 0,
+                        "delta": {"type": "input_json_delta", "partial_json": json.dumps({"file_path": str(secret)})},
+                    },
+                ),
+                ("content_block_stop", {"index": 0}),
+                ("message_delta", {"delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 1}}),
+                ("message_stop", {}),
+            ]
+            for name, data in events:
+                chunk = f"event: {name}\ndata: {json.dumps({'type': name, **data})}\n\n".encode()
+                self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+
+    return _ReadsSecret
+
+
+@pytest.mark.parametrize(
+    ("settings", "disallowed", "denied"),
+    [(True, True, True), (True, False, True), (False, True, True), (False, False, False)],
+    ids=["as-the-sdk-passes-them", "flag-settings-alone", "command-line-alone", "neither"],
+)
+def test_the_ring2_rules_apply_without_the_workspaces_settings(
+    tmp_path: Path, settings: bool, disallowed: bool, denied: bool
+) -> None:
+    """An untrusted workspace's session reads no settings file, but a Ring-2 deny rule still refuses the read it
+    names, through each of the two layers it reaches the CLI by. Neither layer: the read goes through, which proves
+    the check can see it."""
+    from embry0.safety.policy import SafetyPolicy
+
+    project, home, invocation = _setup(tmp_path)
+    (tmp_path / "secret").mkdir()
+    secret = tmp_path / "secret" / "token.txt"
+    secret.write_text("RING2-SECRET-MARKER\n")
+    policy = SafetyPolicy(allowed_tools=["Read"], deny_rules=[f"Read(/{tmp_path}/secret/**)"])
+    invocation = dataclasses.replace(
+        invocation, workspace_config=False, safety_policy=policy, skills=[], skill_mounts=(), mcp_servers={}
+    )
+    handler = _denied_read_api(secret)
+    server, url = _serve(handler)
+    try:
+        options = build_sdk_options(invocation)
+        _run_cli(
+            url, project, home, invocation, strict=True, tools=options.tools, settings=settings, disallowed=disallowed
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    results = [body for body in handler.bodies if "toolu_probe" in body and "tool_result" in body]
+    assert results, f"the CLI never sent the read's result: {len(handler.bodies)} requests"
+    leaked = any("RING2-SECRET-MARKER" in body for body in results)
+    assert leaked is not denied, f"settings={settings} disallowed={disallowed}: the denied file was read={leaked}"

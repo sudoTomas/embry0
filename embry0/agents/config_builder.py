@@ -9,12 +9,14 @@ Phase 1 only implements build_sdk_options(). build_cli_args() arrives in Phase 2
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Final
 
 from claude_agent_sdk import ClaudeAgentOptions
 
 from embry0.agents.invocation import AgentInvocation
+from embry0.safety.policy import render_settings_json
 
 # EMB-37: the CLI's ToolSearch server tools, which load deferred tools into
 # context at runtime.
@@ -78,7 +80,12 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
       block participates in the CLI's prompt caching (EMB-35).
     - setting_sources: ["project"] so the SDK loads /workspace/.claude/settings.json
       (the deny rules the executor writes there) and /workspace/.claude/skills/**
-      for skill files.
+      for skill files. [] when invocation.workspace_config is False (#58): the
+      CLI then reads nothing from the workspace, no settings, CLAUDE.md,
+      commands, skills or agents, all of which the workspace's author wrote.
+    - settings: None, or, when invocation.workspace_config is False, the
+      Ring-2 deny rules as the CLI's flag settings, which it reads whatever
+      the setting sources: they stand in for the workspace's settings.json.
     - plugins: the mounted skill sources (invocation.skill_mounts) whose
       plugin name prefixes a skill in invocation.skills; none when it is empty.
     - skills: invocation.skills as the allowlist over the plugins' skills and
@@ -121,7 +128,8 @@ def build_sdk_options(invocation: AgentInvocation) -> ClaudeAgentOptions:
             if invocation.system_prompt
             else None
         ),
-        setting_sources=["project"],
+        setting_sources=["project"] if invocation.workspace_config else [],
+        settings=None if invocation.workspace_config else json.dumps(render_settings_json(invocation.safety_policy)),
         # Spec 3.3: a mounted skill source is a local plugin, loaded only for
         # an agent that lists one of its skills: a plugin brings its hooks too
         # (a SessionStart hook injects context into every session). The

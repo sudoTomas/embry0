@@ -89,3 +89,11 @@ class AgentInvocation:
     # is no filter. The sandbox reads it as ``skills_hidden`` in its config;
     # a runner that predates it ignores the key and runs with no filter.
     skills_hidden: bool = False
+    # False when the workspace is not this run's to trust (a pull request
+    # review that runs nothing, #58): the CLI then reads no configuration from
+    # it, no project settings, CLAUDE.md, commands, skills or agents, and the
+    # Ring-2 rules reach it as flag settings and on its command line instead
+    # of through the workspace's settings.json. The sandbox reads it as
+    # ``workspace_config`` in its config; a runner that predates it ignores
+    # the key and reads the workspace's configuration.
+    workspace_config: bool = True

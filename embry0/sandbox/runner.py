@@ -80,6 +80,8 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         node=str(cfg.get("node") or ""),
         skill_mounts=tuple(cfg.get("skill_mounts") or ()),
         skills_hidden=cfg.get("skills_hidden") is True,
+        # #58: only an explicit False keeps the workspace's configuration out.
+        workspace_config=cfg.get("workspace_config") is not False,
         pricing_usd_per_mtok=_rates_from_config(cfg.get("pricing_usd_per_mtok")),
     )
 
