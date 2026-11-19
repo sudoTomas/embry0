@@ -39,7 +39,7 @@ services:
       DOCKER_HOST: unix:///run/embry0-sandbox/docker.sock
       AUDIT_LOG_PATH: /data/audit.jsonl
       TZ: "${TZ:-America/New_York}"
-      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-172.29.0.10,172.29.0.11}"
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-${FRONTEND_NETWORK_PREFIX:-172.29}.0.10,${FRONTEND_NETWORK_PREFIX:-172.29}.0.11}"
       # Images live on the sandbox daemon by local tag: no registry, no pins.
       # Overrides IMAGE_REGISTRY from the root .env.
       IMAGE_REGISTRY: ""

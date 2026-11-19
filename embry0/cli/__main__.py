@@ -14,6 +14,8 @@ from typing import Any
 import structlog
 import yaml
 
+from embry0.cli import frontend_network
+
 logger = structlog.get_logger()
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -426,6 +428,16 @@ def cmd_start(args: argparse.Namespace) -> None:
         _err(f".env not found in {home}")
         _err("Create one from the template:")
         _err(f"  cp {home / '.env.example'} {home / '.env'}")
+        sys.exit(1)
+
+    # #366: Docker refuses the pinned frontend network over another network's
+    # range only at `up`, after the build; read it as `up` will and say so now.
+    network = frontend_network.inspect(_compose_cmd(home), project=PROJECT_NAME, env_file=ENV_FILE, run=subprocess.run)
+    for note in network.notes:
+        _warn(note)
+    if network.problems:
+        for problem in network.problems:
+            _err(problem)
         sys.exit(1)
 
     if not _images_exist(home):

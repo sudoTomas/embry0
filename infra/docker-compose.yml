@@ -28,7 +28,7 @@ services:
     # subnet-wide trust would let any of them spoof client IPs).
     networks:
       frontend:
-        ipv4_address: 172.29.0.10
+        ipv4_address: ${FRONTEND_NETWORK_PREFIX:-172.29}.0.10
     logging:
       driver: json-file
       options:
@@ -53,13 +53,15 @@ services:
       # rate limiter and the secret-reveal audit trail both key on. Without
       # this every request appeared to come from the nginx container: the
       # limiter degraded to one global bucket and audit attribution was
-      # useless. Must match the pinned `frontend` network subnet below.
-      # Drift fails safe (falls back to not trusting the header).
+      # useless. The default follows FRONTEND_NETWORK_PREFIX, as the two
+      # addresses do (#366); a value set by hand must name addresses on the
+      # `frontend` network, which `embry0 start` warns about. Drift fails
+      # safe (falls back to not trusting the header).
       # RAV-1069: narrowed from the /16 to exactly nginx (.10) + the
       # dashboard tunnel (.11). Trusting both lets the Cloudflare-edge-
       # appended visitor IP surface as the client for rate-limit + audit;
       # everything else on the subnet stays untrusted.
-      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-172.29.0.10,172.29.0.11}"
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-${FRONTEND_NETWORK_PREFIX:-172.29}.0.10,${FRONTEND_NETWORK_PREFIX:-172.29}.0.11}"
       # #523: the registry login registry-auth-init generated, and the digests
       # init-push-images recorded. At startup the orchestrator writes the login
       # into its docker CLI config and installs the pins, so every embry0 image
@@ -616,7 +618,7 @@ services:
         condition: service_started
     networks:
       frontend:
-        ipv4_address: 172.29.0.11
+        ipv4_address: ${FRONTEND_NETWORK_PREFIX:-172.29}.0.11
     logging:
       driver: json-file
       options:
@@ -642,11 +644,14 @@ networks:
   frontend:
     driver: bridge
     # RAV-1060: pinned so FORWARDED_ALLOW_IPS on the orchestrator stays
-    # correct across network recreations. Only nginx and the orchestrator
-    # live here — trusting this subnet == trusting nginx. If you change it,
-    # change FORWARDED_ALLOW_IPS in the orchestrator environment too.
+    # correct across network recreations: nginx (.0.10) and the dashboard
+    # tunnel (.0.11) have fixed addresses here, and the orchestrator trusts
+    # exactly those two. FRONTEND_NETWORK_PREFIX, the /16's first two
+    # octets, moves the range, both addresses and that default together
+    # (#366). `embry0 start` refuses, before it builds, a range another
+    # network overlaps or one outside the private ranges.
     ipam:
       config:
-        - subnet: 172.29.0.0/16
+        - subnet: ${FRONTEND_NETWORK_PREFIX:-172.29}.0.0/16
   backend:
     driver: bridge
