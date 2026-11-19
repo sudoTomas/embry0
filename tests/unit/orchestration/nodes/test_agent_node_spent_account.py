@@ -103,6 +103,8 @@ async def _run(
     resolver: _Resolver | None = None,
     waits: bool = True,
     state: dict[str, Any] | None = None,
+    workspace_config: bool = True,
+    shipped: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], list[str], _Traces, _Health, list[dict[str, Any]]]:
     ran: list[str] = []
     queue = list(results or [AgentOutput(agent_type=agent_type, output="done")])
@@ -110,6 +112,8 @@ async def _run(
 
     async def _capture(**kwargs: Any) -> AgentOutput:
         ran.append(kwargs["config"]["model"])
+        if shipped is not None:
+            shipped.append(dict(kwargs["config"]))
         return queue.pop(0) if queue else AgentOutput(agent_type=agent_type, output="done")
 
     class _Runner:
@@ -140,6 +144,8 @@ async def _run(
         credentials={"api_key": "", "oauth_token": "oauth-xyz"},
         config={"configurable": configurable},
         on_event=seen.append,
+        # Passed only when it is not the default, so the other tests run as they always have.
+        **({} if workspace_config else {"workspace_config": False}),
     )
     return updates, ran, traces, health, seen
 
@@ -156,6 +162,17 @@ async def test_a_run_that_finds_its_account_spent_runs_again_on_the_next_ready_m
     assert traces.created[1]["fallback"]["instead_of"] == "claude-sonnet-5"
     assert traces.finished[0]["error_code"] == "ERR_PROVIDER_QUOTA_EXHAUSTED", "the failed attempt's trace stays"
     assert any("runs again on the next ready model" in str(e.get("message")) for e in seen)
+
+
+@pytest.mark.asyncio
+async def test_the_run_on_the_next_model_still_reads_no_workspace_configuration() -> None:
+    """#58: the run again on the next ready model is the same run: a workspace it may not read stays unread."""
+    shipped: list[dict[str, Any]] = []
+    _updates, ran, *_ = await _run(
+        order=["grok-4.7"], results=[_spent("triage")], workspace_config=False, shipped=shipped
+    )
+    assert ran == ["claude-sonnet-5", "grok-4.7"]
+    assert [c.get("workspace_config") for c in shipped] == [False, False], "the second run reads the workspace"
 
 
 @pytest.mark.asyncio
