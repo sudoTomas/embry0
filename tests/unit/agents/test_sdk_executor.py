@@ -1115,6 +1115,21 @@ async def test_sdk_executor_output_parses_as_a_watcher_proposal_without_glue(tmp
 
 
 @pytest.mark.asyncio
+async def test_turn_usage_comes_right_after_its_turn_start_and_before_the_turns_blocks(tmp_path, monkeypatch) -> None:
+    """The order the job-event fixtures follow (#108): a turn's usage is known when its message arrives, so it is
+    written right after turn_start, before the message's blocks."""
+    usage = {"input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    messages = [
+        _assistant_with([_FakeBlock("one")], model="claude-sonnet-5", usage=usage),
+        _assistant_with([_FakeBlock("two")], model="claude-sonnet-5", usage=usage),
+        _FakeResultMessage("done", 0.009),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    order = [e["type"] for e in events if e["type"] in ("turn_start", "turn_usage", "text")]
+    assert order == ["turn_start", "turn_usage", "text"] * 2, order
+
+
+@pytest.mark.asyncio
 async def test_turn_usage_is_emitted_per_assistant_message_with_a_priced_delta(tmp_path, monkeypatch) -> None:
     usage = {"input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
     messages = [
