@@ -409,8 +409,8 @@ def qa() -> list[dict[str, Any]]:
     inside orchestrate_qa is stamped node "qa", agent "qa" and its run_id by the
     executor's _ids (nodes.py runs it with node="qa"). None of those names is a
     graph node: the frontend has to attribute such rows to the node running at
-    the time. One thing the wire carries is left out: the sub-task writer's
-    `app` tag on every nested agent row, which the contract does not admit (#107).
+    the time. The sub-task's writer (nodes.py, _tagged_writer) also tags every
+    row of the nested agent with the app it checks (#107).
     """
     s = Stream("job-0001")
     init_id, orchestrate_id, report_id = (n[0] for n in QA_NODE_IDS)
@@ -425,9 +425,13 @@ def qa() -> list[dict[str, Any]]:
     s.add(ev.progress(message="[web] acquiring sandbox", node="acquire_sandbox", app="web"))
     s.add(ev.progress(message="[web] booting app (target=managed)", node="boot_app", app="web"))
     r: dict[str, Any] = dict(run_id="run-0001", node="qa", agent="qa")
-    s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=100, **r))
-    s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r))
-    s.add(
+
+    def agent_row(event: dict[str, Any]) -> None:
+        s.add({**event, "app": "web"})
+
+    agent_row(ev.agent_started(model="claude-sonnet-5-5", max_turns=100, **r))
+    agent_row(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r))
+    agent_row(
         ev.tool_call(
             tool_id="toolu_fx_qa1",
             tool_name="mcp__playwright__browser_navigate",
@@ -436,10 +440,10 @@ def qa() -> list[dict[str, Any]]:
             **r,
         )
     )
-    s.add(ev.tool_result(tool_id="toolu_fx_qa1", content="Page loaded: Home", is_error=False, **r))
-    s.add(ev.turn_start(turn_number=2, model="claude-sonnet-5-5", **r))
-    s.add(ev.text(text="Every acceptance criterion passed.", **r))
-    s.add(
+    agent_row(ev.tool_result(tool_id="toolu_fx_qa1", content="Page loaded: Home", is_error=False, **r))
+    agent_row(ev.turn_start(turn_number=2, model="claude-sonnet-5-5", **r))
+    agent_row(ev.text(text="Every acceptance criterion passed.", **r))
+    agent_row(
         ev.turn_usage(
             input_tokens=1800,
             output_tokens=600,
@@ -450,7 +454,7 @@ def qa() -> list[dict[str, Any]]:
             **r,
         )
     )
-    s.add(
+    agent_row(
         ev.cost_update(
             cost_usd=0.42,
             duration_ms=160000,
@@ -463,7 +467,7 @@ def qa() -> list[dict[str, Any]]:
             **r,
         )
     )
-    s.add(
+    agent_row(
         ev.agent_completed(
             is_error=False,
             error_code=None,

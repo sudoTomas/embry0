@@ -20,46 +20,51 @@ export interface ContractBase {
   parent_tool_use_id?: string;
 }
 
+/** On the rows an agent run writes: a QA sub-task's writer tags each with the app it checks (#107). */
+interface AppTagged {
+  app?: string;
+}
+
 interface Truncatable {
   truncated?: boolean;
   original_length?: number;
 }
 
-export interface AgentStartedContract extends ContractBase {
+export interface AgentStartedContract extends ContractBase, AppTagged {
   type: "agent_started"; model: string; max_turns: number; skill_sources?: string[];
 }
-export interface TurnStartContract extends ContractBase { type: "turn_start"; turn_number: number; model: string }
-export interface TurnUsageContract extends ContractBase {
+export interface TurnStartContract extends ContractBase, AppTagged { type: "turn_start"; turn_number: number; model: string }
+export interface TurnUsageContract extends ContractBase, AppTagged {
   type: "turn_usage"; input_tokens: number; output_tokens: number; cache_read_tokens: number;
   cache_creation_tokens: number; cost_usd: number | null; model: string;
 }
-export interface TextContract extends ContractBase, Truncatable { type: "text"; text: string }
-export interface ThinkingContract extends ContractBase, Truncatable { type: "thinking"; text: string }
+export interface TextContract extends ContractBase, AppTagged, Truncatable { type: "text"; text: string }
+export interface ThinkingContract extends ContractBase, AppTagged, Truncatable { type: "thinking"; text: string }
 /** Set on a stored event whose code the job log retention sweep replaced (ADR 0017). */
 interface Redactable {
   redacted?: Record<string, unknown>;
 }
 
-export interface ToolCallContract extends ContractBase, Redactable {
+export interface ToolCallContract extends ContractBase, AppTagged, Redactable {
   type: "tool_call"; tool_id: string; tool_name: string; summary: string; tool_input: Record<string, unknown>;
 }
-export interface ToolResultContract extends ContractBase, Truncatable, Redactable { type: "tool_result"; tool_id: string; content: string; is_error: boolean }
-export interface SubagentStartContract extends ContractBase { type: "subagent_start"; tool_id: string; name: string }
-export interface SubagentEndContract extends ContractBase { type: "subagent_end"; tool_id: string; is_error: boolean }
-export interface ContextCompactedContract extends ContractBase { type: "context_compacted"; pre_tokens?: number }
-export interface AgentAskUserContract extends ContractBase {
+export interface ToolResultContract extends ContractBase, AppTagged, Truncatable, Redactable { type: "tool_result"; tool_id: string; content: string; is_error: boolean }
+export interface SubagentStartContract extends ContractBase, AppTagged { type: "subagent_start"; tool_id: string; name: string }
+export interface SubagentEndContract extends ContractBase, AppTagged { type: "subagent_end"; tool_id: string; is_error: boolean }
+export interface ContextCompactedContract extends ContractBase, AppTagged { type: "context_compacted"; pre_tokens?: number }
+export interface AgentAskUserContract extends ContractBase, AppTagged {
   type: "agent_ask_user"; question: string; category: string; options: string[]; importance: string; suggested_answer?: string;
 }
-export interface CostUpdateContract extends ContractBase {
+export interface CostUpdateContract extends ContractBase, AppTagged {
   type: "cost_update"; cost_usd: number; duration_ms: number; duration_api_ms: number; num_turns: number;
   tokens_in: number; tokens_out: number; cache_read_tokens: number; cache_creation_tokens: number;
 }
-export interface AgentCompletedContract extends ContractBase, Truncatable {
+export interface AgentCompletedContract extends ContractBase, AppTagged, Truncatable {
   type: "agent_completed"; is_error: boolean; error_code: string | null; error_message: string; output: string;
   cost_usd: number; duration_ms: number; tools_called: Record<string, number>; policy_denials: Record<string, number>;
   input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
 }
-export interface ErrorContract extends ContractBase { type: "error"; message: string; code?: string; tool_name?: string }
+export interface ErrorContract extends ContractBase, AppTagged { type: "error"; message: string; code?: string; tool_name?: string }
 export interface NodeStartedContract extends ContractBase { type: "node_started"; attempt: number; round?: number }
 export interface NodeCompletedContract extends ContractBase {
   type: "node_completed"; attempt: number; action?: string; job_kind?: string; template?: string; deliverables?: number; ok?: boolean; round?: number; error?: string;
@@ -120,26 +125,28 @@ type Fields = { required: readonly string[]; optional: readonly string[] };
 
 const BASE_OPTIONAL = ["agent", "event_seq", "job_id", "node", "parent_tool_use_id", "prev_seq", "run_id"] as const;
 const TRUNC = ["original_length", "truncated"] as const;
+/** The base fields plus `app`, on the rows an agent run writes (AppTagged). */
+const RUN_OPTIONAL = [...BASE_OPTIONAL, "app"] as const;
 /** A sorted copy that keeps the members literal. `sorted([...BASE_OPTIONAL, "x"])` widens the
  *  fresh literal to string, which makes RowKeys<T> string and both guards below vacuous. */
 const sorted = <const T extends readonly string[]>(fields: T): readonly T[number][] => [...fields].sort();
 
 /** Same contract as data. Keys and field lists must equal docs/contracts/events.json (sorted). */
 export const EVENT_FIELDS = {
-  agent_started: { required: ["max_turns", "model", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "skill_sources"]) },
-  turn_start: { required: ["model", "timestamp", "turn_number", "type"], optional: [...BASE_OPTIONAL] },
-  turn_usage: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "input_tokens", "model", "output_tokens", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
-  text: { required: ["text", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
-  thinking: { required: ["text", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
-  tool_call: { required: ["summary", "timestamp", "tool_id", "tool_input", "tool_name", "type"], optional: sorted([...BASE_OPTIONAL, "redacted"]) },
-  tool_result: { required: ["content", "is_error", "timestamp", "tool_id", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC, "redacted"]) },
-  subagent_start: { required: ["name", "timestamp", "tool_id", "type"], optional: [...BASE_OPTIONAL] },
-  subagent_end: { required: ["is_error", "timestamp", "tool_id", "type"], optional: [...BASE_OPTIONAL] },
-  context_compacted: { required: ["timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "pre_tokens"]) },
-  agent_ask_user: { required: ["category", "importance", "options", "question", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "suggested_answer"]) },
-  cost_update: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_api_ms", "duration_ms", "num_turns", "timestamp", "tokens_in", "tokens_out", "type"], optional: [...BASE_OPTIONAL] },
-  agent_completed: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_ms", "error_code", "error_message", "input_tokens", "is_error", "output", "output_tokens", "policy_denials", "timestamp", "tools_called", "type"], optional: sorted([...BASE_OPTIONAL, ...TRUNC]) },
-  error: { required: ["message", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "code", "tool_name"]) },
+  agent_started: { required: ["max_turns", "model", "timestamp", "type"], optional: sorted([...RUN_OPTIONAL, "skill_sources"]) },
+  turn_start: { required: ["model", "timestamp", "turn_number", "type"], optional: sorted(RUN_OPTIONAL) },
+  turn_usage: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "input_tokens", "model", "output_tokens", "timestamp", "type"], optional: sorted(RUN_OPTIONAL) },
+  text: { required: ["text", "timestamp", "type"], optional: sorted([...RUN_OPTIONAL, ...TRUNC]) },
+  thinking: { required: ["text", "timestamp", "type"], optional: sorted([...RUN_OPTIONAL, ...TRUNC]) },
+  tool_call: { required: ["summary", "timestamp", "tool_id", "tool_input", "tool_name", "type"], optional: sorted([...RUN_OPTIONAL, "redacted"]) },
+  tool_result: { required: ["content", "is_error", "timestamp", "tool_id", "type"], optional: sorted([...RUN_OPTIONAL, ...TRUNC, "redacted"]) },
+  subagent_start: { required: ["name", "timestamp", "tool_id", "type"], optional: sorted(RUN_OPTIONAL) },
+  subagent_end: { required: ["is_error", "timestamp", "tool_id", "type"], optional: sorted(RUN_OPTIONAL) },
+  context_compacted: { required: ["timestamp", "type"], optional: sorted([...RUN_OPTIONAL, "pre_tokens"]) },
+  agent_ask_user: { required: ["category", "importance", "options", "question", "timestamp", "type"], optional: sorted([...RUN_OPTIONAL, "suggested_answer"]) },
+  cost_update: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_api_ms", "duration_ms", "num_turns", "timestamp", "tokens_in", "tokens_out", "type"], optional: sorted(RUN_OPTIONAL) },
+  agent_completed: { required: ["cache_creation_tokens", "cache_read_tokens", "cost_usd", "duration_ms", "error_code", "error_message", "input_tokens", "is_error", "output", "output_tokens", "policy_denials", "timestamp", "tools_called", "type"], optional: sorted([...RUN_OPTIONAL, ...TRUNC]) },
+  error: { required: ["message", "timestamp", "type"], optional: sorted([...RUN_OPTIONAL, "code", "tool_name"]) },
   node_started: { required: ["attempt", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "round"]) },
   node_completed: { required: ["attempt", "timestamp", "type"], optional: sorted([...BASE_OPTIONAL, "action", "deliverables", "error", "job_kind", "ok", "round", "template"]) },
   pipeline_graph: { required: ["graph", "timestamp", "type"], optional: [...BASE_OPTIONAL] },
