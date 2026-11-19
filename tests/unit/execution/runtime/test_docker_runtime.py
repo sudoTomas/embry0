@@ -142,13 +142,14 @@ async def test_chown_volume_runs_a_capability_free_helper_but_chown() -> None:
 
 @pytest.mark.asyncio
 async def test_image_commands() -> None:
-    client = _client("", RuntimeError("No such image"), " abc \n", "", "", "")
+    client = _client("", RuntimeError("No such image"), " abc \n", "", "", "", "")
     runtime = DockerRuntime(client)
     assert await runtime.image_exists("img:1") is True
     assert await runtime.image_exists("img:2", timeout=10) is False
     assert await runtime.image_label("img:1", "embry0.build-hash") == "abc"
     await runtime.build_image("img:1", dockerfile="/app/D", context="/app", labels={"embry0.build-hash": "abc"})
     await runtime.build_image("img:2", dockerfile="/tmp/x.dockerfile", context=".")
+    await runtime.build_image("img:3", dockerfile="/app/D", context="/app", target="base")
     await runtime.remove_image("img:1")
     base = ["docker", "--host", "tcp://dind:2376"]
     assert _issued(client) == [
@@ -157,6 +158,7 @@ async def test_image_commands() -> None:
         ([*base, "inspect", "--format", '{{index .Config.Labels "embry0.build-hash"}}', "img:1"], 10),
         ([*base, "build", "-t", "img:1", "--label", "embry0.build-hash=abc", "-f", "/app/D", "/app"], 300),
         ([*base, "build", "-t", "img:2", "-f", "/tmp/x.dockerfile", "."], 300),
+        ([*base, "build", "-t", "img:3", "--target", "base", "-f", "/app/D", "/app"], 300),
         ([*base, "rmi", "-f", "img:1"], 30),
     ]
 

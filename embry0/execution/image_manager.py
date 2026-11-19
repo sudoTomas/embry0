@@ -29,6 +29,10 @@ _REGISTRY_PULL_TIMEOUT_SECONDS = 300
 
 #: The Dockerfile the self-build path builds, relative to the app root.
 SANDBOX_DOCKERFILE = Path("infra") / "Dockerfile.sandbox"
+#: The stage of it that is the slim sandbox (#328). The Dockerfile has more stages after it, and a build without a
+#: target builds the last one, a toolchain image: the compose image builder names this stage too
+#: (``sandbox-image-builder`` in ``infra/docker-compose.yml``).
+SANDBOX_TARGET = "base"
 
 
 _WILDCARD = re.compile(r"[*?\[]")
@@ -97,12 +101,15 @@ class SandboxImageManager:
         return [dockerfile, *sorted(files - {dockerfile})]
 
     def _compute_build_hash(self) -> str:
-        """SHA256 of :meth:`build_inputs`, each file's path beside its contents, so a moved file counts too.
+        """SHA256 of the stage built and :meth:`build_inputs`, each file's path beside its contents, so a moved
+        file counts too.
 
         The image installs its Python packages from uv.lock (#288), which the Dockerfile mounts: a lock change
-        alone (a claude-agent-sdk bump, and with it the Claude CLI agents run) marks the image stale too.
+        alone (a claude-agent-sdk bump, and with it the Claude CLI agents run) marks the image stale too. The stage
+        counts as an input (#328): an image built from another stage of the same files is not this one.
         """
         hasher = hashlib.sha256()
+        hasher.update(f"target\0{SANDBOX_TARGET}\0".encode())
         for f in self.build_inputs():
             data = f.read_bytes()
             hasher.update(f"{f.relative_to(self._app_root).as_posix()}\0{len(data)}\0".encode())
@@ -216,6 +223,7 @@ class SandboxImageManager:
                 dockerfile=str(dockerfile_path),
                 context=build_context,
                 labels={"embry0.build-hash": build_hash},
+                target=SANDBOX_TARGET,
                 timeout=300,
             )
             logger.info("sandbox_image_built", image=image, hash=build_hash)
