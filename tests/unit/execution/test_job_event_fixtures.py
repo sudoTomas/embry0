@@ -134,6 +134,30 @@ def test_qa_fixture_tags_the_nested_agent_rows_with_their_app() -> None:
     assert untagged == [], f"nested agent rows without the app their sub-task runs for: {untagged}"
 
 
+@pytest.mark.parametrize("name", CONTRACT_FIXTURES)
+def test_every_turn_reports_its_usage_where_the_executor_does(name: str) -> None:
+    """#108: the executor writes a turn's turn_usage right after its turn_start, before the turn's blocks, once per
+    message that reports usage (tests/unit/agents/test_sdk_executor.py pins it). The generator wrote it after the
+    blocks and not for every turn, so a reducer that relies on the order passed against the fixtures and met
+    another order on the wire. Each run's usage rows also add up to its cost_update."""
+    events = json.loads((FIXTURES / f"{name}.json").read_text())
+    for i, event in enumerate(events):
+        if event["type"] != "turn_start":
+            continue
+        after = next((e for e in events[i + 1 :] if e.get("run_id") == event.get("run_id")), None)
+        assert after is not None and after["type"] == "turn_usage", (
+            f"{name}: turn {event['turn_number']} of {event.get('run_id')} is followed by "
+            f"{after and after['type']}, not its turn_usage"
+        )
+    for run in {e["run_id"] for e in events if e["type"] == "cost_update"}:
+        usage = [e for e in events if e["type"] == "turn_usage" and e.get("run_id") == run]
+        total = next(e for e in events if e["type"] == "cost_update" and e.get("run_id") == run)
+        assert (sum(u["input_tokens"] for u in usage), sum(u["output_tokens"] for u in usage)) == (
+            total["tokens_in"],
+            total["tokens_out"],
+        ), f"{name}: the turn_usage rows of {run} do not add up to its cost_update"
+
+
 def test_fixtures_equal_the_script_output() -> None:
     module = _script()
     generated = module.generate_all()

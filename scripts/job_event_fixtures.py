@@ -56,6 +56,17 @@ def issue_to_pr() -> list[dict[str, Any]]:
     r1 = dict(run_id="run-fixture-1", node="triage", agent="triage")
     s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=20, **r1))
     s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r1))
+    s.add(
+        ev.turn_usage(
+            input_tokens=1200,
+            output_tokens=80,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.0042,
+            model="claude-sonnet-5-5",
+            **r1,
+        )
+    )
     s.add(ev.thinking(text="The issue asks for a CLI flag.", **r1))
     s.add(
         ev.tool_call(
@@ -68,17 +79,6 @@ def issue_to_pr() -> list[dict[str, Any]]:
     )
     s.add(ev.tool_result(tool_id="toolu_fx_01", content="# example\n", is_error=False, **r1))
     s.add(ev.text(text="Routing to developer then reviewer.", **r1))
-    s.add(
-        ev.turn_usage(
-            input_tokens=1200,
-            output_tokens=80,
-            cache_read_tokens=0,
-            cache_creation_tokens=0,
-            cost_usd=0.0042,
-            model="claude-sonnet-5-5",
-            **r1,
-        )
-    )
     s.add(
         ev.cost_update(
             cost_usd=0.0042,
@@ -116,6 +116,17 @@ def issue_to_pr() -> list[dict[str, Any]]:
     s.add(ev.agent_started(model="claude-opus-5-5", max_turns=50, **r2))
     s.add(ev.turn_start(turn_number=1, model="claude-opus-5-5", **r2))
     s.add(
+        ev.turn_usage(
+            input_tokens=5000,
+            output_tokens=400,
+            cache_read_tokens=3000,
+            cache_creation_tokens=0,
+            cost_usd=0.021,
+            model="claude-opus-5-5",
+            **r2,
+        )
+    )
+    s.add(
         ev.tool_call(
             tool_id="toolu_fx_task",
             tool_name="Task",
@@ -142,19 +153,19 @@ def issue_to_pr() -> list[dict[str, Any]]:
     )
     s.add(ev.subagent_end(tool_id="toolu_fx_task", is_error=False, **r2))
     s.add(ev.tool_result(tool_id="toolu_fx_task", content="argparse lives in cli.py", is_error=False, **r2))
+    s.add(ev.context_compacted(pre_tokens=90000, **r2))
+    s.add(ev.turn_start(turn_number=2, model="claude-opus-5-5", **r2))
     s.add(
         ev.turn_usage(
-            input_tokens=5000,
-            output_tokens=400,
-            cache_read_tokens=3000,
+            input_tokens=7000,
+            output_tokens=600,
+            cache_read_tokens=6000,
             cache_creation_tokens=0,
-            cost_usd=0.021,
+            cost_usd=None,
             model="claude-opus-5-5",
             **r2,
         )
     )
-    s.add(ev.context_compacted(pre_tokens=90000, **r2))
-    s.add(ev.turn_start(turn_number=2, model="claude-opus-5-5", **r2))
     s.add(
         ev.tool_call(
             tool_id="toolu_fx_02",
@@ -176,17 +187,6 @@ def issue_to_pr() -> list[dict[str, Any]]:
         )
     )
     s.add(ev.tool_result(tool_id="toolu_fx_03", content="ok", is_error=False, **r2))
-    s.add(
-        ev.turn_usage(
-            input_tokens=7000,
-            output_tokens=600,
-            cache_read_tokens=6000,
-            cache_creation_tokens=0,
-            cost_usd=None,
-            model="claude-opus-5-5",
-            **r2,
-        )
-    )
     s.add(
         ev.cost_update(
             cost_usd=0.048,
@@ -224,16 +224,6 @@ def issue_to_pr() -> list[dict[str, Any]]:
     s.add(ev.agent_started(model="claude-opus-5-5", max_turns=50, **r3))
     s.add(ev.turn_start(turn_number=1, model="claude-opus-5-5", **r3))
     s.add(
-        ev.tool_call(
-            tool_id="toolu_fx_04",
-            tool_name="Bash",
-            summary="pytest -q",
-            tool_input={"command": "pytest -q"},
-            **r3,
-        )
-    )
-    s.add(ev.tool_result(tool_id="toolu_fx_04", content="3 passed", is_error=False, **r3))
-    s.add(
         ev.turn_usage(
             input_tokens=2000,
             output_tokens=150,
@@ -244,6 +234,16 @@ def issue_to_pr() -> list[dict[str, Any]]:
             **r3,
         )
     )
+    s.add(
+        ev.tool_call(
+            tool_id="toolu_fx_04",
+            tool_name="Bash",
+            summary="pytest -q",
+            tool_input={"command": "pytest -q"},
+            **r3,
+        )
+    )
+    s.add(ev.tool_result(tool_id="toolu_fx_04", content="3 passed", is_error=False, **r3))
     s.add(
         ev.cost_update(
             cost_usd=0.0068,
@@ -280,6 +280,17 @@ def issue_to_pr() -> list[dict[str, Any]]:
     r4 = dict(run_id="run-fixture-4", node="review", agent="reviewer")
     s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=20, **r4))
     s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r4))
+    s.add(
+        ev.turn_usage(
+            input_tokens=900,
+            output_tokens=60,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.003,
+            model="claude-sonnet-5-5",
+            **r4,
+        )
+    )
     s.add(ev.text(text="LGTM with one nit.", **r4))
     s.add(
         ev.cost_update(
@@ -351,6 +362,17 @@ def onboarding() -> list[dict[str, Any]]:
             r = dict(run_id="run-fixture-onboard-1", node=node_id, agent=agent_type)
             s.add(ev.agent_started(model="claude-sonnet-5-5", max_turns=30, **r))
             s.add(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r))
+            s.add(
+                ev.turn_usage(
+                    input_tokens=3000,
+                    output_tokens=200,
+                    cache_read_tokens=0,
+                    cache_creation_tokens=0,
+                    cost_usd=0.009,
+                    model="claude-sonnet-5-5",
+                    **r,
+                )
+            )
             s.add(
                 ev.tool_call(
                     tool_id="toolu_fx_ob1",
@@ -432,6 +454,17 @@ def qa() -> list[dict[str, Any]]:
     agent_row(ev.agent_started(model="claude-sonnet-5-5", max_turns=100, **r))
     agent_row(ev.turn_start(turn_number=1, model="claude-sonnet-5-5", **r))
     agent_row(
+        ev.turn_usage(
+            input_tokens=900,
+            output_tokens=200,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.21,
+            model="claude-sonnet-5-5",
+            **r,
+        )
+    )
+    agent_row(
         ev.tool_call(
             tool_id="toolu_fx_qa1",
             tool_name="mcp__playwright__browser_navigate",
@@ -442,18 +475,18 @@ def qa() -> list[dict[str, Any]]:
     )
     agent_row(ev.tool_result(tool_id="toolu_fx_qa1", content="Page loaded: Home", is_error=False, **r))
     agent_row(ev.turn_start(turn_number=2, model="claude-sonnet-5-5", **r))
-    agent_row(ev.text(text="Every acceptance criterion passed.", **r))
     agent_row(
         ev.turn_usage(
-            input_tokens=1800,
-            output_tokens=600,
+            input_tokens=900,
+            output_tokens=400,
             cache_read_tokens=0,
             cache_creation_tokens=0,
-            cost_usd=0.42,
+            cost_usd=0.21,
             model="claude-sonnet-5-5",
             **r,
         )
     )
+    agent_row(ev.text(text="Every acceptance criterion passed.", **r))
     agent_row(
         ev.cost_update(
             cost_usd=0.42,

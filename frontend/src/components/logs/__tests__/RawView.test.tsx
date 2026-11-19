@@ -26,9 +26,14 @@ describe("RawView", () => {
   });
 
   it("shows a tool_call's type, #seq and summary", () => {
-    renderVirtual(<RawView events={loadFixture("issue-to-pr")} />);
-    const row = screen.getAllByTestId("raw-row").find((r) => r.textContent?.includes("#1015"));
-    expect(row, "no row carries #1015").toBeDefined();
+    const events = loadFixture("issue-to-pr");
+    // The seq is the fixture's own, read rather than written here: regenerating the fixture can move it (#108).
+    const call = events.find((e) => e.type === "tool_call" && "summary" in e && e.summary === "Read README.md");
+    expect(call, "the fixture has no Read README.md call").toBeDefined();
+    renderVirtual(<RawView events={events} />);
+    const seq = `#${call!.event_seq}`;
+    const row = screen.getAllByTestId("raw-row").find((r) => r.textContent?.includes(seq));
+    expect(row, `no row carries ${seq}`).toBeDefined();
     expect(row!.textContent).toContain("tool_call");
     expect(row!.textContent).toContain("Read README.md");
   });
