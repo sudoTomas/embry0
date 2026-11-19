@@ -2,6 +2,7 @@
   "agent_ask_user": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -22,6 +23,7 @@
   "agent_completed": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -67,6 +69,7 @@
   "agent_started": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -85,6 +88,7 @@
   "context_compacted": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -101,6 +105,7 @@
   "cost_update": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -124,6 +129,7 @@
   "error": {
     "optional": [
       "agent",
+      "app",
       "code",
       "event_seq",
       "job_id",
@@ -394,6 +400,7 @@
   "subagent_end": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -411,6 +418,7 @@
   "subagent_start": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -444,6 +452,7 @@
   "text": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -462,6 +471,7 @@
   "thinking": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -480,6 +490,7 @@
   "tool_call": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -500,6 +511,7 @@
   "tool_result": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -521,6 +533,7 @@
   "turn_start": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
@@ -538,6 +551,7 @@
   "turn_usage": {
     "optional": [
       "agent",
+      "app",
       "event_seq",
       "job_id",
       "node",
