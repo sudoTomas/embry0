@@ -152,6 +152,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "event_seq": 1030,
     "job_id": "job-0001",
     "max_turns": 100,
@@ -164,6 +165,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "event_seq": 1033,
     "job_id": "job-0001",
     "model": "claude-sonnet-5-5",
@@ -176,6 +178,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "event_seq": 1036,
     "job_id": "job-0001",
     "node": "qa",
@@ -192,6 +195,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "content": "Page loaded: Home",
     "event_seq": 1039,
     "is_error": false,
@@ -205,6 +209,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "event_seq": 1042,
     "job_id": "job-0001",
     "model": "claude-sonnet-5-5",
@@ -217,6 +222,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "event_seq": 1045,
     "job_id": "job-0001",
     "node": "qa",
@@ -228,6 +234,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "cache_creation_tokens": 0,
     "cache_read_tokens": 0,
     "cost_usd": 0.42,
@@ -244,6 +251,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "cache_creation_tokens": 0,
     "cache_read_tokens": 0,
     "cost_usd": 0.42,
@@ -262,6 +270,7 @@
   },
   {
     "agent": "qa",
+    "app": "web",
     "cache_creation_tokens": 0,
     "cache_read_tokens": 0,
     "cost_usd": 0.42,

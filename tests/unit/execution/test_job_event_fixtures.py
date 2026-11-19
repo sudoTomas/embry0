@@ -124,6 +124,16 @@ def test_qa_fixture_nests_the_agent_run_in_orchestrate_qa() -> None:
         )
 
 
+def test_qa_fixture_tags_the_nested_agent_rows_with_their_app() -> None:
+    """#107: the QA sub-task's writer tags each row of its nested agent with the app; the fixture carries what the
+    wire carries."""
+    events = json.loads((FIXTURES / "qa.json").read_text())
+    nested = [e for e in events if e.get("run_id") == "run-0001"]
+    assert nested, "the qa fixture has no nested agent run"
+    untagged = sorted({e["type"] for e in nested if e.get("app") != "web"})
+    assert untagged == [], f"nested agent rows without the app their sub-task runs for: {untagged}"
+
+
 def test_fixtures_equal_the_script_output() -> None:
     module = _script()
     generated = module.generate_all()
