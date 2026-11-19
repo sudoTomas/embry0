@@ -129,12 +129,18 @@ USER root
 # the interpreter the sandbox runner uses, so the `sandbox` group's locked
 # versions go in as pip constraints: Poetry may share them but cannot move
 # one, and a Poetry that needs another version fails the build here.
+# Poetry 2 (#331): a target repository's dev checks use its commands.
+# `poetry install --no-dev` is gone (`--without dev` or `--only main`), and so
+# is `poetry lock --no-update`: `poetry lock` keeps the locked versions unless
+# asked (`--regenerate`). `poetry shell` and `poetry export` are plugins, not
+# installed here. A lock file Poetry 1.x wrote installs as it did.
 RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
     --mount=type=bind,source=pyproject.toml,target=/opt/lock/pyproject.toml \
     --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
     /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-hashes --no-cache --quiet \
         --output-file /tmp/constraints.lock.txt \
-    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==1.8.4" \
+    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==2.5.1" \
+    && poetry --version \
     && rm /tmp/constraints.lock.txt
 USER agent
 WORKDIR /workspace
@@ -171,7 +177,8 @@ RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
     --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
     /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-hashes --no-cache --quiet \
         --output-file /tmp/constraints.lock.txt \
-    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==1.8.4" \
+    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==2.5.1" \
+    && poetry --version \
     && rm /tmp/constraints.lock.txt
 USER agent
 WORKDIR /workspace
