@@ -532,8 +532,8 @@ jobs:
       # The download must match the sha256 the release's checksums file gives.
       - name: gitleaks (open-source CLI)
         env:
-          GITLEAKS_VERSION: 8.18.4
-          GITLEAKS_SHA256: ba6dbb656933921c775ee5a2d1c13a91046e7952e9d919f9bac4cec61d628e7d
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
         run: |
           set -euo pipefail
           tarball="$RUNNER_TEMP/gitleaks.tar.gz"
