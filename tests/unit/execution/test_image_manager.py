@@ -1,5 +1,7 @@
 """Tests for SandboxImageManager — proxy image presence check + expire paused jobs routing."""
 
+import re
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -358,6 +360,7 @@ class _LabelRuntime:
     def __init__(self) -> None:
         self.label: str | None = None
         self.builds: list[str] = []
+        self.targets: list[str | None] = []
 
     async def image_label(self, image: str, label: str, *, timeout: int = 60) -> str | None:
         return self.label
@@ -365,8 +368,9 @@ class _LabelRuntime:
     async def image_exists(self, image: str, *, timeout: int = 60) -> bool:
         return self.label is not None
 
-    async def build_image(self, tag: str, *, labels: dict[str, str], **_kwargs: Any) -> None:
+    async def build_image(self, tag: str, *, labels: dict[str, str], target: str | None = None, **_kwargs: Any) -> None:
         self.builds.append(tag)
+        self.targets.append(target)
         self.label = labels["embry0.build-hash"]
 
 
@@ -543,3 +547,71 @@ async def test_expire_paused_jobs_without_a_callback_behaves_as_before() -> None
     reaper, jobs_repo = _reaper_with_paused_jobs(["job-a"])
     await reaper._expire_paused_jobs()
     jobs_repo.update.assert_awaited_once_with("job-a", status="expired")
+
+
+# -- the stage the self-build path builds (#328) ----------------------------------------------------------------
+
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def _stages(dockerfile: str) -> list[str]:
+    """The stage names of a Dockerfile, in order."""
+    return [m.group(1) for m in re.finditer(r"(?im)^FROM\s+\S+\s+AS\s+(\S+)\s*$", dockerfile)]
+
+
+def test_the_sandbox_target_is_a_stage_of_the_sandbox_dockerfile_and_not_its_last() -> None:
+    """Built without a target, the Dockerfile gives its last stage, a toolchain image; the slim sandbox is another."""
+    from embry0.execution.image_manager import SANDBOX_DOCKERFILE, SANDBOX_TARGET
+
+    stages = _stages((_REPO / SANDBOX_DOCKERFILE).read_text(encoding="utf-8"))
+    assert SANDBOX_TARGET in stages, f"{SANDBOX_TARGET!r} is not a stage of {SANDBOX_DOCKERFILE}: {stages}"
+    assert stages[-1] != SANDBOX_TARGET, "the target is the last stage: this test no longer shows anything"
+
+
+def test_the_compose_image_builder_builds_the_same_stage() -> None:
+    import yaml
+
+    from embry0.execution.image_manager import SANDBOX_DOCKERFILE, SANDBOX_TARGET
+
+    compose = yaml.safe_load((_REPO / "infra" / "docker-compose.yml").read_text(encoding="utf-8"))
+    build = compose["services"]["sandbox-image-builder"]["build"]
+    assert build["dockerfile"] == SANDBOX_DOCKERFILE.as_posix()
+    assert build["target"] == SANDBOX_TARGET, "the two ways the sandbox image is built make different images"
+
+
+@pytest.mark.asyncio
+async def test_the_self_build_builds_the_slim_sandbox_stage(tmp_path):
+    """#328: the self-built embry0-sandbox image is the base stage of the real Dockerfile, not its last stage."""
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "infra" / "Dockerfile.sandbox").write_text(
+        (_REPO / "infra" / "Dockerfile.sandbox").read_text(encoding="utf-8")
+    )
+    docker = MagicMock()
+    docker._build_base_cmd = MagicMock(return_value=["docker"])
+    docker.run_cmd = AsyncMock(return_value="")
+    mgr = SandboxImageManager(DockerRuntime(docker), app_root=str(tmp_path))
+    assert await mgr.ensure_image("embry0-sandbox:latest", force=True) is True
+    [build] = [c[0][0] for c in docker.run_cmd.call_args_list if "build" in c[0][0]]
+    assert "--target" in build, f"no stage named: the build makes the Dockerfile's last stage: {build}"
+    assert build[build.index("--target") + 1] == "base", build
+
+
+@pytest.mark.asyncio
+async def test_an_image_built_from_the_last_stage_is_rebuilt(tmp_path):
+    """#328: an image the self-build path made before it named the stage carries the build hash of the same files.
+    The stage is an input of the hash, so that image counts as stale and is built again, from the right stage."""
+    import hashlib
+
+    (tmp_path / "infra").mkdir()
+    dockerfile = tmp_path / "infra" / "Dockerfile.sandbox"
+    dockerfile.write_text("FROM scratch AS base\nFROM base AS dev\n")
+    runtime = _LabelRuntime()
+    mgr = SandboxImageManager(runtime, app_root=str(tmp_path))  # type: ignore[arg-type]
+    before = hashlib.sha256()
+    for f in mgr.build_inputs():  # the hash as it was: the files alone
+        data = f.read_bytes()
+        before.update(f"{f.relative_to(tmp_path).as_posix()}\0{len(data)}\0".encode())
+        before.update(data)
+    runtime.label = before.hexdigest()[:16]
+    assert await mgr.ensure_image() is True, "an image built from the last stage was kept"
+    assert runtime.builds == ["embry0-sandbox:latest"] and runtime.targets == ["base"], runtime.targets
