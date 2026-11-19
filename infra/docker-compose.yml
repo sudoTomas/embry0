@@ -425,7 +425,9 @@ services:
       context: ..
       dockerfile: infra/Dockerfile.sandbox
       # Dockerfile.sandbox is multi-stage; without an explicit target the
-      # final stage (dev-python) would be tagged as the slim sandbox.
+      # final stage (dev-jvm-python) would be tagged as the slim sandbox.
+      # The self-build path names the same stage (SANDBOX_TARGET in
+      # embry0/execution/image_manager.py).
       target: base
 
   dev-python-image-builder:

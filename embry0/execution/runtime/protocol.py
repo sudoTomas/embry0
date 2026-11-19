@@ -306,9 +306,13 @@ class AgentRuntime(Protocol):
         dockerfile: str,
         context: str,
         labels: Mapping[str, str] | None = None,
+        target: str | None = None,
         timeout: int = 300,
     ) -> None:
-        """Build ``tag`` from ``dockerfile`` and the build context directory ``context``."""
+        """Build ``tag`` from ``dockerfile`` and the build context directory ``context``.
+
+        ``target``: the stage of a multi-stage Dockerfile to build; None builds its last stage.
+        """
         ...
 
     async def remove_image(self, image: str, *, timeout: int = 30) -> None:

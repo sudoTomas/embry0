@@ -353,11 +353,14 @@ class DockerRuntime:
         dockerfile: str,
         context: str,
         labels: Mapping[str, str] | None = None,
+        target: str | None = None,
         timeout: int = 300,
     ) -> None:
         args = ["build", "-t", tag]
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
+        if target:
+            args += ["--target", target]
         args += ["-f", dockerfile, context]
         # A build's progress is a log: only its end (the cause of a failure) is kept.
         await self._client.run_cmd(self._cmd(*args), timeout=timeout, max_bytes=LOG_TAIL_BYTES, keep_tail=True)
