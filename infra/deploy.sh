@@ -146,6 +146,18 @@ done
 # the systemd unit does. Without COMPOSE_FILE it is docker-compose.yml alone.
 compose() { (cd "$here" && docker compose "$@"); }
 
+# #366: the dashboard network's range, as this script, the systemd unit and
+# `embry0 start` would each render it, must agree, be free and be the range
+# the stack's network already has. The check imports only the standard library.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "deploy: python3 is needed to check the dashboard network's range" >&2
+  exit 1
+fi
+if ! python3 -I "$root/embry0/cli/frontend_network.py" --root "$root"; then
+  echo "deploy: the dashboard network check refused (above); nothing was built" >&2
+  exit 1
+fi
+
 echo ">> building ${services[*]} at $sha"
 compose build "${services[@]}"
 echo ">> recreating ${recreate[*]}"

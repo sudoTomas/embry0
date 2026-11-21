@@ -50,13 +50,19 @@ git clone <repository> <directory>
 
 If the directory already holds an embry0 checkout, use it as it is; pull only on the person's word.
 
-Then check that the stack's pinned network range is free on this machine. The dashboard network has a fixed subnet (the orchestrator trusts the dashboard's fixed addresses in it), and Docker refuses to create it over another network's range. `embry0 start` checks it too, before it builds; checking now lets the person settle it before anything is installed. The script reads `FRONTEND_NETWORK_PREFIX` from `.env` when that file sets it, and the compose default otherwise:
+Then check that the stack's pinned network range is free on this machine. The dashboard network has a fixed subnet (the orchestrator trusts the dashboard's fixed addresses in it), and Docker refuses to create it over another network's range. `embry0 start` checks it too, before it builds; checking now lets the person settle it before anything is installed. The script reads `FRONTEND_NETWORK_PREFIX` from `.env` and `infra/.env` when they set it, and the compose default otherwise. `embry0 start` reads the first file and `infra/deploy.sh` and the systemd unit the second, so the script stops when the two differ:
 
 ```bash
 cd <directory> && python3 - <<'PY'
 import ipaddress, json, os, re, subprocess
-env = open(".env").read() if os.path.exists(".env") else ""
-prefix = (re.findall(r"(?m)^FRONTEND_NETWORK_PREFIX=([0-9.]+)[ \t]*$", env) or [None])[-1]
+def set_in(path):
+    text = open(path).read() if os.path.exists(path) else ""
+    found = re.findall(r"""(?m)^[ \t]*(?:export[ \t]+)?FRONTEND_NETWORK_PREFIX[ \t]*=[ \t]*["']?([0-9.]*)["']?[ \t]*(?:#.*)?$""", text)
+    return (found or [""])[-1] or None
+if os.path.exists(".env") and os.path.exists("infra/.env") and set_in(".env") != set_in("infra/.env"):
+    raise SystemExit(f"FRONTEND_NETWORK_PREFIX is {set_in('.env') or 'unset'} in .env and {set_in('infra/.env') or 'unset'} "
+                     "in infra/.env: set the same value in both")
+prefix = set_in(".env") or set_in("infra/.env")
 compose = re.sub(r"\$\{FRONTEND_NETWORK_PREFIX:-([0-9.]+)\}", lambda m: prefix or m.group(1),
                  open("infra/docker-compose.yml").read())
 wanted = [ipaddress.ip_network(s) for s in re.findall(r"subnet: ([0-9a-fA-F.:/]+)", compose)]
@@ -73,7 +79,7 @@ print("\n".join(clashes) or f"free: {', '.join(map(str, wanted))}")
 PY
 ```
 
-On an overlap, stop and show it. The person either removes the other network, if nothing uses it, or moves the stack's range with one setting: `FRONTEND_NETWORK_PREFIX`, the first two octets of a free private /16 (in 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16), for example `10.229`. The subnet, both fixed addresses and the `FORWARDED_ALLOW_IPS` default follow it. Once step 4 has written `.env`, add the line `FRONTEND_NETWORK_PREFIX=<two octets>` to it and run this check again before step 5.
+On an overlap, stop and show it. The person either removes the other network, if nothing uses it, or moves the stack's range with one setting: `FRONTEND_NETWORK_PREFIX`, the first two octets of a free private /16 (in 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16), for example `10.229`. The subnet, both fixed addresses and the `FORWARDED_ALLOW_IPS` default follow it. Once step 4 has written `.env`, add the line `FRONTEND_NETWORK_PREFIX=<two octets>` to it, and to `infra/.env` too when that file exists, then run this check again before step 5. `embry0 start` and `infra/deploy.sh` refuse when the two files differ.
 
 ## 4. Write `.env`
 

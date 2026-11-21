@@ -30,7 +30,12 @@ _REQUIRED = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*):?\?")
 
 
 def _net(name: str, subnet: str, project: str | None = None) -> dict[str, Any]:
-    labels = {"com.docker.compose.project": project} if project else {}
+    """A Docker network; with *project*, that compose project's, named after its key as compose names it."""
+    labels = (
+        {"com.docker.compose.project": project, "com.docker.compose.network": name.removeprefix(f"{project}_")}
+        if project
+        else {}
+    )
     return {"Id": f"id-{name}", "Name": name, "Labels": labels, "IPAM": {"Config": [{"Subnet": subnet}]}}
 
 
@@ -54,9 +59,11 @@ class Docker:
         self.networks = networks
         self.render = render
         self.calls: list[list[str]] = []
+        self.cwds: list[object] = []
 
-    def __call__(self, cmd: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+    def __call__(self, cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         self.calls.append(list(cmd))
+        self.cwds.append(kw.get("cwd"))
         done = subprocess.CompletedProcess
         if cmd[:2] == ["docker", "compose"] and "config" in cmd:
             return self.render(cmd)
@@ -172,6 +179,88 @@ def test_start_warns_when_forwarded_allow_ips_trusts_an_address_off_the_network(
     )
 
 
+@pytest.mark.parametrize(
+    ("trusted", "warning"),
+    [
+        ("*", "every peer"),
+        ("172.29.0.10, *", "every peer"),
+        ("172.29.0.0/16", "holds addresses other than"),
+        ("172.29.0.12", "holds addresses other than"),
+    ],
+)
+def test_start_warns_when_forwarded_allow_ips_trusts_more_than_the_two_proxies(
+    home, monkeypatch, capsys, trusted: str, warning: str
+) -> None:
+    """#637 review: `*`, and a whole-subnet value on the network, trust every container that reaches the
+    orchestrator; the compose file pins the two addresses to avoid exactly that."""
+    docker = Docker([_net("bridge", "172.17.0.0/16")], _rendered(_config("172.29", forwarded=trusted)))
+    code = _start(monkeypatch, docker)
+    err = capsys.readouterr().err
+    assert code is None and docker.ups(), err
+    assert "FORWARDED_ALLOW_IPS" in err and warning in err, f"no warning that {trusted!r} trusts too much: {err}"
+
+
+@pytest.mark.parametrize("trusted", ["172.29.0.10,172.29.0.11", "172.29.0.10/31", "172.29.0.11"])
+def test_start_says_nothing_when_forwarded_allow_ips_trusts_only_the_two_proxies(
+    home, monkeypatch, capsys, trusted: str
+) -> None:
+    docker = Docker([_net("bridge", "172.17.0.0/16")], _rendered(_config("172.29", forwarded=trusted)))
+    assert _start(monkeypatch, docker) is None
+    assert "FORWARDED_ALLOW_IPS" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("root_env", "infra_env"),
+    [
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", ""),
+        ("", "FRONTEND_NETWORK_PREFIX=10.229\n"),
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", "FRONTEND_NETWORK_PREFIX=10.230\n"),
+        ("FORWARDED_ALLOW_IPS=10.229.0.10\n", ""),
+    ],
+)
+def test_start_refuses_when_the_two_env_files_disagree(home, monkeypatch, capsys, root_env, infra_env) -> None:
+    """#637 review: `embry0 start` interpolates the root .env; infra/deploy.sh and the systemd unit interpolate
+    infra/.env. Set in one, the next deploy recreates the frontend on another range and the orchestrator trusts
+    addresses nobody has."""
+    (home / ".env").write_text("POSTGRES_PASSWORD=x\n" + root_env)
+    (home / "infra" / ".env").write_text("POSTGRES_PASSWORD=x\n" + infra_env)
+    docker = Docker([_net("bridge", "172.17.0.0/16")], _rendered(_config("10.229")))
+    code = _start(monkeypatch, docker)
+    err = capsys.readouterr().err
+    assert code == 1 and docker.builds() == [], f"the start went on with env files that disagree: {err}"
+    assert "in .env and" in err and "in infra/.env" in err, f"the refusal does not name both files: {err}"
+
+
+def test_start_takes_two_env_files_that_say_the_same_in_different_words(home, monkeypatch, capsys) -> None:
+    (home / ".env").write_text("POSTGRES_PASSWORD=x\nexport FRONTEND_NETWORK_PREFIX='10.229'\n")
+    (home / "infra" / ".env").write_text('POSTGRES_PASSWORD=x\nFRONTEND_NETWORK_PREFIX="10.229"  # moved off a lab\n')
+    docker = Docker([_net("bridge", "172.17.0.0/16")], _rendered(_config("10.229")))
+    assert _start(monkeypatch, docker) is None and docker.builds(), capsys.readouterr().err
+
+
+def test_start_refuses_a_range_other_than_the_one_the_stacks_network_has(home, monkeypatch, capsys) -> None:
+    """The network outlives a stopped stack: services rendered on a new range would get addresses it does not hold."""
+    own = [_net("bridge", "172.17.0.0/16"), _net("embry0_frontend", "172.29.0.0/16", project="embry0")]
+    docker = Docker(own, _rendered(_config("10.229")))
+    code = _start(monkeypatch, docker)
+    err = capsys.readouterr().err
+    assert code == 1 and docker.builds() == [], f"the start went on over a network on another range: {err}"
+    assert "embry0_frontend has 172.29.0.0/16" in err and "10.229.0.0/16" in err, err
+
+
+def test_the_deploy_check_renders_from_infra_as_deploy_sh_and_the_unit_do(home, capsys) -> None:
+    """`python3 frontend_network.py --root`, as infra/deploy.sh runs it: compose from infra/, with no -f and no
+    --env-file, so it reads infra/.env exactly as the script and the systemd unit do."""
+    from embry0.cli import frontend_network
+
+    own = [_net("embry0_frontend", "172.29.0.0/16", project="embry0")]
+    docker = Docker(own, _rendered(_config("10.229")))
+    code = frontend_network.main(["--root", str(home)], run=docker)
+    configs = [(c, cwd) for c, cwd in zip(docker.calls, docker.cwds, strict=True) if "config" in c]
+    assert configs == [(["docker", "compose", "config", "--format", "json"], home / "infra")], configs
+    assert code == 1 and "embry0_frontend has 172.29.0.0/16" in capsys.readouterr().err
+
+
 def test_start_says_when_it_cannot_check_the_range_and_goes_on(home, monkeypatch, capsys) -> None:
     docker = Docker(TAKEN, _rendered(None))
     code = _start(monkeypatch, docker)
@@ -209,3 +298,38 @@ def test_the_check_reads_compose_s_real_rendering(home, monkeypatch, capsys, pre
         assert code == 1 and "172.29.240.0/24 (network accounts)" in err, f"exit {code}: {err}"
     else:
         assert code is None and docker.ups() and "not checked" not in err, f"exit {code}: {err}"
+
+
+@pytest.mark.skipif(not _compose_available(), reason="needs the docker compose CLI")
+@pytest.mark.parametrize(
+    ("root_env", "infra_env", "refusal"),
+    [
+        # both files agree, and the network the stack has is on the old range: the deploy path reads infra/.env
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", "FRONTEND_NETWORK_PREFIX=10.229\n", "embry0_frontend has 172.29.0.0/16"),
+        # the review's case: set in the root .env alone, which infra/deploy.sh does not read
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", "", "is '10.229' in .env and unset in infra/.env"),
+    ],
+)
+def test_the_deploy_check_reads_compose_s_real_rendering_from_infra(
+    home, capsys, root_env: str, infra_env: str, refusal: str
+) -> None:
+    """The deploy path's check against the real parser, run from infra/ as infra/deploy.sh runs compose."""
+    from embry0.cli import frontend_network
+
+    compose = (home / "infra" / "docker-compose.yml").read_text()
+    required = "".join(f"{name}=x\n" for name in sorted(set(_REQUIRED.findall(compose))))
+    (home / ".env").write_text(required + root_env)
+    (home / "infra" / ".env").write_text(required + infra_env)
+    real_run = subprocess.run
+
+    def render(cmd: list[str]) -> Any:
+        env = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
+        env.pop("FRONTEND_NETWORK_PREFIX", None)
+        env["DOCKER_HOST"] = f"unix://{home}/no-daemon.sock"
+        return real_run(cmd, capture_output=True, text=True, env=env, cwd=home / "infra")
+
+    docker = Docker([_net("embry0_frontend", "172.29.0.0/16", project="embry0")], render)
+    code = frontend_network.main(["--root", str(home)], run=docker)
+    err = capsys.readouterr().err
+    assert code == 1 and refusal in err, f"exit {code}: {err}"
+    assert "not checked" not in err, f"the real rendering was not read: {err}"

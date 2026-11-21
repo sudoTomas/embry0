@@ -607,8 +607,20 @@ def _fake_docker(tmp_path: Path, subnets: dict[str, str]) -> dict[str, str]:
             "overlaps 172.29.240.0/24 (network accounts)",
         ),
         # #366: a range moved with FRONTEND_NETWORK_PREFIX is checked where it now is
-        ({"bridge": "172.17.0.0/16", "accounts": "172.29.240.0/24"}, "10.229", "free: 10.229.0.0/16"),
-        ({"bridge": "172.17.0.0/16", "lab": "10.229.8.0/24"}, "10.229", "overlaps 10.229.8.0/24 (network lab)"),
+        (
+            {"bridge": "172.17.0.0/16", "accounts": "172.29.240.0/24"},
+            "FRONTEND_NETWORK_PREFIX=10.229",
+            "free: 10.229.0.0/16",
+        ),
+        (
+            {"bridge": "172.17.0.0/16", "lab": "10.229.8.0/24"},
+            "FRONTEND_NETWORK_PREFIX=10.229",
+            "overlaps 10.229.8.0/24",
+        ),
+        # #637 review: quoted, exported and commented lines, as compose reads them
+        ({"bridge": "172.17.0.0/16"}, 'FRONTEND_NETWORK_PREFIX="10.229"', "free: 10.229.0.0/16"),
+        ({"bridge": "172.17.0.0/16"}, "export FRONTEND_NETWORK_PREFIX=10.229", "free: 10.229.0.0/16"),
+        ({"bridge": "172.17.0.0/16"}, "FRONTEND_NETWORK_PREFIX='10.229'  # moved off the lab", "free: 10.229.0.0/16"),
     ],
 )
 def test_the_network_check_finds_a_taken_range_before_the_build(
@@ -618,13 +630,44 @@ def test_the_network_check_finds_a_taken_range_before_the_build(
     (tmp_path / "infra").mkdir()
     (tmp_path / "infra" / "docker-compose.yml").write_text((ROOT / "infra" / "docker-compose.yml").read_text())
     if dotenv is not None:
-        (tmp_path / ".env").write_text(f"API_KEY=x\nFRONTEND_NETWORK_PREFIX={dotenv}\n")
+        (tmp_path / ".env").write_text(f"API_KEY=x\n{dotenv}\n")
     env = _fake_docker(tmp_path, subnets)
     run = subprocess.run(
         [sys.executable, "-c", net_script], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
     )
     assert run.returncode == 0, run.stderr
     assert answer in run.stdout, run.stdout
+
+
+@pytest.mark.parametrize(
+    ("root_env", "infra_env", "differs"),
+    [
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", "PROD_PORT=8200\n", True),
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", "FRONTEND_NETWORK_PREFIX=10.230\n", True),
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", 'export FRONTEND_NETWORK_PREFIX="10.229"\n', False),
+    ],
+)
+def test_the_network_check_stops_when_the_two_env_files_differ(
+    tmp_path: Path, root_env: str, infra_env: str, differs: bool
+) -> None:
+    """#637 review: `embry0 start` reads .env, and infra/deploy.sh and the systemd unit read infra/.env."""
+    net_script = _install_script("docker")
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "infra" / "docker-compose.yml").write_text((ROOT / "infra" / "docker-compose.yml").read_text())
+    (tmp_path / ".env").write_text(root_env)
+    (tmp_path / "infra" / ".env").write_text(infra_env)
+    run = subprocess.run(
+        [sys.executable, "-c", net_script],
+        cwd=tmp_path,
+        env=_fake_docker(tmp_path, {"bridge": "172.17.0.0/16"}),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if differs:
+        assert run.returncode != 0 and "set the same value in both" in run.stderr, f"{run.stdout}{run.stderr}"
+    else:
+        assert run.returncode == 0 and "free: 10.229.0.0/16" in run.stdout, f"{run.stdout}{run.stderr}"
 
 
 def test_the_network_check_never_calls_a_range_it_did_not_find_free(tmp_path: Path) -> None:

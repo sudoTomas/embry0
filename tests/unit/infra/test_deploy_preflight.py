@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "infra" / "deploy.sh"
+# The dashboard network check the script runs as a script of its own (#366).
+_NETWORK_CHECK = Path(__file__).resolve().parents[3] / "embry0" / "cli" / "frontend_network.py"
 
 _STUBS = {
     "docker": """#!/bin/sh
@@ -54,6 +56,8 @@ def deploy(tmp_path: Path):
     root = tmp_path / "checkout"
     (root / "infra").mkdir(parents=True)
     shutil.copy(_SCRIPT, root / "infra" / "deploy.sh")
+    (root / "embry0" / "cli").mkdir(parents=True)
+    shutil.copy(_NETWORK_CHECK, root / "embry0" / "cli" / "frontend_network.py")
     (root / "infra" / ".env").write_text("PROD_PORT=8200\n")
     (root / ".env").write_text("API_KEY=test-key\n")
     bin_dir = tmp_path / "bin"
@@ -218,3 +222,15 @@ def test_a_failing_readiness_read_does_not_fail_the_deploy(deploy, tmp_path: Pat
     assert result.returncode == 0 and ">> deployed" in result.stdout, (
         f"the deploy rolled, so a readiness read that fails only goes unprinted: {result.returncode} {result.stderr}"
     )
+
+
+def test_a_deploy_whose_env_files_disagree_on_the_range_builds_nothing(deploy, tmp_path: Path) -> None:
+    """#637 review: the range set in the root .env alone, which `embry0 start` reads and this script does not. The
+    deploy would recreate the frontend on the default range inside the moved network."""
+    root = tmp_path / "checkout"
+    (root / ".env").write_text("API_KEY=test-key\nFRONTEND_NETWORK_PREFIX=10.229\n")
+    result, calls = deploy(STUB_JOBS_BODY='{"jobs": []}')
+    assert result.returncode == 1, f"the deploy went on: {result.stdout}{result.stderr}"
+    assert "FRONTEND_NETWORK_PREFIX is '10.229' in .env and unset in infra/.env" in result.stderr, result.stderr
+    built = [c for c in calls if c.startswith("docker compose build") or c.startswith("docker compose up")]
+    assert built == [], f"the deploy built or recreated after the check refused: {built}"

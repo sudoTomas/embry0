@@ -432,7 +432,8 @@ def cmd_start(args: argparse.Namespace) -> None:
 
     # #366: Docker refuses the pinned frontend network over another network's
     # range only at `up`, after the build; read it as `up` will and say so now.
-    network = frontend_network.inspect(_compose_cmd(home), project=PROJECT_NAME, env_file=ENV_FILE, run=subprocess.run)
+    # infra/deploy.sh runs the same check, so both env files must agree.
+    network = frontend_network.inspect(_compose_cmd(home), project=PROJECT_NAME, root=home, run=subprocess.run)
     for note in network.notes:
         _warn(note)
     if network.problems:
