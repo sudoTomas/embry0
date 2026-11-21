@@ -8,6 +8,11 @@ tested the lock's 1.x, `anthropic` was in no lock at all, and the exact
 group's export with every hash checked, and `check-image-lock.py` fails the
 build when what is installed differs from it. These tests pin the group
 against the code the images carry, and the recipes against the lock.
+
+The dev stages add Poetry the same way (#645): pyproject's `poetry` group,
+locked with the rest, its export installed with every hash checked, and the
+stage checked against both groups. No package of any sandbox image is
+installed from outside the lock.
 """
 
 from __future__ import annotations
@@ -42,6 +47,11 @@ def _commands(instruction: str) -> list[list[str]]:
 
 def _option(argv: list[str], name: str) -> str | None:
     return argv[argv.index(name) + 1] if name in argv else None
+
+
+def _options(argv: list[str], name: str) -> list[str]:
+    """Every value of an option given more than once, in order."""
+    return [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == name]
 
 
 def _pyproject() -> dict:
@@ -214,42 +224,67 @@ def _exports(instruction: str) -> list[list[str]]:
     return [argv for argv in _commands(instruction) if argv[0].endswith("/uv") and argv[1:2] == ["export"]]
 
 
-def _group_export(dockerfile: Path, export: list[str]) -> None:
-    assert {"--locked", "--no-emit-project"} <= set(export) and _option(export, "--only-group") == "sandbox", (
-        f"{dockerfile.name}: export the `sandbox` group alone, --locked: {export}"
+def _group_export(dockerfile: Path, export: list[str], groups: tuple[str, ...] = ("sandbox",)) -> None:
+    assert {"--locked", "--no-emit-project"} <= set(export) and tuple(_options(export, "--only-group")) == groups, (
+        f"{dockerfile.name}: export the {' and '.join(groups)} group(s) alone, --locked: {export}"
     )
 
 
-def _assert_locked_install(dockerfile: Path, before: int | None = None) -> int:
-    """The one hash-checked install of the group's export, checked in full in the same RUN."""
-    instructions = _instructions(dockerfile)
-    locked = [
+def _locked_installs(dockerfile: Path) -> list[tuple[int, list[str]]]:
+    """Every ``pip install -r <file>`` of the Dockerfile, with the index of its instruction."""
+    return [
         (i, argv)
-        for i, ins in enumerate(instructions)
+        for i, ins in enumerate(_instructions(dockerfile))
         if ins.startswith("RUN ")
         for argv in _commands(ins)
         if argv[:2] == ["pip", "install"] and "-r" in argv
     ]
-    assert len(locked) == 1, f"{dockerfile.name}: expected one `pip install -r <exported group>`, found {locked}"
-    at, argv = locked[0]
-    if before is not None:
-        assert at < before, (
-            f"{dockerfile.name}: the locked install must be in the base stage, which every stage builds on"
-        )
+
+
+def _assert_group_install(
+    dockerfile: Path, at: int, argv: list[str], *, installs: tuple[str, ...], checks: tuple[str, ...]
+) -> None:
+    """A hash-checked install of the ``installs`` groups' export, then the whole stage checked against the
+    ``checks`` groups' export, in the same RUN."""
+    instruction = _instructions(dockerfile)[at]
     assert "--require-hashes" in argv, f"{dockerfile.name}: install the export with every hash checked: {argv}"
-    export = next((e for e in _exports(instructions[at]) if _option(e, "--output-file") == _option(argv, "-r")), None)
+    export = next((e for e in _exports(instruction) if _option(e, "--output-file") == _option(argv, "-r")), None)
     assert export is not None, f"{dockerfile.name}: the pip install -r is not fed by a `uv export` in the same RUN"
-    _group_export(dockerfile, export)
+    _group_export(dockerfile, export, installs)
     assert "--no-hashes" not in export, f"{dockerfile.name}: the installed export must carry the lock's hashes"
-    check = next((a for a in _commands(instructions[at]) if a[:1] == ["python"]), None)
+    pins = _option(argv, "-r")
+    if checks != installs:
+        against = next((e for e in _exports(instruction) if tuple(_options(e, "--only-group")) == checks), None)
+        assert against is not None, f"{dockerfile.name}: no export of the {checks} groups to check the stage against"
+        _group_export(dockerfile, against, checks)
+        pins = _option(against, "--output-file")
+    check = next((a for a in _commands(instruction) if a[:1] == ["python"]), None)
     assert check is not None, f"{dockerfile.name}: the build never checks its install against the lock"
     # Exact: the whole export (no --subset), only pip outside it, and nothing
     # after it on the line that could swallow its exit status (`|| true`).
-    expected = ["python", "/opt/check-image-lock.py", _option(argv, "-r"), "--allow", "pip"]
+    expected = ["python", "/opt/check-image-lock.py", pins, "--allow", "pip"]
     assert check == expected, f"{dockerfile.name}: the drift check must run as {expected}, not {check}"
-    assert _CHECKER_MOUNT in instructions[at], f"{dockerfile.name}: /opt/check-image-lock.py is not {_CHECKER_MOUNT}"
-    _assert_fails_on_any_error(dockerfile, instructions[at])
+    assert _CHECKER_MOUNT in instruction, f"{dockerfile.name}: /opt/check-image-lock.py is not {_CHECKER_MOUNT}"
+    _assert_fails_on_any_error(dockerfile, instruction)
+
+
+def _assert_locked_install(dockerfile: Path) -> int:
+    """The one hash-checked install of the sandbox group's export, checked in full in the same RUN."""
+    locked = _locked_installs(dockerfile)
+    assert len(locked) == 1, f"{dockerfile.name}: expected one `pip install -r <exported group>`, found {locked}"
+    at, argv = locked[0]
+    _assert_group_install(dockerfile, at, argv, installs=("sandbox",), checks=("sandbox",))
     return at
+
+
+def _stage_starts(dockerfile: Path) -> dict[str, int]:
+    """Each named stage of the Dockerfile and the index of its FROM."""
+    found = {}
+    for i, ins in enumerate(_instructions(dockerfile)):
+        match = re.match(r"FROM\s+\S+\s+AS\s+(\S+)$", ins)
+        if match:
+            found[match.group(1)] = i
+    return found
 
 
 _CHECKER_MOUNT = "--mount=type=bind,source=infra/scripts/check-image-lock.py,target=/opt/check-image-lock.py"
@@ -275,30 +310,44 @@ def _other_pip_installs(dockerfile: Path, locked_at: int) -> list[tuple[int, lis
     ]
 
 
-def _assert_constrained(dockerfile: Path, at: int, argv: list[str]) -> None:
-    """A tool's pip install that may share the locked versions but never move one."""
-    constraints = _option(argv, "-c")
-    assert constraints, (
-        f"{dockerfile.name}: `{' '.join(argv)}` installs into the runner's interpreter without the "
-        "sandbox group's locked versions as constraints, so it could move one"
-    )
-    export = next(
-        (e for e in _exports(_instructions(dockerfile)[at]) if _option(e, "--output-file") == constraints), None
-    )
-    assert export is not None, f"{dockerfile.name}: the constraints {constraints} are not a `uv export` of the same RUN"
-    _group_export(dockerfile, export)
-    _assert_fails_on_any_error(dockerfile, _instructions(dockerfile)[at])
+#: The stages of Dockerfile.sandbox that add Poetry to the base stage.
+DEV_STAGES = ("dev-python", "dev-jvm-python")
 
 
 def test_the_sandbox_image_installs_its_group_from_the_lock():
-    stages = [i for i, ins in enumerate(_instructions(SANDBOX)) if ins.startswith("FROM base AS ")]
-    assert stages, "Dockerfile.sandbox has no stage built on `base`; update this guard"
-    at = _assert_locked_install(SANDBOX, before=min(stages))
-    others = _other_pip_installs(SANDBOX, at)
-    assert others, "Dockerfile.sandbox no longer installs Poetry in its dev stages; update this guard"
-    for i, argv in others:
-        assert i > min(stages), f"Dockerfile.sandbox: a second pip install in the base stage: {argv}"
-        _assert_constrained(SANDBOX, i, argv)
+    starts = _stage_starts(SANDBOX)
+    assert {"base", *DEV_STAGES} <= set(starts), f"Dockerfile.sandbox's stages changed; update this guard: {starts}"
+    order = sorted(starts.values())
+    end = {name: next((j for j in order if j > i), len(_instructions(SANDBOX))) for name, i in starts.items()}
+    locked = _locked_installs(SANDBOX)
+    base = [(i, argv) for i, argv in locked if starts["base"] < i < end["base"]]
+    assert len(base) == 1, f"Dockerfile.sandbox: expected one locked install in the base stage, found {base}"
+    _assert_group_install(SANDBOX, *base[0], installs=("sandbox",), checks=("sandbox",))
+    for name in DEV_STAGES:
+        mine = [(i, argv) for i, argv in locked if starts[name] < i < end[name]]
+        assert len(mine) == 1, f"Dockerfile.sandbox: expected one locked install of Poetry in {name}, found {mine}"
+        # #645: Poetry and what it needs from the lock's `poetry` group, hash-checked; the stage checked whole.
+        _assert_group_install(SANDBOX, *mine[0], installs=("poetry",), checks=("sandbox", "poetry"))
+    others = [(i, argv) for i, argv in _other_pip_installs(SANDBOX, -1) if (i, argv) not in locked]
+    assert not others, f"Dockerfile.sandbox: every Python package comes from a locked install: {others}"
+
+
+def test_the_poetry_group_is_poetry_alone_locked_once_past_its_advisories():
+    """#645, #331: the `poetry` group names Poetry with a range, uv.lock holds one version of it at or past 2.3.3,
+    and one version of each package it needs, so the stage's two exports cannot disagree."""
+    group = _pyproject().get("dependency-groups", {}).get("poetry")
+    assert group and len(group) == 1 and re.match(r"poetry\s*[<>=~]", group[0]), (
+        f"pyproject.toml's `poetry` group must name Poetry alone, with a range: {group}"
+    )
+    assert "poetry" not in (_pyproject().get("tool", {}).get("uv", {}).get("default-groups") or []), (
+        "the `poetry` group must not be a default group: `uv sync` and the orchestrator image leave it out"
+    )
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    for name in sorted(_lock_closure(["poetry"])):
+        versions = [p["version"] for p in lock["package"] if _canonical(p["name"]) == name]
+        assert len(versions) == 1, f"uv.lock pins {name} at {versions}: the dev images' two exports could differ"
+    [version] = [p["version"] for p in lock["package"] if _canonical(p["name"]) == "poetry"]
+    assert tuple(int(part) for part in version.split(".")[:3]) >= (2, 3, 3), f"uv.lock locks Poetry {version}"
 
 
 def test_the_qa_sandbox_image_installs_its_group_from_the_lock():
@@ -334,5 +383,4 @@ def test_the_import_scan_skips_only_imports_guarded_against_their_failure():
 def test_no_sandbox_image_pins_a_package_by_hand():
     for dockerfile in (SANDBOX, SANDBOX_QA):
         written = re.findall(r'"([A-Za-z0-9._-]+(?:==|>=|<=|~=|<|>)[^"]*)"', dockerfile.read_text(encoding="utf-8"))
-        hand = [req for req in written if not req.startswith("poetry==")]
-        assert not hand, f"{dockerfile.name} writes versions by hand; they come from uv.lock now: {hand}"
+        assert not written, f"{dockerfile.name} writes versions by hand; they come from uv.lock now: {written}"

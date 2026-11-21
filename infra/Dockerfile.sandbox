@@ -124,11 +124,12 @@ RUN home=$(mktemp -d) && HOME="$home" python -m embry0.agents.sdk_support && rm 
 # installed per-job by the agent (`poetry install`), not baked here.
 FROM base AS dev-python
 USER root
-# Poetry runs the target repository's checks; it is not an embry0
-# dependency, and its own dependencies are not in uv.lock. It installs into
-# the interpreter the sandbox runner uses, so the `sandbox` group's locked
-# versions go in as pip constraints: Poetry may share them but cannot move
-# one, and a Poetry that needs another version fails the build here.
+# Poetry runs the target repository's checks; no embry0 code imports it.
+# It and everything it needs are uv.lock's `poetry` group (#645), locked
+# together with the `sandbox` group, so they share its versions and cannot
+# move one. Its export is installed with every hash checked, and the stage is
+# then checked against both groups: a package installed from outside them, or
+# at another version, fails the build, as in the base stage.
 # Poetry 2 (#331): a target repository's dev checks use its commands.
 # `poetry install --no-dev` is gone (`--without dev` or `--only main`), and so
 # is `poetry lock --no-update`: `poetry lock` keeps the locked versions unless
@@ -137,11 +138,15 @@ USER root
 RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
     --mount=type=bind,source=pyproject.toml,target=/opt/lock/pyproject.toml \
     --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
-    /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-hashes --no-cache --quiet \
-        --output-file /tmp/constraints.lock.txt \
-    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==2.5.1" \
+    --mount=type=bind,source=infra/scripts/check-image-lock.py,target=/opt/check-image-lock.py \
+    /opt/uv/uv export --project /opt/lock --locked --only-group poetry --no-emit-project --no-cache --quiet \
+        --output-file /tmp/poetry.lock.txt \
+    && /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --only-group poetry --no-emit-project \
+        --no-hashes --no-cache --quiet --output-file /tmp/image.lock.txt \
+    && pip install --no-cache-dir --require-hashes -r /tmp/poetry.lock.txt \
+    && python /opt/check-image-lock.py /tmp/image.lock.txt --allow pip \
     && poetry --version \
-    && rm /tmp/constraints.lock.txt
+    && rm /tmp/poetry.lock.txt /tmp/image.lock.txt
 USER agent
 WORKDIR /workspace
 
@@ -150,9 +155,9 @@ WORKDIR /workspace
 # a Java 21 backend (backend/pom.xml) whose suites are pure pytest.
 #
 # Inherits Python 3.12, Node 22 and the Claude CLI from `base`; adds JDK 21
-# and Poetry. Poetry is the same pin as the dev-python stage so a monorepo
-# whose dev checks are Maven in one tree and Poetry in another can use one
-# image. No Maven package: the repo ships backend/mvnw, and the wrapper
+# and Poetry. Poetry comes from the same locked group as in dev-python, so a
+# monorepo whose dev checks are Maven in one tree and Poetry in another can
+# use one image. No Maven package: the repo ships backend/mvnw, and the wrapper
 # provisions Maven itself. No Docker CLI, by design — these suites drive
 # containers only through injected seams, so a real `docker` call is a bug we
 # want to fail loudly rather than quietly satisfy.
@@ -170,15 +175,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends \
         temurin-21-jdk \
     && rm -rf /var/lib/apt/lists/*
-# Poetry with the `sandbox` group's locked versions as constraints, as in
-# dev-python.
+# Poetry from the lock's `poetry` group, hash-checked, as in dev-python.
 RUN --mount=from=uv,source=/uv,target=/opt/uv/uv \
     --mount=type=bind,source=pyproject.toml,target=/opt/lock/pyproject.toml \
     --mount=type=bind,source=uv.lock,target=/opt/lock/uv.lock \
-    /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --no-emit-project --no-hashes --no-cache --quiet \
-        --output-file /tmp/constraints.lock.txt \
-    && pip install --no-cache-dir -c /tmp/constraints.lock.txt "poetry==2.5.1" \
+    --mount=type=bind,source=infra/scripts/check-image-lock.py,target=/opt/check-image-lock.py \
+    /opt/uv/uv export --project /opt/lock --locked --only-group poetry --no-emit-project --no-cache --quiet \
+        --output-file /tmp/poetry.lock.txt \
+    && /opt/uv/uv export --project /opt/lock --locked --only-group sandbox --only-group poetry --no-emit-project \
+        --no-hashes --no-cache --quiet --output-file /tmp/image.lock.txt \
+    && pip install --no-cache-dir --require-hashes -r /tmp/poetry.lock.txt \
+    && python /opt/check-image-lock.py /tmp/image.lock.txt --allow pip \
     && poetry --version \
-    && rm /tmp/constraints.lock.txt
+    && rm /tmp/poetry.lock.txt /tmp/image.lock.txt
 USER agent
 WORKDIR /workspace
