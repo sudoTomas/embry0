@@ -17,10 +17,7 @@ from langgraph.types import Command
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
 from embry0.orchestration.budget import allowance_to_continue, continue_adds, resolve_job_cap
-from embry0.orchestration.nodes.agent import (
-    USER_RETRY_ROUNDS_CAP,
-    load_budget_settings,
-)
+from embry0.orchestration.nodes.agent import load_budget_settings, retry_rounds_cap
 from embry0.orchestration.routing.conditions import check_budget
 
 logger = structlog.get_logger(__name__)
@@ -391,12 +388,15 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
 
     if choice == "continue_retrying":
         user_rounds = int(state.get("user_retry_rounds", 0) or 0)
-        max_user_retries = USER_RETRY_ROUNDS_CAP
+        max_user_retries = retry_rounds_cap(state)
         if user_rounds >= max_user_retries:
-            logger.warning("user_retry_rounds_exceeded", job_id=state.get("job_id"))
+            logger.warning("user_retry_rounds_exceeded", job_id=state.get("job_id"), cap=max_user_retries)
             return {
                 "current_stage": "abandoned",
-                "errors": [f"Exceeded {max_user_retries} user-initiated retries"],
+                "errors": [
+                    f"Exceeded {max_user_retries} user-initiated retries, the most the settings document's "
+                    "agent_questions.retry_rounds_cap allows this job"
+                ],
             }
         updates: dict[str, Any] = {
             "retry_count": 0,

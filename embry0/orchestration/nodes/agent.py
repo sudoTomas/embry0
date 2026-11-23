@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -59,18 +60,33 @@ def _env_cap(name: str, default: int) -> int:
         return default
 
 
-# Cap on agent ask-user rounds per job. Env-tunable (RAV-605) because the
-# right ceiling differs between untrusted SaaS and a trusted self-hosted
-# box. Brainstorming floors at a higher value because design conversations
-# legitimately need more turns.
-DEFAULT_ASK_USER_CAP = _env_cap("ASK_USER_ROUNDS_CAP", 10)
-BRAINSTORMING_ASK_USER_CAP = max(15, DEFAULT_ASK_USER_CAP)
+def ask_rounds_cap(state: Mapping[str, Any], *, brainstorming: bool = False) -> tuple[int, str]:
+    """The rounds of asking a person ``state``'s job may take, and the ``agent_questions`` key that sets them.
+
+    The job's own values, read for its repository when it started (:mod:`embry0.services.job_settings`): the
+    deployment's, its organization's and its repository's layers. ``rounds_cap``, or for a developer run with the
+    brainstorming skill the higher of it and ``brainstorming_floor``, since a design conversation needs more rounds.
+    """
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
+
+    settings = job_section(state, AGENT_QUESTIONS)
+    if brainstorming and settings.brainstorming_floor > settings.rounds_cap:
+        return settings.brainstorming_floor, "brainstorming_floor"
+    return settings.rounds_cap, "rounds_cap"
+
+
+def retry_rounds_cap(state: Mapping[str, Any]) -> int:
+    """How many times a person may send ``state``'s job back with continue retrying, as the job read it."""
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
+
+    return job_section(state, AGENT_QUESTIONS).retry_rounds_cap
+
+
 #: The questions one agent run may answer itself and have recorded (#410). They count toward no round cap, and
 #: each is an input row, an audit row and a line of the Q&A a resume hands the agent; the rest are dropped, logged.
 MAX_AUTO_ANSWERED_PER_RUN = 20
-# User-initiated retry rounds after max_retries (consumed by the
-# issue_to_pr max_retries node).
-USER_RETRY_ROUNDS_CAP = _env_cap("USER_RETRY_ROUNDS_CAP", 5)
 
 # EMB-35: per-role turn budgets. The flat 40 was sized for the developer
 # (repo exploration + implementation); triage is a bounded classification
@@ -1365,10 +1381,12 @@ def _enforce_ask_user_cap(
     state: dict[str, Any],
     pending_questions: list[dict[str, Any]],
     *,
-    max_rounds: int = DEFAULT_ASK_USER_CAP,
+    brainstorming: bool = False,
     job_id_for_log: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
-    """Apply the job-wide ask_user round cap.
+    """Apply the job-wide ask_user round cap: the job's ``agent_questions.rounds_cap``, or for a developer run
+    with the brainstorming skill (``brainstorming``) the higher of it and ``brainstorming_floor``
+    (:func:`ask_rounds_cap`).
 
     Returns ``(exhausted, updates)``:
     - ``exhausted=True`` means the cap was hit; ``updates`` carries the
@@ -1414,6 +1432,7 @@ def _enforce_ask_user_cap(
         }
 
     current_rounds = int(state.get("agent_question_rounds", 0) or 0)
+    max_rounds, key = ask_rounds_cap(state, brainstorming=brainstorming)
     if current_rounds >= max_rounds:
         logger.warning(
             "agent_question_rounds_exceeded",
@@ -1425,7 +1444,10 @@ def _enforce_ask_user_cap(
             "current_stage": "failed",
             "agent_questions_exhausted": True,
             "error_code": ErrorCode.MAX_AGENT_QUESTIONS.value,
-            "errors": [f"Agent exceeded {max_rounds} rounds of asking the user — giving up."],
+            "errors": [
+                f"Agent exceeded {max_rounds} rounds of asking the user, the most the settings document's "
+                f"agent_questions.{key} allows this job — giving up."
+            ],
             # The run answered these itself whatever happens to its blocking ones: they are still its record.
             "auto_answered_agent_questions": auto,
         }

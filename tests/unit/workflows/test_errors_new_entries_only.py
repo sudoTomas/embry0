@@ -27,6 +27,7 @@ import pytest
 
 import embry0
 from embry0.orchestration.state import JobState
+from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
 from tests.fixtures.sandbox_git_local import reads_branch_tip
 from tests.unit.workflows.appended_updates import echoes, graph_nodes
 from tests.unit.workflows.test_developer_branch_verification import (
@@ -35,6 +36,9 @@ from tests.unit.workflows.test_developer_branch_verification import (
     _turn_cap_result,
 )
 from tests.unit.workflows.test_done_when_check import _UNMET, LIST, _dev_state, _result, _with
+
+#: The cap a job reads when no layer sets agent_questions.rounds_cap.
+ROUNDS_CAP = AGENT_QUESTIONS.defaults().rounds_cap
 
 EARLIER = "an earlier error, stored once"
 SRC = pathlib.Path(embry0.__file__).parent
@@ -330,7 +334,6 @@ async def test_a_run_that_errored_keeps_its_error_beside_the_done_when_pause() -
 @pytest.mark.asyncio
 async def test_the_question_cap_keeps_the_runs_error_beside_its_own(node: str) -> None:
     """A run that errored and asked past the cap: the cap's failure was laid over the run's error and replaced it."""
-    from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
     from embry0.workflows.issue_to_pr.nodes import developer_node, review_node
     from tests.unit.workflows.test_command_routing import _make_review_config, _state
 
@@ -345,7 +348,7 @@ async def test_the_question_cap_keeps_the_runs_error_beside_its_own(node: str) -
             "total_cost_usd": 0.0,
         }
 
-    state = _state(errors=[EARLIER], agent_question_rounds=DEFAULT_ASK_USER_CAP, agent_outputs=[], pr_url="http://x")
+    state = _state(errors=[EARLIER], agent_question_rounds=ROUNDS_CAP, agent_outputs=[], pr_url="http://x")
     function, config = {
         "developer": (developer_node, None),
         "review": (review_node, _make_review_config(object())),
@@ -359,7 +362,8 @@ async def test_the_question_cap_keeps_the_runs_error_beside_its_own(node: str) -
     assert update.get("agent_questions_exhausted"), f"the cap was not reached: {update.get('current_stage')}"
     assert update["errors"] == [
         f"{node}: Connection reset",
-        f"Agent exceeded {DEFAULT_ASK_USER_CAP} rounds of asking the user — giving up.",
+        f"Agent exceeded {ROUNDS_CAP} rounds of asking the user, the most the settings document's "
+        "agent_questions.rounds_cap allows this job — giving up.",
     ], f"the run's own error and the cap's, and nothing stored before: {update['errors']}"
 
 

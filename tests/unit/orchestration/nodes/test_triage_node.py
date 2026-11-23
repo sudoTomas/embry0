@@ -4,6 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from embry0.orchestration.nodes.triage import parse_triage_response
+from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
+
+#: The cap a job reads when no layer sets agent_questions.rounds_cap.
+ROUNDS_CAP = AGENT_QUESTIONS.defaults().rounds_cap
 
 
 def test_omitted_sandbox_profile_is_not_named_default():
@@ -341,7 +345,6 @@ async def test_triage_cycle_guard_terminates_at_cap() -> None:
     from langgraph.graph import END
     from langgraph.types import Command
 
-    from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
     from embry0.workflows.issue_to_pr.nodes import triage_node
 
     state = {
@@ -351,7 +354,7 @@ async def test_triage_cycle_guard_terminates_at_cap() -> None:
         "sandbox_container_id": "container-abc",
         "agent_outputs": [],
         "errors": [],
-        "triage_question_rounds": DEFAULT_ASK_USER_CAP,  # already at cap
+        "triage_question_rounds": ROUNDS_CAP,  # already at cap
         "total_cost_usd": 0.0,
     }
     config = {

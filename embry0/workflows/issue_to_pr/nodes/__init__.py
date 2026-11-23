@@ -23,12 +23,7 @@ from __future__ import annotations
 from langgraph.config import get_stream_writer
 from langgraph.types import interrupt
 
-from embry0.orchestration.nodes.agent import (
-    BRAINSTORMING_ASK_USER_CAP,
-    DEFAULT_ASK_USER_CAP,
-    USER_RETRY_ROUNDS_CAP,
-    run_agent_node,
-)
+from embry0.orchestration.nodes.agent import run_agent_node
 
 # --- node modules (import after the seams) ---
 from embry0.workflows.issue_to_pr.nodes._common import (
@@ -68,9 +63,6 @@ from embry0.workflows.issue_to_pr.nodes._triage import (
 from embry0.workflows.issue_to_pr.nodes._verify import verify_node
 
 __all__ = [
-    "BRAINSTORMING_ASK_USER_CAP",
-    "DEFAULT_ASK_USER_CAP",
-    "USER_RETRY_ROUNDS_CAP",
     "_branch_on_origin",
     "_build_developer_adopted_prompt",
     "_build_developer_delta_prompt",

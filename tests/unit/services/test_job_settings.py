@@ -277,6 +277,8 @@ def _resumer(builder: StateGraph, store: Any) -> IssueExecutor:
 async def test_without_a_store_or_with_one_that_fails_a_job_runs_on_the_defaults() -> None:
     js = _job_settings()
     defaults = {
+        # #179: the caps a job's agents ask and a person sends it back under; what the constants were.
+        "agent_questions": {"rounds_cap": 10, "brainstorming_floor": 15, "retry_rounds_cap": 5},
         "context_audit": {
             "days": None,
             "open_prs": False,

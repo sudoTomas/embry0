@@ -37,8 +37,8 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 | `MAX_RUNNING_JOBS` | `0` | Most jobs running at once across the deployment; `0` is no cap. A job past it waits in `pending` (the board's "queued" lane), its timeline says so, and it starts on its own when a running job ends — it is never failed for waiting. Every kind of job counts once: issue-to-PR, QA (whose own sub-tasks run up to the repo's `parallelism.max_concurrent_apps` sandboxes inside that one slot), onboard, pull request review, watcher and PR-comment jobs. A job paused for an answer (`awaiting_input`, `paused`) holds no slot, since its agent has stopped; its resume takes the next free slot ahead of jobs that have not started. Cancelling a queued job removes it before it runs. The queue lives in the orchestrator's memory, but each job records how to start it (`jobs.launch`), so after a restart the jobs still waiting are started again; only a waiting row written before that record existed (#307) is failed with `ERR_ORPHANED` and a message that it never started. Size it against DinD: [provisioning](ops/provisioning.md#sizing-dind-and-the-job-cap) |
 | `SHUTDOWN_DRAIN_SECONDS` | `90` | On SIGTERM (a deploy, a restart) the orchestrator starts no more jobs and gives the running ones this long to reach their next node boundary, where LangGraph has saved them; a job still inside a node after it is stopped where it is. Every job stopped is resumed from its checkpoint when the orchestrator is back. Keep it under the orchestrator's `stop_grace_period` in `infra/docker-compose.yml` (180 s) minus uvicorn's 30 s and the rest of shutdown; see [deploy](ops/deploy.md#deploying-while-jobs-run) |
 | `MAX_RESUME_ATTEMPTS` | `3` | How many times boot recovers one job after an unclean stop (a crash or kill, no drain) before failing it with `ERR_RESUME_LIMIT`, so a job that takes the orchestrator down cannot loop. Recoveries after a clean drain do not count. `0` turns recovery off: every in-flight job fails at boot, as before #307 |
-| `ASK_USER_ROUNDS_CAP` | `10` | Agent ask-user rounds per job before `ERR_MAX_AGENT_QUESTIONS` |
-| `USER_RETRY_ROUNDS_CAP` | `5` | User "continue retrying" rounds per job |
+| `ASK_USER_ROUNDS_CAP` | `10` | Governed by the settings document (`agent_questions.rounds_cap`, the rounds of questions a job's agents may ask before `ERR_MAX_AGENT_QUESTIONS`). Read once, at the first start of the release that added the section, and ignored after that; a value that is not a whole number at or above `0` is not imported |
+| `USER_RETRY_ROUNDS_CAP` | `5` | Governed by the settings document (`agent_questions.retry_rounds_cap`, the times a person may continue retrying a job). Read once, as `ASK_USER_ROUNDS_CAP` is |
 | `PROD_PORT` | `8200` | Frontend port (nginx) |
 | `AGENT_RUNTIME` | `dind` | Which daemon runs sandboxes: `dind`, the privileged Docker-in-Docker service, or `rootless`, a dedicated rootless Docker daemon on the host. `rootless` needs `DOCKER_HOST=unix://…` and no `DOCKER_TLS_VERIFY`/`DOCKER_CERT_PATH`, refuses to start unless the daemon reports rootless with enforceable limits, and refuses `dind_enabled` profiles and QA `mode: dind`. Compose sets it through `infra/docker-compose.rootless.yml`; see [provisioning.md §10](ops/provisioning.md#10-a-rootless-sandbox-daemon) |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for notifications |
@@ -434,6 +434,16 @@ From an MCP client:
 Generated from the sections by `python -m embry0.settings.reference --write docs/configuration.md`; a test fails when it is out of date.
 
 <!-- settings-reference:start -->
+
+#### `agent_questions`
+
+How many rounds of questions a job's agents may ask a person, and how many times a person may send a job back to try again.
+
+| Key | Type | Default | Allowed | Overridable by | Imported from | Description |
+|---|---|---|---|---|---|---|
+| `rounds_cap` | whole number | `10` | ≥ 0 | organization, repository | `ASK_USER_ROUNDS_CAP` | Rounds of asking a person one job may take, counted across triage, the developer and the reviewer: each run that stops with a question a person must answer is one. The job fails with ERR_MAX_AGENT_QUESTIONS at the first question past it. Triage's own pauses for more information are counted apart, against the same cap. 0: the first question fails the job. |
+| `brainstorming_floor` | whole number | `15` | ≥ 0 | organization, repository |  | The cap of a developer run that loads the brainstorming skill, when it is higher than rounds_cap: a design conversation needs more rounds. |
+| `retry_rounds_cap` | whole number | `5` | ≥ 0 | organization, repository | `USER_RETRY_ROUNDS_CAP` | How many times a person may answer a job that ran out of retries with continue retrying; past it, the job stops. |
 
 #### `asks`
 

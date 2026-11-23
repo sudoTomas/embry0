@@ -15,7 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langgraph.types import Command
 
-from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
+from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
+
+#: The cap a job reads when no layer sets agent_questions.rounds_cap.
+ROUNDS_CAP = AGENT_QUESTIONS.defaults().rounds_cap
+
 
 ASK = {"type": "agent_ask_user", "question": "which database?", "category": "general"}
 RUN_ERROR = "triage: one of its tool calls failed"
@@ -53,7 +57,7 @@ def _state(**over: Any) -> dict[str, Any]:
         "agent_outputs": [],
         "errors": [],
         "total_cost_usd": 0.0,
-        "agent_question_rounds": DEFAULT_ASK_USER_CAP,  # the cap is reached: the next question exhausts it
+        "agent_question_rounds": ROUNDS_CAP,  # the cap is reached: the next question exhausts it
         "agent_questions_exhausted": False,
         **over,
     }

@@ -32,12 +32,16 @@ from langgraph.types import Command
 
 from embry0.orchestration.checkpoint import checkpointer_context
 from embry0.orchestration.restart import ShutdownInterrupt
+from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.issue_inputs import IssueInputsRepository
 from embry0.storage.repositories.jobs import JobsRepository
 from embry0.workflows.issue_to_pr.nodes import developer_node, review_node, triage_node
 from tests.fixtures.repository_writes import COVERED, MASTER, UNCOVERED, call, ids, repository_writes_app
 from tests.unit.workflows.test_command_routing import _make_review_config, _state, _triage_config
+
+#: The cap a job reads when no layer sets agent_questions.rounds_cap.
+ROUNDS_CAP = AGENT_QUESTIONS.defaults().rounds_cap
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -272,14 +276,13 @@ async def test_a_run_records_at_most_its_cap_and_says_so(db_with_migrations: Dat
 
 async def test_the_questions_of_a_run_past_the_round_cap_are_still_recorded(db_with_migrations: DatabasePool) -> None:
     """The run asked a blocking question past the cap and failed; the ones it answered itself are its record."""
-    from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
 
     await _job(db_with_migrations, "job-1", "iss-1")
     with (
         patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=_Run([AUTO, BLOCKING], "")),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _event: None),
     ):
-        result = await developer_node(_state(agent_question_rounds=DEFAULT_ASK_USER_CAP), None)
+        result = await developer_node(_state(agent_question_rounds=ROUNDS_CAP), None)
     update = dict(result.update if isinstance(result, Command) else result)
     assert update.get("agent_questions_exhausted") is True, "the run is past the cap"
 
@@ -354,7 +357,6 @@ async def test_triage_after_a_qa_failure_keeps_the_questions_it_answered_itself_
     """Triage, run again after a QA failure, answers a question itself (folded into its result), then its
     decision asks the person a question. That second cap call answers its own, empty, list of questions the
     agent answered itself; laid over the result, it dropped the folded one, on both of its paths."""
-    from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
     from tests.unit.workflows.issue_to_pr.test_qa_failure_routing_in_triage import (
         _make_config,
         _make_qa_failed_state,
@@ -365,7 +367,7 @@ async def test_triage_after_a_qa_failure_keeps_the_questions_it_answered_itself_
     output = _triage_decision_with_qa_failure_action({"kind": "ask_user", "question": "Which behaviour is intended?"})
     state = _make_qa_failed_state()
     if at_the_cap:
-        state["agent_question_rounds"] = DEFAULT_ASK_USER_CAP
+        state["agent_question_rounds"] = ROUNDS_CAP
     with (
         patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=_Run([AUTO], output)),
         patch("embry0.workflows.issue_to_pr.nodes.get_stream_writer", return_value=lambda _event: None),
