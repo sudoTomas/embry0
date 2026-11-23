@@ -68,31 +68,25 @@ class Problem:
 #: How deep a problem's place goes: a section and its field. Below a field, a place would name a key of a mapping
 #: the operator wrote, and a 422 repeats nothing written (:func:`placed`).
 _FIELD_DEPTH: Final = 2
-#: How a key written twice is told, naming its lines but not the key, which the operator wrote.
-_TWICE: Final = re.compile(r"on lines? (\d+) and (\d+)")
 
 
 def placed(problem: Problem) -> Problem:
     """``problem`` as a 422 says it: placed at its section's field when its place goes on into a mapping below the
-    field, whose keys are what the operator wrote (a list's positions are not, and stay), and a key written twice
-    told by its lines alone."""
+    field, whose keys are what the operator wrote (a list's positions are not, and stay)."""
     loc = problem.loc
     if len(loc) > _FIELD_DEPTH and any(isinstance(part, str) for part in loc[_FIELD_DEPTH:]):
         loc = loc[:_FIELD_DEPTH]
-    msg = problem.msg
-    if problem.type == "duplicate_key":
-        lines = _TWICE.search(msg)
-        msg = (
-            f"A key is written twice, on lines {lines[1]} and {lines[2]}; only the second would be kept. Keep one."
-            if lines
-            else "A key is written twice in one mapping; only the second would be kept. Keep one."
-        )
-    return Problem(loc, problem.type, msg)
+    return Problem(loc, problem.type, problem.msg)
 
 
 class DocumentInvalid(ValueError):
     """The document has problems; ``problems`` lists every one, each once, as :func:`placed` says it: no place
-    below a section's field names a key the operator wrote, and no message a key written twice."""
+    below a section's field names a key the operator wrote, and no message repeats a key, a tag or an alias name
+    the operator wrote (a key written twice is told by its lines, a YAML message's quoted text by ``…``).
+
+    The one exception is a section or a field the catalog does not have: its name is said, with the nearest one
+    the catalog has, so a typo is seen at once. Those two levels hold the catalog's words, and a name written
+    there that is none of them is the operator's mistake, not their content."""
 
     def __init__(self, problems: list[Problem]) -> None:
         said = list(dict.fromkeys(placed(problem) for problem in problems))
@@ -107,11 +101,27 @@ class DocumentTooLarge(ValueError):
 # ---- parsing ----------------------------------------------------------------
 
 
+#: Text PyYAML quotes in a message: a tag, an alias or a token as written, or one character.
+_QUOTED: Final = re.compile(r"'((?:\\.|[^'\\])*)'")
+
+
+def _unquoted(text: str) -> str:
+    """``text`` with each quoted part longer than one character (``\\t`` counts as one) said as ``'…'``: PyYAML
+    quotes tags and alias names as written, at any length, and a 422 repeats nothing written."""
+
+    def one(match: re.Match[str]) -> str:
+        inner = match[1]
+        single = len(inner) == 1 or (len(inner) == 2 and inner[0] == "\\")
+        return match[0] if single else "'…'"
+
+    return _QUOTED.sub(one, text)
+
+
 def _yaml_problem(exc: yaml.YAMLError) -> Problem:
     mark = getattr(exc, "problem_mark", None)
     where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
     problem = getattr(exc, "problem", None) or str(exc)
-    return Problem((), "yaml_syntax", f"The YAML cannot be read: {where}{problem}")
+    return Problem((), "yaml_syntax", f"The YAML cannot be read: {where}{_unquoted(problem)}")
 
 
 _TOO_DEEP: Final = Problem((), "too_deep", "The document is nested too deeply.")
@@ -293,7 +303,8 @@ def _message(section: Section[Any], error: Mapping[str, Any]) -> str:
         key = str(loc[-1])
         if len(loc) == 1:
             return f"'{key}' is not a setting of '{section.name}'.{_close(key, section.fields)}"
-        return f"'{key}' is not a setting here."
+        # Below a field the key is one the operator wrote into a mapping or an object: said by kind only.
+        return "A key here is not a setting."
     msg = str(error.get("msg") or "invalid").removeprefix("Value error, ")
     if isinstance(error.get("input"), bool) and error.get("type") in _WANTS_TEXT:
         msg += ". YAML reads a bare on, off, yes or no as true or false; put the word in quotes"

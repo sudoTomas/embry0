@@ -163,8 +163,8 @@ def structure_problems(root: yaml.Node | None, *, what: str = "a document") -> l
                         StructureProblem(
                             (*loc, name),
                             "duplicate_key",
-                            f"'{name}' is written twice, on lines {first[name]} and {_line(key)}; YAML would keep "
-                            "only the second. Keep one.",
+                            f"A key is written twice, on lines {first[name]} and {_line(key)}; YAML would keep only "
+                            "the second. Keep one.",
                         )
                     )
                 else:
@@ -176,10 +176,11 @@ def structure_problems(root: yaml.Node | None, *, what: str = "a document") -> l
 
 
 class DuplicateKey(ValueError):
-    """A JSON object names one key twice; ``key`` is the name."""
+    """A JSON object names one key twice; ``key`` is the name, which the message never repeats: it is what the
+    operator wrote."""
 
     def __init__(self, key: str) -> None:
-        super().__init__(f"'{key}' is written twice in one object; JSON would keep only the second. Keep one.")
+        super().__init__("A key is written twice in one object; JSON would keep only the second. Keep one.")
         self.key = key
 
 

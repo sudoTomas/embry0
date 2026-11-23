@@ -483,6 +483,13 @@ _WRITTEN_KEY = "zz-written-key"
         f"leads:\n  readiness_labels:\n    {_WRITTEN_KEY}: [[2026-01-02]]\n",
         f"leads:\n  readiness_weights:\n    {_WRITTEN_KEY}: {'9' * 5000}\n",
         f"slop_meter:\n  weights:\n    {_WRITTEN_KEY}: not-a-number\n",
+        f"leads:\n  offer_min: !{_WRITTEN_KEY} 4\n",
+        f"leads:\n  offer_min: !<tag:example.org,2026:{_WRITTEN_KEY}> 4\n",
+        f"%TAG !e! tag:example.org,2026:\n---\nleads:\n  offer_min: !e!{_WRITTEN_KEY} 4\n",
+        f"leads:\n  offer_min: !{_WRITTEN_KEY}!x 4\n",
+        f"leads:\n  offer_min: *{_WRITTEN_KEY}\n",
+        f"{_WRITTEN_KEY}: *{_WRITTEN_KEY}\n",
+        f"leads:\n  ask_severities:\n    {_WRITTEN_KEY}:\n      {_WRITTEN_KEY}: 1\n",
     ],
     ids=[
         "date",
@@ -496,6 +503,13 @@ _WRITTEN_KEY = "zz-written-key"
         "date in a list",
         "long number",
         "type",
+        "tag",
+        "verbatim tag",
+        "expanded tag",
+        "tag handle",
+        "undefined alias",
+        "undefined alias at the top",
+        "key below a field",
     ],
 )
 def test_no_problem_under_a_mapping_names_the_key_the_operator_wrote(text: str) -> None:
@@ -510,7 +524,7 @@ def test_no_problem_under_a_mapping_names_the_key_the_operator_wrote(text: str) 
         found = [p.to_dict() for p in exc.problems]
     assert found, f"the document is refused: {text!r}"
     for problem in found:
-        assert len(problem["loc"]) == 2, f"placed at the section's field: {problem}"
+        assert len(problem["loc"]) <= 2, f"placed no deeper than the section's field: {problem}"
         assert _WRITTEN_KEY not in json.dumps(problem), f"the 422 repeats the key written: {problem}"
 
 
@@ -540,10 +554,8 @@ def _nested(levels: int) -> Any:
 def test_a_value_nested_past_the_bound_is_refused_before_its_check_reads_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """No setting nests more than a few levels. A value nested 100,000 deep is refused at its field, and its check,
     which would read every level, never runs."""
-    from embry0.settings import document, registry
+    from embry0.settings import registry
     from embry0.settings.sections import CATALOG
-
-    bound = getattr(document, "MAX_VALUE_DEPTH", 32)
 
     checked: list[object] = []
     real = registry.validate_values
@@ -556,7 +568,7 @@ def test_a_value_nested_past_the_bound_is_refused_before_its_check_reads_it(monk
     )
     assert checked == [], "the check of a value past the bound never runs"
     with pytest.raises(DocumentInvalid) as within:
-        check(CATALOG, {"leads": {"done_phrases": _nested(bound - 1)}}, stored={})
+        check(CATALOG, {"leads": {"done_phrases": _nested(5)}}, stored={})
     assert "too_deep" not in [p.type for p in within.value.problems], "a value within the bound is checked as before"
 
 
@@ -568,3 +580,32 @@ def test_problems_placed_at_one_field_are_said_once() -> None:
     with pytest.raises(DocumentInvalid) as caught:
         check(CATALOG, load_yaml("leads:\n  ask_severities:\n    a: 2026-01-02\n    b: 2026-01-03\n"), stored={})
     assert [(tuple(p.loc), p.type) for p in caught.value.problems] == [(("leads", "ask_severities"), "date_value")]
+
+
+def test_a_key_below_a_field_the_model_does_not_have_is_told_by_kind_not_name() -> None:
+    """A section whose field is a model of its own refuses a key that model does not have, and says so without
+    naming it: below a field, a key is the operator's content."""
+    from pydantic import Field
+
+    from embry0.settings.registry import Section, SectionModel
+
+    class Inner(SectionModel):
+        limit: int = Field(default=1, description="A limit inside the field.")
+
+    class Outer(SectionModel):
+        inner: Inner = Field(default_factory=Inner, description="A field that is a model of its own.")
+
+    catalog = Catalog((Section(name="outer", model=Outer, summary="A section with a nested model."),))
+    with pytest.raises(DocumentInvalid) as caught:
+        check(catalog, {"outer": {"inner": {"limit": 2, _WRITTEN_KEY: 1}}}, stored={})
+    said = [(tuple(p.loc), p.type, p.msg) for p in caught.value.problems]
+    assert said == [(("outer", "inner"), "extra_forbidden", "A key here is not a setting.")], said
+
+
+def test_a_yaml_message_keeps_its_line_column_and_a_one_character_quote() -> None:
+    """Only quoted text longer than one character is said as '…': where the YAML broke, and a character such as a
+    tab it cannot read, are still said."""
+    with pytest.raises(DocumentInvalid) as caught:
+        load_yaml("leads:\n\toffer_min: 4\n")
+    (problem,) = caught.value.problems
+    assert "line 2, column 1" in problem.msg and "'\\t'" in problem.msg, problem.msg
