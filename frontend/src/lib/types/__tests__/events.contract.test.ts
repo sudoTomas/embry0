@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import contractText from "../../../../../docs/contracts/events.json?raw";
 import { EVENT_FIELDS } from "../events";
 
-type Contract = Record<string, { required: string[]; optional: string[] }>;
+type Contract = Record<string, { required: string[]; optional: string[]; written_by: string }>;
 
 // Read as text through Vite (`?raw`): the app tsconfig has no Node types.
 const contract: Contract = JSON.parse(contractText);
@@ -16,7 +16,8 @@ describe("event contract mirror", () => {
 
   it("declares the same required and optional fields per type", () => {
     for (const [type, fields] of Object.entries(contract)) {
-      expect(EVENT_FIELDS[type as keyof typeof EVENT_FIELDS], type).toEqual(fields);
+      const { required, optional } = fields;
+      expect(EVENT_FIELDS[type as keyof typeof EVENT_FIELDS], type).toEqual({ required, optional });
     }
   });
 });

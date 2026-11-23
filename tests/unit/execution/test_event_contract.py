@@ -120,3 +120,62 @@ def test_api_doc_events_section_is_rendered_from_the_contract() -> None:
 def test_api_doc_does_not_document_routes_that_do_not_exist() -> None:
     doc = API_DOC.read_text(encoding="utf-8")
     assert "/api/v1/graphs/" not in doc, "docs/api.md documents /graphs/* routes that were never implemented"
+
+
+#: Every module baked into the sandbox image whose code may make an event (infra/Dockerfile.sandbox copies these).
+_SANDBOX_BAKED = ("embry0/agents", "embry0/sandbox", "embry0/safety")
+
+
+def _constructed_in_the_sandbox() -> set[str]:
+    """The event types the sandbox-baked modules can make: every call of a constructor of events.py there, by
+    the type that constructor makes."""
+    tree = ast.parse(CONTRACT_MODULE.read_text(encoding="utf-8"))
+    makes: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name) and sub.value.id == "EventType":
+                    makes[node.name] = EventType[sub.attr].value
+    built: set[str] = set()
+    for base in _SANDBOX_BAKED:
+        for path in sorted((REPO / base).rglob("*.py")):
+            for sub in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(sub, ast.Call):
+                    name = sub.func.attr if isinstance(sub.func, ast.Attribute) else getattr(sub.func, "id", None)
+                    if name in makes:
+                        built.add(makes[name])
+    return built
+
+
+def test_the_agent_run_types_are_the_events_the_sandbox_makes() -> None:
+    """The orchestrator takes only these from an agent run's output (embry0/execution/agent_runner.py), so the set
+    is what the code in the sandbox image can make: one the sandbox makes but the set leaves out would be dropped,
+    and one the set names but nothing there makes would let a line of it in for nothing."""
+    from embry0.execution.events import AGENT_RUN_TYPES
+
+    built = _constructed_in_the_sandbox()
+    assert len(built) >= 10, f"the scan found too few event types to mean anything: {sorted(built)}"
+    assert sorted(built) == sorted(str(kind) for kind in AGENT_RUN_TYPES), (
+        f"made in the sandbox but not agent-run types: {sorted(built - set(AGENT_RUN_TYPES))}; "
+        f"agent-run types nothing there makes: {sorted(set(AGENT_RUN_TYPES) - built)}"
+    )
+
+
+def test_a_row_a_reader_trusts_is_one_only_the_orchestrator_writes() -> None:
+    """Each event type a query of job_logs selects by name is read for what the orchestrator decided (the newest
+    pause, a node's end) or is an agent run's own: a reader of an orchestrator type reads only what the
+    orchestrator wrote, since no agent run's line of it is taken. The agent-run types a query names are read for
+    display or retention, never trusted as the orchestrator's."""
+    from embry0.execution.events import AGENT_RUN_TYPES
+
+    named: set[str] = set()
+    for path in sorted((REPO / "embry0").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for clause in re.findall(r"event_type\s*(?:=\s*'[a-z_]+'|IN\s*\([^)]*\))", text):
+            named |= set(re.findall(r"'([a-z_]+)'", clause))
+    assert "interrupt" in named, f"the scan finds the newest-pause query: {sorted(named)}"
+    agent_run_named = sorted(named & {str(kind) for kind in AGENT_RUN_TYPES})
+    assert agent_run_named == ["agent_completed", "agent_started", "tool_call", "tool_result"], (
+        "a query of job_logs names an agent-run type it may trust; each such reader must be for display or "
+        f"retention only: {agent_run_named}"
+    )

@@ -20,7 +20,7 @@ import structlog
 from embry0.agents.claude_cli_session import canonical_session_path_for
 from embry0.agents.session import MAX_RESUME_BLOB_BYTES
 from embry0.execution.docker_client import DockerClient, ExecStdinTimeoutError
-from embry0.execution.events import parse_event
+from embry0.execution.events import AGENT_RUN_TYPES, ORCHESTRATOR_STAMPED, parse_event
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
 from embry0.safety.redaction import redact_secrets, redacted_log_field, redacted_stderr_tail, secret_env_values
 
@@ -52,6 +52,31 @@ SANDBOX_PROJECT_CWD = "/workspace"
 #   `pip install --user` writes. -s leaves it off.
 RUNNER_COMMAND: tuple[str, ...] = ("python", "-P", "-s", "-m", "embry0.sandbox.runner")
 SANDBOX_HOME = Path("/home/agent")
+#: The longest event type a dropped line's log names, cut there: the type is what a sandbox wrote.
+_DROPPED_TYPE_CHARS = 64
+#: How many distinct dropped types one run's log names; the rest are counted together under ``<other>``.
+_DROPPED_TYPES_NAMED = 16
+
+
+def agent_run_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """``event`` as a job's events take it from an agent run's stdout, or None when it is not one an agent run
+    writes.
+
+    The runner's stdout carries whatever its process and the code the job runs as the same user write to it, so
+    a line naming a type of the orchestrator's own (``interrupt``, ``node_completed``, a QA or review result)
+    is no agent run's event: only :data:`~embry0.execution.events.AGENT_RUN_TYPES` are taken. The fields only
+    the orchestrator stamps (``job_id``, ``event_seq``, ``prev_seq``) are taken off, so a line cannot pass for
+    another job's event or another place in this one's.
+    """
+    if event.get("type") not in AGENT_RUN_TYPES:
+        return None
+    return {key: value for key, value in event.items() if key not in ORCHESTRATOR_STAMPED}
+
+
+def _dropped_type(event: dict[str, Any]) -> str:
+    """A dropped line's type as its log names it: text cut short, or the kind of value it was."""
+    kind = event.get("type")
+    return kind[:_DROPPED_TYPE_CHARS] if isinstance(kind, str) else f"<{type(kind).__name__}>"
 
 
 @dataclass
@@ -351,6 +376,7 @@ class AgentRunner:
             final_result: dict[str, Any] | None = None
             event_callback = on_event or (lambda _: None)
             line_count = 0
+            dropped: dict[str, int] = {}
             buffered = 0
 
             async def _drain_stderr() -> None:
@@ -382,9 +408,24 @@ class AgentRunner:
                         continue
                     if event.get("type") == "final_result":
                         final_result = event
-                    else:
-                        event_callback(event)
+                        continue
+                    forwarded = agent_run_event(event)
+                    if forwarded is None:
+                        kind = _dropped_type(event)
+                        if kind not in dropped and len(dropped) >= _DROPPED_TYPES_NAMED:
+                            kind = "<other>"
+                        dropped[kind] = dropped.get(kind, 0) + 1
+                        continue
+                    event_callback(forwarded)
 
+            if dropped:
+                # The types and how many of each, never a line: what the sandbox wrote is not logged as written.
+                logger.warning(
+                    "agent_runner_events_dropped",
+                    container=container,
+                    dropped=sum(dropped.values()),
+                    types=dropped,
+                )
             await proc.wait()
             await stderr_task
 

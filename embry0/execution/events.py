@@ -71,6 +71,34 @@ class EventType(StrEnum):
     JOB_FINISHED = "job_finished"
 
 
+#: The types an agent run writes: the sandbox executors' events, the only ones the orchestrator takes from an agent
+#: runner's stdout into a job's events (``embry0.execution.agent_runner``). Every other type is the orchestrator's
+#: own, written only by it, so a reader of one (``interrupt``, ``node_*``, ``job_*``, a QA or review result) reads
+#: what the orchestrator wrote. ``final_result`` is not an event: the runner's last line, read apart. Exported into
+#: docs/contracts/events.json as each type's ``written_by``; a test checks it against the events the sandbox-baked
+#: modules construct.
+AGENT_RUN_TYPES: frozenset[EventType] = frozenset(
+    {
+        EventType.AGENT_STARTED,
+        EventType.TURN_START,
+        EventType.TURN_USAGE,
+        EventType.TEXT,
+        EventType.THINKING,
+        EventType.TOOL_CALL,
+        EventType.TOOL_RESULT,
+        EventType.SUBAGENT_START,
+        EventType.SUBAGENT_END,
+        EventType.CONTEXT_COMPACTED,
+        EventType.AGENT_ASK_USER,
+        EventType.COST_UPDATE,
+        EventType.AGENT_COMPLETED,
+        EventType.ERROR,
+    }
+)
+#: Fields only the orchestrator stamps (the module docstring): an agent run's event never carries its own.
+ORCHESTRATOR_STAMPED: tuple[str, ...] = ("job_id", "event_seq", "prev_seq")
+
+
 class BaseEvent(TypedDict):
     type: str
     timestamp: str
@@ -847,7 +875,8 @@ def parse_event(line: str) -> dict[str, Any] | None:
         # ValueError covers json.JSONDecodeError and the int digit limit.
         result = None
     if not isinstance(result, dict):
-        logger.warning("event_parse_failed", line=line[:200])
+        # The line's length, never its text: what a sandbox writes is not logged as it wrote it.
+        logger.warning("event_parse_failed", length=len(line))
         return None
     return result
 
@@ -855,18 +884,21 @@ def parse_event(line: str) -> dict[str, Any] | None:
 # --- the contract --------------------------------------------------------------
 
 
-def contract() -> dict[str, dict[str, list[str]]]:
-    """Field names per event type: ``{"tool_call": {"required": [...], "optional": [...]}}``.
+def contract() -> dict[str, dict[str, Any]]:
+    """Field names per event type, and who writes it:
+    ``{"tool_call": {"required": [...], "optional": [...], "written_by": "agent_run"}}``.
 
     ``type`` and ``timestamp`` are required on every event; the base
-    correlation fields are optional on every event. Sorted so the JSON on
-    disk is stable.
+    correlation fields are optional on every event. ``written_by`` is
+    ``agent_run`` for :data:`AGENT_RUN_TYPES`, else ``orchestrator``. Sorted so
+    the JSON on disk is stable.
     """
-    out: dict[str, dict[str, list[str]]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for name, typed in EVENT_SCHEMAS.items():
         required = sorted(getattr(typed, "__required_keys__"))
         optional = sorted(getattr(typed, "__optional_keys__"))
-        out[str(name)] = {"required": required, "optional": optional}
+        written_by = "agent_run" if name in AGENT_RUN_TYPES else "orchestrator"
+        out[str(name)] = {"required": required, "optional": optional, "written_by": written_by}
     return out
 
 

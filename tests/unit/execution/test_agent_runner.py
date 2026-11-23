@@ -431,7 +431,8 @@ _OLD_RUNNER_USAGE = (
 )
 _FINAL_OK = b'{"type": "final_result", "agent_type": "qa", "is_error": false, "output": "done"}\n'
 # An event the runner writes once the agent is under way.
-_STARTED = b'{"type": "progress", "message": "agent started"}\n'
+# An event an agent run writes: a type of the orchestrator's own (progress, say) is dropped from this stream.
+_STARTED = b'{"type": "agent_started", "model": "custom/m", "max_turns": 5}\n'
 
 
 class _LinesStdout:

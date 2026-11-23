@@ -18,7 +18,8 @@
       "question",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "agent_completed": {
     "optional": [
@@ -48,7 +49,8 @@
       "timestamp",
       "tools_called",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "agent_paused_for_input": {
     "optional": [
@@ -64,7 +66,8 @@
       "count",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "agent_started": {
     "optional": [
@@ -83,7 +86,8 @@
       "model",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "context_compacted": {
     "optional": [
@@ -100,7 +104,8 @@
     "required": [
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "cost_update": {
     "optional": [
@@ -124,7 +129,8 @@
       "tokens_in",
       "tokens_out",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "error": {
     "optional": [
@@ -143,7 +149,8 @@
       "message",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "interrupt": {
     "optional": [
@@ -161,7 +168,8 @@
     "required": [
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "job_failed": {
     "optional": [
@@ -178,7 +186,8 @@
       "message",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "job_finished": {
     "optional": [
@@ -198,7 +207,8 @@
       "timestamp",
       "total_cost_usd",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "node_completed": {
     "optional": [
@@ -221,7 +231,8 @@
       "attempt",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "node_started": {
     "optional": [
@@ -238,7 +249,8 @@
       "attempt",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "pipeline_graph": {
     "optional": [
@@ -254,7 +266,8 @@
       "graph",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "pr_created": {
     "optional": [
@@ -271,7 +284,8 @@
       "pr_url",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "progress": {
     "optional": [
@@ -288,7 +302,8 @@
       "message",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "qa_agent_transient_retry": {
     "optional": [
@@ -305,7 +320,8 @@
       "reason",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "qa_apps_resolved": {
     "optional": [
@@ -321,7 +337,8 @@
       "apps",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "qa_subtask_finished": {
     "optional": [
@@ -340,7 +357,8 @@
       "status",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "qa_subtask_started": {
     "optional": [
@@ -357,7 +375,8 @@
       "target",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "qa_subtask_status": {
     "optional": [
@@ -377,7 +396,8 @@
       "status",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "review_decision": {
     "optional": [
@@ -395,7 +415,8 @@
       "summary",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "subagent_end": {
     "optional": [
@@ -413,7 +434,8 @@
       "timestamp",
       "tool_id",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "subagent_start": {
     "optional": [
@@ -431,7 +453,8 @@
       "timestamp",
       "tool_id",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "system": {
     "optional": [
@@ -447,7 +470,8 @@
       "message",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "text": {
     "optional": [
@@ -466,7 +490,8 @@
       "text",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "thinking": {
     "optional": [
@@ -485,7 +510,8 @@
       "text",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "tool_call": {
     "optional": [
@@ -506,7 +532,8 @@
       "tool_input",
       "tool_name",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "tool_result": {
     "optional": [
@@ -528,7 +555,8 @@
       "timestamp",
       "tool_id",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "turn_start": {
     "optional": [
@@ -546,7 +574,8 @@
       "timestamp",
       "turn_number",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "turn_usage": {
     "optional": [
@@ -568,7 +597,8 @@
       "output_tokens",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "agent_run"
   },
   "validation_result": {
     "optional": [
@@ -584,7 +614,8 @@
       "timestamp",
       "type",
       "validation"
-    ]
+    ],
+    "written_by": "orchestrator"
   },
   "verification_result": {
     "optional": [
@@ -605,6 +636,7 @@
       "tier",
       "timestamp",
       "type"
-    ]
+    ],
+    "written_by": "orchestrator"
   }
 }
