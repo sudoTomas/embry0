@@ -330,7 +330,8 @@ def _continue_past_ceiling(state: dict[str, Any], passed: int, *, extra: float |
         ):
             return dict(await nodes_module.max_retries_node(job, config={"configurable": {}}))
 
-    return run_async(go()), offered.get("options")
+    update = run_async(go())
+    return update, offered
 
 
 def test_a_layer_cannot_raise_how_many_continues_pass_the_budget_ceiling() -> None:
@@ -339,15 +340,15 @@ def test_a_layer_cannot_raise_how_many_continues_pass_the_budget_ceiling() -> No
     budget.continue_past_ceiling_max, the deployment's alone, bounds them whatever a layer sets."""
     store = _Store(**_layers(**{f"repository:{WIDGETS}": {"retry_rounds_cap": 100000}}))
     widgets = run_async(_start(store, WIDGETS))
-    stopped, options = _continue_past_ceiling(widgets, 5)
+    stopped, pause = _continue_past_ceiling(widgets, 5)
     assert stopped.get("current_stage") == "abandoned", (
         f"a sixth continue past the $50 ceiling went on under a repository's retry_rounds_cap of 100000: {stopped}"
     )
-    assert "budget.continue_past_ceiling_max" in stopped["errors"][0], stopped["errors"]
-    assert options is not None and "continue_retrying" not in options, f"the pause still offered it: {options}"
-    went_on, options = _continue_past_ceiling(widgets, 4)
+    assert "continue_retrying" not in pause.get("options", []), f"the pause still offered it: {pause.get('options')}"
+    assert "budget.continue_past_ceiling_max" in pause.get("message", ""), pause.get("message")
+    went_on, pause = _continue_past_ceiling(widgets, 4)
     assert went_on.get("current_stage") == "developer_retry" and went_on.get("continues_past_ceiling") == 5, went_on
-    assert "continue_retrying" in (options or []), options
+    assert "continue_retrying" in pause.get("options", []), pause.get("options")
 
 
 def test_the_deployment_sets_how_many_continues_pass_the_budget_ceiling() -> None:
@@ -399,3 +400,116 @@ def test_no_layer_may_set_how_many_continues_pass_the_budget_ceiling(layer: str)
     assert [(p.loc, p.type) for p in invalid.value.problems] == [
         (("budget", "continue_past_ceiling_max"), "not_overridable")
     ], f"the {layer} layer may set budget.continue_past_ceiling_max: {invalid.value.problems}"
+
+
+async def _paused_job(app: Any, job_id: str, repo: str, summary: dict[str, Any]) -> None:
+    """A job paused at max_retries with ``summary``, as the node logged it: what the resume API checks a choice
+    against."""
+    from datetime import UTC, datetime
+
+    from embry0.execution import events
+
+    await app.state.db.execute(
+        "INSERT INTO jobs (job_id, repo, task, status, pipeline_template, created_at, started_at) "
+        "VALUES ($1, $2, 'T', 'paused', 'full-magnum-opus', $3, $3)",
+        job_id,
+        repo,
+        datetime.now(UTC),
+    )
+    await app.state.jobs_repo.append_log_event(
+        job_id, events.interrupt(node="max_retries", reason="max_retries", summary=summary)
+    )
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.parametrize(
+    ("spent", "extra"),
+    [
+        (10.5, 100.0),  # the default continue stays under the $50 ceiling; the named amount would pass it
+        (45.0, 5.0),  # the default continue would pass it; the named amount lands on it
+    ],
+)
+async def test_a_used_up_job_with_room_under_the_ceiling_is_offered_a_continue_the_ceiling_bounds(
+    db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch, spent: float, extra: float
+) -> None:
+    """#651 review, through the API: with no continue past the ceiling left (continue_past_ceiling_max 0), the pause
+    offered a continue only when the default amount stayed under the ceiling, and a named amount past it then
+    stopped the job; or it hid the continue when the default passed the ceiling, and the API refused an amount
+    that landed on it. The ceiling now bounds the continue, as continue_may_exceed_ceiling false does: offered
+    while there is room, and capped at the ceiling whatever amount is named."""
+    from tests.fixtures.repository_writes import COVERED, MASTER, call, repository_writes_app
+
+    job = await _start(_Store({"budget": {"continue_past_ceiling_max": 0}}), COVERED)
+    state = {**job, "pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": spent}
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        scheduled: list[Any] = []
+        monkeypatch.setattr(app.state.issue_executor, "schedule_resume", lambda *a, **k: scheduled.append((a, k)))
+        pause = await _max_retries(state, {"choice": "abandon"})
+        assert "continue_retrying" in pause[1].get("options", []), (
+            f"a job ${50 - spent:.2f} under its ceiling was not offered a continue: {pause[1].get('options')}"
+        )
+        await _paused_job(app, "job-room", COVERED, pause[1])
+        answered = await call(
+            app,
+            "POST",
+            "/api/v1/jobs/job-room/resume",
+            MASTER,
+            {"choice": "continue_retrying", "extra_budget_usd": extra},
+        )
+        assert answered.status_code == 200 and len(scheduled) == 1, answered.text
+    went_on, _ = await _max_retries(state, {"choice": "continue_retrying", "extra_budget_usd": extra})
+    assert went_on.get("current_stage") == "developer_retry", f"the continue stopped the job: {went_on}"
+    assert went_on.get("budget_cap_usd") == 50.0, f"the continue was not capped at the $50 ceiling: {went_on}"
+    assert "continues_past_ceiling" not in went_on, "a continue the ceiling bounded was counted as one past it"
+
+
+@pytest.mark.requires_postgres
+async def test_a_used_up_job_at_the_ceiling_is_offered_no_continue_and_the_api_refuses_one(
+    db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.repository_writes import COVERED, MASTER, call, repository_writes_app
+
+    job = await _start(_Store({"budget": {"continue_past_ceiling_max": 0}}), COVERED)
+    state = {**job, "pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": 50.2}
+    _, pause = await _max_retries(state, {"choice": "abandon"})
+    assert "continue_retrying" not in pause.get("options", []), pause.get("options")
+    assert "which no continue may pass (budget.continue_past_ceiling_max is 0)" in pause.get("message", ""), (
+        f"with the key at 0 the pause must say no continue may pass the ceiling: {pause.get('message')}"
+    )
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        scheduled: list[Any] = []
+        monkeypatch.setattr(app.state.issue_executor, "schedule_resume", lambda *a, **k: scheduled.append((a, k)))
+        await _paused_job(app, "job-at-ceiling", COVERED, pause)
+        refused = await call(
+            app,
+            "POST",
+            "/api/v1/jobs/job-at-ceiling/resume",
+            MASTER,
+            {"choice": "continue_retrying", "extra_budget_usd": 1.0},
+        )
+    assert refused.status_code == 409 and not scheduled, refused.text
+
+
+async def _max_retries(state: dict[str, Any], answer: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``max_retries_node``'s update for ``answer`` over a $50 ceiling, and the pause it offered."""
+    import embry0.workflows.issue_to_pr.nodes as nodes_module
+    from embry0.settings.sections.budget import BudgetSettings
+
+    offered: dict[str, Any] = {}
+
+    def asked(summary: dict[str, Any]) -> dict[str, Any]:
+        offered.update(summary)
+        return answer
+
+    job = {**state, "current_stage": "developer_complete", "retry_count": 1, "user_retry_rounds": 0}
+    with (
+        patch.object(nodes_module, "get_stream_writer", return_value=lambda _event: None),
+        patch.object(nodes_module, "interrupt", new=asked),
+        patch(
+            "embry0.workflows.issue_to_pr.nodes._interrupts.load_budget_settings",
+            new=AsyncMock(return_value=BudgetSettings(max_budget_per_job_usd=50.0)),
+        ),
+        patch("embry0.audit.helpers.emit_audit", new=AsyncMock()),
+    ):
+        update = dict(await nodes_module.max_retries_node(job, config={"configurable": {}}))
+    return update, offered

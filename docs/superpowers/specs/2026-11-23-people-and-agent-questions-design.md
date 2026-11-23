@@ -154,8 +154,10 @@ agent_questions:
   - With `retry_rounds_cap` on the organization and repository layers, a layer could have raised that bound. The
     budget section gives those layers no fleet limit on purpose.
   - So a new deployment-only key, `budget.continue_past_ceiling_max` (default 5, the bound the variable gave),
-    counts the continues that took the job past the ceiling. The continue that would pass it once more is refused
-    and the job stops, whatever `retry_rounds_cap` says; it is not offered at the pause either.
+    counts the continues that took the job past the ceiling. Once that many have, the ceiling bounds the job's
+    next continues as `continue_may_exceed_ceiling: false` bounds every one, whatever `retry_rounds_cap` says: a
+    continue adds at most what is left under the ceiling, whatever amount the person names, and is offered while
+    there is room under it.
   - Continues that keep the job under the ceiling count against `retry_rounds_cap` alone.
   - A job reads the key with its other kept settings when it starts (the budget section joins the job sections;
     its other keys are still read where they are checked), and counts on its state (`continues_past_ceiling`).
@@ -194,7 +196,7 @@ agent_questions:
 
 | Check | How |
 |---|---|
-| A layer cannot raise how many continues pass the budget ceiling | A repository layer sets `retry_rounds_cap: 100000`; through `max_retries_node`, the continue past the ceiling after `continue_past_ceiling_max` of them is refused and not offered; a continue under the ceiling goes on; an organization or repository layer that sets `budget.continue_past_ceiling_max` is refused. |
+| A layer cannot raise how many continues pass the budget ceiling | A repository layer sets `retry_rounds_cap: 100000`; through `max_retries_node`, once `continue_past_ceiling_max` continues have passed the ceiling, a job at it is not offered one; through the API, a used-up job with room under the ceiling is offered a continue, and a named amount past it is capped at the ceiling; a continue under the ceiling is not counted; an organization or repository layer that sets `budget.continue_past_ceiling_max` is refused. |
 | An organization's layer and a repository's each set a job's caps | Start jobs for repositories with and without the layers; the first round count at which `_enforce_ask_user_cap` fails each job, the brainstorming developer's cap, triage's own cap and the continue-retrying cap follow the nearest layer (`tests/unit/services/test_agent_questions_settings.py`). |
 | A running job keeps what it started with | Start a job, pause it on a question, change the layer, resume it: it keeps its cap; the next job reads the new one. |
 | The import writes a set value once | `ASK_USER_ROUNDS_CAP=12` and `USER_RETRY_ROUNDS_CAP=3` are written with source `bootstrap`; a second start imports nothing; `ten`, `-1`, an empty value and the default are not imported (`tests/unit/settings/test_agent_questions_import.py`). |

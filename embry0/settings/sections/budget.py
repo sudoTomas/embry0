@@ -158,10 +158,11 @@ class BudgetSettings(SectionModel):
         ge=0,
         description=(
             "How many times a person's continue may take one job past max_budget_per_job_usd, while "
-            "continue_may_exceed_ceiling is true. A continue that would take the job past the ceiling once more is "
-            "refused, and the job stops; continues that keep it under the ceiling count against "
-            "agent_questions.retry_rounds_cap alone. A job reads it when it starts and keeps it. 0: no continue "
-            "may pass the ceiling."
+            "continue_may_exceed_ceiling is true. Once that many have, the ceiling bounds the job's next continues "
+            "as continue_may_exceed_ceiling false bounds every one: a continue adds at most what is left under it, "
+            "and a job at the ceiling is not offered one. Continues that keep a job under the ceiling count against "
+            "agent_questions.retry_rounds_cap alone. A job reads it when it starts and keeps it. 0: no continue may "
+            "take a job past the ceiling."
         ),
     )
     continue_default_extra_usd: float | None = Field(
