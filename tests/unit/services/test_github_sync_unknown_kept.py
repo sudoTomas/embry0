@@ -231,6 +231,33 @@ async def test_a_lookup_held_between_its_check_and_its_claim_takes_no_issue_anot
     )
 
 
+async def test_a_kept_lookup_cancelled_at_its_check_holds_no_claim(db_with_migrations: DatabasePool) -> None:
+    """#646 review: the next push of a kept record claims #7 and waits for the database; cancelled there (a deploy, a
+    timeout), it kept the claim. The kept record lives on until its time, and every other create's lookup skipped #7
+    meanwhile: a create whose own issue that was would send again and make a second GitHub issue."""
+    gh, sync, issues, pushed = await _unknown_create(db_with_migrations)
+    kept = next(p for p in sync._live(REPO) if p.kept_until is not None)
+    waiting, never = asyncio.Event(), asyncio.Event()
+    read = issues.get_by_tracker_ref
+
+    async def held(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        waiting.set()
+        await never.wait()
+        return await read(*args, **kwargs)
+
+    issues.get_by_tracker_ref = held  # type: ignore[method-assign]
+    task = asyncio.create_task(sync.push_create(pushed, issues))
+    await asyncio.wait_for(waiting.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert kept in sync._live(REPO), "the kept record is gone: the test no longer reaches the case"
+    assert kept.claimed is None, (
+        f"the kept record still holds #{kept.claimed} after its lookup was cancelled at the database check: every "
+        "other create's lookup skips that issue until the record's time runs out"
+    )
+
+
 async def test_the_next_push_creates_nothing_while_github_still_cannot_say(db_with_migrations: DatabasePool) -> None:
     """The earlier create may have made the issue, and GitHub still cannot be read to say: nothing is created."""
     gh, sync, issues, pushed = await _unknown_create(db_with_migrations)

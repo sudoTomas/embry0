@@ -145,7 +145,7 @@ class _Claim:
     """The GitHub issue one create's lookup holds, which no other create's lookup takes (#629).
 
     Taken before the lookup asks the database whether another embry0 issue holds that issue, and dropped when it
-    does or when the question fails (#638). Asked first, it left a gap: between the answer and the claim, another
+    does, when the question fails, and when the push is cancelled while it waits for the answer (#638). Asked first, it left a gap: between the answer and the claim, another
     create's lookup could take the issue, link it and resolve, which released that create's claim, and the second
     link of the same issue failed. Taken first, the other create still holds it while it links; once it has
     resolved, its link is in the database, which the question then reads.
@@ -479,13 +479,15 @@ class GitHubSyncService:
                     # Another create's lookup under way took it (#629).
                     logger.info("github_issue_lookup_skipped_claimed", repo=repo, number=number)
                     continue
+                taken = False
                 try:
-                    elsewhere = await pushed_by_another(number)
-                except Exception:
-                    claim.drop(number)
-                    raise
-                if elsewhere:
-                    claim.drop(number)
+                    taken = not await pushed_by_another(number)
+                finally:
+                    # Dropped on every way out that does not take it: another issue holds it, the check failed, or
+                    # the push was cancelled while it waited (a kept record would hold it until its time, #646).
+                    if not taken:
+                        claim.drop(number)
+                if not taken:
                     logger.info("github_issue_lookup_skipped_linked_elsewhere", repo=repo, number=number)
                     continue
                 return True, item
