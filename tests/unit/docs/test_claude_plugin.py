@@ -597,39 +597,107 @@ def _fake_docker(tmp_path: Path, subnets: dict[str, str]) -> dict[str, str]:
 
 
 @pytest.mark.parametrize(
-    ("subnets", "clash"),
+    ("subnets", "dotenv", "answer"),
     [
-        ({"bridge": "172.17.0.0/16", "embry0_frontend": "172.29.0.0/16"}, False),  # the stack's own: not a clash
-        ({"bridge": "172.17.0.0/16", "accounts": "172.29.240.0/24"}, True),
+        # the stack's own network is not a clash
+        ({"bridge": "172.17.0.0/16", "embry0_frontend": "172.29.0.0/16"}, None, "free: 172.29.0.0/16"),
+        (
+            {"bridge": "172.17.0.0/16", "accounts": "172.29.240.0/24"},
+            None,
+            "overlaps 172.29.240.0/24 (network accounts)",
+        ),
+        # #366: a range moved with FRONTEND_NETWORK_PREFIX is checked where it now is
+        (
+            {"bridge": "172.17.0.0/16", "accounts": "172.29.240.0/24"},
+            "FRONTEND_NETWORK_PREFIX=10.229",
+            "free: 10.229.0.0/16",
+        ),
+        (
+            {"bridge": "172.17.0.0/16", "lab": "10.229.8.0/24"},
+            "FRONTEND_NETWORK_PREFIX=10.229",
+            "overlaps 10.229.8.0/24",
+        ),
+        # #637 review: quoted, exported and commented lines, as compose reads them
+        ({"bridge": "172.17.0.0/16"}, 'FRONTEND_NETWORK_PREFIX="10.229"', "free: 10.229.0.0/16"),
+        ({"bridge": "172.17.0.0/16"}, "export FRONTEND_NETWORK_PREFIX=10.229", "free: 10.229.0.0/16"),
+        ({"bridge": "172.17.0.0/16"}, "FRONTEND_NETWORK_PREFIX='10.229'  # moved off the lab", "free: 10.229.0.0/16"),
     ],
 )
 def test_the_network_check_finds_a_taken_range_before_the_build(
-    tmp_path: Path, subnets: dict[str, str], clash: bool
+    tmp_path: Path, subnets: dict[str, str], dotenv: str | None, answer: str
 ) -> None:
     net_script = _install_script("docker")
     (tmp_path / "infra").mkdir()
     (tmp_path / "infra" / "docker-compose.yml").write_text((ROOT / "infra" / "docker-compose.yml").read_text())
+    if dotenv is not None:
+        (tmp_path / ".env").write_text(f"API_KEY=x\n{dotenv}\n")
     env = _fake_docker(tmp_path, subnets)
     run = subprocess.run(
         [sys.executable, "-c", net_script], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
     )
     assert run.returncode == 0, run.stderr
-    if clash:
-        assert "overlaps 172.29.240.0/24 (network accounts)" in run.stdout, run.stdout
+    assert answer in run.stdout, run.stdout
+
+
+@pytest.mark.parametrize(
+    ("root_env", "infra_env", "differs"),
+    [
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", "PROD_PORT=8200\n", True),
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", "FRONTEND_NETWORK_PREFIX=10.230\n", True),
+        ("FRONTEND_NETWORK_PREFIX=10.229\n", 'export FRONTEND_NETWORK_PREFIX="10.229"\n', False),
+    ],
+)
+def test_the_network_check_stops_when_the_two_env_files_differ(
+    tmp_path: Path, root_env: str, infra_env: str, differs: bool
+) -> None:
+    """#637 review: `embry0 start` reads .env, and infra/deploy.sh and the systemd unit read infra/.env."""
+    net_script = _install_script("docker")
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "infra" / "docker-compose.yml").write_text((ROOT / "infra" / "docker-compose.yml").read_text())
+    (tmp_path / ".env").write_text(root_env)
+    (tmp_path / "infra" / ".env").write_text(infra_env)
+    run = subprocess.run(
+        [sys.executable, "-c", net_script],
+        cwd=tmp_path,
+        env=_fake_docker(tmp_path, {"bridge": "172.17.0.0/16"}),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if differs:
+        assert run.returncode != 0 and "set the same value in both" in run.stderr, f"{run.stdout}{run.stderr}"
     else:
-        assert run.stdout.startswith("free: "), run.stdout
+        assert run.returncode == 0 and "free: 10.229.0.0/16" in run.stdout, f"{run.stdout}{run.stderr}"
+
+
+def test_the_network_check_never_calls_a_range_it_did_not_find_free(tmp_path: Path) -> None:
+    """#366: with the subnet interpolated, the script's old pattern matched nothing and printed "free: " over no
+    range. A compose file whose pinned subnet the script cannot read is an error, not a free range."""
+    net_script = _install_script("docker")
+    (tmp_path / "infra").mkdir()
+    (tmp_path / "infra" / "docker-compose.yml").write_text("services: {}\n")
+    run = subprocess.run(
+        [sys.executable, "-c", net_script],
+        cwd=tmp_path,
+        env=_fake_docker(tmp_path, {"bridge": "172.17.0.0/16"}),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode != 0 and "free" not in run.stdout, f"exit {run.returncode}: {run.stdout}"
+    assert "no pinned subnet found" in run.stderr, run.stderr
 
 
 def test_the_range_the_skill_names_is_the_compose_one() -> None:
+    """#366: the range is one setting; the skill moves it with that setting and reads its default from compose."""
     compose = (ROOT / "infra" / "docker-compose.yml").read_text()
-    subnets = re.findall(r"subnet: ([0-9./]+)", compose)
-    assert subnets == ["172.29.0.0/16"], f"the stack's pinned subnets changed: {subnets}"
-    assert "every `172.29.0.` in `infra/docker-compose.yml`" in _skill("install")
-    assert "and in `infra/docker-compose.rootless.yml`" in _skill("install")
-    lines = [line for line in compose.splitlines() if "172.29.0." in line]
-    assert len(lines) == 4, f"the skill names four places in the compose file, found {len(lines)}"
-    rootless = (ROOT / "infra" / "docker-compose.rootless.yml").read_text()
-    assert "172.29.0." in rootless, "the rootless overlay no longer carries the range: drop it from the skill"
+    assert "- subnet: ${FRONTEND_NETWORK_PREFIX:-172.29}.0.0/16" in compose, (
+        "the compose subnet is no longer the form the skill's check substitutes"
+    )
+    skill = _skill("install")
+    assert "`FRONTEND_NETWORK_PREFIX`" in skill and "172.29.0." not in skill, (
+        "the skill must move the range with FRONTEND_NETWORK_PREFIX, not by editing the compose files"
+    )
 
 
 def test_uninstalling_says_the_minted_key_stays_valid_until_revoked() -> None:

@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "infra" / "deploy.sh"
+# The dashboard network check the script runs as a script of its own (#366).
+_NETWORK_CHECK = Path(__file__).resolve().parents[3] / "embry0" / "cli" / "frontend_network.py"
 
 _STUBS = {
     "docker": """#!/bin/sh
@@ -54,6 +56,8 @@ def deploy(tmp_path: Path):
     root = tmp_path / "checkout"
     (root / "infra").mkdir(parents=True)
     shutil.copy(_SCRIPT, root / "infra" / "deploy.sh")
+    (root / "embry0" / "cli").mkdir(parents=True)
+    shutil.copy(_NETWORK_CHECK, root / "embry0" / "cli" / "frontend_network.py")
     (root / "infra" / ".env").write_text("PROD_PORT=8200\n")
     (root / ".env").write_text("API_KEY=test-key\n")
     bin_dir = tmp_path / "bin"
@@ -218,3 +222,38 @@ def test_a_failing_readiness_read_does_not_fail_the_deploy(deploy, tmp_path: Pat
     assert result.returncode == 0 and ">> deployed" in result.stdout, (
         f"the deploy rolled, so a readiness read that fails only goes unprinted: {result.returncode} {result.stderr}"
     )
+
+
+def test_a_deploy_whose_env_files_disagree_on_the_range_builds_nothing(deploy, tmp_path: Path) -> None:
+    """#637 review: the range set in the root .env alone, which `embry0 start` reads and this script does not. The
+    deploy would recreate the frontend on the default range inside the moved network."""
+    root = tmp_path / "checkout"
+    (root / ".env").write_text("API_KEY=test-key\nFRONTEND_NETWORK_PREFIX=10.229\n")
+    result, calls = deploy(STUB_JOBS_BODY='{"jobs": []}')
+    assert result.returncode == 1, f"the deploy went on: {result.stdout}{result.stderr}"
+    assert "FRONTEND_NETWORK_PREFIX is '10.229' in .env and unset in infra/.env" in result.stderr, result.stderr
+    built = [c for c in calls if c.startswith("docker compose build") or c.startswith("docker compose up")]
+    assert built == [], f"the deploy built or recreated after the check refused: {built}"
+
+
+def test_a_deploy_whose_shell_overrides_the_range_builds_nothing(deploy) -> None:
+    """#637 review: an exported FRONTEND_NETWORK_PREFIX overrides both env files for compose, and the systemd unit,
+    which reads the files, would render another range at the next boot."""
+    result, calls = deploy(STUB_JOBS_BODY='{"jobs": []}', FRONTEND_NETWORK_PREFIX="10.229")
+    assert result.returncode == 1, f"the deploy went on: {result.stdout}{result.stderr}"
+    assert "FRONTEND_NETWORK_PREFIX is '10.229' in this run's environment" in result.stderr, result.stderr
+    built = [c for c in calls if c.startswith("docker compose build") or c.startswith("docker compose up")]
+    assert built == [], f"the deploy built or recreated after the check refused: {built}"
+
+
+def test_a_deploy_with_a_python3_older_than_the_check_needs_says_so(deploy, tmp_path: Path) -> None:
+    """#637 review: the check needs Python 3.9 at import. An older python3 failed it with a TypeError traceback
+    and the deploy said only that the check refused."""
+    stub = tmp_path / "bin" / "python3"
+    stub.write_text('#!/bin/sh\ncase "$1" in --version) echo "Python 3.8.10" ;; *) exit 1 ;; esac\n')
+    stub.chmod(0o755)
+    result, calls = deploy(STUB_JOBS_BODY='{"jobs": []}')
+    assert result.returncode == 1, f"the deploy went on: {result.stdout}{result.stderr}"
+    assert "python3 3.9 or newer is needed" in result.stderr and "Python 3.8.10" in result.stderr, result.stderr
+    built = [c for c in calls if c.startswith("docker compose build") or c.startswith("docker compose up")]
+    assert built == [], f"the deploy built or recreated without the check: {built}"

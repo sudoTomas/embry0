@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "infra" / "deploy.sh"
+# The dashboard network check the script runs as a script of its own (#366).
+_NETWORK_CHECK = Path(__file__).resolve().parents[3] / "embry0" / "cli" / "frontend_network.py"
 
 _STUB = '#!/bin/sh\necho "$(basename "$0") $*" >> "$STUB_LOG"\n'
 
@@ -21,6 +23,8 @@ def _checkout(tmp_path: Path, *, infra_env: bool, root_env: bool) -> Path:
     root = tmp_path / "checkout"
     (root / "infra").mkdir(parents=True)
     (root / "infra" / "deploy.sh").write_text(_SCRIPT.read_text())
+    (root / "embry0" / "cli").mkdir(parents=True)
+    (root / "embry0" / "cli" / "frontend_network.py").write_text(_NETWORK_CHECK.read_text())
     if infra_env:
         (root / "infra" / ".env").write_text("PROD_PORT=8200\n")
     if root_env:

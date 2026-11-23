@@ -55,6 +55,7 @@ _REPRESENTATIVE_ENV: dict[str, str] = dict.fromkeys(
         "DIND_CPUS",
         "DIND_MEMORY",
         "ENVIRONMENT_SECRET_KEY",
+        "FRONTEND_NETWORK_PREFIX",
         "GITHUB_TOKEN",
         "GITHUB_WEBHOOK_SECRET",
         "IMAGE_REGISTRY",
