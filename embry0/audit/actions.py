@@ -161,6 +161,9 @@ AuditAction = Literal[
     "handoff.cancelled",
     # Knowledge maps: an admin gave a map to another owner (#180)
     "map.owner_changed",
+    # A template a settings document names that no longer fits its use, replaced or skipped at it (#180)
+    "map.analysis_template.replaced",
+    "job.slop_route.skipped",
 ]
 
 AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
@@ -279,6 +282,8 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "handoff.returned": "Decision sent back",
     "handoff.cancelled": "Hand-off taken back",
     "map.owner_changed": "Map owner changed",
+    "map.analysis_template.replaced": "Map analysis ran another template",
+    "job.slop_route.skipped": "Slop route skipped",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))

@@ -1342,7 +1342,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # pipeline_templates_builtin.py.
     from embry0.storage.seeds.pipeline_templates_builtin import seed_builtin_pipeline_templates
 
-    await seed_builtin_pipeline_templates(PipelineTemplatesRepository(db))
+    await seed_builtin_pipeline_templates(PipelineTemplatesRepository(db), settings_db=db)
 
     # Seed the qa agent definition when it is missing. Insert-if-missing, like
     # every built-in agent: an operator's edit survives a restart, and

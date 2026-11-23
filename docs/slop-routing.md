@@ -84,7 +84,8 @@ Only a template the write changes is checked, so a write of another key never tr
 
 - A rename does not rewrite the documents, as it moves an agent's `quest_template`: a document is the operator's text, possibly kept in a file that the next `embry0 settings apply` writes back.
 - The check and the change cannot race: a settings write that may change `slop_policy` reads the templates `FOR SHARE` in its transaction (a write of any other section reads none and locks nothing), and a template's change locks its row `FOR UPDATE` before it reads the documents, so whichever comes second sees what the first committed.
-- A template that is gone anyway, invalid, or no longer takes a code job (its row edited in the database by hand) is logged when a job would run it (`plan_route_template_not_found` with `slop_route`, `plan_route_template_invalid`, `plan_route_slop_template_unfit`), and the job takes the route its kind defaults to. A slop route never fails a job, unlike a template a person named that is invalid.
+- A template that is gone anyway, invalid, or no longer takes a code job (its row edited in the database by hand, or a built-in's route rewritten by a release's start-up seed, which nothing guards) is logged when a job would run it (`plan_route_template_not_found` with `slop_route`, `plan_route_template_invalid`, `plan_route_slop_template_unfit`), and the job takes the route its kind defaults to; a route skipped because the template no longer takes a code job is also audited, `job.slop_route.skipped`. A slop route never fails a job, unlike a template a person named that is invalid.
+- After each start-up seed, every template a document names that fails its check is logged, `pipeline_template_seed_unfit` with the key and the documents, so it can be pointed elsewhere.
 
 ### A job pinned to the full pipeline
 

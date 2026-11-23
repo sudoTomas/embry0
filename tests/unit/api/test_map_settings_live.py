@@ -247,3 +247,54 @@ async def test_a_maps_write_waits_for_a_held_template_and_another_section_does_n
     assert maps_waited, "a maps write reads the templates FOR SHARE, so it waits for the held row"
     for task in tasks:
         task.result()
+
+
+# ---- a template made unfit where nothing guards it: a start-up seed ----
+
+
+def _with_a_coding_step(seed: dict[str, Any]) -> dict[str, Any]:
+    """``seed`` as a later release could ship it: its route given a developer, so its jobs are code jobs."""
+    graph = seed["graph_definition"]
+    developer = {"id": "dev", "agent_type": "developer", "position": {"x": 0, "y": 0}}
+    return {**seed, "graph_definition": {**graph, "nodes": [*graph["nodes"], developer]}}
+
+
+async def test_a_seed_that_makes_a_named_template_unfit_is_logged_and_an_analysis_falls_back(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#664 review: a built-in counts as an analysis template by its graph alone, and the start-up seed rewrites
+    that graph with no guard: a part sent for analysis then ran a route with a coding step, and nothing said so."""
+    from embry0.api.v1 import knowledge_maps
+    from embry0.storage.seeds import pipeline_templates_builtin as seeds
+
+    analysis_template = getattr(knowledge_maps, "_analysis_template", None)
+    assert analysis_template is not None, "the analysis send does not check the template it runs"
+    assert (await _patch(app, "maps", {"analysis_template": "garden"}, repo="acme/shop")).status_code == 200
+    reseeded = {"garden": _with_a_coding_step(seeds.BUILTIN_PIPELINE_TEMPLATES["garden"])}
+    monkeypatch.setattr(seeds, "BUILTIN_PIPELINE_TEMPLATES", reseeded)
+    with capture_logs() as logs:
+        await seed_builtin_pipeline_templates(PipelineTemplatesRepository(app.state.db), settings_db=app.state.db)
+    unfit = [
+        (log["template"], log["key"], log["held_by"]) for log in logs if log["event"] == "pipeline_template_seed_unfit"
+    ]
+    assert unfit == [("garden", "maps.analysis_template", ["repository acme/shop"])], (
+        f"a seed that made a named template unfit must say so: {logs}"
+    )
+
+    used = await analysis_template(SimpleNamespace(app=app), "acme/shop")
+    assert used == "analysis-default", f"a part of acme/shop was sent for analysis on {used!r}, which now writes code"
+    rows = await app.state.db.fetch(
+        "SELECT actor, details FROM audit_log WHERE action = 'map.analysis_template.replaced'"
+    )
+    assert [(r["actor"], r["details"]["repo"], r["details"]["template"], r["details"]["used"]) for r in rows] == [
+        ("embry0:maps", "acme/shop", "garden", "analysis-default")
+    ], f"the replacement must be audited: {rows}"
+
+    await app.state.db.execute(
+        "UPDATE pipeline_templates SET default_for_kind = NULL, job_kind = 'code' WHERE name = 'analysis-default'"
+    )
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as refused:
+        await analysis_template(SimpleNamespace(app=app), "acme/shop")
+    assert refused.value.status_code == 409 and "maps.analysis_template" in str(refused.value.detail), refused.value

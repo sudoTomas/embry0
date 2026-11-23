@@ -711,6 +711,58 @@ async def _map_issue_labels(request: Request, repo: str, slug: str, *, remove: b
     return await own_issue_labels(state, repo, labels)
 
 
+async def _template_problem(templates: Any, name: str) -> str | None:
+    """Why ``name`` cannot run a part's analysis, as a write of ``maps.analysis_template`` checks it; None when it can."""
+    from embry0.workflows.row_behaviour import analysis_job_problem
+
+    for row in await templates.list_all():
+        if row.get("name") == name:
+            full = await templates.get(row["id"])
+            return analysis_job_problem(full or dict(row))
+    return f"no pipeline template named {name!r}"
+
+
+async def _analysis_template(request: Request, repo: str) -> str:
+    """The template a part of ``repo`` sent for analysis runs: ``maps.analysis_template`` as the repository reads it
+    (#180), checked again here.
+
+    A write checked it records analysis jobs, and the guard refuses a change that would stop it while a document
+    names it; a start-up seed rewriting a built-in's graph is not guarded (#664 review). So a template that no longer
+    records analysis jobs is replaced by ``analysis-default``, logged and audited, and when that one does not either
+    the send is refused, naming the key.
+    """
+    from embry0.audit.helpers import emit_audit
+    from embry0.services.own_issues import section_for
+    from embry0.settings.sections.maps import DEFAULT_ANALYSIS_TEMPLATE, MAPS
+
+    named = (await section_for(request.app.state, MAPS, repo)).analysis_template
+    templates = getattr(request.app.state, "templates_repo", None)
+    if templates is None:
+        return named
+    problem = await _template_problem(templates, named)
+    if problem is None:
+        return named
+    fallback = None
+    if named != DEFAULT_ANALYSIS_TEMPLATE and await _template_problem(templates, DEFAULT_ANALYSIS_TEMPLATE) is None:
+        fallback = DEFAULT_ANALYSIS_TEMPLATE
+    logger.warning("map_analysis_template_unfit", repo=repo, template=named, problem=problem, used=fallback)
+    if fallback is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"maps.analysis_template names a template that cannot run an analysis now ({problem}): set it "
+            "to one that records analysis jobs (PATCH /api/v1/config/settings/maps)",
+        )
+    config = getattr(request.app.state, "config", None)
+    await emit_audit(
+        getattr(request.app.state, "db", None),
+        "map.analysis_template.replaced",
+        actor="embry0:maps",
+        details={"repo": repo, "template": named, "problem": problem, "used": fallback},
+        audit_log_path=getattr(config, "audit_log_path", None),
+    )
+    return fallback
+
+
 async def _start_analysis(request: Request, repo: str, title: str, task: str, by: str, run_with: Any) -> str:
     executor = getattr(request.app.state, "issue_executor", None)
     if executor is None:
@@ -718,16 +770,13 @@ async def _start_analysis(request: Request, repo: str, title: str, task: str, by
     refusal = await executor.dispatch_refusal(actor=by)
     if refusal is not None:
         raise HTTPException(status_code=429, detail=refusal.public_message)
-    from embry0.services.own_issues import section_for
-    from embry0.settings.sections.maps import MAPS
-
+    template = await _analysis_template(request, repo)
     jobs = request.app.state.jobs_repo
     job_id: str = await jobs.create(
         repo=repo,
         task=task,
         trace_id=f"trc-{uuid.uuid4().hex[:12]}",
-        # #180: the template the repository's settings name, which a write checked records analysis jobs.
-        pipeline_template=(await section_for(request.app.state, MAPS, repo)).analysis_template,
+        pipeline_template=template,
         pipeline_config=apply_run_with(None, run_with),
         dispatched_by=by,
     )

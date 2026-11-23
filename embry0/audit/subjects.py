@@ -187,6 +187,8 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "handoff.cancelled": Subject(repos=("handoff",)),
     # The owners a map moved between.
     "map.owner_changed": Subject(owners=("before", "after")),
+    "map.analysis_template.replaced": _REPO,
+    "job.slop_route.skipped": Subject(repos=("job",)),
 }
 
 

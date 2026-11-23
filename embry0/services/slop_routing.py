@@ -169,3 +169,49 @@ def slop_route_guard(documents: SettingsDocumentsRepository, catalog: Catalog) -
         await analysis_guard(conn, before, after)
 
     return both
+
+
+async def unfit_named_templates(db: Any, catalog: Catalog) -> list[dict[str, Any]]:
+    """Each template a settings document names (``slop_policy.route_template``, ``maps.analysis_template``) that
+    fails the check a write of the key makes: gone, or no longer taking a code job, or no longer recording analysis
+    jobs. Each with the key, the problem and the documents that name it.
+
+    The guard keeps an operator's change from making one unfit; a start-up seed rewriting a built-in's graph is not
+    guarded (#664 review), so the seed reads this after it runs and logs each it finds.
+    """
+    from embry0.settings.store import build_snapshot
+
+    documents = SettingsDocumentsRepository(db)
+    found: list[dict[str, Any]] = []
+    async with db.transaction() as conn:
+        snapshot = build_snapshot(catalog, await documents.all(conn), token=(), log=False)
+        rows = {
+            str(row["name"]): dict(row)
+            for row in await conn.fetch(
+                "SELECT name, default_for_kind, job_kind, graph_definition FROM pipeline_templates"
+            )
+        }
+        checks = (
+            (SLOP_POLICY, "route_template", code_job_problem, documents_routing_to),
+            (MAPS, "analysis_template", analysis_job_problem, documents_analysing_with),
+        )
+        for section, key, check, naming in checks:
+            if section.name not in catalog:
+                continue
+            names = {str(getattr(snapshot.get(section), key))}
+            names |= {
+                str(data[section.name][key])
+                for data in snapshot.layers.values()
+                if isinstance(data.get(section.name), dict) and data[section.name].get(key)
+            }
+            for name in sorted(names):
+                row = rows.get(name)
+                problem = f"no pipeline template named {name!r}" if row is None else check(row)
+                if problem is None:
+                    continue
+                holders = await naming(conn, documents, catalog, name)
+                if holders:
+                    found.append(
+                        {"key": f"{section.name}.{key}", "template": name, "problem": problem, "held_by": holders}
+                    )
+    return found
