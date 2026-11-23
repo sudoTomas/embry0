@@ -55,6 +55,8 @@ RETIRED = {
     "SCOUT_TICK_SECONDS": "the scout ticks every 300 s, a constant",
     "PROPOSAL_BRIEFS_PER_TICK": "the proposal brief writer writes at most 3 briefs every 60 s, constants",
     "PROPOSAL_BRIEF_INTERVAL_SECONDS": "the proposal brief writer writes at most 3 briefs every 60 s, constants",
+    "JOB_BRIEFS_PER_TICK": "the job brief writer writes at most 3 briefs every 60 s, constants",
+    "JOB_BRIEF_INTERVAL_SECONDS": "the job brief writer writes at most 3 briefs every 60 s, constants",
 }
 
 
@@ -86,4 +88,6 @@ def test_no_retired_variable_set_says_nothing_of_them() -> None:
         "SCOUT_TICK_SECONDS",
         "PROPOSAL_BRIEFS_PER_TICK",
         "PROPOSAL_BRIEF_INTERVAL_SECONDS",
+        "JOB_BRIEFS_PER_TICK",
+        "JOB_BRIEF_INTERVAL_SECONDS",
     ], f"each set variable once, nothing else: {said}"

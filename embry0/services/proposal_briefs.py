@@ -43,6 +43,9 @@ from embry0.services.brief_writer import (
     cut_title,
     system_prompt,
 )
+from embry0.services.brief_writer import (
+    warn_retired_cadence as warn_retired,
+)
 from embry0.services.lead_kinds import KINDS, id_pattern
 from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import Proposal
@@ -333,34 +336,15 @@ class ProposalBriefWriter(BriefWriter[Proposal, BriefSettings, Brief]):
         )
 
 
+#: What runs instead of the retired variables, as the warning and ``embry0 config`` say it.
+CADENCE: Final = f"the proposal brief writer writes at most {PER_TICK} briefs every {INTERVAL_SECONDS:g} s"
+
+
 def warn_retired_cadence(config: Any) -> list[str]:
     """Warn once, at startup, for each of ``PROPOSAL_BRIEFS_PER_TICK`` and ``PROPOSAL_BRIEF_INTERVAL_SECONDS`` still
-    set: neither is read any more (#168). Returns the variables warned about.
-
-    As ``SCOUT_TICK_SECONDS`` is (:func:`embry0.services.scout.warn_retired_tick`): the variable, whether its value
-    is what runs now (``matches``), and what to do; never the value. Whether it is set, from the environment or
-    ``.env``.
-    """
-    given = getattr(config, "model_fields_set", None) or set()
-    warned: list[str] = []
-    for attribute, (variable, runs) in _RETIRED.items():
-        if attribute not in given:
-            continue
-        try:
-            matches = float(str(getattr(config, attribute, "")).strip()) == runs
-        except ValueError:
-            matches = False
-        logger.warning(
-            "settings_env_retired",
-            variable=variable,
-            matches=matches,
-            hint=(
-                f"no longer read: the proposal brief writer writes at most {PER_TICK} briefs every "
-                f"{INTERVAL_SECONDS:g} s, constants; remove the variable"
-            ),
-        )
-        warned.append(variable)
-    return warned
+    set: neither is read any more (#168). Returns the variables warned about
+    (:func:`embry0.services.brief_writer.warn_retired_cadence`)."""
+    return warn_retired(config, _RETIRED, writer=CADENCE)
 
 
 def with_briefs(

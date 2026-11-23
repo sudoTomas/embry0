@@ -223,3 +223,66 @@ async def test_without_a_usable_model_nothing_is_written(custom_enabled: None) -
     assert await _writer(store, [], model="").tick() == []
     assert await _writer(store, [], model="claude-sonnet-5").tick() == [], "only the chat-completions family is called"
     assert store.saved == {}
+
+
+# ---- the cadence is fixed (#665) --------------------------------------------------------------------------------
+
+
+def _retired_cadence_warnings(**env: str) -> tuple[list[str], list[dict[str, Any]]]:
+    import os
+    from unittest.mock import patch
+
+    from structlog.testing import capture_logs
+
+    from embry0.config import Embry0Config
+
+    warn = getattr(job_briefs, "warn_retired_cadence", None)
+    assert warn is not None, (
+        "startup must say that JOB_BRIEFS_PER_TICK and JOB_BRIEF_INTERVAL_SECONDS are no longer read"
+    )
+    with patch.dict(os.environ, env, clear=True):
+        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
+    with capture_logs() as logs:
+        warned = warn(config)
+    return warned, [e for e in logs if e["event"] == "settings_env_retired"]
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "matches"),
+    [
+        ("JOB_BRIEFS_PER_TICK", "4", False),
+        ("JOB_BRIEFS_PER_TICK", "3", True),
+        ("JOB_BRIEFS_PER_TICK", "many", False),
+        ("JOB_BRIEF_INTERVAL_SECONDS", "30", False),
+        ("JOB_BRIEF_INTERVAL_SECONDS", "60.0", True),
+    ],
+)
+def test_a_cadence_variable_still_set_is_named_in_one_warning_saying_the_cadence_is_fixed(
+    variable: str, value: str, matches: bool
+) -> None:
+    """Neither variable is read any more; the config takes any text for them, so no value stops a start, and only
+    this says the variable does nothing."""
+    warned, events = _retired_cadence_warnings(**{variable: value})
+    assert warned == [variable] and len(events) == 1, f"{variable} is set and no longer read: one warning: {events}"
+    (event,) = events
+    assert (event["log_level"], event["variable"], event["matches"]) == ("warning", variable, matches)
+    assert "job brief writer writes at most 3 briefs every 60 s" in event["hint"], "the warning says what runs now"
+    assert set(event) == {"event", "log_level", "variable", "matches", "hint"}, "the value itself is not logged"
+
+
+def test_both_cadence_variables_are_named_and_none_set_warns_nothing() -> None:
+    both = _retired_cadence_warnings(JOB_BRIEFS_PER_TICK="5", JOB_BRIEF_INTERVAL_SECONDS="120")
+    assert both[0] == ["JOB_BRIEFS_PER_TICK", "JOB_BRIEF_INTERVAL_SECONDS"], both
+    assert [e["variable"] for e in both[1]] == both[0], "one warning each"
+    assert _retired_cadence_warnings() == ([], []), "nothing set, nothing to say"
+
+
+def test_the_job_brief_writer_runs_at_the_fixed_cadence() -> None:
+    async def settings() -> JobBriefSettings:
+        return JobBriefSettings(models=lambda repo: "", voice=job_briefs.VOICE)
+
+    writer = JobBriefWriter(store=FakeStore([]), settings=settings, calls=_calls())
+    assert (writer._per_tick, writer._interval) == (3, 60.0), "unless told otherwise, 3 briefs every 60 s"  # noqa: SLF001
+    assert (getattr(job_briefs, "PER_TICK", None), getattr(job_briefs, "INTERVAL_SECONDS", None)) == (3, 60.0), (
+        "the cadence is a constant of the module, not a setting"
+    )

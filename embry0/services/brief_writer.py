@@ -326,3 +326,31 @@ class BriefWriter[Item, S: TickSettings, B]:
             except Exception:
                 logger.warning(f"{self._briefs.feature}_tick_failed", exc_info=True)
             await asyncio.sleep(self._interval)
+
+
+def warn_retired_cadence(config: Any, retired: Mapping[str, tuple[str, float]], *, writer: str) -> list[str]:
+    """Warn once, at startup, for each variable of ``retired`` that ``config`` was given: a brief writer's cadence
+    is a constant of its module now (#168), and the variable is no longer read. Returns the variables warned about.
+
+    ``retired`` maps each ``Embry0Config`` attribute to its variable and the value that runs now; ``writer`` names
+    the writer and its cadence in the hint. As ``SCOUT_TICK_SECONDS`` is warned about
+    (:func:`embry0.services.scout.warn_retired_tick`): the variable, whether its value is what runs now
+    (``matches``), and what to do; never the value. Whether it is set, from the environment or ``.env``.
+    """
+    given = getattr(config, "model_fields_set", None) or set()
+    warned: list[str] = []
+    for attribute, (variable, runs) in retired.items():
+        if attribute not in given:
+            continue
+        try:
+            matches = float(str(getattr(config, attribute, "")).strip()) == runs
+        except ValueError:
+            matches = False
+        logger.warning(
+            "settings_env_retired",
+            variable=variable,
+            matches=matches,
+            hint=f"no longer read: {writer}, constants; remove the variable",
+        )
+        warned.append(variable)
+    return warned

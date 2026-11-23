@@ -2790,13 +2790,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the same brief writer: each tick reads its model from one settings
     # snapshot and its prompt from the job-brief agent definition (#166).
     from embry0.services.job_briefs import JobBriefWriter, job_brief_settings
+    from embry0.services.job_briefs import warn_retired_cadence as warn_retired_job_cadence
 
+    warn_retired_job_cadence(config)
     app.state.job_brief_writer = JobBriefWriter(
         store=app.state.job_briefs_repo,
         settings=job_brief_settings(app.state.settings, app.state.agent_defs_repo),
         calls=app.state.background_calls,
-        per_tick=config.job_briefs_per_tick,
-        interval_seconds=config.job_brief_interval_seconds,
     )
     job_brief_task = asyncio.create_task(app.state.job_brief_writer.start())
     app.state.background_tasks.add(job_brief_task)

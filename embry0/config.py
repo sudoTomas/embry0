@@ -853,8 +853,13 @@ class Embry0Config(BaseSettings):
     # Jobs in plain words (spec 2026-10-26, job briefs), on
     # background_models.job_brief.
     job_brief_model: Annotated[str, NOT_SECRET] = ""
-    job_brief_interval_seconds: float = Field(default=60.0, gt=0)
-    job_briefs_per_tick: int = Field(default=3, ge=1, le=20)
+    # JOB_BRIEF_INTERVAL_SECONDS and JOB_BRIEFS_PER_TICK are no longer read: the
+    # job brief writer writes at most 3 briefs every 60 seconds
+    # (embry0.services.job_briefs.PER_TICK, INTERVAL_SECONDS; #665). Kept one
+    # release only so startup can warn while either is still set
+    # (settings_env_retired), as text, so no value of them can stop a start.
+    job_brief_interval_seconds: Annotated[str, NOT_SECRET] = ""
+    job_briefs_per_tick: Annotated[str, NOT_SECRET] = ""
     # The Slop-O-Meter (spec 2026-10-26, slop-o-meter): it reads the
     # repositories enrolled in background.slop_meter of the settings document
     # (#165). SLOP_METER_REPOS and SLOP_METER_EXCLUDE (comma-separated) are
