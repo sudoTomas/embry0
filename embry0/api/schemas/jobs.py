@@ -1,8 +1,8 @@
 """Pydantic request models for the jobs API."""
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class JobResumeRequest(BaseModel):
@@ -21,6 +21,14 @@ class JobResumeRequest(BaseModel):
     #: document's budget.continue_extra_max_usd (checked by the route, 422 above it). Absent, a job over
     #: its budget may spend budget.continue_default_extra_usd more, or one more cap.
     extra_budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @field_validator("extra_budget_usd", mode="before")
+    @classmethod
+    def _an_amount(cls, value: Any) -> Any:
+        # JSON's true would be read as 1.0 (#651 review): an amount is a number of dollars.
+        if isinstance(value, bool):
+            raise ValueError("give an amount of dollars, not true or false")
+        return value
 
 
 class DoneWhenItem(BaseModel):

@@ -731,6 +731,10 @@ async def resume_job_as(
 
     if req.extra_budget_usd is not None:
         await _check_extra_budget(request, req.extra_budget_usd)
+    # Worked out before the resume is scheduled, while the job's saved state is still its pause's (#651 review).
+    capped = await _capped_extra(
+        request, executor, job_id, str(job.get("pipeline_template") or ""), req.choice, req.extra_budget_usd
+    )
 
     # #470: the pause is taken, paused -> running, in one statement before anything is scheduled, so two resumes of
     # it sent at once cannot both run it: the second finds the job running and is refused with what it is now.
@@ -770,26 +774,43 @@ async def resume_job_as(
         raise HTTPException(status_code=503, detail="embry0 is shutting down; try again once it is back") from None
 
     answer: dict[str, Any] = {"job_id": job_id, "status": "resuming", "choice": req.choice}
-    capped = _capped_extra(summary, req.choice, req.extra_budget_usd)
     if capped is not None:
         answer.update(capped)
     return answer
 
 
-def _capped_extra(summary: dict[str, Any] | None, choice: str, extra: float | None) -> dict[str, Any] | None:
-    """What a continue naming ``extra`` adds when the pause bounded it below that (#651 review): the most it said a
-    continue may add, and why, so the person is not left to find the job capped. None when nothing was capped."""
-    budget = summary.get("budget") if isinstance(summary, dict) else None
-    if not isinstance(budget, dict) or choice != "continue_retrying" or extra is None:
+async def _capped_extra(
+    request: Request, executor: Any, job_id: str, pipeline: str, choice: str, extra: float | None
+) -> dict[str, Any] | None:
+    """What a continue naming ``extra`` adds when the deployment's ceiling holds it below that, and why (#651
+    review), so the person is not left to find the job capped; None when nothing is capped.
+
+    Worked out now, as ``max_retries_node`` will grant it: from the budget section as it reads now and the state
+    the job saved at its pause, through the node's own ``continue_bound``, on any pause a continue may name an
+    amount on. Nothing the pause recorded is repeated: the amount is computed and the reason is fixed words for a
+    fixed code. When the state or the settings cannot be read, the answer says nothing of a cap, logged.
+    """
+    if choice != "continue_retrying" or extra is None:
         return None
-    most = budget.get("continue_max")
-    if not isinstance(most, int | float) or extra <= most:
+    from embry0.api.budget import budget_settings
+    from embry0.workflows.issue_to_pr.nodes._interrupts import bound_words, continue_bound
+
+    try:
+        state = await executor.paused_state(job_id, pipeline)
+        policy = await budget_settings(request)
+    except Exception:  # noqa: BLE001 - the resume goes on; only its answer is shorter
+        logger.warning("job_resume_cap_unread", job_id=job_id, exc_info=True)
         return None
-    because = str(budget.get("continue_max_because") or "the deployment's ceiling bounds it")
+    if not isinstance(state, dict):
+        return None
+    bound = continue_bound(state, policy, extra)
+    if bound.reason is None or bound.adds >= extra:
+        return None
+    because = bound_words(state, float(policy.max_budget_per_job_usd), bound.reason)
     return {
-        "extra_budget_usd": most,
+        "extra_budget_usd": bound.adds,
         "extra_budget_capped": True,
-        "message": f"The continue adds ${most:.2f}, not the ${extra:.2f} named: {because}.",
+        "message": f"The continue adds ${bound.adds:.2f}, not the ${extra:.2f} named: {because}.",
     }
 
 

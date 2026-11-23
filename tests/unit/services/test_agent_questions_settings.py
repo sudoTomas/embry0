@@ -444,6 +444,7 @@ async def test_a_used_up_job_with_room_under_the_ceiling_is_offered_a_continue_t
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
         scheduled: list[Any] = []
         monkeypatch.setattr(app.state.issue_executor, "schedule_resume", lambda *a, **k: scheduled.append((a, k)))
+        await _live(app, monkeypatch, state, max_budget_per_job_usd=50.0)
         pause = await _max_retries(state, {"choice": "abandon"})
         assert "continue_retrying" in pause[1].get("options", []), (
             f"a job ${50 - spent:.2f} under its ceiling was not offered a continue: {pause[1].get('options')}"
@@ -553,3 +554,105 @@ async def test_a_hard_ceiling_bounds_a_named_continue_in_its_recorded_cap_and_au
     assert "A continue may add at most $39.50: this deployment's ceiling of $50.00 per job is a hard limit" in (
         pause.get("message", "")
     ), pause.get("message")
+
+
+async def _live(app: Any, monkeypatch: pytest.MonkeyPatch, state: dict[str, Any], **budget: Any) -> None:
+    """The deployment's budget section as ``budget`` sets it, and ``state`` as the paused job's graph saved it."""
+    await app.state.settings.set_keys("budget", budget, actor="test")
+
+    async def saved(job_id: str, pipeline: str = "") -> dict[str, Any]:
+        return state
+
+    monkeypatch.setattr(app.state.issue_executor, "paused_state", saved, raising=False)
+
+
+async def _resume(app: Any, job_id: str, body: dict[str, Any]) -> Any:
+    from tests.fixtures.repository_writes import MASTER, call
+
+    return await call(app, "POST", f"/api/v1/jobs/{job_id}/resume", MASTER, body)
+
+
+@pytest.mark.requires_postgres
+async def test_the_resume_answer_follows_the_budget_settings_when_the_person_answers(
+    db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#651 review: the answer was built from the pause's summary while the node reads the settings live, so a
+    change of continue_may_exceed_ceiling during the pause made it wrong both ways."""
+    from tests.fixtures.repository_writes import COVERED, repository_writes_app
+
+    job = await _start(_Store(), COVERED)
+    state = {**job, "pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": 10.5}
+    _, free = await _max_retries(state, {"choice": "abandon"})
+    _, bounded = await _max_retries(state, {"choice": "abandon"}, hard=True)
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        monkeypatch.setattr(app.state.issue_executor, "schedule_resume", lambda *a, **k: None)
+        await _paused_job(app, "job-was-free", COVERED, free)
+        await _live(app, monkeypatch, state, max_budget_per_job_usd=50.0, continue_may_exceed_ceiling=False)
+        now_hard = await _resume(app, "job-was-free", {"choice": "continue_retrying", "extra_budget_usd": 100.0})
+        await _paused_job(app, "job-was-bounded", COVERED, bounded)
+        await _live(app, monkeypatch, state, max_budget_per_job_usd=50.0, continue_may_exceed_ceiling=True)
+        now_free = await _resume(app, "job-was-bounded", {"choice": "continue_retrying", "extra_budget_usd": 100.0})
+    assert now_hard.status_code == 200 and now_hard.json().get("extra_budget_capped") is True, (
+        f"the ceiling became a hard limit during the pause, and the answer did not say the $100 was capped: "
+        f"{now_hard.json()}"
+    )
+    assert now_hard.json()["extra_budget_usd"] == 39.5 and "is a hard limit" in now_hard.json()["message"]
+    went_on, _ = await _max_retries(state, {"choice": "continue_retrying", "extra_budget_usd": 100.0}, hard=True)
+    assert went_on["budget_cap_usd"] == 50.0, "the node grants what the answer said: up to the $50 ceiling"
+    assert now_free.status_code == 200 and "extra_budget_capped" not in now_free.json(), (
+        f"the ceiling stopped bounding the continue during the pause, and the answer still said it capped it: "
+        f"{now_free.json()}"
+    )
+
+
+@pytest.mark.requires_postgres
+async def test_the_resume_answer_repeats_nothing_the_pause_recorded(
+    db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#651 review: the answer repeated the pause's stored reason and took its amount as it was, true included."""
+    from tests.fixtures.repository_writes import COVERED, repository_writes_app
+
+    job = await _start(_Store(), COVERED)
+    state = {**job, "pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": 10.5}
+    recorded = {
+        "options": ["continue_retrying", "abandon"],
+        "message": "m",
+        "budget": {"continue_max": True, "continue_max_because": "<img src=x onerror=alert(1)>"},
+    }
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        monkeypatch.setattr(app.state.issue_executor, "schedule_resume", lambda *a, **k: None)
+        await _paused_job(app, "job-recorded", COVERED, recorded)
+        await _live(app, monkeypatch, state, max_budget_per_job_usd=50.0, continue_may_exceed_ceiling=False)
+        answered = await _resume(app, "job-recorded", {"choice": "continue_retrying", "extra_budget_usd": 100.0})
+        await _paused_job(app, "job-true", COVERED, recorded)
+        named_true = await _resume(app, "job-true", {"choice": "continue_retrying", "extra_budget_usd": True})
+    assert answered.status_code == 200, answered.text
+    assert "<img" not in answered.text, f"the answer repeats what the pause recorded: {answered.text}"
+    amount = answered.json().get("extra_budget_usd")
+    assert type(amount) is float and amount == 39.5, f"the amount must be the one worked out now: {answered.json()}"
+    assert named_true.status_code == 422, f"true was taken as an amount: {named_true.status_code} {named_true.text}"
+
+
+@pytest.mark.requires_postgres
+async def test_a_named_amount_on_a_pause_not_about_the_budget_is_capped_and_said(
+    db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#651 review: a job paused for failed reviews, well under its cap, continued naming $100 under a hard $50
+    ceiling: the node capped it at the ceiling and the answer said nothing."""
+    from tests.fixtures.repository_writes import COVERED, repository_writes_app
+
+    job = await _start(_Store(), COVERED)
+    state = {**job, "pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": 5.0}
+    _, pause = await _max_retries(state, {"choice": "abandon"}, hard=True)
+    assert "budget" not in pause, f"the pause is about the reviews, not the budget: {pause}"
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        monkeypatch.setattr(app.state.issue_executor, "schedule_resume", lambda *a, **k: None)
+        await _paused_job(app, "job-reviews", COVERED, pause)
+        await _live(app, monkeypatch, state, max_budget_per_job_usd=50.0, continue_may_exceed_ceiling=False)
+        answered = await _resume(app, "job-reviews", {"choice": "continue_retrying", "extra_budget_usd": 100.0})
+    assert answered.status_code == 200 and answered.json().get("extra_budget_capped") is True, (
+        f"a named amount the ceiling capped on a pause not about the budget was not said: {answered.json()}"
+    )
+    assert answered.json()["extra_budget_usd"] == 45.0, answered.json()
+    went_on, _ = await _max_retries(state, {"choice": "continue_retrying", "extra_budget_usd": 100.0}, hard=True)
+    assert went_on["budget_cap_usd"] == 50.0, f"the node grants what the answer said, $45 past the $5 spent: {went_on}"

@@ -216,6 +216,23 @@ async def test_a_paused_job_reads_back_from_postgres_in_a_fresh_process(clean_da
     assert not lost, f"state written before the pause did not come back from Postgres: {lost}"
 
 
+async def test_a_paused_jobs_saved_state_is_read_without_its_graph(clean_database_url: str) -> None:
+    """#651 review: the resume API works out what a continue adds from the state the job saved at its pause, as
+    the node it paused in reads it again, without compiling the job's graph."""
+    await _pause(clean_database_url)
+
+    process = _process(clean_database_url)
+    paused_state = getattr(process, "paused_state", None)
+    assert paused_state is not None, "the executor cannot read a paused job's saved state"
+    saved = await paused_state(JOB)
+    snapshot = await _read_back(clean_database_url)
+
+    assert saved == snapshot.values, (
+        f"the saved state must be what the job's graph reads back: {_differences(snapshot.values, saved or {})}"
+    )
+    assert await paused_state("job-never-ran") is None, "a job with no checkpoint has no saved state"
+
+
 async def test_a_paused_job_resumes_to_completion_in_a_fresh_process(clean_database_url: str) -> None:
     await _pause(clean_database_url)
 

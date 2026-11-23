@@ -608,6 +608,18 @@ class IssueExecutor:
             },
         )
 
+    async def paused_state(self, job_id: str, pipeline: str = "") -> dict[str, Any] | None:
+        """A paused job's state as its graph reads it back, the node it paused in included when it resumes: what
+        the job saved at its pause, over its channels' defaults. None when the job saved none. ``pipeline`` is the
+        job's ``pipeline_template``, which picks its workflow as a run does."""
+        from embry0.orchestration.checkpoint import checkpointer_context
+
+        async with checkpointer_context(self._database_url) as saver:
+            graph = self._select_workflow(pipeline).compile(config={"checkpointer": saver})
+            snapshot = await graph.aget_state({"configurable": {"thread_id": job_id}})
+        values = getattr(snapshot, "values", None)
+        return dict(values) if values else None
+
     def schedule_resume(
         self,
         issue_id: str | None,
