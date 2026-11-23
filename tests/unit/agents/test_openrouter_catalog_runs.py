@@ -114,17 +114,21 @@ def _sandbox_run(**kw: Any) -> AgentOutput:
     return asyncio.run(OpenAICompatibleExecutor().run(invocation, {"_test_writer": [].append}))
 
 
-def test_the_sandbox_prices_the_run_from_the_rates_it_was_sent(server: FakeOpenAIServer) -> None:
+@pytest.mark.parametrize("record", [True, False], ids=["its provider record", "the rates alone"])
+def test_the_sandbox_prices_the_run_from_the_rates_it_was_sent(server: FakeOpenAIServer, record: bool) -> None:
+    """With a provider record (#173 PR 3), or with the rates alone, as an orchestrator before records sent them."""
     server.answer(completion(content="done", prompt_tokens=1_000_000, completion_tokens=100_000))
-    out = _sandbox_run()
+    out = _sandbox_run() if record else _sandbox_run(provider_record=None)
     assert not out.is_error, out.error_message
     assert server.chat_requests()[0]["json"]["model"] == "anthropic/claude-opus-5.5"
     assert out.cost_usd == pytest.approx(4.0 + 2.0)
 
 
 def test_without_the_rates_the_sandbox_refuses_to_meter_it_at_zero(server: FakeOpenAIServer) -> None:
+    """A run with neither a provider record nor rates (an orchestrator that predates both): its own table lacks the
+    live list's model, so it is unpriced."""
     server.answer(completion(content="done", prompt_tokens=1000, completion_tokens=10))
-    out = _sandbox_run(pricing_usd_per_mtok=None)
+    out = _sandbox_run(pricing_usd_per_mtok=None, provider_record=None)
     assert out.is_error and out.error_code == ErrorCode.INVALID_CONFIG.value
     assert out.error_message.startswith("cost unknown:")
 

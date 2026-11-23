@@ -4977,6 +4977,21 @@ deliverable under an "Assumptions" heading.$seed$
         END $$;
         """,
     ),
+    (
+        155,
+        "traces.pricing: the provider record's pricing a run was resolved with (ADR 0031)",
+        # #173 PR 3: each agent run carries its provider's record, resolved from
+        # the deployment's catalogue at the run's start; the trace keeps what it
+        # priced the run with: the rates in force then, the cache factors, when
+        # they were resolved and what the run is charged from (Anthropic's CLI,
+        # or the catalogue's rates). NULL for a run that predates it.
+        """
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS pricing JSONB
+            CHECK (pricing IS NULL OR jsonb_typeof(pricing) = 'object');
+        COMMENT ON COLUMN traces.pricing IS
+            '{"provider", "model", "rates": {"in", "out"} | null, "cache": {"read", "write"}, "resolved_at", "charged_from"}: what the run was priced with; NULL before #173 PR 3.';
+        """,
+    ),
 ]
 
 

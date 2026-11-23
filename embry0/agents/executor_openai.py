@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -52,7 +53,7 @@ from embry0.agents.context_fit import (
 )
 from embry0.agents.invocation import AgentInvocation
 from embry0.agents.mcp_client import McpStdioClient, summarize_content
-from embry0.agents.providers import ModelProvider, provider_named, upstream_model
+from embry0.agents.providers import provider_named, upstream_model
 from embry0.agents.xai_tools import execute_tool
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
@@ -305,7 +306,7 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
-async def _context_window(provider: ModelProvider, base_url: str, api_key: str, model: str) -> int | None:
+async def _context_window(base_url: str, api_key: str, model: str) -> int | None:
     """The context window of ``model`` on the operator's server: the setting, else its ``/models``.
 
     None when neither says: the run is then not fitted, and a request the
@@ -326,11 +327,51 @@ async def _context_window(provider: ModelProvider, base_url: str, api_key: str, 
         await client.aclose()
 
 
-def _endpoint(provider: ModelProvider) -> str:
-    """The API root this run calls: the operator's for the custom provider, else the catalog's."""
-    if provider.sandbox_base_url_env:
-        return os.environ.get(provider.sandbox_base_url_env, "").strip()
-    return provider.openai_base_url
+@dataclass(frozen=True)
+class _Target:
+    """The provider a run calls, from its record (#173 PR 3) or, from an orchestrator that predates records, the
+    sandbox's own table."""
+
+    name: str
+    api_root: str
+    base_url_env: str
+    key_env: str
+    upstream_model: str
+    request_extras: dict[str, Any]
+
+    @property
+    def endpoint(self) -> str:
+        """The API root this run calls: the operator's for the custom provider, else the provider's own."""
+        if self.base_url_env:
+            return os.environ.get(self.base_url_env, "").strip()
+        return self.api_root
+
+
+def _target(invocation: AgentInvocation) -> _Target | str:
+    """What the run calls, or why it cannot be called."""
+    record = invocation.provider_record
+    if record is not None:
+        if record.runtime != "chat_completions":
+            return f"{record.name!r} is not an OpenAI-compatible chat-completions provider"
+        return _Target(
+            record.name,
+            record.api_root,
+            record.base_url_env,
+            record.key_env,
+            record.upstream_model or invocation.model,
+            dict(record.request_extras),
+        )
+    provider = provider_named(invocation.provider)
+    if provider is None or provider.runtime != "chat_completions":
+        return f"{invocation.provider!r} is not an OpenAI-compatible chat-completions provider"
+    return _Target(
+        provider.name,
+        provider.openai_base_url,
+        provider.sandbox_base_url_env,
+        provider.sandbox_key_env,
+        upstream_model(provider, invocation.model),
+        dict(provider.request_extras.get(invocation.model, {})),
+    )
 
 
 class OpenAICompatibleExecutor:
@@ -344,16 +385,14 @@ class OpenAICompatibleExecutor:
         resume_session_id: str | None = None,  # noqa: ARG002 — no CLI session on this path
         resume_messages: list[dict[str, Any]] | None = None,
     ) -> AgentOutput:
-        provider = provider_named(invocation.provider)
-        if provider is None or provider.runtime != "chat_completions":
-            return error_output(
-                invocation.agent_type, f"{invocation.provider!r} is not an OpenAI-compatible chat-completions provider"
-            )
-        base_url = _endpoint(provider)
+        provider = _target(invocation)
+        if isinstance(provider, str):
+            return error_output(invocation.agent_type, provider)
+        base_url = provider.endpoint
         if not base_url:
             return error_output(
                 invocation.agent_type,
-                f"no base URL for provider {provider.name!r}: {provider.sandbox_base_url_env} is not set in the sandbox",
+                f"no base URL for provider {provider.name!r}: {provider.base_url_env} is not set in the sandbox",
             )
         via_proxy = provider.name == "custom" and _flag(LOCAL_LLM_PROXY_FLAG)
         if via_proxy:
@@ -365,16 +404,16 @@ class OpenAICompatibleExecutor:
                     "bearer for it (the orchestrator writes it at create; dispatch the job again)",
                 )
         else:
-            api_key = os.environ.get(provider.sandbox_key_env, "").strip()
+            api_key = os.environ.get(provider.key_env, "").strip()
         if not api_key:
             return error_output(
                 invocation.agent_type,
-                f"model {invocation.model!r} needs a {provider.name} credential: {provider.sandbox_key_env} "
+                f"model {invocation.model!r} needs a {provider.name} credential: {provider.key_env} "
                 "is not set in the sandbox (the registry or the orchestrator env injects it at create)",
             )
-        model = upstream_model(provider, invocation.model)
-        extras = dict(provider.request_extras.get(invocation.model, {}))
-        window = await _context_window(provider, base_url, api_key, model) if provider.name == "custom" else None
+        model = provider.upstream_model
+        extras = provider.request_extras
+        window = await _context_window(base_url, api_key, model) if provider.name == "custom" else None
         return await run_tool_loop(
             invocation,
             config,

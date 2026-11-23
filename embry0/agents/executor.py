@@ -235,6 +235,87 @@ def _cli_error_result(message: Any) -> _CliErrorResult | None:
     return _CliErrorResult(subtype, body, status_code)
 
 
+@dataclass(frozen=True)
+class _SdkProvider:
+    """An Agent SDK provider other than Anthropic, as the run's record (#173 PR 3) or the sandbox's table says."""
+
+    name: str
+    base_url: str
+    key_env: str
+
+
+def _sdk_provider(invocation: AgentInvocation) -> _SdkProvider | None:
+    """The provider the CLI is pointed at for ``invocation``: its record's, else the table's (an orchestrator that
+    predates records); None when neither knows it."""
+    record = invocation.provider_record
+    if record is not None and record.name == invocation.provider:
+        return _SdkProvider(record.name, record.base_url, record.key_env)
+    from embry0.agents.providers import PROVIDERS
+
+    prov = next((pr for pr in PROVIDERS if pr.name == invocation.provider), None)
+    return _SdkProvider(prov.name, prov.base_url, prov.api_key_env) if prov is not None else None
+
+
+def _turn_price(
+    invocation: AgentInvocation, model: str, input_tokens: int, output_tokens: int, cache_read: int, cache_creation: int
+) -> float | None:
+    """A turn's estimated cost: at the run's record's rates for its own model, or for any call of a provider other
+    than Anthropic (each of them is billed by that provider); else from the sandbox's table."""
+    record = invocation.provider_record
+    if record is not None and (record.charged_from == "catalogue" or model == invocation.model):
+        return record.price(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+        )
+    return price_usage(
+        model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
+    )
+
+
+def _sdk_charge(
+    invocation: AgentInvocation,
+    cli_cost_usd: float,
+    run_usage: dict[str, tuple[int, int, int, int]],
+    result_usage: tuple[int, int, int, int],
+) -> float:
+    """What an Agent SDK run is charged (the design's "Pricing a run").
+
+    Anthropic's: what its CLI reports (``cli_cost_usd``, net of a resumed
+    session's earlier runs), which knows Anthropic's pricing better than flat
+    rates do. Any other provider's: the run's tokens at its record's rates.
+    The CLI prices every call by its own table of Claude models, which knows
+    nothing of the provider's, so its figure is logged beside the charge and
+    not counted. The tokens are each API call's this run, by message id, so a
+    resumed session's earlier runs are not counted again; the result's usage
+    when no call reported one. From an orchestrator that predates records, or
+    with no rates, the CLI's figure, as before.
+    """
+    record = invocation.provider_record
+    if record is None or record.charged_from != "catalogue":
+        return cli_cost_usd
+    tokens = [sum(call[i] for call in run_usage.values()) for i in range(4)] if run_usage else list(result_usage)
+    charged = record.price(
+        input_tokens=tokens[0], output_tokens=tokens[1], cache_read_tokens=tokens[2], cache_creation_tokens=tokens[3]
+    )
+    if charged is None:
+        logger.warning("sdk_run_unpriced_charged_cli_cost", provider=record.name, model=invocation.model)
+        return cli_cost_usd
+    logger.info(
+        "sdk_run_charged_from_catalogue",
+        provider=record.name,
+        model=invocation.model,
+        cost_usd=charged,
+        cli_cost_usd=cli_cost_usd,
+    )
+    return charged
+
+
 def _resumed_session_cost(session_id: str, cwd: str | Path | None) -> float:
     """The session cost the CLI will restore when it resumes ``session_id``."""
     session_file = find_session_file(
@@ -617,10 +698,9 @@ class SdkAgentExecutor:
         # the Anthropic subscription. Missing credentials fail closed before
         # any tokens are spent.
         if invocation.provider:
-            from embry0.agents.providers import PROVIDERS
             from embry0.sandbox.xai_token import read_xai_proxy_token
 
-            prov = next((pr for pr in PROVIDERS if pr.name == invocation.provider), None)
+            prov = _sdk_provider(invocation)
             if prov is None:
                 return AgentOutput(
                     agent_type=invocation.agent_type,
@@ -640,12 +720,12 @@ class SdkAgentExecutor:
                     "CLAUDE_CODE_OAUTH_TOKEN": "",
                 }
             else:
-                provider_key = os.environ.get(prov.api_key_env, "")
+                provider_key = os.environ.get(prov.key_env, "")
                 if not provider_key:
                     cred_hint = (
-                        f"the xai-proxy (bearer file + EMBRY0_XAI_PROXY_URL) or {prov.api_key_env}"
+                        f"the xai-proxy (bearer file + EMBRY0_XAI_PROXY_URL) or {prov.key_env}"
                         if invocation.provider == "xai"
-                        else prov.api_key_env
+                        else prov.key_env
                     )
                     return AgentOutput(
                         agent_type=invocation.agent_type,
@@ -687,6 +767,8 @@ class SdkAgentExecutor:
         # the pause summary so "the agent went quiet" can be told apart from
         # "the agent spent its turns on a tool it was never going to be allowed".
         policy_denials: dict[str, int] = {}
+        # Each API call's (input, output, cache read, cache creation) tokens this run, by message id.
+        run_usage: dict[str, tuple[int, int, int, int]] = {}
 
         # --- The skills the CLI can load, read before it starts. A skill's
         # inline commands run from the text the CLI loaded, so a Skill call is
@@ -825,18 +907,18 @@ class SdkAgentExecutor:
                         turn_out = int(usage_now.get("output_tokens", 0) or 0)
                         turn_cache_read = int(usage_now.get("cache_read_input_tokens", 0) or 0)
                         turn_cache_creation = int(usage_now.get("cache_creation_input_tokens", 0) or 0)
+                        # One API call's usage, under its message id: the CLI may send a message's usage again
+                        # with each of its content blocks, and the last is the call's (#173 PR 3).
+                        message_id = getattr(message, "message_id", None) or f"#{len(run_usage)}"
+                        run_usage[str(message_id)] = (turn_in, turn_out, turn_cache_read, turn_cache_creation)
                         writer(
                             events.turn_usage(
                                 input_tokens=turn_in,
                                 output_tokens=turn_out,
                                 cache_read_tokens=turn_cache_read,
                                 cache_creation_tokens=turn_cache_creation,
-                                cost_usd=price_usage(
-                                    model_now,
-                                    input_tokens=turn_in,
-                                    output_tokens=turn_out,
-                                    cache_read_tokens=turn_cache_read,
-                                    cache_creation_tokens=turn_cache_creation,
+                                cost_usd=_turn_price(
+                                    invocation, model_now, turn_in, turn_out, turn_cache_read, turn_cache_creation
                                 ),
                                 model=model_now,
                                 **scoped,
@@ -902,6 +984,12 @@ class SdkAgentExecutor:
                     output_tokens = int(usage.get("output_tokens", 0) or 0)
                     cache_read_tokens = int(usage.get("cache_read_input_tokens", 0) or 0)
                     cache_creation_tokens = int(usage.get("cache_creation_input_tokens", 0) or 0)
+                    cost_usd = _sdk_charge(
+                        invocation,
+                        cost_usd,
+                        run_usage,
+                        (input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens),
+                    )
                     writer(
                         events.cost_update(
                             cost_usd=cost_usd,

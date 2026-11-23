@@ -469,7 +469,7 @@ def resolve_agent_invocation(
 
     from embry0.agents.providers import (
         chat_only_message,
-        model_rates,
+        provider_record,
         unpriced_models,
         unpriced_models_message,
     )
@@ -602,6 +602,8 @@ def resolve_agent_invocation(
             reason="a job's run-time config cannot replace an agent's system prompt",
         )
     skills = resolved.skills or []
+    # #173 PR 3: what the sandbox needs of the model's provider, from the deployment's catalogue, now.
+    record = provider_record(final_model)
 
     return AgentInvocation(
         agent_type=agent_type,
@@ -621,9 +623,10 @@ def resolve_agent_invocation(
         channel_config=None,  # Phase 3
         provider=provider.name if provider else None,
         fallback=fallback_record,
-        # The rates in force here: OpenRouter's live list, then the deployment's catalogue, which a sandbox
-        # carries no copy of (its own is the shipped one). Anthropic's CLI reports its own cost.
-        pricing_usd_per_mtok=model_rates(final_model) if provider is not None else catalog_rates(final_model),
+        # The rates in force here, for a sandbox image that predates the provider record: OpenRouter's live list,
+        # then the deployment's catalogue. Anthropic's CLI reports its own cost.
+        pricing_usd_per_mtok=record.rates if provider is not None else catalog_rates(final_model),
+        provider_record=record,
         local_first=local_first_record,
     )
 

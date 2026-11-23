@@ -54,7 +54,7 @@ import structlog  # noqa: E402
 from langchain_core.runnables import RunnableConfig  # noqa: E402
 
 from embry0.agents.executor_factory import select_executor  # noqa: E402
-from embry0.agents.invocation import AgentInvocation  # noqa: E402
+from embry0.agents.invocation import AgentInvocation, ProviderRecord  # noqa: E402
 from embry0.safety.policy import default_policy_for_agent, parse_tool_list, tools_for_run  # noqa: E402
 from embry0.safety.redaction import redact_event, redact_secrets, secret_env_values  # noqa: E402
 
@@ -119,6 +119,7 @@ def _invocation_from_config(cfg: dict[str, Any]) -> AgentInvocation:
         # with it reads the workspace only on an exact True, so a value of another type keeps it out.
         workspace_config="workspace_config" not in cfg or cfg["workspace_config"] is True,
         pricing_usd_per_mtok=_rates_from_config(cfg.get("pricing_usd_per_mtok")),
+        provider_record=ProviderRecord.from_config(cfg.get("provider_record")),
     )
 
 

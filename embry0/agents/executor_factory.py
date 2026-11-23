@@ -46,10 +46,16 @@ def select_executor(invocation: AgentInvocation) -> AgentExecutor:
 
         return DirectXaiExecutor()
 
-    from embry0.agents.providers import provider_named
+    # #173 PR 3: the run's provider record says its runtime; from an orchestrator that predates it, the table.
+    record = invocation.provider_record
+    if record is not None:
+        chat = record.runtime == "chat_completions"
+    else:
+        from embry0.agents.providers import provider_named
 
-    provider = provider_named(invocation.provider) if invocation.provider else None
-    if provider is not None and provider.runtime == "chat_completions":
+        provider = provider_named(invocation.provider) if invocation.provider else None
+        chat = provider is not None and provider.runtime == "chat_completions"
+    if chat:
         from embry0.agents.executor_openai import OpenAICompatibleExecutor
 
         return OpenAICompatibleExecutor()

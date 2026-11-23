@@ -45,6 +45,7 @@ class TracesRepository:
         stderr_tail: str | None = None,
         trace_id: str | None = None,
         fallback: dict[str, Any] | None = None,
+        pricing: dict[str, Any] | None = None,
     ) -> str:
         """Create a trace record and return its ID.
 
@@ -58,6 +59,10 @@ class TracesRepository:
 
         ``fallback`` is set for a run that ran on a provider-fallback model:
         what it stood in for (spec 2026-10-25-provider-fallback-design).
+
+        ``pricing`` is what the run was priced with: its provider record's
+        rates, cache factors, when they were resolved and what it is charged
+        from (#173 PR 3, ``ProviderRecord.trace_pricing``).
         """
         trace_id = trace_id or f"trc-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
@@ -66,9 +71,9 @@ class TracesRepository:
                 trace_id, job_id, agent_type, model, result,
                 cost_usd, duration_ms, tools_called, result_summary,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                error_code, stderr_tail, skill_actions, fallback
+                error_code, stderr_tail, skill_actions, fallback, pricing
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             """,
             trace_id,
             job_id,
@@ -87,6 +92,7 @@ class TracesRepository:
             stderr_tail,
             skill_actions or {},
             fallback,
+            pricing,
         )
         logger.info("trace_created", trace_id=trace_id, job_id=job_id, agent_type=agent_type)
         if self._metrics is not None and cost_usd > 0:

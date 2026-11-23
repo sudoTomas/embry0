@@ -208,6 +208,37 @@ def price_run(
     )
 
 
+def _priced(
+    invocation: AgentInvocation,
+    compute_cost: Callable[[str, int, int, int, int], float | None] | None,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+) -> float | None:
+    """What this usage costs: at the provider record's rates and cache factors, which the orchestrator resolved from
+    the deployment's catalogue at the run's start; from an orchestrator that predates records, at the rates it sent,
+    else as ``compute_cost`` (the sandbox's own table; :func:`price_usage` for a turn's estimate) says."""
+    record = invocation.provider_record
+    if record is not None:
+        return record.price(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        )
+    if invocation.pricing_usd_per_mtok is not None or compute_cost is None:
+        return price_usage(
+            invocation.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            rates=invocation.pricing_usd_per_mtok,
+        )
+    return compute_cost(invocation.model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+
+
 def error_output(agent_type: str, message: str) -> AgentOutput:
     return AgentOutput(agent_type=agent_type, is_error=True, error_message=message)
 
@@ -318,13 +349,13 @@ async def run_tool_loop(
                         output_tokens=usage.output_tokens,
                         cache_read_tokens=usage.cache_read_tokens,
                         cache_creation_tokens=usage.cache_creation_tokens,
-                        cost_usd=price_usage(
-                            invocation.model,
-                            input_tokens=usage.input_tokens,
-                            output_tokens=usage.output_tokens,
-                            cache_read_tokens=usage.cache_read_tokens,
-                            cache_creation_tokens=usage.cache_creation_tokens,
-                            rates=invocation.pricing_usd_per_mtok,
+                        cost_usd=_priced(
+                            invocation,
+                            None,
+                            usage.input_tokens,
+                            usage.output_tokens,
+                            usage.cache_read_tokens,
+                            usage.cache_creation_tokens,
                         ),
                         model=invocation.model,
                         **ids,
@@ -442,24 +473,9 @@ async def run_tool_loop(
     # None when the model has no price entry (#219): the price table is the only
     # accounting these APIs leave, so an unpriced model is an error to record,
     # never a silent $0.
-    # A model of OpenRouter's live catalog carries its rates on the invocation.
-    priced = (
-        price_usage(
-            invocation.model,
-            input_tokens=totals["in"],
-            output_tokens=totals["out"],
-            cache_read_tokens=totals["cache_read"],
-            cache_creation_tokens=totals["cache_creation"],
-            rates=invocation.pricing_usd_per_mtok,
-        )
-        if invocation.pricing_usd_per_mtok is not None
-        else compute_cost(
-            invocation.model,
-            totals["in"],
-            totals["out"],
-            totals["cache_read"],
-            totals["cache_creation"],
-        )
+    # The run's provider record carries its rates (#173 PR 3); an orchestrator that predates it, the rates alone.
+    priced = _priced(
+        invocation, compute_cost, totals["in"], totals["out"], totals["cache_read"], totals["cache_creation"]
     )
     cost = priced if priced is not None else 0.0
     if priced is None:
