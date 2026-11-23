@@ -11,6 +11,8 @@ Three concentric rings defend the sandbox:
    the CLI apply them with evaluate_ring2_paths.
 3. Ring 3 (programmable): content_checks — regex-on-input rules this module
    evaluates via evaluate_policy(). Used when Ring 2 can't express a check.
+   argument_checks refuse a call by the value of one named argument, and
+   command_checks a shell command by what its parse runs or reads.
 
 Fail-closed: if evaluate_policy raises or returns something malformed, the tool
 is denied. A hook that errors silently and allows the tool through is a
@@ -23,6 +25,7 @@ import json
 import os
 import pwd
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Final
@@ -59,6 +62,60 @@ class CommandCheck:
     runs: tuple[str, ...] = ()
     reads: tuple[str, ...] = ()
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class ArgumentCheck:
+    """A Ring-3 rule on one named argument of a tool call.
+
+    - tools: the tool names it checks;
+    - argument: the input key it reads;
+    - allowed: the values that pass; empty, none does. A call without the
+      argument, or with it null or false, passes;
+    - reason: shown to the agent when it refuses a call.
+    """
+
+    tools: tuple[str, ...]
+    argument: str
+    allowed: tuple[Any, ...] = ()
+    reason: str = ""
+
+    def refuses(self, tool_name: str, tool_input: Mapping[str, Any]) -> bool:
+        if tool_name not in self.tools or self.argument not in tool_input:
+            return False
+        value = tool_input[self.argument]
+        if value is None or value is False:
+            return False
+        return not any(type(value) is type(ok) and value == ok for ok in self.allowed)
+
+
+_VIBIUM_FIND = ("mcp__vibium__browser_find", "mcp__vibium__browser_find_all")
+_NO_MODEL = (
+    "vibium's model-backed locating is not available in a sandbox; use an exact locator "
+    "(css, role, text, label, placeholder, testid, alt, title, xpath)"
+)
+
+#: Arguments of the browser tools a QA agent is granted that would reach past the sandbox.
+#: vibium 26.11's browser_find and browser_find_all take a model provider, model, endpoint and
+#: effort per call, and a provider that needs no key (local, openai-compatible) with an endpoint
+#: of the call's choosing sends the page's screenshot there; strategy vlm asks a model by name.
+#: browser_record_stop's upload sends the recording to a remote station. The vibium server is
+#: also started with no model and no station configured (embry0.workflows.qa.browser_backends).
+#: These checks bind the MCP server's tool calls only. The vibium command line takes the same
+#: options and runs with the agent's own environment; what governs it is what governs any
+#: program the agent starts: the Bash checks and the sandbox's network boundary.
+BROWSER_ARGUMENT_CHECKS: Final[tuple[ArgumentCheck, ...]] = (
+    *(
+        ArgumentCheck(tools=_VIBIUM_FIND, argument=name, reason=_NO_MODEL)
+        for name in ("provider", "model", "aiBaseURL", "reasoningEffort")
+    ),
+    ArgumentCheck(tools=_VIBIUM_FIND, argument="strategy", allowed=("auto", "cv", "tree"), reason=_NO_MODEL),
+    ArgumentCheck(
+        tools=("mcp__vibium__browser_record_stop",),
+        argument="upload",
+        reason="a recording stays in the sandbox; save it with path and upload it through the presign flow",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -99,6 +156,7 @@ class SafetyPolicy:
     content_checks: list[ContentRule] = field(default_factory=list)
     network_egress_allowlist: list[str] = field(default_factory=list)
     command_checks: list[CommandCheck] = field(default_factory=list)
+    argument_checks: list[ArgumentCheck] = field(default_factory=list)
 
 
 def _normalize(text: str) -> str:
@@ -194,6 +252,11 @@ def evaluate_policy(
         allowed = policy.allowed_tools
         if allowed is not None and tool_name not in allowed and tool_name not in _INFRA_ALLOWED_TOOLS:
             return Verdict.deny(f"tool {tool_name!r} is not in this agent's allowlist")
+        for argument_check in policy.argument_checks:
+            if argument_check.refuses(tool_name, tool_input):
+                return Verdict.deny(
+                    f"Blocked by safety policy: {tool_name}'s {argument_check.argument!r}: {argument_check.reason}"
+                )
         rules = [rule for rule in policy.content_checks if _rule_applies(rule, tool_name)]
         checks = policy.command_checks if tool_name in SHELL_TOOLS else []
         if not rules and not checks:
@@ -362,6 +425,8 @@ def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
     - Ring 3 content checks: every pattern in DANGEROUS_BASH_PATTERNS.
     - Ring 3 command checks: a Docker client run, a file named .env read
       (embry0.safety.command_checks).
+    - Ring 3 argument checks: the browser tool arguments that would call a
+      model or upload a recording (BROWSER_ARGUMENT_CHECKS).
 
     There are no allow rules: the SDK executor runs the CLI in
     bypassPermissions mode, where everything a deny rule does not refuse is
@@ -386,6 +451,7 @@ def default_policy_for_agent(agent_type: str) -> SafetyPolicy:
         content_checks=content_checks,
         network_egress_allowlist=[],
         command_checks=command_checks,
+        argument_checks=list(BROWSER_ARGUMENT_CHECKS),
     )
 
 

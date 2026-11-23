@@ -55,16 +55,21 @@ class BrowserBackend:
     storage_state_env: Mapping[str, str]
     # Appended to the QA system prompt when this backend is selected.
     prompt_fragment: str
+    # Env set on the browser server's own process, over the sandbox env it
+    # inherits: what the server must not read, though the agent's process
+    # does. Empty: the server's entry carries no `env`.
+    mcp_env: Mapping[str, str] = MappingProxyType({})
 
     def mcp_servers(self) -> dict[str, Any]:
         """Fresh `mcp_servers` dict for an agent definition."""
-        return {
-            self.mcp_server_name: {
-                "type": "stdio",
-                "command": self.mcp_command,
-                "args": list(self.mcp_args),
-            }
+        server: dict[str, Any] = {
+            "type": "stdio",
+            "command": self.mcp_command,
+            "args": list(self.mcp_args),
         }
+        if self.mcp_env:
+            server["env"] = dict(self.mcp_env)
+        return {self.mcp_server_name: server}
 
     def browser_tools(self) -> list[str]:
         """Fresh list of the backend's fully-qualified MCP tool names."""
@@ -146,6 +151,121 @@ PLAYWRIGHT = BrowserBackend(
 )
 
 
+# Served by vibium's MCP server but deliberately kept out of the QA agent's
+# allowlist, as PLAYWRIGHT_EXCLUDED_TOOLS is for Playwright. CI asks the
+# image's own server for tools/list and requires granted + excluded to be
+# exactly what it serves (infra/scripts/check-browser-mcp-tools.py), so a
+# tool a vibium release adds or drops fails there, not on a QA run.
+VIBIUM_EXCLUDED_TOOLS: frozenset[str] = frozenset(
+    {
+        # Tools that call a model or a speech service with whatever keys the
+        # server can read: the run is the agent's to reason about, and
+        # embry0 meters and gates every model call itself.
+        "mcp__vibium__vibium_run",
+        "mcp__vibium__vibium_check",
+        "mcp__vibium__vibium_say",
+        "mcp__vibium__vibium_listen",
+        # Raw mouse, keys and touch: they bypass actionability checks.
+        "mcp__vibium__browser_mouse_click",
+        "mcp__vibium__browser_mouse_down",
+        "mcp__vibium__browser_mouse_move",
+        "mcp__vibium__browser_mouse_up",
+        "mcp__vibium__browser_keys",
+        "mcp__vibium__browser_tap",
+        "mcp__vibium__browser_swipe",
+        "mcp__vibium__browser_long_press",
+        # Clock mocking lets the agent fake time-dependent criteria.
+        "mcp__vibium__page_clock_install",
+        "mcp__vibium__page_clock_fast_forward",
+        "mcp__vibium__page_clock_pause_at",
+        "mcp__vibium__page_clock_resume",
+        "mcp__vibium__page_clock_run_for",
+        "mcp__vibium__page_clock_set_fixed_time",
+        "mcp__vibium__page_clock_set_system_time",
+        "mcp__vibium__page_clock_set_timezone",
+        # set_content rewrites the page under test.
+        "mcp__vibium__browser_set_content",
+        # Cookie read/write and storage export: session-state exfiltration;
+        # auth flows through browser_restore_storage only.
+        "mcp__vibium__browser_get_cookies",
+        "mcp__vibium__browser_set_cookie",
+        "mcp__vibium__browser_delete_cookies",
+        "mcp__vibium__browser_storage_state",
+        # Sleep and arbitrary-function waits: the granted waits cover them.
+        "mcp__vibium__browser_sleep",
+        "mcp__vibium__browser_wait_for_fn",
+        # Marginal reads, emulation and window control the granted set covers.
+        "mcp__vibium__browser_close_page",
+        "mcp__vibium__browser_count",
+        "mcp__vibium__browser_download_set_dir",
+        "mcp__vibium__browser_emulate_media",
+        "mcp__vibium__browser_focus",
+        "mcp__vibium__browser_forward",
+        "mcp__vibium__browser_get_html",
+        "mcp__vibium__browser_get_value",
+        "mcp__vibium__browser_get_window",
+        "mcp__vibium__browser_highlight",
+        "mcp__vibium__browser_is_enabled",
+        "mcp__vibium__browser_is_set",
+        "mcp__vibium__browser_pdf",
+        "mcp__vibium__browser_scroll_into_view",
+        "mcp__vibium__browser_set_geolocation",
+        "mcp__vibium__browser_set_window",
+    }
+)
+
+# What vibium's server reads, or a later release may read, that a sandbox's
+# environment can carry and the server must not. Set empty on the server
+# alone, over the sandbox env it inherits: the agent's own process keeps
+# what it runs on.
+# - VIBIUM_LOAD_AI_ENV=0: every vibium command, the MCP server included,
+#   starts by filling each of the variables below that is empty from
+#   ai.env in its config dir (VIBIUM_CONFIG_DIR, else ~/.config/vibium).
+#   Emptying them alone would leave that file free to set them again.
+# - The AI provider, model, endpoint and keys: browser_find calls a model
+#   when one is configured.
+# - The speech providers, their keys, endpoints and commands: read by the
+#   speech tools, which are not granted.
+# - VIBIUM_API_KEY: 26.11.16 reads it only to redact it from recordings.
+# - A remote station to connect to, which is also where
+#   browser_record_stop's `upload` goes.
+# - Cloud-browser keys: 26.11.16's server reads none, but a repository's
+#   env can carry them for its own tests.
+_VIBIUM_SERVER_ENV: Mapping[str, str] = MappingProxyType(
+    {
+        "VIBIUM_LOAD_AI_ENV": "0",
+        "VIBIUM_AI_PROVIDER": "",
+        "VIBIUM_AI_MODEL": "",
+        "VIBIUM_AI_BASE_URL": "",
+        "VIBIUM_AI_REASONING_EFFORT": "",
+        "ANTHROPIC_API_KEY": "",
+        "OPENAI_API_KEY": "",
+        "GOOGLE_API_KEY": "",
+        "GEMINI_API_KEY": "",
+        "XAI_API_KEY": "",
+        "VIBIUM_SAY_PROVIDER": "",
+        "VIBIUM_SAY_MODEL": "",
+        "VIBIUM_SAY_VOICE": "",
+        "VIBIUM_SAY_COMMAND": "",
+        "VIBIUM_PIPER_URL": "",
+        "VIBIUM_LISTEN_PROVIDER": "",
+        "VIBIUM_LISTEN_MODEL": "",
+        "VIBIUM_LISTEN_COMMAND": "",
+        "VIBIUM_SHERPA_URL": "",
+        "DEEPGRAM_API_KEY": "",
+        "ELEVENLABS_API_KEY": "",
+        "VIBIUM_API_KEY": "",
+        "VIBIUM_CONNECT_URL": "",
+        "VIBIUM_CONNECT_API_KEY": "",
+        "VIBIUM_CONNECT_HEADERS": "",
+        "VIBIUM_CONNECT_CAPS": "",
+        "BROWSERBASE_API_KEY": "",
+        "HYPERBROWSER_API_KEY": "",
+        "KERNEL_API_KEY": "",
+    }
+)
+
+
 VIBIUM = BrowserBackend(
     name="vibium",
     mcp_server_name="vibium",
@@ -155,13 +275,10 @@ VIBIUM = BrowserBackend(
     # volumes) instead of vibium's ~/Pictures default.
     mcp_command="vibium",
     mcp_args=("mcp", "--headless", "--screenshot-dir", "/workspace/.qa/screenshots"),
-    # The curated allowlist from docs/spikes/2026-08-27-vibium-browser-backend.md
-    # (49 of the 85 served tools; verified against vibium 26.8.21 tools/list).
-    # Deliberately excluded: raw mouse (bypasses actionability), clock mocking
-    # (lets the agent fake time-dependent criteria), set_content (rewrites the
-    # page under test), cookie read/write + storage export (session-state
-    # exfiltration; auth flows through restore only), sleep/wait_for_fn, and
-    # marginal read/emulation tools covered by the granted set.
+    # The curated allowlist from docs/spikes/2026-08-27-vibium-browser-backend.md:
+    # 49 of the 92 tools vibium 26.11.16 serves; VIBIUM_EXCLUDED_TOOLS says why
+    # each of the rest is out. 26.11 replaced browser_check/browser_uncheck
+    # with browser_set/browser_unset.
     tool_names=(
         # Session / navigation
         "mcp__vibium__browser_start",
@@ -178,8 +295,8 @@ VIBIUM = BrowserBackend(
         "mcp__vibium__browser_fill",
         "mcp__vibium__browser_press",
         "mcp__vibium__browser_hover",
-        "mcp__vibium__browser_check",
-        "mcp__vibium__browser_uncheck",
+        "mcp__vibium__browser_set",
+        "mcp__vibium__browser_unset",
         "mcp__vibium__browser_select",
         "mcp__vibium__browser_scroll",
         "mcp__vibium__browser_drag",
@@ -231,6 +348,10 @@ VIBIUM = BrowserBackend(
     # browser_restore_storage TOOL CALL (prompt-driven restore-first, #234) —
     # the generic QA_STORAGE_STATE_PATH carries the file's location.
     storage_state_env=MappingProxyType({}),
+    # No model and no station for the server: see _VIBIUM_SERVER_ENV. The
+    # call arguments that would name one are refused by the safety policy
+    # (embry0.safety.policy.BROWSER_ARGUMENT_CHECKS).
+    mcp_env=_VIBIUM_SERVER_ENV,
     # Appended AFTER the QA system prompt: overrides its Playwright-specific
     # instructions for vibium runs (#234). Restore-first auth, evaluate-shim
     # console/network evidence, trace recording, map-first targeting.
@@ -249,14 +370,15 @@ Session lifecycle:
   - Before writing result.json, call browser_record_stop with
     path=/workspace/.qa/traces/session.zip and upload it via the presign
     flow under "traces/session.zip". The ZIP opens in the Playwright trace
-    viewer — it is primary failure evidence.
+    viewer — it is primary failure evidence. Never pass browser_record_stop's
+    own upload option: it is refused.
 
 Pre-authenticated sessions (pre_authenticated: true) — NAVIGATE, RESTORE, RELOAD:
   Unlike Playwright, the seeded session is NOT applied automatically. The
   orchestrator wrote it (already converted to vibium's native restore
   shape) to the file named by the QA_STORAGE_STATE_PATH env var. Restoring
   web storage only works while the browser is ON the app's origin —
-  verified against vibium 26.8.21: restoring any earlier throws a
+  verified against vibium 26.11.16: restoring any earlier throws a
   SecurityError or silently drops localStorage. Your first browser actions
   MUST be, in this exact order:
     1. browser_start
@@ -278,8 +400,13 @@ Element targeting (token-cheap, in preference order):
     a ref as the selector for click/fill/etc. browser_diff_map after an
     action shows what changed. browser_a11y_tree replaces browser_snapshot
     for full page structure.
-  - browser_find accepts semantic locators (role/text/label/placeholder/
-    testid) besides CSS.
+  - browser_find takes an exact locator: css for a CSS selector, or
+    role/text/label/placeholder/testid/alt/title/xpath. A plain string is a
+    description, matched against the page's names and roles only — no model
+    is available to it — so prefer an exact locator. Do not pass provider,
+    model, aiBaseURL, reasoningEffort or strategy: vlm; they are refused.
+  - Checkboxes and radios: browser_set (value: false clears a checkbox) and
+    browser_unset.
 
 Console & network evidence — Vibium MCP has NO console/network tools.
   Install this recorder via browser_evaluate IMMEDIATELY after EVERY
@@ -349,7 +476,7 @@ def backend_names() -> tuple[str, ...]:
 
 
 def to_vibium_storage_state(playwright_state: Mapping[str, Any], frontend_url: str) -> dict[str, Any]:
-    """Convert a Playwright storageState to vibium 26.8.21's native restore shape.
+    """Convert a Playwright storageState to vibium's native restore shape (26.8.21, unchanged in 26.11.16).
 
     Established empirically against the pinned binary (#234): vibium's
     ``storage restore`` applies web storage ONLY from its own single-origin

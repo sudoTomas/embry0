@@ -418,3 +418,35 @@ def test_the_ring2_rules_apply_without_the_workspaces_settings(
     assert results, f"the CLI never sent the read's result: {len(handler.bodies)} requests"
     leaked = any("RING2-SECRET-MARKER" in body for body in results)
     assert leaked is not denied, f"settings={settings} disallowed={disallowed}: the denied file was read={leaked}"
+
+
+# -- a browser server's own environment ---------------------------------------------------------------------------
+
+
+def _env_server(path: Path, env: dict[str, str] | None) -> dict[str, Any]:
+    """A stdio server that writes the environment it was started with to ``path``."""
+    server: dict[str, Any] = {"type": "stdio", "command": "sh", "args": ["-c", f"env > {path}; exec sleep 5"]}
+    if env is not None:
+        server["env"] = env
+    return server
+
+
+@pytest.mark.parametrize("own_env", [True, False], ids=["vibium's env", "no env (proves the check)"])
+def test_the_vibium_server_reads_no_ai_key_the_sandbox_carries(api_url: str, tmp_path: Path, own_env: bool) -> None:
+    """The CLI starts a stdio server with its own environment, which carries the agent's API key. The vibium
+    server's env (embry0.workflows.qa.browser_backends) empties it, and every other variable vibium reads for a
+    model or a station, over what it inherits. Without that env the key reaches the server."""
+    from embry0.workflows.qa.browser_backends import VIBIUM
+
+    project, home, invocation = _setup(tmp_path)
+    written = tmp_path / "server-env"
+    server = _env_server(written, dict(VIBIUM.mcp_env) if own_env else None)
+    probe = dataclasses.replace(invocation, mcp_servers={"vibium": server}, skills=[], skill_mounts=())
+    options = build_sdk_options(probe)
+    _run_cli(api_url, project, home, probe, strict=True, tools=options.tools)
+    env = dict(line.split("=", 1) for line in written.read_text().splitlines() if "=" in line)
+    if own_env:
+        assert env.get("ANTHROPIC_API_KEY") == "", "the agent's API key reached the vibium server"
+        assert env.get("VIBIUM_LOAD_AI_ENV") == "0" and env.get("VIBIUM_CONNECT_URL") == "", sorted(env)
+    else:
+        assert env.get("ANTHROPIC_API_KEY", "").startswith("sk-ant-"), "the CLI no longer passes its env to a server"

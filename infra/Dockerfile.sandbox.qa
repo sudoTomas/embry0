@@ -88,9 +88,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     # behavior shifts between releases (storage-state shape, pipe transport),
     # and the QA browser-backend contract is validated against this version.
     # 26.8.21 is the hard floor — it fixes storage restore (upstream #217)
-    # and a pipe-transport hang. Bumps are deliberate one-line changes.
+    # and a pipe-transport hang. 26.11.16 is built with Go 1.26.11 and
+    # changes the MCP tools the QA backend grants: browser_check/uncheck
+    # became browser_set/unset, browser_find reads a bare string as a
+    # description, and new tools call models. A bump is deliberate: the
+    # granted and excluded tools (browser_backends.py) must match its
+    # tools/list, which CI checks against this image.
     # See docs/spikes/2026-08-27-vibium-browser-backend.md (#229/#231).
-    && npm install -g @playwright/mcp@latest playwright@latest vibium@26.8.21
+    && npm install -g @playwright/mcp@latest playwright@latest vibium@26.11.16
 
 # Pre-fetch Chromium so the QA agent doesn't pay download cost at job start.
 # Critically: install via @playwright/mcp's BUNDLED playwright-core (not the
@@ -107,9 +112,10 @@ RUN node /usr/lib/node_modules/@playwright/mcp/node_modules/playwright-core/cli.
 
 # Pre-fetch Vibium's Chrome for Testing + chromedriver into VIBIUM_CACHE_DIR.
 # Sandboxes have no internet egress at job time, so the browser MUST be baked
-# here (downloads are checksum-verified as of vibium 26.8.21). a+rwX for the
-# same reason as /opt/playwright: per-launch profile dirs are created under
-# the cache by the non-root agent user at runtime. Chrome refuses its own
+# here. vibium fetches it over HTTPS from its one host, storage.googleapis.com
+# (Chrome for Testing publishes no checksums). a+rwX for the same reason as
+# /opt/playwright: per-launch profile dirs are created under the cache by the
+# non-root agent user at runtime. Chrome refuses its own
 # sandbox when run as root in DinD — the orchestrator injects
 # VIBIUM_CHROME_ARGS=--no-sandbox per job (see browser_backends.py, #233);
 # it is deliberately NOT baked as an ENV here so non-QA uses of the image
