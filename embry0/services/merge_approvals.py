@@ -34,7 +34,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
+from embry0.forge_urls import GITHUB_HOST, parse_pr_url
 from embry0.services.merge_recommendation import ReviewFacts, parse_review, recommend, summarize
+from embry0.storage.repo_renames import same_repository
+from embry0.storage.repositories.jobs import job_repository
 from embry0.workflows.qa._glob_match import compile_glob, match_any
 
 if TYPE_CHECKING:
@@ -199,8 +202,6 @@ def classify_checks(check_runs: dict[str, Any] | None, combined_status: dict[str
 
 # -- decisions ------------------------------------------------------------------
 
-_PR_URL = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)/?$")
-
 APPROVE_WORDS = frozenset({"approve", "approved", "merge"})
 REJECT_WORDS = frozenset({"reject", "rejected", "decline"})
 
@@ -216,11 +217,6 @@ class DecisionRefused(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
-
-
-def parse_pr_url(url: str) -> tuple[str, int] | None:
-    match = _PR_URL.match((url or "").strip())
-    return (match.group(1), int(match.group(2))) if match else None
 
 
 def _short(sha: str | None) -> str:
@@ -317,10 +313,16 @@ class MergeApprovalService:
         Recorded, not posted: :meth:`sweep_once` posts it once the PR's CI
         has settled (or ``MERGE_APPROVAL_CI_WAIT_MINUTES`` passed), so the
         recommendation reads real CI rather than "pending"."""
-        parsed = parse_pr_url(pr_url)
-        if parsed is None or not self.handles(parsed[0]):
+        pr = parse_pr_url(pr_url)
+        if pr is None or not self.handles(pr.repo):
             return None
-        repo, number = parsed
+        if pr.forge != "github" or pr.host != GITHUB_HOST:
+            # A merge ask reads and merges with the GitHub client, on github.com (#181).
+            logger.info("merge_approval_forge_not_supported", forge=pr.forge, host=pr.host, pr_url=pr_url)
+            return None
+        if not await self._in_job_repository(job_id, pr.repo):
+            return None
+        repo, number = pr.repo, pr.number
         pr = await self._github.get_pull(repo, number)
         if pr is None:
             logger.warning("merge_approval_pr_unreadable", repo=repo, pr_number=number)
@@ -372,6 +374,23 @@ class MergeApprovalService:
 
         logger.info("merge_approval_recorded", approval_id=row["id"], repo=repo, pr_number=number)
         return row
+
+    async def _in_job_repository(self, job_id: str | None, repo: str) -> bool:
+        """Whether ``repo``, a pull request's, is the repository of the job that reported it: an ask merges only a
+        job's own repository. False when the job's row cannot be read. True with no job (an ask carried over from a
+        row that names none) or no job store (a service built without one: production passes it,
+        tests/unit/api/test_merge_approvals_wiring.py), which have nothing to compare."""
+        if not job_id or self._jobs is None:
+            return True
+        try:
+            job = await self._jobs.get(job_id)
+        except Exception:
+            logger.warning("merge_approval_job_lookup_failed", job_id=job_id, exc_info=True)
+            return False
+        if job is not None and same_repository(repo, job_repository(job)):
+            return True
+        logger.warning("merge_approval_pr_outside_job_repository", job_id=job_id, repo=repo)
+        return False
 
     async def _review(self, job_id: str | None) -> ReviewFacts | None:
         if not job_id or self._jobs is None:

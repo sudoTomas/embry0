@@ -339,7 +339,7 @@ def offered_work_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     async def no_areas(_request: Any, repos: set[str]) -> dict[str, list[Any]]:
         return {r: [] for r in repos}
 
-    async def no_pr_stats(_request: Any, _pr_url: str | None) -> None:
+    async def no_pr_stats(_request: Any, _pr_url: str | None, _repo: str | None) -> None:
         return None
 
     async def regions(_request: Any) -> dict[str, Any]:

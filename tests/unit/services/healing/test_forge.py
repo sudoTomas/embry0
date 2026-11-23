@@ -41,6 +41,7 @@ async def test_a_forge_error_yields_no_time_never_an_exception():
     "url",
     [
         "https://gitlab.com/acme/widgets/-/merge_requests/42",  # not GitHub: no guessing
+        "https://ghe.example.test/acme/widgets/pull/42",  # GitHub, on a host this client does not read
         "https://github.com/acme/widgets/pull/abc",
         "https://github.com/acme/widgets/pulls/42",
         "https://evil.test/github.com/acme/widgets/pull/42",

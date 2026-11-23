@@ -33,8 +33,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from embry0.api.job_allowlist import hide_job_unless_covered
 from embry0.api.repo_allowlist import covered_slugs, key_covers
 from embry0.api.served import ServedRoute
-from embry0.api.v1.job_review import GITHUB_PR
 from embry0.api.v1.ui import require_game
+from embry0.forge_urls import ForgeHosts, parse_pr_url
 from embry0.services.slop import dungeons
 from embry0.services.world import (
     CLEANED_DAYS,
@@ -53,6 +53,8 @@ from embry0.services.world import (
     quest_title,
     quest_xp,
 )
+from embry0.storage.repo_renames import same_repository
+from embry0.storage.repositories.jobs import job_repository
 from embry0.workflows.row_behaviour import pipelines_by_name
 
 logger = structlog.get_logger(__name__)
@@ -393,20 +395,38 @@ async def _organization(request: Request, owner: str) -> Any:
     return await organizations.get(owner) if organizations is not None else None
 
 
-async def _pr_stats(request: Request, pr_url: str | None) -> dict[str, Any] | None:
-    """What the forge says the pull request changed; None when it cannot say in time.
+async def _repo_forge(request: Request, repo: str) -> str | None:
+    """The forge ``repo`` is registered on, as the registry answers; None when it cannot say."""
+    repos = getattr(request.app.state, "repos_repo", None)
+    return await repos.forge_or_none(repo) if repos is not None else None
+
+
+async def _pr_stats(request: Request, pr_url: str | None, repo: str | None) -> dict[str, Any] | None:
+    """What the forge says the pull request changed; None when it cannot say in time, or when the pull request is
+    not in ``repo``, the job's own repository (its path, on the forge it is registered on): a read for a job reads
+    only that repository.
 
     A request reads each owner's organization, and makes its forge client, once
     however many of its pull requests it reads, as the decisions do for their
     quests to review (#296).
     """
-    match = GITHUB_PR.match(pr_url or "")
-    if match is None:
+    pr = parse_pr_url(pr_url)
+    # GitHub's numbers only, read with the organization's client on github.com (#181): any other pull request shows
+    # its link without them.
+    if pr is None or pr.forge != "github" or not ForgeHosts.of(getattr(request.app.state, "config", None)).reaches(pr):
         return None
-    repo, number = match["repo"], int(match["number"])
-    owner = repo.split("/", 1)[0]
+    job_repo = repo or ""
+    forge = (
+        await _once(request, "pr_repo_forges", job_repo.lower(), lambda: _repo_forge(request, job_repo))
+        if same_repository(pr.repo, job_repo)
+        else None
+    )
+    if forge != pr.forge:
+        logger.info("world_pr_outside_job_repository", pr_url=pr_url, repo=repo, forge=forge)
+        return None
+    repo, number, owner = pr.repo, pr.number, pr.owner
     org = await _once(request, "pr_organizations", owner, lambda: _organization(request, owner))
-    if org is None:
+    if org is None or org.forge != pr.forge:
         return None
     from embry0.api.v1.organizations import org_forge_client
 
@@ -454,7 +474,7 @@ async def read_quest(job_id: str, request: Request) -> dict[str, Any]:
         repo.merge_approval(job_id),
         repo.lead_links([job_id]),
         verifications.get(job_id) if verifications is not None else asyncio.sleep(0, result=None),
-        _pr_stats(request, quest.get("pr_url")),
+        _pr_stats(request, quest.get("pr_url"), job_repository(quest)),
         _brief_titles(request, [job_id]),
     )
     party: dict[str, dict[str, Any]] = {}

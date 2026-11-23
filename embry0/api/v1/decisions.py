@@ -26,6 +26,7 @@ from embry0.services.decisions import Decision, done, offered, ordered
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.leads import LeadsSettings
 from embry0.storage.database import read_jsonb_text
+from embry0.storage.repositories.jobs import job_repository
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -120,7 +121,7 @@ async def done_inputs(
 
     async def pr_of(row: dict[str, Any]) -> dict[str, Any] | None:
         async with gate:
-            return await _pr_stats(request, row.get("pr_url"))
+            return await _pr_stats(request, row.get("pr_url"), job_repository(row))
 
     async def prs_of() -> list[dict[str, Any] | None]:
         return list(await asyncio.gather(*(pr_of(r) for r in rows[:_PR_STATS_ROWS])))

@@ -18,6 +18,7 @@ from tests.unit.services.test_merge_approvals import (
     HEAD,
     NEW_HEAD,
     PR_URL,
+    REPO,
     FakeGitHub,
     FakeNotifier,
     FakeVerifications,
@@ -32,11 +33,12 @@ RED = {"total_count": 1, "check_runs": [{"name": "build", "status": "completed",
 
 
 class FakeJobs:
-    def __init__(self, result_summary: str | None = REVIEW_JSON) -> None:
+    def __init__(self, result_summary: str | None = REVIEW_JSON, repo: str = REPO) -> None:
         self.result_summary = result_summary
+        self.repo = repo
 
     async def get(self, job_id: str) -> dict[str, Any] | None:
-        return {"job_id": job_id, "result_summary": self.result_summary}
+        return {"job_id": job_id, "repo": self.repo, "result_summary": self.result_summary}
 
 
 def _svc(db, github, notifier, *, jobs=None, **config) -> MergeApprovalService:
@@ -296,3 +298,20 @@ async def test_the_ask_is_stored_as_a_json_object(db_with_migrations, github, no
         "SELECT ask->'recommendation'->>'verdict' FROM merge_approvals WHERE id = $1", row["id"]
     )
     assert verdict == "review_first"
+
+
+# -- the job's own repository ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("job_repo", "renames"), [(REPO.upper(), {}), ("acme/old-backend", {"acme/old-backend": REPO})]
+)
+async def test_a_merge_is_asked_about_a_pull_request_of_the_job_s_repository(
+    db_with_migrations, github, notifier, monkeypatch, job_repo: str, renames: dict[str, str]
+) -> None:
+    """Compared ignoring case, after REPO_RENAMES."""
+    from embry0.storage import repo_renames
+
+    monkeypatch.setattr(repo_renames, "REPO_RENAMES", renames)
+    svc = _svc(db_with_migrations, github, notifier, jobs=FakeJobs(repo=job_repo))
+    assert await svc.ask(job_id="job-1", pr_url=PR_URL) is not None

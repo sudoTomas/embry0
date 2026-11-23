@@ -147,8 +147,8 @@ A person's verdict on a finished job's work, and what they do with it. Each writ
 
 - `GET /api/v1/jobs/{job_id}/evaluation` (read): the evaluation as it stands, in the same shape; every field `null`, with an empty `note`, while nobody has reviewed the job; a job dismissed before anyone rated it has only `by` and `at`, and one rated before keeps what it was given. It reads at any time, the game layer on or off. A job outside the calling key's repository allowlist answers 404 as a missing one does, and nothing is logged or audited: it is a read.
 - `PUT /api/v1/jobs/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the job has not finished, 422 with none of them.
-- `POST /api/v1/jobs/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the job's GitHub pull request branch with the notes; 409 without one, or when the pull request is not open.
-- `POST /api/v1/jobs/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, which takes the admin tier, closes the pull request with the note as a comment. The answer adds `closed_pr`.
+- `POST /api/v1/jobs/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the job's pull request branch with the notes; 409 without one, when the pull request is not in the job's own repository (its path, on the forge the repository is registered on), or when it is not open. It works on github.com pull requests: on any other forge or host it answers 422 `sending work back is not supported for this forge (<forge>)`, naming `gitlab`, or `github at <host>` for a GitHub Enterprise host, which embry0 does not reach.
+- `POST /api/v1/jobs/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, which takes the admin tier, closes the pull request with the note as a comment, using the credential of the organization its owner is registered as. The answer adds `closed_pr`, false for a job with no pull request or a merged one. Closing works on github.com pull requests: on any other forge or host it answers 422 `closing a pull request is not supported for this forge (<forge>)` and records nothing, so reject again without `close_pr` to record the rejection alone. 409 when the pull request is not in the job's own repository (its path, compared ignoring case after `REPO_RENAMES`, on the forge the repository is registered on), when its owner is not a registered organization, or is registered on another forge.
 - `POST /api/v1/jobs/{job_id}/run-again` (`{"run_with"}`, 202): starts the job again as a new job from its launch record (same repo, task, pipeline and settings; a Run with choice replaces the old one) and records the new job as its follow-up, so it leaves the review inbox, and answers `followup_issue_id` too: the issue the new job is linked to. The new job is linked to the old one's issue, except for a key with a [repository allowlist](#repository-allowlist) that does not read that issue: its new job has no issue and no issue number, and an issue's workflow runs from the job's own task, as an issue-less job's does, without the issue's answered questions that the old run carried. 409 while the job has not finished, or for a job with no launch record. A map of a repository's areas runs again as a new map, as Map in the repository's Areas section starts one ([map areas](areas.md#map-areas)): the map waiting for a person is retired, a new one waits for the new job, and a map already running is a 409.
 - `POST /api/v1/jobs/{job_id}/dismiss`: seen, nothing to do; the job leaves the review inbox. It adds no rating or verdict: a job dismissed before anyone rated it has none, and one rated before keeps what it was given. 409 while it has not finished.
 
@@ -1159,9 +1159,10 @@ organization:
   issue that moved to such a repository,
   `POST /issues/{id}/inputs/{input_id}/answer` when the answer is the last
   blocking one and would resume the issue's waiting job of such a
-  repository, and `POST /jobs/{id}/send-back` on a job whose pull request
-  is in such a repository. Each tells the key one thing it does not
-  otherwise read: that such work exists. No route starts a job for a key
+  repository. Each tells the key one thing it does not otherwise read:
+  that such work exists. (`POST /jobs/{id}/send-back` and closing on
+  `POST /jobs/{id}/reject` act only on the job's own repository, for
+  every key: a pull request address naming another is a 409.) No route starts a job for a key
   with an allowlist in a repository it does not cover, which a test walks
   over every route and MCP tool that can start one
   (`tests/unit/api/test_job_starts_inventory.py`);

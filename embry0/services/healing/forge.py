@@ -13,15 +13,15 @@ the caller is told nothing is known and falls back to a bound it can defend.
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
+from embry0.forge_urls import GITHUB_HOST, parse_pr_url
+
 logger = structlog.get_logger(__name__)
 
-_PR_URL = re.compile(r"^https?://(?:www\.)?github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)/?$")
 # A PR's open time never changes; remember this many so a repeated report of
 # the same PR (a redelivery, a follow-up job) costs no forge call.
 _CACHE_SIZE = 512
@@ -37,16 +37,16 @@ class GitHubPrTimes:
     async def opened_at(self, pr_url: str) -> datetime | None:
         """``created_at`` of the PR, or None when it cannot be established.
 
-        None for a GitLab merge request too: this speaks GitHub only, and a
-        guess dressed as a forge timestamp is worse than no timestamp.
+        None for a GitLab merge request or a GitHub Enterprise pull request too:
+        this speaks to github.com only, and a guess dressed as a forge
+        timestamp is worse than no timestamp.
         """
-        match = _PR_URL.match(pr_url.strip())
-        if match is None:
+        pr = parse_pr_url(pr_url)
+        if pr is None or pr.forge != "github" or pr.host != GITHUB_HOST:
             return None
         if pr_url in self._known:
             return self._known[pr_url]
-        owner, repo, number = match.group(1), match.group(2), match.group(3)
-        slug = f"{owner}/{repo}"
+        slug, number = pr.repo, pr.number
         try:
             resp = await self._client.get(f"/repos/{slug}/pulls/{number}", repo=slug)
             if resp.status_code != 200:

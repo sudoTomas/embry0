@@ -21,7 +21,6 @@ from embry0.services.merge_approvals import (
     MergeApprovalService,
     classify_checks,
     denylist_hits,
-    parse_pr_url,
 )
 from embry0.storage.repositories.healing_cases import HealingCasesRepository
 from embry0.storage.repositories.merge_approvals import MergeApprovalsRepository
@@ -115,9 +114,46 @@ def test_an_unreadable_or_truncated_ci_state_is_unknown() -> None:
     assert classify_checks({"total_count": 101, "check_runs": GREEN_RUNS["check_runs"]}, NO_STATUSES).state == "unknown"
 
 
-def test_parse_pr_url() -> None:
-    assert parse_pr_url(PR_URL) == (REPO, 42)
-    assert parse_pr_url("https://gitlab.com/o/r/-/merge_requests/3") is None
+@pytest.mark.parametrize(
+    "pr_url",
+    [f"https://gitlab.com/{REPO}/-/merge_requests/42", f"https://ghe.example.test/{REPO}/pull/42"],
+    ids=["gitlab", "github-enterprise"],
+)
+async def test_no_merge_is_asked_about_a_pull_request_off_github_com(pr_url: str) -> None:
+    """A merge ask reads and merges with the GitHub client, on github.com (#181): a merge request, or a pull request
+    on another host, of a repository merge approvals cover is not asked about, and its forge is not read."""
+    github = FakeGitHub()
+    svc = MergeApprovalService(repo=None, github=github, notifier=FakeNotifier(), config=_config())
+    assert svc.handles(REPO), "the check measures nothing: the repository is not one merge approvals cover"
+    assert await svc.ask(job_id="job-1", pr_url=pr_url) is None
+    assert github.get_pull_calls == 0
+
+
+class _Jobs:
+    """The job store: ``row`` for every job, or ``error`` raised by a read."""
+
+    def __init__(self, row: dict[str, Any] | None, error: Exception | None = None) -> None:
+        self.row, self.error = row, error
+
+    async def get(self, job_id: str) -> dict[str, Any] | None:
+        if self.error is not None:
+            raise self.error
+        return self.row
+
+
+@pytest.mark.parametrize(
+    "jobs",
+    [_Jobs({"job_id": "job-1", "repo": "globex/gizmos"}), _Jobs(None), _Jobs(None, error=RuntimeError("down"))],
+    ids=["another-repository", "job-not-found", "job-unreadable"],
+)
+async def test_a_merge_is_asked_about_only_in_the_job_s_own_repository(jobs: _Jobs) -> None:
+    """The job reported the pull request: an ask merges only one in the job's own repository, and when the job's
+    repository cannot be read it asks about none. The forge is not read."""
+    github = FakeGitHub()
+    svc = MergeApprovalService(repo=None, github=github, notifier=FakeNotifier(), config=_config(), jobs=jobs)
+    assert svc.handles(REPO), "the check measures nothing: the repository is not one merge approvals cover"
+    assert await svc.ask(job_id="job-1", pr_url=PR_URL) is None
+    assert github.get_pull_calls == 0
 
 
 # -- fakes -----------------------------------------------------------------------

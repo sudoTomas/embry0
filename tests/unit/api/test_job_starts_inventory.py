@@ -984,10 +984,11 @@ STARTS: dict[tuple[str, str, str], frozenset[str]] = {
         for path in ("/api/v1/jobs/{job_id}/run-again", "/api/v1/world/quests/{job_id}/run-again")
         for label in ("", "the key's job, its issue elsewhere")
     },
+    # A job's pull request elsewhere starts nothing, whatever the key: an action on a job's pull request acts only
+    # on the job's own repository (409).
     **{
-        ("POST", path, label): _SEND_BACK
+        ("POST", path, ""): _SEND_BACK
         for path in ("/api/v1/jobs/{job_id}/send-back", "/api/v1/world/quests/{job_id}/send-back")
-        for label in ("", "the key's job, its pull request elsewhere")
     },
     ("POST", "/api/v1/cases/{case_id}/accept", ""): frozenset({_EXECUTE}),
     ("POST", "/api/v1/cases/{case_id}/accept", "the key's retry, its issue elsewhere"): frozenset({_EXECUTE}),
@@ -1168,12 +1169,6 @@ REACHING: dict[str, tuple[str, str, Setup, Any]] = {
         "/api/v1/issues/{issue_id}/inputs/{input_id}/answer",
         _crossed_answer,
         {"answer": "this one"},
-    ),
-    "sending back a job whose pull request is elsewhere": (
-        "POST",
-        "/api/v1/jobs/{job_id}/send-back",
-        _crossed_pull_request,
-        {"notes": "again"},
     ),
 }
 
