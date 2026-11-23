@@ -25,6 +25,8 @@ addresses from that daemon's networks.
 the ``run`` it is given, and never prints the rendering it reads: compose renders
 the orchestrator's ``env_file`` into it. This file imports only the standard
 library: ``infra/deploy.sh`` runs it as a script (``main``), with no environment.
+It needs Python 3.9 or newer (it subscripts ``collections.abc.Callable`` at
+import), which ``infra/deploy.sh`` checks before it runs it.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import os
 import re
 import subprocess
 import sys
@@ -89,21 +92,41 @@ def env_value(path: Path, key: str) -> str | None:
     return found
 
 
-def disagreements(root: Path) -> list[str]:
-    """A problem for each setting the two env files set differently, when both exist."""
-    files = [root / name for name in ENV_FILES]
-    if not all(f.is_file() for f in files):
-        return []
+def _shown(value: str | None) -> str:
+    return repr(value) if value is not None else "unset"
+
+
+def disagreements(root: Path, environ: Mapping[str, str] | None = None) -> list[str]:
+    """A problem for each setting the two env files set differently, when both exist, and for each that the
+    environment of this run sets otherwise than the files do.
+
+    Compose takes a variable from the environment over either file. A value exported in the shell that runs
+    ``embry0 start`` or ``infra/deploy.sh`` is not in the environment of the next shell or of the systemd unit, so
+    that start and the next one would render different ranges. ``Environment=`` in the systemd unit overrides the
+    files for the unit the same way; this check cannot see it, so the message names it.
+    """
+    environ = os.environ if environ is None else environ
+    files = {name: root / name for name in ENV_FILES if (root / name).is_file()}
     problems = []
     for key in AGREED:
-        first, second = (env_value(f, key) for f in files)
-        if first != second:
-            shown = [repr(v) if v is not None else "unset" for v in (first, second)]
+        values = {name: env_value(path, key) for name, path in files.items()}
+        if len(values) == len(ENV_FILES) and len(set(values.values())) > 1:
+            first, second = (values[name] for name in ENV_FILES)
             problems.append(
-                f"{key} is {shown[0]} in {ENV_FILES[0]} and {shown[1]} in {ENV_FILES[1]}: `embry0 start` reads the "
-                f"first, and infra/deploy.sh and the systemd unit read the second, so the stack's range and the "
-                f"proxies it trusts would depend on how it was started. Set the same value in both."
+                f"{key} is {_shown(first)} in {ENV_FILES[0]} and {_shown(second)} in {ENV_FILES[1]}: `embry0 start` "
+                f"reads the first, and infra/deploy.sh and the systemd unit read the second, so the stack's range and "
+                f"the proxies it trusts would depend on how it was started. Set the same value in both."
             )
+        if key in environ:
+            here = environ[key].strip() or None
+            other = {name: value for name, value in values.items() if value != here}
+            if other:
+                where = " and ".join(f"{_shown(value)} in {name}" for name, value in other.items())
+                problems.append(
+                    f"{key} is {_shown(here)} in this run's environment, which compose takes over the env files "
+                    f"({where}); another shell and the systemd unit read the files. Put the value in the files and "
+                    f"unset it here. An Environment= line in the systemd unit overrides the files the same way."
+                )
     return problems
 
 
@@ -223,7 +246,13 @@ def check(config: Mapping[str, Any], networks: Sequence[Mapping[str, Any]], *, p
 
 
 def inspect(
-    compose_cmd: Sequence[str], *, project: str, root: Path, cwd: Path | None = None, run: Run | None = None
+    compose_cmd: Sequence[str],
+    *,
+    project: str,
+    root: Path,
+    cwd: Path | None = None,
+    run: Run | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> Finding:
     """Check the env files under *root* agree, then render the compose config *compose_cmd* names (run in *cwd*) and
     check it against Docker's networks.
@@ -232,7 +261,7 @@ def inspect(
     next report their own error, and a check that could not run says so instead of passing.
     """
     run = run or subprocess.run
-    agreed = tuple(disagreements(root))
+    agreed = tuple(disagreements(root, environ))
     rendered = run([*compose_cmd, "config", "--format", "json"], capture_output=True, text=True, check=False, cwd=cwd)
     try:
         config = json.loads(rendered.stdout) if rendered.returncode == 0 else None

@@ -238,6 +238,38 @@ def test_start_takes_two_env_files_that_say_the_same_in_different_words(home, mo
     assert _start(monkeypatch, docker) is None and docker.builds(), capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("key", "here", "in_files"),
+    [
+        ("FRONTEND_NETWORK_PREFIX", "10.230", "FRONTEND_NETWORK_PREFIX=10.229\n"),
+        ("FRONTEND_NETWORK_PREFIX", "10.229", ""),
+        ("FORWARDED_ALLOW_IPS", "10.229.0.10", ""),
+    ],
+)
+def test_start_refuses_a_setting_this_run_s_environment_overrides(
+    home, monkeypatch, capsys, key: str, here: str, in_files: str
+) -> None:
+    """#637 review: compose takes a variable from the environment over both env files. Exported in the shell that
+    starts the stack, it is not in the next shell's or the systemd unit's, which render the files' range."""
+    (home / ".env").write_text("POSTGRES_PASSWORD=x\n" + in_files)
+    monkeypatch.setenv(key, here)
+    docker = Docker([_net("bridge", "172.17.0.0/16")], _rendered(_config("10.229")))
+    code = _start(monkeypatch, docker)
+    err = capsys.readouterr().err
+    assert code == 1 and docker.builds() == [], f"the start went on with {key}={here} in its environment: {err}"
+    assert "this run's environment" in err and "Environment=" in err, (
+        f"the refusal does not say the environment overrides the files, nor name the unit's Environment=: {err}"
+    )
+
+
+def test_start_takes_an_environment_that_says_what_the_files_say(home, monkeypatch, capsys) -> None:
+    (home / ".env").write_text("POSTGRES_PASSWORD=x\nFRONTEND_NETWORK_PREFIX=10.229\n")
+    (home / "infra" / ".env").write_text("POSTGRES_PASSWORD=x\nFRONTEND_NETWORK_PREFIX=10.229\n")
+    monkeypatch.setenv("FRONTEND_NETWORK_PREFIX", "10.229")
+    docker = Docker([_net("bridge", "172.17.0.0/16")], _rendered(_config("10.229")))
+    assert _start(monkeypatch, docker) is None and docker.builds(), capsys.readouterr().err
+
+
 def test_start_refuses_a_range_other_than_the_one_the_stacks_network_has(home, monkeypatch, capsys) -> None:
     """The network outlives a stopped stack: services rendered on a new range would get addresses it does not hold."""
     own = [_net("bridge", "172.17.0.0/16"), _net("embry0_frontend", "172.29.0.0/16", project="embry0")]

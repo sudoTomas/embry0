@@ -148,9 +148,14 @@ compose() { (cd "$here" && docker compose "$@"); }
 
 # #366: the dashboard network's range, as this script, the systemd unit and
 # `embry0 start` would each render it, must agree, be free and be the range
-# the stack's network already has. The check imports only the standard library.
+# the stack's network already has. The check imports only the standard
+# library, and needs Python 3.9 or newer at import.
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "deploy: python3 is needed to check the dashboard network's range" >&2
+  echo "deploy: python3 3.9 or newer is needed to check the dashboard network's range, and none is on PATH" >&2
+  exit 1
+fi
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+  echo "deploy: python3 3.9 or newer is needed to check the dashboard network's range; PATH has $(python3 --version 2>&1 | head -n 1)" >&2
   exit 1
 fi
 if ! python3 -I "$root/embry0/cli/frontend_network.py" --root "$root"; then
