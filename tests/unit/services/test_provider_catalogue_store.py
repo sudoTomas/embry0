@@ -632,3 +632,35 @@ async def test_a_price_the_release_refuses_leaves_the_model_unpriced_in_force(
     assert providers.model_rates("deepseek-flash") is None, "it ran at the seed's price in place of the deployment's"
     assert providers.unpriced_models(["deepseek-flash"]) == ["deepseek-flash"]
     assert providers.model_rates("deepseek-v4-pro") == (1.32, 3.96), "DeepSeek's other models stay in service"
+
+
+async def _recorded(db: DatabasePool) -> dict[str, Any]:
+    value = await db.fetchval("SELECT shipped FROM provider_catalogue")
+    return json.loads(value) if isinstance(value, str) else value
+
+
+@pytest.mark.parametrize("taken_out", ["after the drop", "before the drop"])
+async def test_an_undo_brings_a_dropped_model_back_as_it_was_read(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch, taken_out: str
+) -> None:
+    """Re-price chat-only gpt-6.1-sol; a release drops it; take the override out; undo that: it comes back
+    chat-only, named in notes, its record with it, whichever came first of the drop and the taking out."""
+    db = db_with_migrations
+    await CatalogueStore(db).save(SOL_REPRICED, actor="a")
+    if taken_out == "before the drop":
+        took_out = await CatalogueStore(db).save("providers:\n  openai:\n    enabled: true\n", actor="a")
+    _drop_from_the_seed(monkeypatch, "openai", "gpt-6.1-sol")
+    catalogue.install(None)
+    store = CatalogueStore(db)
+    await store.refresh()
+    if taken_out == "after the drop":
+        assert providers.chat_only_models(["gpt-6.1-sol"]) == ["gpt-6.1-sol"]
+        took_out = await store.save("providers:\n  openai:\n    enabled: true\n", actor="a")
+        assert "gpt-6.1-sol" in (await _recorded(db)).get("openai", {}), "the record of a dropped model was lost"
+    assert took_out.revision_id is not None
+    undone = await store.undo(took_out.revision_id, actor="b")
+    assert undone.changed
+    assert providers.model_rates("gpt-6.1-sol") == (3.0, 12.0)
+    assert providers.chat_only_models(["gpt-6.1-sol"]) == ["gpt-6.1-sol"], "agents would send a chat-only model tools"
+    assert [p.loc for p in store.notes] == [("providers", "openai", "models", "gpt-6.1-sol")], "kept, unnamed"
+    assert (await _recorded(db))["openai"]["gpt-6.1-sol"]["chat_only"] is True, "the undo did not put the record back"

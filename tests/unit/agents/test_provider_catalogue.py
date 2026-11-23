@@ -797,3 +797,15 @@ def test_a_withheld_model_has_no_rates_of_its_own_nor_its_provider_s_default() -
     shipped_model = catalogue.Catalogue.build(catalogue.seed().document, withheld=frozenset({"deepseek-flash"}))
     assert shipped_model.rates("deepseek-flash") is None, "the seed's entry priced a model whose price is withheld"
     assert "deepseek-flash" not in shipped_model.named("deepseek").pricing_usd_per_mtok
+
+
+def test_a_write_records_every_dropped_model_it_knew_of_named_or_not() -> None:
+    """The record of a model the release no longer ships outlives the overlay's naming it; one it still ships is
+    this release's entry, and only for a model the overlay names."""
+    previous = _shipped(("openai", "gpt-6.1-sol"), ("openai", "gpt-6-luna"))
+    base = _later_seed(without_models={"openai": ["gpt-6.1-sol"]})
+    written = catalogue.shipped_entries(base, {"providers": {"deepseek": {"models": {"deepseek-flash": {}}}}}, previous)
+    assert written["openai"] == {"gpt-6.1-sol": previous["openai"]["gpt-6.1-sol"]}, "a dropped model's record was lost"
+    assert written["deepseek"]["deepseek-flash"]["prices"][0] == {"in": 0.3, "out": 1.2, "from": None}
+    later = catalogue.records(previous, {"openai": {"gpt-6.1-sol": {"chat_only": False}}})
+    assert later["openai"]["gpt-6.1-sol"] == {"chat_only": False} and "gpt-6-luna" in later["openai"]

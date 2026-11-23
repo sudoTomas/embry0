@@ -71,6 +71,7 @@ from embry0.agents.catalogue import (
     install,
     merge,
     merge_stored,
+    records,
     restored,
     seed,
     shipped_entries,
@@ -442,11 +443,14 @@ class CatalogueStore:
             )
         return bool(refused)
 
-    async def _checked(self, conn: Any, text: str, stored: _Row) -> tuple[dict[str, Any], Catalogue]:
+    async def _checked(
+        self, conn: Any, text: str, stored: _Row, recorded: Mapping[str, Any] | None = None
+    ) -> tuple[dict[str, Any], Catalogue]:
         """``text``'s overlay and the catalogue it makes, refused naming every problem: its own, and each model
-        something names that the catalogue ``stored`` makes offers and the new one does not."""
+        something names that the catalogue ``stored`` makes offers and the new one does not. ``recorded`` is what
+        the write will record of the shipped catalogue (``stored``'s by default)."""
         data = load_text(text)
-        after = Catalogue.build(merge(seed().document, data or None, stored.shipped))
+        after = Catalogue.build(merge(seed().document, data or None, stored.shipped if recorded is None else recorded))
         problems = broken_references(await self.references(conn), built(stored)[0], after)
         if problems:
             raise CatalogueInvalid(problems)
@@ -483,13 +487,14 @@ class CatalogueStore:
             data, _after = await self._checked(conn, text, stored)
             if text == stored.yaml_text:
                 return SaveResult(stored.generation, None, False)
-            generation = await self._write(conn, text, data, actor=actor, previous=stored.shipped)
+            shipped = shipped_entries(seed().document, data, stored.shipped)
+            generation = await self._write(conn, text, data, actor=actor, shipped=shipped)
             revision_id = await ConfigRevisionsRepository(self.db).append(
                 conn,
                 scope=SCOPE,
                 surface=SURFACE,
-                before=_document(stored.yaml_text, stored.data),
-                after=_document(text, data),
+                before=_document(stored.yaml_text, stored.data, stored.shipped),
+                after=_document(text, data, shipped),
                 actor=actor,
                 source=source,
                 reason=reason,
@@ -520,14 +525,17 @@ class CatalogueStore:
             if latest is None or latest["id"] != revision_id or after_doc.get("yaml_text") != stored.yaml_text:
                 raise NotUndoable(WHY_NOT)
             text = str(before_doc.get("yaml_text") or "")
-            data, _after = await self._checked(conn, text, stored)
-            generation = await self._write(conn, text, data, actor=actor, previous=stored.shipped)
+            # What was recorded then, over what is recorded now: the text comes back as it was read.
+            recorded = records(stored.shipped, _mapping(before_doc.get("shipped")))
+            data, _after = await self._checked(conn, text, stored, recorded)
+            shipped = shipped_entries(seed().document, data, recorded)
+            generation = await self._write(conn, text, data, actor=actor, shipped=shipped)
             new_revision = await ConfigRevisionsRepository(self.db).append(
                 conn,
                 scope=SCOPE,
                 surface=SURFACE,
-                before=_document(stored.yaml_text, stored.data),
-                after=_document(text, data),
+                before=_document(stored.yaml_text, stored.data, stored.shipped),
+                after=_document(text, data, shipped),
                 actor=actor,
                 source="restore",
                 reason=f"undo of change {revision_id}",
@@ -583,15 +591,14 @@ class CatalogueStore:
                 day = datetime.now(UTC).date().isoformat()
                 text = f"# Imported once from {', '.join(variables)} on {day}; the variables are ignored now.\n"
                 text += yaml.safe_dump(overlay, sort_keys=False, default_flow_style=False)
-                generation = await self._write(
-                    conn, text, overlay, actor=actor, imported=ledger, previous=stored.shipped
-                )
+                shipped = shipped_entries(seed().document, overlay, stored.shipped)
+                generation = await self._write(conn, text, overlay, actor=actor, imported=ledger, shipped=shipped)
                 await ConfigRevisionsRepository(self.db).append(
                     conn,
                     scope=SCOPE,
                     surface=SURFACE,
-                    before=_document(stored.yaml_text, stored.data),
-                    after=_document(text, overlay),
+                    before=_document(stored.yaml_text, stored.data, stored.shipped),
+                    after=_document(text, overlay, shipped),
                     actor=actor,
                     source="bootstrap",
                     reason=f"imported once from {', '.join(variables)}",
@@ -635,11 +642,11 @@ class CatalogueStore:
         data: Mapping[str, Any],
         *,
         actor: str,
-        previous: Mapping[str, Any],
+        shipped: Mapping[str, Any],
         imported: list[str] | None = None,
     ) -> int:
-        """Store ``text`` and its values in JSON form (a ``from`` day as its ISO text), with the shipped entry of
-        each model they name (``catalogue.shipped_entries``: this release's, or ``previous``'s for one it dropped)."""
+        """Store ``text`` and its values in JSON form (a ``from`` day as its ISO text), with what the write records
+        of the shipped catalogue (``catalogue.shipped_entries``)."""
         generation = await conn.fetchval(
             "UPDATE provider_catalogue SET yaml_text = $2, data = $3::jsonb, generation = generation + 1, "
             "imported = COALESCE($5, imported), updated_by = $4, updated_at = NOW(), shipped = $6::jsonb "
@@ -649,7 +656,7 @@ class CatalogueStore:
             stored_form(data),
             actor,
             imported,
-            shipped_entries(seed().document, data, previous),
+            dict(shipped),
         )
         return int(generation)
 
@@ -681,8 +688,10 @@ def _matches(expected: int | Collection[int] | None, generation: int) -> bool:
     return generation == expected if isinstance(expected, int) else generation in expected
 
 
-def _document(text: str, data: Mapping[str, Any]) -> dict[str, Any]:
-    return {"yaml_text": text, "data": stored_form(data)}
+def _document(text: str, data: Mapping[str, Any], shipped: Mapping[str, Any]) -> dict[str, Any]:
+    """A revision's side: the text, its values and what was recorded of the shipped catalogue with them, so an undo
+    puts back the record too."""
+    return {"yaml_text": text, "data": stored_form(data), "shipped": dict(shipped)}
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

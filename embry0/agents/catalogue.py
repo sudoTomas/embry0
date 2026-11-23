@@ -761,21 +761,34 @@ def restored(overlay: dict[Any, Any]) -> dict[Any, Any]:
 def shipped_entries(
     base: CatalogueDocument, overlay: Any, previous: Mapping[str, Mapping[str, Any]] | None = None
 ) -> dict[str, dict[str, Any]]:
-    """For each model ``overlay`` names, the shipped entry it is written against, in JSON form: ``base``'s, or what
-    ``previous`` recorded of one a release has dropped since. :func:`merge` reads it once a release drops the model."""
+    """What a write records of the shipped catalogue, in JSON form: for each model ``overlay`` names that ``base``
+    ships, ``base``'s entry; and every entry ``previous`` recorded of a model ``base`` no longer ships, whether or not
+    ``overlay`` names it now, so that a later write naming it again (an undo) finds it. :func:`merge` reads it once a
+    release drops the model."""
     out: dict[str, dict[str, Any]] = {}
+    for name, records in (previous or {}).items() if isinstance(previous, Mapping) else ():
+        shipped = base.providers[name].models if name in base.providers else {}
+        for model, record in records.items() if isinstance(records, Mapping) else ():
+            if model not in shipped and isinstance(record, Mapping):
+                out.setdefault(str(name), {})[str(model)] = dict(record)
     providers = overlay.get("providers") if isinstance(overlay, Mapping) else None
     for name, entry in providers.items() if isinstance(providers, Mapping) else ():
         models = entry.get("models") if isinstance(entry, Mapping) else None
-        if not isinstance(models, Mapping):
-            continue
         shipped = base.providers[name].models if name in base.providers else {}
-        before = (previous or {}).get(name) or {}
-        for model in models:
+        for model in models if isinstance(models, Mapping) else ():
             if model in shipped:
                 out.setdefault(str(name), {})[str(model)] = shipped[model].model_dump(mode="json", by_alias=True)
-            elif isinstance(before.get(model), Mapping):
-                out.setdefault(str(name), {})[str(model)] = dict(before[model])
+    return out
+
+
+def records(*sources: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """``sources`` (what writes recorded, :func:`shipped_entries`) as one, a later source's model over an earlier."""
+    out: dict[str, dict[str, Any]] = {}
+    for source in sources:
+        for name, models in (source or {}).items() if isinstance(source, Mapping) else ():
+            for model, record in models.items() if isinstance(models, Mapping) else ():
+                if isinstance(record, Mapping):
+                    out.setdefault(str(name), {})[str(model)] = dict(record)
     return out
 
 

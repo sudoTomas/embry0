@@ -227,7 +227,7 @@ stored overlay is read part by part:
 |---|---|
 | `null` for a model the release took out too | as asked: the model is gone, and nothing is reported |
 | a provider the release no longer ships | the rest; that provider's entry is left out |
-| fields of a model the release took out | when they give it `prices` of its own: the deployment's own model at those prices, chat-only and with the request extras it was last shipped with unless the overlay says (each write records what the shipped catalogue said of every model it names, in `provider_catalogue.shipped`), named in `notes`; else that model's entry is left out |
+| fields of a model the release took out | when they give it `prices` of its own: the deployment's own model at those prices, chat-only and with the request extras it was last shipped with unless the overlay says (each write records what the shipped catalogue said of every model it names, and keeps what it recorded of a model a release dropped, in `provider_catalogue.shipped`; an undo puts back the record of the side it restores), named in `notes`; else that model's entry is left out |
 | a field the release made its own, a key it no longer knows, a value a bound now refuses | the rest; that field, or that model's entry, is left out |
 | a top-level key the release does not know | the rest; that key is left out |
 | no overlay at all at its top level (not a mapping, another `version`) | the shipped catalogue, with that problem |
