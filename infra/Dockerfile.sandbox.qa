@@ -40,15 +40,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         temurin-21-jdk \
     # Docker CLI only — no daemon. Talks to DinD over TCP+TLS. The CLI and
     # compose are Go binaries: each release carries the Go standard library it
-    # was built with, so a bump is also how a Go fix arrives. docker 29.9.2 and
-    # compose v5.6.1 are built with Go 1.26.10 (#317); what compose still
-    # carries is accepted in infra/trivy/sandbox.trivyignore.yaml.
-    && curl -fsSL https://download.docker.com/linux/static/stable/"$(uname -m)"/docker-29.9.2.tgz \
-       | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
+    # was built with, so a bump is also how a Go fix arrives. docker 29.10.0
+    # and compose v5.7.2 are built with Go 1.27.4, and compose links
+    # containerd 2.4.2; what compose still carries is accepted in
+    # infra/trivy/sandbox.trivyignore.yaml. Each download is checked against
+    # the sha256 its publisher gives: Docker's .sha256 beside the tarball,
+    # compose's checksums.txt.
+    && arch="$(uname -m)" \
+    && case "$arch" in \
+         x86_64) docker_sha256=7c1ebadc65c716cdc6d35fc78759ed0e4317debf43c21dd12f066f2006999def \
+                 compose_sha256=e14235d9c622c5bd57eb8adeed4a0f7308c7f3862e6812dd843f6fe27f1307cc ;; \
+         aarch64) docker_sha256=6e5159e8b5615e0c0c2954a2a1a2a12bc65f5d9b603595dba24a10cb367408cd \
+                  compose_sha256=e3afd91588e494ff309fced4ad40c5fa93ababe54c1c2eeffe90865719d8d0db ;; \
+         *) echo "no docker or compose checksum for $arch" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL https://download.docker.com/linux/static/stable/"$arch"/docker-29.10.0.tgz -o /tmp/docker.tgz \
+    && echo "$docker_sha256  /tmp/docker.tgz" | sha256sum -c - \
+    && tar -xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker \
+    && rm /tmp/docker.tgz \
     && chmod +x /usr/local/bin/docker \
     && mkdir -p /usr/local/lib/docker/cli-plugins \
-    && curl -fsSL https://github.com/docker/compose/releases/download/v5.6.1/docker-compose-linux-"$(uname -m)" \
+    && curl -fsSL https://github.com/docker/compose/releases/download/v5.7.2/docker-compose-linux-"$arch" \
        -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    && echo "$compose_sha256  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
     && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
     && rm -rf /var/lib/apt/lists/*

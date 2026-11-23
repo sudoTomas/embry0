@@ -41,174 +41,181 @@ vulnerabilities:
       - usr/lib/node_modules/npm/node_modules/undici/package.json
     statement: npm 12.2.1 vendors undici 6.29.0 and no npm release vendors the fixed 6.29.1 yet; bump npm when one does
     expired_at: 2026-12-15
-  # docker compose v5.6.1 (QA image) links golang.org/x/net 0.58.0; its Go
-  # is fixed (1.26.10). v5.7.0 links 0.60.0, which fixes CVE-2026-78669, but
-  # it reworks how `up` creates and starts containers, which the QA stacks run
-  # through, and was one day old when this was written. Removed by moving to
-  # v5.7.0 or later deliberately. CVE-2026-78661 (x/net/html) is fixed in
-  # x/net 0.62.0, which no compose release links yet: v5.7.0 and compose's
-  # main branch link 0.60.0. compose builds no x/net/html code into the binary
+  # docker compose v5.7.2 (QA image) is built with Go 1.27.4 and links
+  # containerd 2.4.2 and golang.org/x/net 0.60.0. CVE-2026-78661 (x/net/html)
+  # is fixed in x/net 0.62.0, which no compose release links yet: v5.7.2 and
+  # v5.8.0 link 0.60.0. compose builds no x/net/html code into the binary
   # (`go tool nm` lists none of its symbols); Trivy matches the module.
   # Removed by a compose release that links x/net >= 0.62.0.
-  - id: CVE-2026-78669
-    paths:
-      - usr/local/lib/docker/cli-plugins/docker-compose
-    statement: compose v5.6.1 links golang.org/x/net 0.58.0; v5.7.0 has the fix but changes how up starts containers; move to it deliberately
-    expired_at: 2026-12-15
   - id: CVE-2026-78661
     paths:
       - usr/local/lib/docker/cli-plugins/docker-compose
-    statement: compose v5.6.1 links golang.org/x/net 0.58.0; the fix is in x/net 0.62.0, which no compose release links yet (v5.7.0 links 0.60.0); removed by a compose release that links >= 0.62.0
+    statement: compose v5.7.2 links golang.org/x/net 0.60.0; the fix is in x/net 0.62.0, which no compose release links yet (v5.8.0 links 0.60.0); removed by a compose release that links >= 0.62.0
     expired_at: 2026-12-15
   # The vibium binary (QA image): Go standard library 1.26.1. vibium 26.8.21
-  # is the newest release and the floor the QA browser-backend contract is
-  # validated against (Dockerfile.sandbox.qa); no release built with a fixed Go
-  # exists yet. It drives the image's own Chrome, in a sandbox with no internet
-  # egress at job time. Removed by bumping vibium to a release built with
-  # Go >= 1.26.10. npm installs one of two binaries by architecture; both are
-  # built with Go 1.26.1 and carry the same 24 findings, so each entry names
-  # both (the docker, compose and Python paths do not depend on it).
+  # is the release the QA browser-backend contract is validated against
+  # (Dockerfile.sandbox.qa, embry0/workflows/qa/browser_backends.py). It
+  # drives the image's own Chrome, in a sandbox with no internet egress at job
+  # time. vibium 26.11.16 is built with Go 1.26.11, which fixes all of these,
+  # but it is not a drop-in: its MCP server no longer serves browser_check and
+  # browser_uncheck, which the backend grants, `browser_find` reads a bare
+  # string as a description for a model rather than a selector, and new tools
+  # call models (vibium_run, vibium_check) or upload recordings
+  # (browser_record_stop's `upload`). Removed by moving the backend to
+  # 26.11.16 or later deliberately, with its granted tools and prompt checked
+  # against that release's tools/list. npm installs one of two binaries by
+  # architecture; both carry the same findings, so each entry names both (the
+  # docker, compose and Python paths do not depend on it).
+  # CVE-2026-97054 (net/http, fixed in Go 1.26.11 and 1.27.4) came after the
+  # rest. Every vibium entry expires on the same day, two weeks out: the move
+  # to 26.11.16 has to land before then.
+  - id: CVE-2026-97054
+    paths:
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
+      - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-111943
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-27145
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-32280
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-32281
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-32283
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-33810
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-33811
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-33814
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-33818
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-39820
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-39821
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-39822
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-39836
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-42499
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-42504
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-46600
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-56853
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-56858
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-56859
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-56860
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-56862
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-78667
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-78669
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
   - id: CVE-2026-97031
     paths:
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-x64/bin/vibium
       - usr/lib/node_modules/vibium/node_modules/@vibium/linux-arm64/bin/vibium
-    statement: vibium 26.8.21, the newest release, is built with Go 1.26.1; bump it when a release built with a fixed Go exists
-    expired_at: 2027-02-01
+    statement: vibium 26.8.21 is built with Go 1.26.1; 26.11.16 (Go 1.26.11) has the fix but changes the MCP tools the QA backend grants; removed by moving to it deliberately
+    expired_at: 2026-12-05
