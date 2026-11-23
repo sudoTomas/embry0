@@ -28,7 +28,10 @@ export type BloatBand = "keep" | "look" | "bloat";
 export interface MapNode {
   id: string;
   kind: string;
-  area: string | null;
+  /** The id of its group. Absent from an older backend, which sends it as `area`. */
+  group?: string | null;
+  /** The old name of `group`, served one release more (#180); read through {@link nodeGroup}. */
+  area?: string | null;
   label: string;
   sub: string | null;
   path: string | null;
@@ -46,7 +49,8 @@ export interface MapNode {
   use?: { level?: number | null; n?: number | null; unit?: string | null };
 }
 
-export interface MapArea {
+/** A scanner's ring of parts on the map (#180: the format's `groups`; `areas` was their name before). */
+export interface MapGroup {
   id: string;
   label: string;
   summary: string | null;
@@ -65,9 +69,22 @@ export interface MapGraph {
   source: string;
   generated_at: string | null;
   kinds: { id: string; label: string }[];
-  areas: MapArea[];
+  /** The scanner's rings of parts. Absent from an older backend, which sends them as `areas`. */
+  groups?: MapGroup[];
+  /** The old name of `groups`, served one release more (#180); read through {@link mapGroups}. */
+  areas?: MapGroup[];
   nodes: MapNode[];
   edges: { s: string; t: string; rel: string | null }[];
+}
+
+/** A part's group: its `group`, else `area`, its old name, from a backend before #180. */
+export function nodeGroup(node: Pick<MapNode, "group" | "area">): string | null {
+  return node.group ?? node.area ?? null;
+}
+
+/** A map's rings of parts: its `groups`, else `areas`, their old name, from a backend before #180. */
+export function mapGroups(graph: Pick<MapGraph, "groups" | "areas">): MapGroup[] {
+  return graph.groups ?? graph.areas ?? [];
 }
 
 export type Verdict = "bloat" | "keep" | "unsure";

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
-import type { MapOwner, MarkView, PartView, SendKind, Verdict } from "@/api/maps";
+import { type MapOwner, type MarkView, type PartView, type SendKind, type Verdict, nodeGroup } from "@/api/maps";
 import { toastApiError } from "@/api/errorToast";
 import { type RunWith, runWithBody } from "@/api/runWith";
 import { RunWithControl } from "@/components/runwith/RunWithControl";
@@ -123,7 +123,7 @@ export function PartPanel({ slug, owner, nodeId, by, canSend, onClose }: PartPan
           <h2 className="break-words text-base font-semibold text-fg">{node.label}</h2>
           <p className="text-xs text-fg-muted">
             {node.kind}
-            {node.area ? ` · ${node.area}` : ""}
+            {nodeGroup(node) ? ` · ${nodeGroup(node)}` : ""}
             {node.sub ? ` · ${node.sub}` : ""}
           </p>
           {node.path && (

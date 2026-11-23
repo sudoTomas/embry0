@@ -4814,6 +4814,44 @@ deliverable under an "Assumptions" heading.$seed$
             CHECK (surface IN ('settings', 'provider_catalogue'));
         """,
     ),
+    (
+        153,
+        "knowledge maps: each stored graph serves its groups, and each part its group, under their new names (#180)",
+        # embry0.map/1 calls the scanner's rings of parts groups now, and a
+        # part names its ring as group; areas and area, their old names, are
+        # read as the same. Every stored graph was written by parse_map as
+        # compact JSON, its strings escaped, its keys in one order: before
+        # "nodes" only keys of its own, its "areas" list last, between
+        # "areas": and the first ,"nodes":; each part's dict opens right
+        # after the list's [ or the }, closing the part before it, as
+        # {"id":…,"kind":…,"area":…,"label":, its ring null or a string
+        # (so in every release that stored maps). Only a part's age
+        # and use hold keys a scanner chose, in a flat dict that opens after
+        # a colon, and no string holds a quote unescaped: so neither can
+        # pass for either. A copy goes in beside each under the new name,
+        # by text alone: a stored graph may be text JSONB refuses (NaN, a
+        # NUL, a lone surrogate), which the viewer's JSON reader reads. A
+        # part that names its group already, a graph whose own keys hold
+        # groups already or no areas, is left as it is, so running it again
+        # changes nothing. Uploads after this one write both.
+        r"""
+        UPDATE knowledge_maps
+           SET graph = regexp_replace(
+                   graph,
+                   '(\[|\},)\{"id":("(?:[^"\\]|\\.)*"),"kind":("(?:[^"\\]|\\.)*"),"area":(null|"(?:[^"\\]|\\.)*"),"label":',
+                   '\1{"id":\2,"kind":\3,"group":\4,"area":\4,"label":', 'g')
+         WHERE position(',"area":' IN graph) > 0;
+
+        UPDATE knowledge_maps
+           SET graph = substr(graph, 1, position(',"nodes":' IN graph) - 1)
+                    || ',"groups":'
+                    || substr(graph, position('"areas":' IN graph) + 8,
+                              position(',"nodes":' IN graph) - position('"areas":' IN graph) - 8)
+                    || substr(graph, position(',"nodes":' IN graph))
+         WHERE position('"areas":' IN substr(graph, 1, position(',"nodes":' IN graph))) > 0
+           AND position('"groups":' IN substr(graph, 1, position(',"nodes":' IN graph))) = 0;
+        """,
+    ),
 ]
 
 

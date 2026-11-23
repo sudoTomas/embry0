@@ -6,10 +6,10 @@ import type { MapGraph, PartView } from "@/api/maps";
 
 const GRAPH: MapGraph = {
   slug: "shop", title: "Shop", repo: "acme/shop", commit: "abc", source: "a scanner", generated_at: "2026-10-27T15:00:00Z",
-  kinds: [{ id: "script", label: "Script" }], areas: [],
+  kinds: [{ id: "script", label: "Script" }], groups: [],
   nodes: [
-    { id: "script:probe.mjs", kind: "script", area: null, label: "probe.mjs", sub: null, path: "scripts/probe.mjs", line: null, url: null, repo: "acme/shop", x: 0, y: 0, r: 5, signals: ["nothing runs it"], bloat: { score: 70, band: "bloat" } },
-    { id: "script:util.mjs", kind: "script", area: null, label: "util.mjs", sub: null, path: "scripts/util.mjs", line: null, url: null, repo: "acme/shop", x: 20, y: 0, r: 5, signals: [] },
+    { id: "script:probe.mjs", kind: "script", group: null, label: "probe.mjs", sub: null, path: "scripts/probe.mjs", line: null, url: null, repo: "acme/shop", x: 0, y: 0, r: 5, signals: ["nothing runs it"], bloat: { score: 70, band: "bloat" } },
+    { id: "script:util.mjs", kind: "script", group: null, label: "util.mjs", sub: null, path: "scripts/util.mjs", line: null, url: null, repo: "acme/shop", x: 20, y: 0, r: 5, signals: [] },
   ],
   edges: [],
 };

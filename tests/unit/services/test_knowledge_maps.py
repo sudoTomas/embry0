@@ -314,3 +314,43 @@ def test_a_batch_is_one_task_for_one_pull_request_that_lists_every_part() -> Non
     assert "read-only" in batch_task("analysis", repo="acme/shop", parts=parts, map_title="Shop", note="", by="ann")
     with pytest.raises(ValueError):
         batch_task("delete", repo="acme/shop", parts=parts, map_title="Shop", note="", by="ann")
+
+
+@pytest.mark.parametrize("name", ["groups", "areas"])
+def test_the_scanner_s_rings_are_groups_and_areas_is_read_as_their_old_name(name: str) -> None:
+    """#180: embry0.map/1 calls the rings groups; an upload that still says areas means the same list. The graph
+    serves them as groups, and as areas for one release, for a viewer of the release before."""
+    doc = _doc()
+    rings = doc.pop("areas")
+    parsed = parse_map({**doc, name: rings}, "shop")
+    expected = [{"id": "ops", "label": "Ops", "summary": None, "x": 1.0, "y": 2.0, "r": 3.0}]
+    assert parsed.graph.get("groups") == expected, f"an upload's {name} must be served as groups: {parsed.graph}"
+    assert parsed.graph["areas"] == expected, "areas, the old name, is served for one release more"
+
+
+def test_a_map_that_gives_both_names_is_refused() -> None:
+    with pytest.raises(MapError, match="groups and areas are one list"):
+        parse_map(_doc(groups=[{"id": "ops"}]), "shop")
+
+
+def test_groups_that_are_not_a_list_are_refused() -> None:
+    doc = _doc()
+    doc.pop("areas")
+    with pytest.raises(MapError, match="groups is a list"):
+        parse_map({**doc, "groups": {"id": "ops"}}, "shop")
+
+
+@pytest.mark.parametrize("name", ["group", "area"])
+def test_a_part_names_its_ring_as_group_and_area_is_read_as_its_old_name(name: str) -> None:
+    """#180: a part's ring is its group; a part that still says area means the same, and is served both ways for
+    one release."""
+    doc = _doc(nodes=[{"id": "a", name: "ops"}, {"id": "b"}])
+    nodes = parse_map(doc, "shop").graph["nodes"]
+    assert [(n.get("group"), n["area"]) for n in nodes] == [("ops", "ops"), (None, None)], (
+        f"a part's {name} must be served as its group, and as area: {nodes}"
+    )
+
+
+def test_a_part_that_gives_both_names_is_refused() -> None:
+    with pytest.raises(MapError, match="'a' gives group and area"):
+        parse_map(_doc(nodes=[{"id": "a", "group": "ops", "area": "ops"}]), "shop")

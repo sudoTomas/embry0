@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MapGraph, MarkCounts, WorkView } from "@/api/maps";
+import { type MapGraph, type MarkCounts, type WorkView, mapGroups } from "@/api/maps";
 import { type ColorBy, fit, hit, nodeColor, placed, themeColors, toScreen, type View, zoomAt } from "@/lib/mapView";
 
 interface MapCanvasProps {
@@ -16,7 +16,7 @@ interface MapCanvasProps {
 /**
  * Knowledge maps (spec 2026-10-27): the parts on the scanner's own layout, drawn on a canvas so a map of
  * thousands of parts stays smooth. Drag to pan, wheel or +/- to zoom, 0 to fit, click a part to open it.
- * Groups (the map format's `areas`) are labelled rings, a selected part's links are drawn bright. Nothing moves by itself.
+ * Groups (the map format's `groups`, once `areas`) are labelled rings, a selected part's links are drawn bright. Nothing moves by itself.
  */
 export function MapCanvas({ graph, colorBy, marks, work, selected, highlight, onSelect }: MapCanvasProps) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -30,7 +30,8 @@ export function MapCanvas({ graph, colorBy, marks, work, selected, highlight, on
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph.nodes]);
   const at = useMemo(() => new Map(points.map((p) => [p.id, p])), [points]);
   const kinds = useMemo(() => graph.kinds.map((k) => k.id), [graph.kinds]);
-  const areas = useMemo(() => graph.areas.map((a) => a.id), [graph.areas]);
+  const rings = useMemo(() => mapGroups(graph), [graph]);
+  const groups = useMemo(() => rings.map((a) => a.id), [rings]);
   const links = useMemo(() => {
     if (!selected) return new Set<string>();
     const out = new Set<string>([selected]);
@@ -69,7 +70,7 @@ export function MapCanvas({ graph, colorBy, marks, work, selected, highlight, on
 
     ctx.font = "11px D-DIN, Arial, sans-serif";
     ctx.textAlign = "center";
-    for (const a of graph.areas) {
+    for (const a of rings) {
       if (a.x == null || a.y == null || !a.r) continue;
       const [x, y] = toScreen(v, size.w, size.h, a.x, a.y);
       const r = a.r * v.scale;
@@ -102,7 +103,7 @@ export function MapCanvas({ graph, colorBy, marks, work, selected, highlight, on
       ctx.stroke();
     }
 
-    const ctxColor = { kinds, areas, marks, work };
+    const ctxColor = { kinds, groups, marks, work };
     for (const p of points) {
       const n = byId.get(p.id);
       if (!n) continue;
@@ -131,7 +132,7 @@ export function MapCanvas({ graph, colorBy, marks, work, selected, highlight, on
       }
     }
     ctx.globalAlpha = 1;
-  }, [graph.areas, graph.edges, points, byId, at, kinds, areas, marks, work, colorBy, selected, links, highlight, current, size]);
+  }, [rings, graph.edges, points, byId, at, kinds, groups, marks, work, colorBy, selected, links, highlight, current, size]);
 
   const local = (e: { clientX: number; clientY: number }) => {
     const rect = canvas.current?.getBoundingClientRect();
