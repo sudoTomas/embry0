@@ -37,7 +37,7 @@ class ErrorCode(StrEnum):
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
     DOCKER_OUTPUT_TOO_LARGE = "ERR_DOCKER_OUTPUT_TOO_LARGE"  # a docker command printed more than its stdout cap and was stopped (embry0/execution/docker_client.py)
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
-    MAX_TRIAGE_QUESTIONS = "ERR_MAX_TRIAGE_QUESTIONS"  # Triage interrupt/resume loop exceeded the 5-round cap
+    MAX_TRIAGE_QUESTIONS = "ERR_MAX_TRIAGE_QUESTIONS"  # Triage's needs_info loop exceeded agent_questions.rounds_cap
     UNSUPPORTED_CONTEXT = "ERR_UNSUPPORTED_CONTEXT"  # Unknown context type — no workspace-init strategy registered
     LOCAL_CONTEXT_DENIED = "ERR_LOCAL_CONTEXT_DENIED"  # local context path outside LOCAL_CONTEXT_ALLOWLIST or over caps
     HTTP_FETCH_FAILED = "ERR_HTTP_FETCH_FAILED"  # http context source unreachable, private-address, or over size cap

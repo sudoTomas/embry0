@@ -91,7 +91,7 @@ person_identities
 
 ## 4. Who a login is
 
-`owners_for(repo, area)` keeps its shape and its order of sources:
+`owners_for(area, repository)` keeps its shape and its order of sources:
 1. the area's owners;
 2. then the repository's owners;
 3. then `CODEOWNERS`.
@@ -146,12 +146,26 @@ agent_questions:
     had.
 - **Messages name the setting.** Each failure at a cap names the key that capped it:
   `agent_questions.rounds_cap`, `brainstorming_floor` or `retry_rounds_cap`.
+- **Continues past the budget ceiling stay the deployment's.**
+  - While `budget.continue_may_exceed_ceiling` is true, a person's continue may take a job past
+    `budget.max_budget_per_job_usd`.
+  - Before this section, the only bound on how many such continues one job could get was `USER_RETRY_ROUNDS_CAP`,
+    which was the deployment's.
+  - With `retry_rounds_cap` on the organization and repository layers, a layer could have raised that bound. The
+    budget section gives those layers no fleet limit on purpose.
+  - So a new deployment-only key, `budget.continue_past_ceiling_max` (default 5, the bound the variable gave),
+    counts the continues that took the job past the ceiling. The continue that would pass it once more is refused
+    and the job stops, whatever `retry_rounds_cap` says; it is not offered at the pause either.
+  - Continues that keep the job under the ceiling count against `retry_rounds_cap` alone.
+  - A job reads the key with its other kept settings when it starts (the budget section joins the job sections;
+    its other keys are still read where they are checked), and counts on its state (`continues_past_ceiling`).
 - **The variables.**
   - `ASK_USER_ROUNDS_CAP` and `USER_RETRY_ROUNDS_CAP` are import-only `Embry0Config` fields, typed as text so no
     value can stop a start.
   - The first start of the release imports a value an operator set, once (`EnvImport` with a whole-number
-    converter). A value that is not a whole number at or above 0 is skipped, as the old reader fell back to its
-    default.
+    converter). A value that is not a whole number at or above 0 is not imported, and the key keeps its default.
+    The old reader fell back to its default for a value that was no number but kept a negative one, which failed a
+    job at its first question; neither is a cap an operator meant.
   - After that, `embry0 config` names each still set as governed and ignored. The orchestrator reads neither from
     the environment, and `config_lint` no longer excepts `ASK_USER_ROUNDS_CAP`.
 - **Retiring the import.** A later release removes the import and the two fields. #168's import retirement follows
@@ -180,6 +194,7 @@ agent_questions:
 
 | Check | How |
 |---|---|
+| A layer cannot raise how many continues pass the budget ceiling | A repository layer sets `retry_rounds_cap: 100000`; through `max_retries_node`, the continue past the ceiling after `continue_past_ceiling_max` of them is refused and not offered; a continue under the ceiling goes on; an organization or repository layer that sets `budget.continue_past_ceiling_max` is refused. |
 | An organization's layer and a repository's each set a job's caps | Start jobs for repositories with and without the layers; the first round count at which `_enforce_ask_user_cap` fails each job, the brainstorming developer's cap, triage's own cap and the continue-retrying cap follow the nearest layer (`tests/unit/services/test_agent_questions_settings.py`). |
 | A running job keeps what it started with | Start a job, pause it on a question, change the layer, resume it: it keeps its cap; the next job reads the new one. |
 | The import writes a set value once | `ASK_USER_ROUNDS_CAP=12` and `USER_RETRY_ROUNDS_CAP=3` are written with source `bootstrap`; a second start imports nothing; `ten`, `-1`, an empty value and the default are not imported (`tests/unit/settings/test_agent_questions_import.py`). |

@@ -505,6 +505,7 @@ What embry0 may spend: each job's ceiling, the daily and monthly caps, the unatt
 | `fix_job_usd` | number | `2.0` | > 0 | organization | `CONTEXT_AUDIT_JOB_BUDGET_USD` | The hard cap of the job that fixes one context-audit finding an owner accepted from the proposals, in US dollars. |
 | `continue_extra_max_usd` | number | `1000.0` | > 0 |  |  | The most a person may name as extra_budget_usd when they continue a job past its cap (POST /jobs/{id}/resume), in US dollars. |
 | `continue_may_exceed_ceiling` | true or false | `true` |  |  |  | Whether a person's continue may take a job past max_budget_per_job_usd. false makes the ceiling a hard limit: a continue adds only what is left under it, and a job already at it cannot be continued. |
+| `continue_past_ceiling_max` | whole number | `5` | ≥ 0 |  |  | How many times a person's continue may take one job past max_budget_per_job_usd, while continue_may_exceed_ceiling is true. A continue that would take the job past the ceiling once more is refused, and the job stops; continues that keep it under the ceiling count against agent_questions.retry_rounds_cap alone. A job reads it when it starts and keeps it. 0: no continue may pass the ceiling. |
 | `continue_default_extra_usd` | number or null | `null` | > 0 |  |  | How much more a continue lets a job spend when the person names no amount, in US dollars; null is one more cap. At most continue_extra_max_usd. |
 
 #### `context_audit`

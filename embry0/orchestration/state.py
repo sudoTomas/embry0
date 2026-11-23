@@ -555,6 +555,9 @@ class JobState(TypedDict, total=False):
     ]  # set True when agent_question_rounds cap hit; routes to terminal failure
     triage_question_rounds: Annotated[int, max_value]  # cycle guard for triage interrupt/resume loops
     user_retry_rounds: Annotated[int, max_value]  # cycle guard for continue_retrying clicks in max_retries_node
+    # #179: the continues that took the job past budget.max_budget_per_job_usd, capped at the job's
+    # budget.continue_past_ceiling_max (max_retries_node).
+    continues_past_ceiling: Annotated[int, max_value]
     # EMB-35: one-shot copy of the user's continue_retrying guidance. The
     # developer delta prompt sends only this on a resumed session (the
     # accumulated additional_context lives in the resumed conversation

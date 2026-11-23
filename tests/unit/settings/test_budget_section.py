@@ -52,6 +52,8 @@ def test_every_default_is_the_cap_embry0_had_before_the_section() -> None:
         "continue_extra_max_usd": 1000.0,
         "continue_may_exceed_ceiling": True,
         "continue_default_extra_usd": None,
+        # USER_RETRY_ROUNDS_CAP's default bounded continues past the ceiling before agent_questions (#179)
+        "continue_past_ceiling_max": 5,
     }
 
 

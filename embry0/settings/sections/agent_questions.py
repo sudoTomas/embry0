@@ -27,8 +27,9 @@ and ``USER_RETRY_ROUNDS_CAP``, read when the orchestrator started, and the
 brainstorming floor was a constant. The first start of the release that added
 the section imports a variable an operator set, once
 (:mod:`embry0.settings.bootstrap`). A value that is not a whole number at or
-above 0 is not imported and the key keeps its default, as the old reader fell
-back to its default.
+above 0 is not imported, and the key keeps its default. The old reader fell
+back to its default for a value that was no number, but kept a negative one,
+which failed a job at its first question; neither is a cap an operator meant.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from embry0.settings.registry import EnvImport, Section, SectionModel
 
 def rounds_from_env(value: Any) -> int:
     """A cap's variable as a whole number. Anything else raises, so the import refuses it and the key keeps its
-    default, as the old reader fell back to its default; a number below 0 is refused by the field itself."""
+    default; a number below 0 is refused by the field itself."""
     return int(str(value).strip())
 
 

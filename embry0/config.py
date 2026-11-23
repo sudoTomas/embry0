@@ -822,8 +822,8 @@ class Embry0Config(BaseSettings):
     # (embry0/settings/sections/agent_questions.py). These two are only its
     # import source: read once, at the first start of the release that added
     # the section, and ignored after that. Text, so no value of either can
-    # stop a start: one the section refuses is not imported, as the old reader
-    # fell back to its default.
+    # stop a start: one the section refuses (not a whole number at or above 0)
+    # is not imported, and its key keeps its default.
     ask_user_rounds_cap: Annotated[str, NOT_SECRET] = ""
     user_retry_rounds_cap: Annotated[str, NOT_SECRET] = ""
 

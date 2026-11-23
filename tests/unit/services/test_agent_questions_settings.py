@@ -273,13 +273,129 @@ def test_no_cap_is_read_from_the_environment_any_more() -> None:
     has the section's cap of 10: the variable is the import's alone."""
     probe = (
         "import json\n"
-        "from embry0.orchestration.nodes.agent import _enforce_ask_user_cap\n"
+        "from embry0.orchestration.nodes import agent\n"
         "q = [{'question': 'Which export?'}]\n"
-        "print(json.dumps([_enforce_ask_user_cap({'job_id': 'j', 'agent_question_rounds': n}, q)[0] for n in (2, 10)]))\n"
+        "asks = [agent._enforce_ask_user_cap({'job_id': 'j', 'agent_question_rounds': n}, q)[0] for n in (2, 10)]\n"
+        "retries = getattr(agent, 'retry_rounds_cap', None)\n"
+        "print(json.dumps([asks, retries({}) if retries else agent.USER_RETRY_ROUNDS_CAP]))\n"
     )
-    env = {**os.environ, "ASK_USER_ROUNDS_CAP": "2", "PYTHONPATH": os.pathsep.join(sys.path)}
+    env = {
+        **os.environ,
+        "ASK_USER_ROUNDS_CAP": "2",
+        "USER_RETRY_ROUNDS_CAP": "1",
+        "PYTHONPATH": os.pathsep.join(sys.path),
+    }
     done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=env, timeout=120)
     assert done.returncode == 0, done.stderr
-    assert json.loads(done.stdout.strip().splitlines()[-1]) == [False, True], (
+    asks, retries = json.loads(done.stdout.strip().splitlines()[-1])
+    assert asks == [False, True], (
         f"ASK_USER_ROUNDS_CAP still caps jobs at load time (exhausted at rounds 2 and 10): {done.stdout}"
     )
+    assert retries == 5, f"USER_RETRY_ROUNDS_CAP still caps continues at load time: {retries}"
+
+
+def _continue_past_ceiling(state: dict[str, Any], passed: int, *, extra: float | None = 1000.0) -> tuple[Any, Any]:
+    """A person's continue of a job over a $50 ceiling that ``passed`` continues already took past it: the node's
+    update, and the options its pause offered."""
+    import embry0.workflows.issue_to_pr.nodes as nodes_module
+    from embry0.settings.sections.budget import BudgetSettings
+
+    job = {
+        **state,
+        "current_stage": "developer_complete",
+        "retry_count": 1,
+        "user_retry_rounds": passed,
+        "pipeline_config": {"budget_usd": 50.0},
+        "budget_cap_usd": 50.0 + 1000.0 * passed,
+        "total_cost_usd": 50.5 + 1000.0 * passed,
+        "budget_allowance_usd": 1000.0 * passed,
+        "continues_past_ceiling": passed,
+    }
+    offered: dict[str, Any] = {}
+    answer = {"choice": "continue_retrying", **({"extra_budget_usd": extra} if extra is not None else {})}
+
+    def asked(summary: dict[str, Any]) -> dict[str, Any]:
+        offered.update(summary)
+        return answer
+
+    async def go() -> dict[str, Any]:
+        with (
+            patch.object(nodes_module, "get_stream_writer", return_value=lambda _event: None),
+            patch.object(nodes_module, "interrupt", new=asked),
+            patch(
+                "embry0.workflows.issue_to_pr.nodes._interrupts.load_budget_settings",
+                new=AsyncMock(return_value=BudgetSettings(max_budget_per_job_usd=50.0)),
+            ),
+            patch("embry0.audit.helpers.emit_audit", new=AsyncMock()),
+        ):
+            return dict(await nodes_module.max_retries_node(job, config={"configurable": {}}))
+
+    return run_async(go()), offered.get("options")
+
+
+def test_a_layer_cannot_raise_how_many_continues_pass_the_budget_ceiling() -> None:
+    """#651 review: while continue_may_exceed_ceiling is true, each continue past the ceiling raises a job's
+    allowance, and retry_rounds_cap was the only bound on how many; a repository layer could set it to any number.
+    budget.continue_past_ceiling_max, the deployment's alone, bounds them whatever a layer sets."""
+    store = _Store(**_layers(**{f"repository:{WIDGETS}": {"retry_rounds_cap": 100000}}))
+    widgets = run_async(_start(store, WIDGETS))
+    stopped, options = _continue_past_ceiling(widgets, 5)
+    assert stopped.get("current_stage") == "abandoned", (
+        f"a sixth continue past the $50 ceiling went on under a repository's retry_rounds_cap of 100000: {stopped}"
+    )
+    assert "budget.continue_past_ceiling_max" in stopped["errors"][0], stopped["errors"]
+    assert options is not None and "continue_retrying" not in options, f"the pause still offered it: {options}"
+    went_on, options = _continue_past_ceiling(widgets, 4)
+    assert went_on.get("current_stage") == "developer_retry" and went_on.get("continues_past_ceiling") == 5, went_on
+    assert "continue_retrying" in (options or []), options
+
+
+def test_the_deployment_sets_how_many_continues_pass_the_budget_ceiling() -> None:
+    store = _Store({"budget": {"continue_past_ceiling_max": 2}})
+    job = run_async(_start(store, WIDGETS))
+    assert _continue_past_ceiling(job, 2)[0].get("current_stage") == "abandoned", "the deployment's 2 was not kept"
+    assert _continue_past_ceiling(job, 1)[0].get("current_stage") == "developer_retry"
+
+
+def test_a_continue_that_stays_under_the_ceiling_is_not_counted_against_it() -> None:
+    """Under the $50 ceiling a continue is an ordinary one: retry_rounds_cap alone governs it."""
+    job = run_async(_start(_Store(), WIDGETS))
+    under = {**job, "pipeline_config": {"budget_usd": 10.0}}
+
+    async def go() -> dict[str, Any]:
+        import embry0.workflows.issue_to_pr.nodes as nodes_module
+        from embry0.settings.sections.budget import BudgetSettings
+
+        state = {
+            **under,
+            "current_stage": "developer_complete",
+            "retry_count": 1,
+            "user_retry_rounds": 1,
+            "total_cost_usd": 10.5,
+            "continues_past_ceiling": 5,
+        }
+        with (
+            patch.object(nodes_module, "get_stream_writer", return_value=lambda _event: None),
+            patch.object(nodes_module, "interrupt", new=lambda _summary: {"choice": "continue_retrying"}),
+            patch(
+                "embry0.workflows.issue_to_pr.nodes._interrupts.load_budget_settings",
+                new=AsyncMock(return_value=BudgetSettings(max_budget_per_job_usd=50.0)),
+            ),
+            patch("embry0.audit.helpers.emit_audit", new=AsyncMock()),
+        ):
+            return dict(await nodes_module.max_retries_node(state, config={"configurable": {}}))
+
+    update = run_async(go())
+    assert update.get("current_stage") == "developer_retry", update
+    assert "continues_past_ceiling" not in update, "a continue under the ceiling was counted as one past it"
+
+
+@pytest.mark.parametrize("layer", ["organization", "repository"])
+def test_no_layer_may_set_how_many_continues_pass_the_budget_ceiling(layer: str) -> None:
+    from embry0.settings.document import DocumentInvalid, check
+
+    with pytest.raises(DocumentInvalid) as invalid:
+        check(CATALOG, {"budget": {"continue_past_ceiling_max": 50}}, stored={}, layer=layer, inherited={})
+    assert [(p.loc, p.type) for p in invalid.value.problems] == [
+        (("budget", "continue_past_ceiling_max"), "not_overridable")
+    ], f"the {layer} layer may set budget.continue_past_ceiling_max: {invalid.value.problems}"

@@ -304,6 +304,15 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
                 f". It has reached this deployment's ceiling of ${ceiling:.2f} per job, which a continue may "
                 "not pass (budget.continue_may_exceed_ceiling is false)"
             )
+        # #179: how many continues may take a job past the ceiling is the deployment's alone, whatever a layer
+        # sets agent_questions.retry_rounds_cap to; once that many have, a continue past it is not offered.
+        passed, most = _past_ceiling(state)
+        if passed >= most and _passes_ceiling(state, budget, None) and "continue_retrying" in options:
+            options = [option for option in options if option != "continue_retrying"]
+            message += (
+                f". It has been continued past this deployment's ceiling of ${ceiling:.2f} per job {passed} times, "
+                "the most budget.continue_past_ceiling_max allows"
+            )
     # #459: a "merge as is" whose change request did not open came back here: the pause says what the forge said,
     # and offers what it offered before (merge as is again, once the forge would take it).
     merge_failed = str(state.get("merge_as_is_failed") or "")
@@ -412,10 +421,25 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             policy = budget if budget is not None else await load_budget_settings(config)
             if extra_budget is not None:
                 extra_budget = min(extra_budget, policy.continue_extra_max_usd)
+            # #179: a continue past the deployment's ceiling counts against its continue_past_ceiling_max, as the
+            # job read it when it started, whatever its agent_questions.retry_rounds_cap allows.
+            passes = _passes_ceiling(state, policy, extra_budget)
+            passed, most = _past_ceiling(state)
+            if passes and passed >= most:
+                logger.warning("continue_past_ceiling_refused", job_id=state.get("job_id"), passed=passed, most=most)
+                return {
+                    "current_stage": "abandoned",
+                    "errors": [
+                        f"Continued past this deployment's ceiling of ${policy.max_budget_per_job_usd:.2f} per job "
+                        f"{passed} times, the most the settings document's budget.continue_past_ceiling_max allows"
+                    ],
+                }
             raised = await _raise_budget(state, config, policy, extra_budget, answered_by)
             if raised is not None:
                 # The raised cap is the one in force until the next agent turn checks it again (#283).
                 updates["budget_allowance_usd"], updates["budget_cap_usd"] = raised
+                if passes:
+                    updates["continues_past_ceiling"] = passed + 1
         if guidance:
             existing = state.get("additional_context", "") or ""
             updates["additional_context"] = existing + f"\n\nUser guidance:\n{guidance}"
@@ -478,6 +502,34 @@ async def deliver_as_is_node(state: dict[str, Any], config: RunnableConfig) -> C
     writer(events.system(message=f"Merging it as it is opened no change request: {reason}. Back to the pause."))
     logger.warning("merge_as_is_change_request_failed", job_id=state.get("job_id"), reason=reason)
     return Command(goto="max_retries", update={"merged_as_is": None, "merge_as_is_failed": reason})
+
+
+def _passes_ceiling(state: dict[str, Any], policy: Any, extra: float | None) -> bool:
+    """Whether a continue granting ``extra`` (None: the default) leaves the job's cap above the deployment's ceiling.
+
+    Only while ``budget.continue_may_exceed_ceiling`` is true: otherwise the ceiling bounds every continue.
+    """
+    ceiling = float(policy.max_budget_per_job_usd)
+    if ceiling <= 0 or not policy.continue_may_exceed_ceiling:
+        return False
+    allowance = allowance_to_continue(
+        state,
+        ceiling=ceiling,
+        extra=extra,
+        default_extra=policy.continue_default_extra_usd,
+        may_exceed_ceiling=True,
+        extra_max=policy.continue_extra_max_usd,
+    )
+    return resolve_job_cap({**state, "budget_allowance_usd": allowance}, ceiling=ceiling) > ceiling
+
+
+def _past_ceiling(state: dict[str, Any]) -> tuple[int, int]:
+    """The continues that took ``state``'s job past the ceiling, and the most the job's kept
+    ``budget.continue_past_ceiling_max`` allows (#179)."""
+    from embry0.services.job_settings import job_section
+    from embry0.settings.sections.budget import BUDGET
+
+    return int(state.get("continues_past_ceiling", 0) or 0), job_section(state, BUDGET).continue_past_ceiling_max
 
 
 async def _raise_budget(
