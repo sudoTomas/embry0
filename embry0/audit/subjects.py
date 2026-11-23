@@ -189,6 +189,12 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "map.owner_changed": Subject(owners=("before", "after")),
     "map.analysis_template.replaced": _REPO,
     "job.slop_route.skipped": Subject(repos=("job",)),
+    # People are the deployment's, as users are (#179).
+    "person.created": DEPLOYMENT,
+    "person.updated": DEPLOYMENT,
+    "person.deleted": DEPLOYMENT,
+    "person.identity.added": DEPLOYMENT,
+    "person.identity.removed": DEPLOYMENT,
 }
 
 

@@ -95,7 +95,7 @@ async def set_login(request: Request, user_id: str, raw: str) -> dict[str, Any]:
     users = _repo(request, "users_repo")
     login = _checked_login(raw)
     try:
-        row = await users.set_github_login(user_id, login)
+        row = await users.set_github_login(user_id, login, actor=request_actor(request))
     except Exception as exc:  # the unique index: another person holds that login
         if "uq_users_github_login_lower" in str(exc) or "unique" in str(exc).lower():
             raise HTTPException(status_code=409, detail=f"{login} is already someone else's") from exc

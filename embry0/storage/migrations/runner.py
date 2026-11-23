@@ -4852,6 +4852,86 @@ deliverable under an "Assumptions" heading.$seed$
            AND position('"groups":' IN substr(graph, 1, position(',"nodes":' IN graph))) = 0;
         """,
     ),
+    (
+        154,
+        "people and their identities, one person backfilled for each user (#179)",
+        # spec 2026-11-23 (people and agent questions), section 3. A person is
+        # who embry0 asks and names as an owner, whether or not they sign in;
+        # an identity is a login on a forge or a handle in a chat, one
+        # person's on its kind whatever its case. Each user who signed in
+        # before this release becomes one person, linked to them, with their
+        # name, email and disabled flag, and their github_login as a github
+        # identity; each is audited as person.created. Nothing reads these
+        # tables yet: users.github_login stays what owners are matched by,
+        # kept in step with a linked person's github identity for a release.
+        # A user's email or login that only blanks set apart from another's
+        # (the old indexes compare them untrimmed) is left off, never failing
+        # the migration on the new indexes.
+        """
+        CREATE TABLE IF NOT EXISTS people (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL CHECK (name <> ''),
+            email      TEXT CHECK (email IS NULL OR email <> ''),
+            user_id    TEXT REFERENCES users (id) ON DELETE SET NULL,
+            timezone   TEXT,
+            hours      TEXT,
+            weekdays   TEXT,
+            disabled   BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by TEXT NOT NULL DEFAULT 'system',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_people_email_lower ON people (LOWER(email)) WHERE email IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_people_user ON people (user_id) WHERE user_id IS NOT NULL;
+        COMMENT ON TABLE people IS
+            'spec 2026-11-23: a person embry0 asks or names as an owner; user_id links their sign-in, when they have one.';
+
+        CREATE TABLE IF NOT EXISTS person_identities (
+            person_id  TEXT NOT NULL REFERENCES people (id) ON DELETE CASCADE,
+            kind       TEXT NOT NULL
+                       CHECK (kind IN ('github', 'gitlab', 'telegram', 'slack', 'teams', 'discord')),
+            value      TEXT NOT NULL CHECK (value <> ''),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_person_identities_kind_value ON person_identities (kind, LOWER(value));
+        CREATE INDEX IF NOT EXISTS idx_person_identities_person ON person_identities (person_id, created_at);
+        COMMENT ON TABLE person_identities IS
+            'spec 2026-11-23: who a person is on a forge (github, gitlab) or in a chat; one person per kind and value, any case.';
+
+        WITH users_now AS (
+            SELECT u.id, u.name, u.disabled, btrim(u.email) AS email, btrim(COALESCE(u.github_login, '')) AS login,
+                   count(*) OVER (PARTITION BY LOWER(btrim(u.email))) AS same_email
+              FROM users u
+             WHERE NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id = u.id)
+        ), made AS (
+            INSERT INTO people (id, name, email, user_id, disabled, created_by)
+            SELECT 'per-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12),
+                   COALESCE(NULLIF(btrim(n.name), ''), NULLIF(n.email, ''), n.id),
+                   CASE WHEN n.same_email = 1 THEN NULLIF(n.email, '') END,
+                   n.id, n.disabled, 'embry0:migration'
+              FROM users_now n
+            RETURNING id, user_id
+        ), linked AS (
+            INSERT INTO person_identities (person_id, kind, value)
+            SELECT made.id, 'github', n.login
+              FROM made JOIN users_now n ON n.id = made.user_id
+             WHERE n.login <> ''
+            ON CONFLICT DO NOTHING
+            RETURNING person_id, value
+        )
+        INSERT INTO audit_log (action, actor, details)
+        SELECT 'person.created', 'embry0:migration',
+               jsonb_build_object(
+                   'person_id', made.id, 'user_id', made.user_id, 'source', 'users',
+                   'identities', COALESCE(
+                       (SELECT jsonb_agg(jsonb_build_object('kind', 'github', 'value', l.value))
+                          FROM linked l WHERE l.person_id = made.id),
+                       '[]'::jsonb
+                   )
+               )
+          FROM made;
+        """,
+    ),
 ]
 
 
