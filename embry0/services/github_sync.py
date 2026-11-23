@@ -140,6 +140,34 @@ class _Push:
     left: list[tuple[dict[str, Any], TriggerContext]] = field(default_factory=list)
 
 
+@dataclass(eq=False)
+class _Claim:
+    """The GitHub issue one create's lookup holds, which no other create's lookup takes (#629).
+
+    Taken before the lookup asks the database whether another embry0 issue holds that issue, and dropped when it
+    does, when the question fails, and when the push is cancelled while it waits for the answer (#638). Asked first, it left a gap: between the answer and the claim, another
+    create's lookup could take the issue, link it and resolve, which released that create's claim, and the second
+    link of the same issue failed. Taken first, the other create still holds it while it links; once it has
+    resolved, its link is in the database, which the question then reads.
+    """
+
+    live: Callable[[], list[_Push]]
+    push: _Push
+
+    def take(self, number: Any) -> bool:
+        """Hold the issue numbered so, unless another create's lookup holds it. Synchronous: nothing runs between
+        the look and the hold."""
+        taken = str(number)
+        if any(other.claimed == taken for other in self.live() if other is not self.push):
+            return False
+        self.push.claimed = taken
+        return True
+
+    def drop(self, number: Any) -> None:
+        if self.push.claimed == str(number):
+            self.push.claimed = None
+
+
 def _same_text(stored: Any, sent: Any) -> bool:
     """Whether GitHub's stored text is the text sent, line endings and trailing whitespace aside."""
 
@@ -302,20 +330,10 @@ class GitHubSyncService:
         if not pushes:
             self._pushing.pop(repo.lower(), None)
 
-    def _claim(self, repo: str, push: _Push) -> Callable[[Any], bool]:
-        """Whether ``push``'s lookup may take the GitHub issue numbered so, which it then holds: not when another
-        create's lookup took it (#629). Two creates that sent the same words and lost both answers read the same
-        newest issue at once; without the claim both took it, and the second link failed. Synchronous, so nothing
-        runs between the check and the claim."""
-
-        def claim(number: Any) -> bool:
-            taken = str(number)
-            if any(other.claimed == taken for other in self._live(repo) if other is not push):
-                return False
-            push.claimed = taken
-            return True
-
-        return claim
+    def _claim(self, repo: str, push: _Push) -> _Claim:
+        """What ``push``'s lookup holds. Two creates that sent the same words and lost both answers read the same
+        newest issue at once; without the claim both took it, and the second link failed (#629)."""
+        return _Claim(lambda: self._live(repo), push)
 
     async def _pushes_of(self, issue: TrackerIssue, payload: dict[str, Any]) -> tuple[list[_Push], bool]:
         """The creates under way that may have made ``issue``, which the issues webhook reports as opened, and
@@ -358,7 +376,7 @@ class GitHubSyncService:
         payload: dict[str, Any],
         started: datetime,
         pushed_by_another: Callable[[Any], Awaitable[bool]],
-        claim: Callable[[Any], bool] = lambda _number: True,
+        claim: _Claim,
     ) -> dict[str, Any]:
         """Create the GitHub issue; the issue GitHub made.
 
@@ -406,7 +424,7 @@ class GitHubSyncService:
         payload: dict[str, Any],
         earliest: datetime,
         pushed_by_another: Callable[[Any], Awaitable[bool]],
-        claim: Callable[[Any], bool] = lambda _number: True,
+        claim: _Claim,
         latest: datetime | None = None,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Whether the issues could be read, and the one this token created in ``repo`` with ``payload``'s title and
@@ -455,12 +473,22 @@ class GitHubSyncService:
                     and _same_text(item.get("body"), payload.get("body"))
                 ):
                     continue
-                if await pushed_by_another(item.get("number")):
-                    logger.info("github_issue_lookup_skipped_linked_elsewhere", repo=repo, number=item.get("number"))
-                    continue
-                if not claim(item.get("number")):
+                number = item.get("number")
+                # Held before the database is asked, so no other lookup takes it meanwhile (#638).
+                if not claim.take(number):
                     # Another create's lookup under way took it (#629).
-                    logger.info("github_issue_lookup_skipped_claimed", repo=repo, number=item.get("number"))
+                    logger.info("github_issue_lookup_skipped_claimed", repo=repo, number=number)
+                    continue
+                taken = False
+                try:
+                    taken = not await pushed_by_another(number)
+                finally:
+                    # Dropped on every way out that does not take it: another issue holds it, the check failed, or
+                    # the push was cancelled while it waited (a kept record would hold it until its time, #646).
+                    if not taken:
+                        claim.drop(number)
+                if not taken:
+                    logger.info("github_issue_lookup_skipped_linked_elsewhere", repo=repo, number=number)
                     continue
                 return True, item
         except Exception:

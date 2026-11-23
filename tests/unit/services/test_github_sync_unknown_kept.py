@@ -183,6 +183,81 @@ async def test_two_creates_with_the_same_words_whose_answers_were_lost_each_link
     assert set(linked) == {first, second} and sorted(linked.values()) == ["7", "8"], linked
 
 
+class _HeldAtTheCheck:
+    """The first lookup to ask the database about issue #8 holds there, its answer read, until the other create has
+    finished: its link written and its record, with its claim, forgotten. That is the gap between a lookup's check
+    and its claim when the check comes first (#638)."""
+
+    def __init__(self, issues: IssuesRepository) -> None:
+        self._read = issues.get_by_tracker_ref
+        self.first: asyncio.Task[Any] | None = None
+        self.other_done = asyncio.Event()
+
+    async def get_by_tracker_ref(self, tracker: str, repo: str | None, key: str) -> dict[str, Any] | None:
+        row = await self._read(tracker, repo, key)
+        if key == "8" and self.first is None:
+            self.first = asyncio.current_task()
+            await self.other_done.wait()
+        return row
+
+    def finished(self, task: asyncio.Task[Any]) -> None:
+        if task is not self.first:
+            self.other_done.set()
+
+
+async def test_a_lookup_held_between_its_check_and_its_claim_takes_no_issue_another_linked(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#638: one lookup asked the database about #8 and heard nothing; before it claimed #8, the other create's lookup
+    took #8, linked it and resolved, releasing its claim. The first then claimed #8 too, and its link failed."""
+    issues = IssuesRepository(db_with_migrations)
+    first = await issues.create(TITLE, BODY, repo=REPO, github_sync_enabled=True, created_by="dev@example.com")
+    second = await issues.create(TITLE, BODY, repo=REPO, github_sync_enabled=True, created_by="dev@example.com")
+    held = _HeldAtTheCheck(issues)
+    monkeypatch.setattr(issues, "get_by_tracker_ref", held.get_by_tracker_ref)
+    gh = _GitHub()
+    gh.answer, gh.together = "lost", asyncio.Barrier(2)
+    sync = _sync(gh)
+    tasks = [asyncio.create_task(sync.push_create(issue_id, issues)) for issue_id in (first, second)]
+    for task in tasks:
+        task.add_done_callback(held.finished)
+    results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=30)
+    assert held.first is not None, "no lookup asked the database about #8: the gap was never opened"
+    failed = [r for r in results if isinstance(r, BaseException)]
+    assert not failed, f"a create failed: {[f'{type(r).__name__}: {r}' for r in failed]}"
+    linked = {r["id"]: r["tracker_key"] for r in await _rows(db_with_migrations)}
+    assert set(linked) == {first, second} and sorted(linked.values()) == ["7", "8"], (
+        f"each create must link the issue it made: {linked}"
+    )
+
+
+async def test_a_kept_lookup_cancelled_at_its_check_holds_no_claim(db_with_migrations: DatabasePool) -> None:
+    """#646 review: the next push of a kept record claims #7 and waits for the database; cancelled there (a deploy, a
+    timeout), it kept the claim. The kept record lives on until its time, and every other create's lookup skipped #7
+    meanwhile: a create whose own issue that was would send again and make a second GitHub issue."""
+    gh, sync, issues, pushed = await _unknown_create(db_with_migrations)
+    kept = next(p for p in sync._live(REPO) if p.kept_until is not None)
+    waiting, never = asyncio.Event(), asyncio.Event()
+    read = issues.get_by_tracker_ref
+
+    async def held(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        waiting.set()
+        await never.wait()
+        return await read(*args, **kwargs)
+
+    issues.get_by_tracker_ref = held  # type: ignore[method-assign]
+    task = asyncio.create_task(sync.push_create(pushed, issues))
+    await asyncio.wait_for(waiting.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert kept in sync._live(REPO), "the kept record is gone: the test no longer reaches the case"
+    assert kept.claimed is None, (
+        f"the kept record still holds #{kept.claimed} after its lookup was cancelled at the database check: every "
+        "other create's lookup skips that issue until the record's time runs out"
+    )
+
+
 async def test_the_next_push_creates_nothing_while_github_still_cannot_say(db_with_migrations: DatabasePool) -> None:
     """The earlier create may have made the issue, and GitHub still cannot be read to say: nothing is created."""
     gh, sync, issues, pushed = await _unknown_create(db_with_migrations)
