@@ -280,7 +280,7 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
     over_budget = check_budget(state) == "over_budget"
     budget = await load_budget_settings(config) if over_budget else None
     at_ceiling = False
-    budget_summary: dict[str, float] | None = None
+    budget_summary: dict[str, Any] | None = None
     if budget is not None:
         ceiling = budget.max_budget_per_job_usd
         # #179: once the job's continues past the ceiling are used up, the ceiling bounds its next one, as
@@ -305,6 +305,21 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
         if at_ceiling and "continue_retrying" in options:
             options = [option for option in options if option != "continue_retrying"]
             message += _ceiling_words(state, ceiling, used_up)
+        elif hard_ceiling and ceiling > 0 and "continue_retrying" in options:
+            # The ceiling bounds what a continue adds, whatever amount a person names: say how much, and why, so
+            # a named amount past it is no surprise (#651 review). The resume answer says it again when it caps one.
+            most_adds = continue_adds(
+                state,
+                ceiling=ceiling,
+                extra=budget.continue_extra_max_usd,
+                default_extra=budget.continue_default_extra_usd,
+                may_exceed_ceiling=False,
+                extra_max=budget.continue_extra_max_usd,
+            )
+            because = _bound_words(state, ceiling, used_up)
+            budget_summary["continue_max"] = round(most_adds, 2)
+            budget_summary["continue_max_because"] = because
+            message += f". A continue may add at most ${most_adds:.2f}: {because}"
     # #459: a "merge as is" whose change request did not open came back here: the pause says what the forge said,
     # and offers what it offered before (merge as is again, once the forge would take it).
     merge_failed = str(state.get("merge_as_is_failed") or "")
@@ -418,7 +433,10 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             # the person named and whatever agent_questions.retry_rounds_cap allows.
             used_up = _used_up(state, policy)
             passes = not used_up and _passes_ceiling(state, policy, extra_budget)
-            raised = await _raise_budget(state, config, policy, extra_budget, answered_by, may_exceed=not used_up)
+            # Bounded when the deployment's ceiling is a hard limit, or the job may pass it no more.
+            raised = await _raise_budget(
+                state, config, policy, extra_budget, answered_by, may_exceed=False if used_up else None
+            )
             if raised is not None:
                 # The raised cap is the one in force until the next agent turn checks it again (#283).
                 updates["budget_allowance_usd"], updates["budget_cap_usd"] = raised
@@ -524,6 +542,22 @@ def _used_up(state: dict[str, Any], policy: Any) -> bool:
         return False
     passed, most = _past_ceiling(state)
     return passed >= most
+
+
+def _bound_words(state: dict[str, Any], ceiling: float, used_up: bool) -> str:
+    """Why the ceiling bounds a continue of ``state``'s job, in words a pause and a resume answer carry."""
+    if not used_up:
+        return (
+            f"this deployment's ceiling of ${ceiling:.2f} per job is a hard limit "
+            "(budget.continue_may_exceed_ceiling is false)"
+        )
+    passed, most = _past_ceiling(state)
+    if most == 0:
+        return f"no continue may pass this deployment's ${ceiling:.2f} ceiling (budget.continue_past_ceiling_max is 0)"
+    return (
+        f"its continues past this deployment's ${ceiling:.2f} ceiling are used up, {passed} of "
+        f"{most} (budget.continue_past_ceiling_max)"
+    )
 
 
 def _ceiling_words(state: dict[str, Any], ceiling: float, used_up: bool) -> str:

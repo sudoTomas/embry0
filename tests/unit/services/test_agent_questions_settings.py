@@ -457,6 +457,18 @@ async def test_a_used_up_job_with_room_under_the_ceiling_is_offered_a_continue_t
             {"choice": "continue_retrying", "extra_budget_usd": extra},
         )
         assert answered.status_code == 200 and len(scheduled) == 1, answered.text
+    room = round(50 - spent, 2)
+    assert pause[1]["budget"].get("continue_max") == room, (
+        f"the pause does not say the most a continue adds: {pause[1]}"
+    )
+    assert f"A continue may add at most ${room:.2f}" in pause[1]["message"], pause[1]["message"]
+    if extra > room:
+        assert answered.json().get("extra_budget_capped") is True and answered.json()["extra_budget_usd"] == room, (
+            f"the resume answer must say it capped ${extra:.2f} at ${room:.2f}: {answered.json()}"
+        )
+        assert "budget.continue_past_ceiling_max is 0" in answered.json()["message"], answered.json()
+    else:
+        assert "extra_budget_capped" not in answered.json(), answered.json()
     went_on, _ = await _max_retries(state, {"choice": "continue_retrying", "extra_budget_usd": extra})
     assert went_on.get("current_stage") == "developer_retry", f"the continue stopped the job: {went_on}"
     assert went_on.get("budget_cap_usd") == 50.0, f"the continue was not capped at the $50 ceiling: {went_on}"
@@ -490,12 +502,20 @@ async def test_a_used_up_job_at_the_ceiling_is_offered_no_continue_and_the_api_r
     assert refused.status_code == 409 and not scheduled, refused.text
 
 
-async def _max_retries(state: dict[str, Any], answer: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """``max_retries_node``'s update for ``answer`` over a $50 ceiling, and the pause it offered."""
+async def _max_retries(
+    state: dict[str, Any], answer: dict[str, Any], *, hard: bool = False, audits: list[Any] | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``max_retries_node``'s update for ``answer`` over a $50 ceiling (a hard limit with ``hard``), and the pause it
+    offered; each audit row it writes goes to ``audits``."""
     import embry0.workflows.issue_to_pr.nodes as nodes_module
     from embry0.settings.sections.budget import BudgetSettings
 
     offered: dict[str, Any] = {}
+    policy = BudgetSettings(max_budget_per_job_usd=50.0, continue_may_exceed_ceiling=not hard)
+
+    async def audit(*args: Any, **kwargs: Any) -> None:
+        if audits is not None:
+            audits.append((args, kwargs))
 
     def asked(summary: dict[str, Any]) -> dict[str, Any]:
         offered.update(summary)
@@ -506,10 +526,30 @@ async def _max_retries(state: dict[str, Any], answer: dict[str, Any]) -> tuple[d
         patch.object(nodes_module, "get_stream_writer", return_value=lambda _event: None),
         patch.object(nodes_module, "interrupt", new=asked),
         patch(
-            "embry0.workflows.issue_to_pr.nodes._interrupts.load_budget_settings",
-            new=AsyncMock(return_value=BudgetSettings(max_budget_per_job_usd=50.0)),
+            "embry0.workflows.issue_to_pr.nodes._interrupts.load_budget_settings", new=AsyncMock(return_value=policy)
         ),
-        patch("embry0.audit.helpers.emit_audit", new=AsyncMock()),
+        patch("embry0.audit.helpers.emit_audit", new=audit),
     ):
         update = dict(await nodes_module.max_retries_node(job, config={"configurable": {}}))
     return update, offered
+
+
+async def test_a_hard_ceiling_bounds_a_named_continue_in_its_recorded_cap_and_audit_row() -> None:
+    """#651 review: with continue_may_exceed_ceiling false, a continue naming $100 on a $10 cap with $10.50 spent was
+    worked out as if it might pass the $50 ceiling: the job recorded a $110.50 cap and the audit row said so."""
+    job = await _start(_Store(), WIDGETS)
+    state = {**job, "pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": 10.5}
+    audits: list[Any] = []
+    went_on, _ = await _max_retries(
+        state, {"choice": "continue_retrying", "extra_budget_usd": 100.0}, hard=True, audits=audits
+    )
+    assert went_on.get("current_stage") == "developer_retry", went_on
+    assert (went_on.get("budget_cap_usd"), went_on.get("budget_allowance_usd")) == (50.0, 40.0), (
+        f"the hard ceiling must bound the recorded cap and allowance: {went_on}"
+    )
+    raised = [kwargs["details"] for args, kwargs in audits if args[1:2] == ("job.budget_raised",)]
+    assert [d["cap_after_usd"] for d in raised] == [50.0], f"the audit row must record the bounded cap: {audits}"
+    _, pause = await _max_retries(state, {"choice": "abandon"}, hard=True)
+    assert "A continue may add at most $39.50: this deployment's ceiling of $50.00 per job is a hard limit" in (
+        pause.get("message", "")
+    ), pause.get("message")

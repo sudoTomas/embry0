@@ -708,7 +708,8 @@ async def resume_job_as(
         executor.go_on_after_account_wait(job)
         return {"job_id": job_id, "status": "resuming", "choice": "account_ready"}
 
-    offered = await _offered_choices(jobs, job_id)
+    summary = await _pause_summary(jobs, job_id)
+    offered = _offered_in(summary)
     if offered is not None and req.choice not in offered:
         # A choice the pause did not offer (#182 review): "merge as is" where the
         # work is only in the sandbox, a continue at a hard budget ceiling or
@@ -768,22 +769,45 @@ async def resume_job_as(
         await jobs.update(job_id, status="paused")
         raise HTTPException(status_code=503, detail="embry0 is shutting down; try again once it is back") from None
 
-    return {"job_id": job_id, "status": "resuming", "choice": req.choice}
+    answer: dict[str, Any] = {"job_id": job_id, "status": "resuming", "choice": req.choice}
+    capped = _capped_extra(summary, req.choice, req.extra_budget_usd)
+    if capped is not None:
+        answer.update(capped)
+    return answer
 
 
-async def _offered_choices(jobs: Any, job_id: str) -> list[str] | None:
-    """The choices the job's pause offered, from its newest ``interrupt`` event (``max_retries_node``'s summary).
+def _capped_extra(summary: dict[str, Any] | None, choice: str, extra: float | None) -> dict[str, Any] | None:
+    """What a continue naming ``extra`` adds when the pause bounded it below that (#651 review): the most it said a
+    continue may add, and why, so the person is not left to find the job capped. None when nothing was capped."""
+    budget = summary.get("budget") if isinstance(summary, dict) else None
+    if not isinstance(budget, dict) or choice != "continue_retrying" or extra is None:
+        return None
+    most = budget.get("continue_max")
+    if not isinstance(most, int | float) or extra <= most:
+        return None
+    because = str(budget.get("continue_max_because") or "the deployment's ceiling bounds it")
+    return {
+        "extra_budget_usd": most,
+        "extra_budget_capped": True,
+        "message": f"The continue adds ${most:.2f}, not the ${extra:.2f} named: {because}.",
+    }
 
-    None when that event names none or cannot be read (a pause from before
-    options were recorded, a store that fails): the resume is then let
-    through as before, and the node's own refusal is the only check.
-    """
+
+async def _pause_summary(jobs: Any, job_id: str) -> dict[str, Any] | None:
+    """The summary of the job's pause, from its newest ``interrupt`` event (``max_retries_node``'s); None when it
+    cannot be read (a store that fails: the node still refuses what it did not offer)."""
     try:
         event = await jobs.latest_interrupt(job_id)
     except Exception:  # noqa: BLE001 - the node still refuses what it did not offer
         logger.warning("job_resume_options_unread", job_id=job_id, exc_info=True)
         return None
     summary = event.get("summary") if isinstance(event, dict) else None
+    return summary if isinstance(summary, dict) else None
+
+
+def _offered_in(summary: dict[str, Any] | None) -> list[str] | None:
+    """The choices the pause offered; None when it names none (a pause from before options were recorded): the
+    resume is then let through as before, and the node's own refusal is the only check."""
     options = summary.get("options") if isinstance(summary, dict) else None
     if not isinstance(options, list) or not options:
         return None
