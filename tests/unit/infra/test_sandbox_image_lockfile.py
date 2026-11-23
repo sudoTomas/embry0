@@ -120,6 +120,10 @@ def _required_imports(tree: ast.AST) -> set[str]:
     return found
 
 
+#: The distributions whose import name is not their name.
+_DISTRIBUTION_OF = {"yaml": "pyyaml"}
+
+
 def _third_party_imports() -> dict[str, set[str]]:
     """Distribution name -> the baked files that import it."""
     imports: dict[str, set[str]] = {}
@@ -127,7 +131,8 @@ def _third_party_imports() -> dict[str, set[str]]:
         for module in _required_imports(ast.parse(path.read_text(encoding="utf-8"))):
             if module in sys.stdlib_module_names or module == "embry0":
                 continue
-            imports.setdefault(_canonical(module), set()).add(str(path.relative_to(ROOT)))
+            distribution = _DISTRIBUTION_OF.get(module, module)
+            imports.setdefault(_canonical(distribution), set()).add(str(path.relative_to(ROOT)))
     return imports
 
 

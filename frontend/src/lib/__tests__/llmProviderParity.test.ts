@@ -3,6 +3,7 @@
 // dashboard, and one removed there is not offered and then refused on save.
 import { describe, expect, it } from "vitest";
 import catalogPy from "../../../../embry0/agents/providers.py?raw";
+import catalogYaml from "../../../../embry0/agents/providers.yaml?raw";
 import registryPy from "../../../../embry0/services/credentials/providers.py?raw";
 import schemaPy from "../../../../embry0/api/schemas/credentials.py?raw";
 import {
@@ -33,21 +34,14 @@ describe("LLM providers match the backend", () => {
   });
 
   it("lists the OpenAI-compatible family in the catalog's order", () => {
-    const constants = capture(
-      catalogPy,
-      /^OPENAI_COMPATIBLE: tuple\[ModelProvider, \.\.\.\] = \(([^)]*)\)/m,
-      "OPENAI_COMPATIBLE in embry0/agents/providers.py",
-    )
-      .split(",")
-      .map((name) => name.trim())
-      .filter(Boolean);
-    const names = constants.map((constant) =>
-      capture(
-        catalogPy,
-        new RegExp(`^${constant} = ModelProvider\\(\\n\\s+name="([a-z]+)"`, "m"),
-        `${constant} in embry0/agents/providers.py`,
-      ),
-    );
+    // The shipped provider catalogue (embry0/agents/providers.yaml): its chat-completions providers, in order.
+    const names: string[] = [];
+    let provider: string | null = null;
+    for (const line of catalogYaml.split("\n")) {
+      provider = /^ {2}([a-z][a-z0-9_-]*):\s*$/.exec(line)?.[1] ?? (/^\S/.test(line) ? null : provider);
+      if (provider !== null && /^ {4}runtime: chat_completions\s*$/.test(line)) names.push(provider);
+    }
+    expect(names.length, "no chat-completions provider found in embry0/agents/providers.yaml").toBeGreaterThan(0);
     expect([...OPENAI_COMPATIBLE_PROVIDERS]).toEqual(names);
   });
 

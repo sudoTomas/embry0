@@ -919,6 +919,8 @@ sandbox = [
     { name = "claude-agent-sdk" },
     { name = "httpx" },
     { name = "langchain-core" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "structlog" },
 ]
 
@@ -970,6 +972,8 @@ sandbox = [
     { name = "claude-agent-sdk" },
     { name = "httpx" },
     { name = "langchain-core" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "structlog" },
 ]
 

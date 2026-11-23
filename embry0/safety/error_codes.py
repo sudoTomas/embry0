@@ -363,6 +363,8 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.services.github_prs:OpenPRListError", ErrorCode.PR_LISTING_FAILED),
     # #219: a provider model with no price entry would run unmetered.
     ("embry0.services.model_enablement:UnpricedModelError", ErrorCode.INVALID_CONFIG),
+    # #173: a provider catalogue the code refuses; validated before it is installed, so a run should never meet one.
+    ("embry0.agents.catalogue:CatalogueInvalid", ErrorCode.INVALID_CONFIG),
     # Third-party / stdlib failures that reached a job row in production.
     ("langgraph.errors:InvalidUpdateError", ErrorCode.STATE_CONCURRENT_UPDATE),
     ("langgraph.errors:GraphRecursionError", ErrorCode.GRAPH_RECURSION),

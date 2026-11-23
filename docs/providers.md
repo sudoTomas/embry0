@@ -13,7 +13,11 @@ enables it: see [OpenAI-compatible providers](#openai-compatible-providers).
 
 ## Registry
 
-`embry0/agents/providers.py`. Routing is per-agent by model id: when a
+The providers, their models and prices are the provider catalogue
+([ADR 0031](adr/0031-provider-catalogue.md)): its schema is
+`embry0/agents/catalogue.py`, and embry0 ships its values in
+`embry0/agents/providers.yaml`, which `embry0/agents/providers.py` routes by.
+Routing is per-agent by model id: when a
 resolved model matches a provider prefix (`grok-*` → xAI), the in-sandbox
 executor overlays `{ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY}` on the CLI
 subprocess for that agent only (`ClaudeAgentOptions.env`). Other agents
@@ -48,7 +52,7 @@ The account is a row in the credential registry (`docs/credentials.md`): an xAI 
 
 Most model providers, and every self-hosted model server, speak OpenAI chat
 completions rather than the Anthropic API. embry0 treats them as one family
-(`OPENAI_COMPATIBLE` in `embry0/agents/providers.py`). An agent whose model
+(the catalogue's `chat_completions` providers, `OPENAI_COMPATIBLE` in `embry0/agents/providers.py`). An agent whose model
 routes to one runs on `OpenAICompatibleExecutor`
 (`embry0/agents/executor_openai.py`): the tool loop the direct xAI executor
 uses (`embry0/agents/_tool_loop.py`), over `POST <API root>/chat/completions`.
@@ -86,8 +90,8 @@ introductory (`gemini-4-argon` becomes $4 / $20 on 2026-12-01,
 its peak hours and the table carries the peak rate; OpenRouter passes the
 upstream price through and charges a fee on credit purchases, which is not
 modelled. A model of these providers runs only when it is listed with a price,
-as for grok (#219); to bring another into service, add it to `models` and
-`pricing_usd_per_mtok` together. OpenRouter's models and prices come from its
+as for grok (#219); to bring another into service, add it under its provider's
+`models` in `embry0/agents/providers.yaml`, with its `prices`. OpenRouter's models and prices come from its
 live list instead (below). A custom server bills nothing per token, so
 any `custom/` model is priced at $0 instead of refused, and a job's
 `budget_usd` does not bound it. A `custom/` id is not listed, so it cannot be
@@ -748,8 +752,8 @@ membership and price by `PUT /config/provider`, not for readiness.
 ## Turn and time budgets
 
 Every agent's `max_turns` and `timeout_seconds` are sized for Claude. A
-provider can scale both (`turn_budget_factor` and `timeout_factor` in
-`embry0/agents/providers.py`). `resolve_agent_invocation` applies them once
+provider can scale both (its `factors`, `turns` and `timeout`, in
+`embry0/agents/providers.yaml`). `resolve_agent_invocation` applies them once
 the model is final, and the "Turn budget" advisory appended to the prompt
 states the scaled number.
 

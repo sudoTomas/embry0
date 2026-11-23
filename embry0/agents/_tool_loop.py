@@ -465,7 +465,7 @@ async def run_tool_loop(
     if priced is None:
         unpriced_message = (
             f"cost unknown: model {invocation.model!r} has no price entry in "
-            "embry0/agents/providers.py, so this run's "
+            "the provider catalogue (embry0/agents/providers.yaml), so this run's "
             f"{totals['in']} input and {totals['out']} output tokens are unmetered"
         )
         logger.error(
