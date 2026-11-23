@@ -712,3 +712,15 @@ def test_a_value_of_the_wrong_shape_hides_none_of_its_key_s_other_problems() -> 
     for key, parts in expected.items():
         assert key in found and all(part in found[key] for part in parts), f"leads.{key} names {parts}: {found}"
         assert "zz-" not in found[key].casefold(), f"and repeats nothing written: {found[key]}"
+
+
+def test_a_phrase_may_join_its_parts_as_persian_and_emoji_do_and_holds_no_other_format_character() -> None:
+    """A zero-width non-joiner and joiner are parts of a word (Unicode's word boundaries, UAX #29): a Persian phrase
+    holds one. Every other format character, such as a bidirectional override, is still refused."""
+    _vocabulary_is_a_key("done_phrases")
+    assert _problems({"done_phrases": ["\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", "a\u200db"]}) == [], (
+        "a phrase holding a zero-width non-joiner or joiner is refused"
+    )
+    assert _problems({"readiness_labels": {"ready": ["\u0628\u0627\u06af\u200c\u0647\u0627"]}}) == []
+    for other in ("done\u202ewhen", "done\u200bwhen", "done\u2066when"):
+        assert [loc for loc, _ in _problems({"done_phrases": [other]})] == [("leads", "done_phrases")], other

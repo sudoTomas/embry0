@@ -363,8 +363,8 @@ class LeadsSettings(SectionModel):
         description=(
             "Phrases that say what done looks like in a ticket's description. Each is matched as written, in any "
             "case and with accents written either way, as whole words: where a phrase starts or ends with a letter "
-            "or digit, the text beside it must not be one (an underscore is punctuation, an accent belongs to its "
-            "letter). In a script written without spaces, such as Chinese, Japanese or Thai, a phrase reads only "
+            "or digit, the text beside it must not be one (an underscore is punctuation; an accent belongs to its "
+            "letter, and a zero-width joiner or non-joiner, as Persian writes, to its word). In a script written without spaces, such as Chinese, Japanese or Thai, a phrase reads only "
             f"where a space or punctuation sets it off. At most {MAX_PHRASES}, each at most {MAX_PHRASE_LENGTH} "
             "characters. An empty list reads no ticket as saying it."
         ),
@@ -488,14 +488,24 @@ class LeadsSettings(SectionModel):
         return _text_list(value, what="word", most=MAX_TITLE_WORDS, longest=MAX_TITLE_WORD_LENGTH)
 
 
+#: The zero-width non-joiner and joiner: parts of a word, not breaks in it (Unicode's word boundaries, UAX #29). A
+#: Persian word joins its parts with the first (``می‌خواهم``), an emoji sequence its emoji with the second. The one
+#: format characters a label, phrase or title word may hold.
+JOINERS: Final = frozenset({"\u200c", "\u200d"})
+#: The text and emoji presentation selectors: an emoji is the same character with either or neither.
+_PRESENTATION: Final = {0xFE0E: None, 0xFE0F: None}
+
+
 def fold(text: str) -> str:
     """``text`` as a ticket's words are compared with an operator's: case-folded and in one canonical form.
 
     Unicode's canonical caseless form: decomposed, case-folded, then composed
     (NFC), so ``é`` written as one character or as ``e`` and a combining
-    accent, and ``STRASSE`` and ``Straße``, read the same.
+    accent, and ``STRASSE`` and ``Straße``, read the same; and without the
+    presentation selectors, so ``✅`` reads the same as ``✅`` with its emoji
+    presentation asked for.
     """
-    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", text).casefold())
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", text).casefold()).translate(_PRESENTATION)
 
 
 def vocabulary_key(text: str) -> str:
@@ -532,10 +542,12 @@ def _text_problems(items: Sequence[Any], *, what: str, most: int, longest: int) 
         problems.append(f"lists an empty {what}")
     if any(len(item) > longest for item in texts):
         problems.append(f"lists a {what} longer than {longest} characters")
-    if any(unicodedata.category(char) in UNPRINTABLE_CATEGORIES for item in texts for char in item):
+    if any(
+        unicodedata.category(char) in UNPRINTABLE_CATEGORIES and char not in JOINERS for item in texts for char in item
+    ):
         problems.append(
-            f"lists a {what} that is not one line of plain text "
-            "(no line break, tab, control, format or separator character)"
+            f"lists a {what} that is not one line of plain text (no line break, tab, control or separator character, "
+            "and no format character but a zero-width joiner or non-joiner)"
         )
     keys = [vocabulary_key(item) for item in texts]
     if len(set(keys)) != len(keys):

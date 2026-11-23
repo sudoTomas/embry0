@@ -460,11 +460,12 @@ leads:
   # Phrases that say what done looks like in a ticket's description. Each is
   # matched as written, in any case and with accents written either way, as
   # whole words: where a phrase starts or ends with a letter or digit, the
-  # text beside it must not be one (an underscore is punctuation, an accent
-  # belongs to its letter). In a script written without spaces, such as
-  # Chinese, Japanese or Thai, a phrase reads only where a space or
-  # punctuation sets it off. At most 100, each at most 80 characters. An empty
-  # list reads no ticket as saying it.
+  # text beside it must not be one (an underscore is punctuation; an accent
+  # belongs to its letter, and a zero-width joiner or non-joiner, as Persian
+  # writes, to its word). In a script written without spaces, such as Chinese,
+  # Japanese or Thai, a phrase reads only where a space or punctuation sets it
+  # off. At most 100, each at most 80 characters. An empty list reads no
+  # ticket as saying it.
   # done_phrases:
   # - acceptance criteria
   # - done when

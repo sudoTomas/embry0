@@ -404,6 +404,15 @@ def test_a_phrase_between_underscores_now_reads_as_done() -> None:
         # character, and as the letter with psili and subscript followed by the oxia. Case folding turns the
         # subscript into a letter, so the marks are put in canonical order before it, not after.
         ("\u1f84", "\u1f80\u0301 \u03b1", True),
+        # Persian joins a word's parts with a zero-width non-joiner, and emoji with a zero-width joiner: neither ends a
+        # word (Unicode's word boundaries, UAX #29), so a phrase reads only as the whole word.
+        ("خواهم", "من می\u200cخواهم بروم", False),
+        ("می\u200cخواهم", "من می\u200cخواهم بروم", True),
+        ("خواهم", "من خواهم رفت", True),
+        # An emoji is the same character with or without its emoji or text presentation selector.
+        ("\u2705 done", "\u2705\ufe0f done", True),
+        ("\u2705\ufe0f done", "\u2705 done", True),
+        ("\u2705\ufe0e done", "\u2705\ufe0f done", True),
     ],
 )
 def test_an_organization_s_phrases_read_in_any_language_and_literally(phrase: str, text: str, done: bool) -> None:

@@ -12,14 +12,17 @@ the words that make a title an epic's and the estimates that read as small or
 large. File paths and error text are code, not language, and stay here.
 
 **Matching.** Labels, phrases, title words and the ticket's own text are
-compared folded (:func:`~embry0.settings.sections.leads.fold`): case-folded
-and in one canonical form, so an accent written as one character or as a
-letter and a combining mark reads the same. A label matches a ticket's label
-trimmed. A done phrase matches as written, as whole words: where it starts
-or ends with a word character, the text beside it must not be one. A word
-character is a letter or a digit of any script, or a combining mark (an
-accent, an Indic vowel sign or virama), which belongs to the letter before
-it; everything else, ``_`` included, is punctuation. So ``done when`` reads
+compared folded (:func:`~embry0.settings.sections.leads.fold`): case-folded,
+in one canonical form and without presentation selectors, so an accent
+written as one character or as a letter and a combining mark reads the
+same, as does an emoji with or without its emoji presentation. A label
+matches a ticket's label trimmed. A done phrase matches as written, as whole
+words: where it starts or ends with a word character, the text beside it
+must not be one. A word character is a letter or a digit of any script, a
+combining mark (an accent, an Indic vowel sign or virama), which belongs to
+the letter before it, or a zero-width joiner or non-joiner, which joins the
+parts of a word (Persian writes ``می‌خواهم`` so) as Unicode's word
+boundaries do (UAX #29); everything else, ``_`` included, is punctuation. So ``done when`` reads
 in ``Done when:`` and in ``_Done when_``, not in ``undone whenever``; ``- [ ]``
 reads anywhere; and a phrase in a script written without spaces (Chinese,
 Japanese, Thai) reads only where a space or punctuation sets it off, since
@@ -43,7 +46,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from embry0.settings.sections.leads import LabelRole, LeadsSettings, Signal, fold, vocabulary_key
+from embry0.settings.sections.leads import JOINERS, LabelRole, LeadsSettings, Signal, fold, vocabulary_key
 
 _PATH = re.compile(
     r"(?<![\w/.-])((?:[\w.-]+/)+[\w.-]+\.\w{1,6}|[\w-]+\.(?:py|ts|tsx|js|jsx|java|kt|go|rs|rb|php|cs|sql|ya?ml|json|toml|md))(?![\w/])"
@@ -57,14 +60,14 @@ _MARK: Final = "\x00"
 
 
 def _word_runs() -> re.Pattern[str]:
-    """A run of word characters: letters and digits of every script (``str.isalnum``: ``re``'s ``\\w`` but ``_``)
-    and combining marks (Unicode category M), which ``\\w`` leaves out, so a boundary falls inside a word written
-    with an accent as a mark or in an Indic script. Read from every code point, once per process when this module
-    is imported (about a tenth of a second)."""
+    """A run of word characters: letters and digits of every script (``str.isalnum``: ``re``'s ``\\w`` but ``_``),
+    combining marks (Unicode category M) and the zero-width joiner and non-joiner (:data:`JOINERS`), which ``\\w``
+    leaves out, so a boundary falls inside a word written with an accent as a mark, in an Indic script or in Persian.
+    Read from every code point, once per process when this module is imported (about a tenth of a second)."""
     ranges: list[list[int]] = []
     for code in range(0x110000):
         char = chr(code)
-        if char.isalnum() or unicodedata.category(char).startswith("M"):
+        if char.isalnum() or char in JOINERS or unicodedata.category(char).startswith("M"):
             if ranges and ranges[-1][1] == code - 1:
                 ranges[-1][1] = code
             else:

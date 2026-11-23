@@ -209,6 +209,10 @@ def _close(word: str, options: Iterable[str]) -> str:
     return f" Did you mean '{match[0]}'?" if match else ""
 
 
+#: What a key YAML read as a number, ``true``, ``null`` or a date is told: it names no kind, so it fits each.
+KEY_NOT_TEXT: Final = "A key must be text: quote a key YAML would read as another kind of value."
+
+
 def _json_problems(value: Any, loc: Loc) -> list[Problem]:
     """Values YAML or JSON can hold and the stored document cannot: dates, binary, sets,
     non-text keys, infinities, and the NUL character, which Postgres refuses."""
@@ -219,7 +223,7 @@ def _json_problems(value: Any, loc: Loc) -> list[Problem]:
         if isinstance(current, dict):
             if any(not isinstance(key, str) for key in current):
                 # Placed at the mapping, once: the key is what the operator wrote, and a 422 repeats nothing written.
-                out.append(Problem(where, "key_type", "A key must be text; put a key written as a number in quotes."))
+                out.append(Problem(where, "key_type", KEY_NOT_TEXT))
             for key, inner in current.items():
                 if not isinstance(key, str):
                     continue
