@@ -171,8 +171,17 @@ RUN useradd --create-home agent
 # enough — the browser files inside stay root-owned + a+rwX.
 RUN mkdir -p /workspace && chown agent:agent /workspace /opt/vibium
 
+# The agent runner's interpreter: a copy of python the agent user may run but
+# not read. The kernel starts a program its user cannot read as a process no
+# other process of that user can open (/proc/<pid>/fd, mem), from its first
+# instruction, so nothing a job runs can write on the runner's stdout or read
+# its stdin (embry0.execution.agent_runner.RUNNER_INTERPRETER).
+RUN install -o root -g root -m 0711 "$(readlink -f /usr/local/bin/python3)" /usr/local/bin/embry0-runner-python
+
 USER agent
 WORKDIR /workspace
 
-# Same build-time SDK check as the slim image (#497).
-RUN home=$(mktemp -d) && HOME="$home" python -m embry0.agents.sdk_support && rm -rf "$home"
+# Same build-time SDK and runner-interpreter check as the slim image (#497).
+RUN test -x /usr/local/bin/embry0-runner-python && ! test -r /usr/local/bin/embry0-runner-python \
+    && home=$(mktemp -d) && HOME="$home" /usr/local/bin/embry0-runner-python -m embry0.agents.sdk_support \
+    && rm -rf "$home"

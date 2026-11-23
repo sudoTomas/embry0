@@ -19,6 +19,7 @@ import structlog.testing
 
 from embry0.execution.agent_runner import AgentOutput, AgentRunner
 from embry0.safety.error_codes import ErrorCode
+from tests.fixtures.sandbox_runner import as_the_runner
 
 
 def test_agent_output_dataclass():
@@ -92,7 +93,7 @@ def _runner_with_proc(proc: _FakeProc) -> AgentRunner:
         env: dict[str, str] | None = None,
         stdin_data: bytes | None = None,
     ) -> _FakeProc:
-        return proc
+        return as_the_runner(proc, stdin_data)
 
     docker.stream_exec = AsyncMock(side_effect=_stream_exec)
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec", "c", "true"])
@@ -416,7 +417,9 @@ async def test_runner_ships_config_on_stdin_not_argv() -> None:
     assert "--config-stdin" in kwargs["command"]
     assert "--config" not in kwargs["command"]
     assert max(len(arg) for arg in kwargs["command"]) < _MAX_ARG_STRLEN
-    assert json.loads(kwargs["stdin_data"]) == config
+    shipped = json.loads(kwargs["stdin_data"])
+    shipped.pop("result_nonce")
+    assert shipped == config
 
 
 # ---------------------------------------------------------------------------
@@ -458,8 +461,8 @@ def _runner_with_procs(procs: list[_FakeProc]) -> AgentRunner:
     docker = AsyncMock()
     remaining = list(procs)
 
-    async def _stream_exec(**_kwargs: object) -> _FakeProc:
-        return remaining.pop(0)
+    async def _stream_exec(*, stdin_data: bytes | None = None, **_kwargs: object) -> _FakeProc:
+        return as_the_runner(remaining.pop(0), stdin_data)
 
     docker.stream_exec = AsyncMock(side_effect=_stream_exec)
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec", "c", "true"])

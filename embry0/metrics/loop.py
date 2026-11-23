@@ -294,7 +294,7 @@ class LoopMetrics:
         # ---- runner / infrastructure --------------------------------------
         self._stale_image = Counter(
             "embry0_sandbox_runner_stale_image_total",
-            "Agent runs that met a sandbox image whose runner predates --config-stdin.",
+            "Agent runs that met a sandbox image older than what this release runs the agent runner with.",
             ["outcome"],
             registry=r,
         )
@@ -529,7 +529,10 @@ class LoopMetrics:
 
     @_never_raises
     def sandbox_runner_stale_image(self, outcome: str) -> None:
-        """``argv_fallback`` (the run went ahead) or ``config_too_large`` (it could not)."""
+        """What the image predates and what the run did: ``argv_fallback`` (``--config-stdin``; it went ahead),
+        ``config_too_large`` (the same; it could not), ``interpreter_missing`` (the runner's execute-only interpreter;
+        it went ahead on the image's python) or ``result_unmarked`` (``--result-nonce``; its result was taken
+        unmarked). The last two go ahead for one release only."""
         self._stale_image.labels(outcome=outcome).inc()
 
     @_never_raises

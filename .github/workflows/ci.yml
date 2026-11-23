@@ -165,6 +165,20 @@ jobs:
             vibium --version
           '
 
+      - name: The agent runner's interpreter starts it sealed
+        # The kernel starts a program its user may run but not read as a
+        # process no other process of that user can open (prctl
+        # PR_GET_DUMPABLE is then not 1). The image's own python, which the
+        # agent can read, must say 1, so this check can fail.
+        run: |
+          docker run --rm --network none embry0-sandbox-qa:latest bash -c '
+            dumpable="import ctypes; print(ctypes.CDLL(None).prctl(3, 0, 0, 0, 0))"
+            plain=$(python -c "$dumpable")
+            runner=$(/usr/local/bin/embry0-runner-python -c "$dumpable")
+            echo "as $(whoami): python $plain, the runner interpreter $runner"
+            test "$plain" = 1 && test "$runner" != 1 && ! test -r /usr/local/bin/embry0-runner-python
+          '
+
       - name: Browser MCP tool lists match the QA allowlists (#81)
         # Each browser backend's allowlist, with its excluded tools, is what
         # its server serves (@playwright/mcp, vibium). Ask the image's own

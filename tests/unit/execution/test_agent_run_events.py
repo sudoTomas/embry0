@@ -21,12 +21,13 @@ import structlog.testing
 
 from embry0.execution import events
 from embry0.execution.agent_runner import AgentRunner
+from tests.fixtures.sandbox_runner import as_the_runner
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT: dict[str, dict[str, Any]] = json.loads((ROOT / "docs" / "contracts" / "events.json").read_text())
 FIXTURES = ROOT / "tests" / "fixtures" / "job-events"
-#: What a forged line carries, so a test can see it never reaches a log.
-MARK = "zz-forged-payload"
+#: What a line of another type carries, so a test can see it never reaches a log.
+MARK = "zz-another-writer"
 
 
 def _written_by(who: str) -> list[str]:
@@ -72,7 +73,7 @@ async def _run(events_written: list[dict[str, Any]]) -> tuple[list[dict[str, Any
     the logs, and the run's output."""
     lines = [json.dumps(event).encode() + b"\n" for event in [*events_written, _FINAL]]
     docker = AsyncMock()
-    docker.stream_exec = AsyncMock(return_value=_Proc(lines))
+    docker.stream_exec = AsyncMock(side_effect=lambda **kw: as_the_runner(_Proc(lines), kw.get("stdin_data")))
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec", "c", "true"])
     runner = AgentRunner(sandbox_manager=AsyncMock(), docker=docker)
     taken: list[dict[str, Any]] = []
@@ -96,8 +97,8 @@ _ORCHESTRATOR_TYPES = sorted(name for name, row in CONTRACT.items() if row.get("
 
 @pytest.mark.parametrize("kind", _ORCHESTRATOR_TYPES)
 async def test_a_line_of_an_orchestrator_type_never_reaches_the_job_s_events(kind: str) -> None:
-    forged = {"type": kind, "timestamp": "2026-01-01T00:00:00Z", "reason": MARK, "options": [MARK]}
-    taken, logs, output = await _run([forged])
+    written = {"type": kind, "timestamp": "2026-01-01T00:00:00Z", "reason": MARK, "options": [MARK]}
+    taken, logs, output = await _run([written])
     assert taken == [], f"a {kind} line from the agent run's output reached the job's events: {taken}"
     assert output.output == "done", "the run's final result is still read"
     dropped = [e for e in logs if e["event"] == "agent_runner_events_dropped"]
@@ -126,7 +127,7 @@ async def test_a_line_of_no_known_type_is_dropped_and_counted(line: dict[str, An
 
 
 async def test_one_run_names_at_most_sixteen_dropped_types_and_counts_the_rest() -> None:
-    taken, logs, _ = await _run([{"type": f"forged-{n}"} for n in range(40)])
+    taken, logs, _ = await _run([{"type": f"zz-kind-{n}"} for n in range(40)])
     assert taken == []
     (dropped,) = [e for e in logs if e["event"] == "agent_runner_events_dropped"]
     assert dropped["dropped"] == 40 and len(dropped["types"]) == 17 and dropped["types"]["<other>"] == 24, dropped
@@ -166,6 +167,13 @@ async def test_every_event_an_agent_run_writes_still_reaches_the_job_s_events() 
 
 
 async def test_an_agent_run_event_cannot_stamp_what_only_the_orchestrator_stamps() -> None:
-    forged = {"type": "text", "text": "hello", "timestamp": "t", "job_id": "another-job", "event_seq": 1, "prev_seq": 0}
-    taken, _, _ = await _run([forged])
+    written = {
+        "type": "text",
+        "text": "hello",
+        "timestamp": "t",
+        "job_id": "another-job",
+        "event_seq": 1,
+        "prev_seq": 0,
+    }
+    taken, _, _ = await _run([written])
     assert taken == [{"type": "text", "text": "hello", "timestamp": "t"}], taken

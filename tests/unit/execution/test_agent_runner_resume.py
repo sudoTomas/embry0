@@ -22,6 +22,7 @@ import pytest
 
 from embry0.agents.session import AgentSession
 from embry0.execution.agent_runner import AgentRunner
+from tests.fixtures.sandbox_runner import as_the_runner
 
 #: What the staging fake returns for a drop write.
 DROP = "/run/embry0/drop/deadbeef/blob"
@@ -106,7 +107,7 @@ def _make_runner(stream_payload: dict[str, Any]) -> tuple[AgentRunner, AsyncMock
 
     async def _stream_exec(*, container, command, workdir=None, env=None, stdin_data=None) -> _FakeProc:
         captured_commands.append(list(command))
-        return _FakeProc(stream_payload)
+        return as_the_runner(_FakeProc(stream_payload), stdin_data)
 
     docker.stream_exec = AsyncMock(side_effect=_stream_exec)
     runner = AgentRunner(sandbox_manager=AsyncMock(), docker=docker)

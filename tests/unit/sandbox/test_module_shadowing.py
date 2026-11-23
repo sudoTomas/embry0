@@ -12,7 +12,8 @@ places that code can write would otherwise load first:
   ``-s`` keeps it off.
 
 Each test runs the exact command line embry0 uses, with a local interpreter
-in place of ``python``/``python3``, next to a planted module, and requires that
+in place of ``python``/``python3`` (and of the runner's own interpreter, a copy
+of the image's python), next to a planted module, and requires that
 the planted code does not run. The control tests run the same plants without
 the flags and require that they do, so a check here can fail.
 """
@@ -28,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from embry0.execution.agent_runner import AgentRunner
+from embry0.execution.agent_runner import RUNNER_INTERPRETER, AgentRunner
 from embry0.workflows.issue_to_pr.log_tool import CONTEXT_MCP_SERVER
 
 _TREE = Path(__file__).resolve().parents[3]
@@ -80,8 +81,9 @@ def _plant_user_site(userbase: Path, python: str, marker_dir: Path) -> None:
 
 
 def _run(argv: list[str], workspace: Path, *, python: str = sys.executable, userbase: Path | None = None) -> str:
-    """``argv`` as the sandbox runs it, with ``python`` for ``python``/``python3``; returns stdout."""
-    command = [python if argv[0] in ("python", "python3") else argv[0], *argv[1:]]
+    """``argv`` as the sandbox runs it, with ``python`` for ``python``/``python3`` and the runner's interpreter;
+    returns stdout."""
+    command = [python if argv[0] in ("python", "python3", RUNNER_INTERPRETER) else argv[0], *argv[1:]]
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": str(_TREE)}
     if userbase is not None:
         env["PYTHONUSERBASE"] = str(userbase)
