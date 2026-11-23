@@ -47,7 +47,7 @@ SAMPLE = Section(
     repo_keys=frozenset({"mode"}),
     env={
         "enabled": "asks_enabled",
-        "per_tick": "proposal_briefs_per_tick",
+        "per_tick": "job_briefs_per_tick",
         "remind_hours": "ask_remind_hours",
         "labels": EnvImport("scout_repos", split_commas),
         "zone": "ask_timezone",

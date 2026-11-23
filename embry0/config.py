@@ -843,8 +843,13 @@ class Embry0Config(BaseSettings):
     # first start of the release that added the section, and ignored after
     # that. They are removed in the next release; nothing else reads them.
     proposal_brief_model: Annotated[str, NOT_SECRET] = ""
-    proposal_brief_interval_seconds: float = Field(default=60.0, gt=0)
-    proposal_briefs_per_tick: int = Field(default=3, ge=1, le=20)
+    # PROPOSAL_BRIEF_INTERVAL_SECONDS and PROPOSAL_BRIEFS_PER_TICK are no longer
+    # read: the proposal brief writer writes at most 3 briefs every 60 seconds
+    # (embry0.services.proposal_briefs.PER_TICK, INTERVAL_SECONDS; #168). Kept one
+    # release only so startup can warn while either is still set
+    # (settings_env_retired), as text, so no value of them can stop a start.
+    proposal_brief_interval_seconds: Annotated[str, NOT_SECRET] = ""
+    proposal_briefs_per_tick: Annotated[str, NOT_SECRET] = ""
     # Jobs in plain words (spec 2026-10-26, job briefs), on
     # background_models.job_brief.
     job_brief_model: Annotated[str, NOT_SECRET] = ""

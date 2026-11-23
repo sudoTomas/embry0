@@ -138,11 +138,11 @@ The scout's policy is the `scout` section of the [settings document](#settings-d
 | `SCOUT_MAX_IN_FLIGHT` | `2` | Governed by the settings document (`scout.max_in_flight`). Read once, at the first start of the release that added the section, and ignored after that |
 | `SCOUT_REVISIT_HOURS` | `24` | Governed by the settings document (`scout.revisit_hours`). Read once, at the first start of the release that added the section, and ignored after that |
 | `SCOUT_MAX_LEADS_PER_JOB` | `5` | Governed by the settings document (`scout.max_leads_per_job`). Read once, at the first start of the release that added the section, and ignored after that |
-| `SCOUT_TICK_SECONDS` | — | No longer read: the scout looks every 5 minutes (300 s), which is also how soon a change to its section applies. While it is still set, startup logs `settings_env_retired` naming it; remove it. The next release stops reading it at all |
+| `SCOUT_TICK_SECONDS` | — | No longer read: the scout looks every 5 minutes (300 s), which is also how soon a change to its section applies. While it is still set, startup logs `settings_env_retired` naming it and `embry0 config` says it is no longer read; remove it. The next release stops reading it at all |
 
 ### Proposal and job briefs
 
-Both loops are one brief writer (`embry0/services/brief_writer.py`), each on its own interval and per-tick count below. Each tick reads its model from one snapshot of the settings document ([background models](providers.md#background-models)) and its voice from an agent definition, so a change to either needs no restart.
+Both loops are one brief writer (`embry0/services/brief_writer.py`), each on its own interval and per-tick count: the proposal briefs' fixed at 3 every 60 s, the job briefs' the variables below. Each tick reads its model from one snapshot of the settings document ([background models](providers.md#background-models)) and its voice from an agent definition, so a change to either needs no restart.
 
 **A brief's voice is an agent definition; its format is embry0's.** A brief's request is a voice, then a format. The voice says who the brief speaks to and how: its language, tone and style. It is the system prompt of the built-in agent `proposal-brief` or `job-brief`. Change it like any agent's: on the Agents page (under *Background writers*), with `PUT /api/v1/agents/{type}` (`{"system_prompt": "..."}`), or with the MCP tools `agent_get`, `agent_update` and `agent_reset`.
 
@@ -157,7 +157,7 @@ Both loops are one brief writer (`embry0/services/brief_writer.py`), each on its
 |----------|---------|-------------|
 | `PROPOSALS_TICKET_MIN_READINESS` | `60` | Governed by the settings document (`leads.ask_min`, the readiness at which a backlog ticket is asked in chat). Read once, at the first start of the release that added the section, and ignored after that |
 | `PROPOSAL_BRIEF_MODEL` | (empty) | Governed by the settings document (`background_models.proposal_brief`, [background models](providers.md#background-models)). Read once, at the first start of the release that added the section, and ignored after that |
-| `PROPOSAL_BRIEF_INTERVAL_SECONDS` / `PROPOSAL_BRIEFS_PER_TICK` | `60` / `3` | How often the proposal brief writer runs, and how many briefs it writes each time (1 to 20) |
+| `PROPOSAL_BRIEF_INTERVAL_SECONDS` / `PROPOSAL_BRIEFS_PER_TICK` | — | No longer read: the proposal brief writer writes at most 3 briefs every 60 s, constants (#168). What it spends is bounded by the budget caps and its model is `background_models.proposal_brief`; the pace only says how soon a new proposal reads in plain words. While either is still set, startup logs `settings_env_retired` naming it and `embry0 config` says it is no longer read; remove it. The next release stops reading them at all |
 | `JOB_BRIEF_MODEL` | (empty) | Governed by the settings document (`background_models.job_brief`). Read once, at the first start of the release that added the section, and ignored after that. The brief's title is the `title` of the job's outbound notifications ([webhooks.md](webhooks.md#outbound-notifications)) |
 | `JOB_BRIEF_INTERVAL_SECONDS` / `JOB_BRIEFS_PER_TICK` | `60` / `3` | How often the job brief writer runs, and how many briefs it writes each time (1 to 20) |
 

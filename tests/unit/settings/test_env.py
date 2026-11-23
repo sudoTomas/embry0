@@ -48,3 +48,42 @@ def test_every_env_import_names_a_config_attribute(catalog: str) -> None:
         if imported.attr not in Embry0Config.model_fields
     ]
     assert missing == [], f"env names no Embry0Config field: {missing}"
+
+
+#: The variables no longer read at all (#168), with what each line says runs instead.
+RETIRED = {
+    "SCOUT_TICK_SECONDS": "the scout ticks every 300 s, a constant",
+    "PROPOSAL_BRIEFS_PER_TICK": "the proposal brief writer writes at most 3 briefs every 60 s, constants",
+    "PROPOSAL_BRIEF_INTERVAL_SECONDS": "the proposal brief writer writes at most 3 briefs every 60 s, constants",
+}
+
+
+@pytest.mark.parametrize("variable", sorted(RETIRED))
+def test_embry0_config_names_a_variable_no_longer_read(variable: str, capsys, monkeypatch) -> None:
+    """``embry0 config`` lists every setting with its value; a retired one, still set, is said to be no longer read,
+    not left to look like one that runs."""
+    from embry0.settings import env
+
+    lines = getattr(env, "retired_lines", None)
+    assert lines is not None, "embry0 config must name each variable that is set and no longer read"
+    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)
+    with patch.dict(os.environ, {variable: "4"}, clear=True), pytest.raises(SystemExit):
+        cmd_config(argparse.Namespace())
+    err = capsys.readouterr().err
+    assert f"{variable} is no longer read: {RETIRED[variable]}; remove it" in err, err
+
+
+def test_no_retired_variable_set_says_nothing_of_them() -> None:
+    from embry0.settings import env
+
+    retired_lines = getattr(env, "retired_lines", None)
+    assert retired_lines is not None, "embry0 config must name each variable that is set and no longer read"
+    with patch.dict(os.environ, {}, clear=True):
+        assert retired_lines(Embry0Config(_env_file=None)) == []  # type: ignore[call-arg]
+    with patch.dict(os.environ, dict.fromkeys(RETIRED, "1"), clear=True):
+        said = retired_lines(Embry0Config(_env_file=None))  # type: ignore[call-arg]
+    assert [line.split(" ", 1)[0] for line in said] == [
+        "SCOUT_TICK_SECONDS",
+        "PROPOSAL_BRIEFS_PER_TICK",
+        "PROPOSAL_BRIEF_INTERVAL_SECONDS",
+    ], f"each set variable once, nothing else: {said}"

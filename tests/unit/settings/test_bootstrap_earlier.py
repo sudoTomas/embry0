@@ -63,7 +63,7 @@ class Record:
 async def test_a_record_wins_over_the_variables_and_is_imported_once(db_with_migrations: DatabasePool) -> None:
     store = SettingsStore(db_with_migrations, TEST_CATALOG)
     record = Record({"per_tick": 7, "remind_hours": 24.0})
-    config = _config(ASK_REMIND_HOURS="12", PROPOSAL_BRIEFS_PER_TICK="4", ASK_TIMEZONE="Europe/Berlin")
+    config = _config(ASK_REMIND_HOURS="12", JOB_BRIEFS_PER_TICK="4", ASK_TIMEZONE="Europe/Berlin")
 
     result = await import_env_once(store, config, today=DAY, earlier=[record.source()])
 
@@ -95,7 +95,7 @@ async def test_without_a_record_the_variables_are_read(db_with_migrations: Datab
     store = SettingsStore(db_with_migrations, TEST_CATALOG)
     record = Record(None)
 
-    result = await import_env_once(store, _config(PROPOSAL_BRIEFS_PER_TICK="4"), today=DAY, earlier=[record.source()])
+    result = await import_env_once(store, _config(JOB_BRIEFS_PER_TICK="4"), today=DAY, earlier=[record.source()])
 
     assert record.reads == 1
     assert (result.imported, result.earlier) == ({"sample": {"per_tick": 4}}, {})
@@ -109,7 +109,7 @@ async def test_a_record_value_the_section_refuses_is_skipped_and_never_read_agai
     store = SettingsStore(db_with_migrations, TEST_CATALOG)
     with capture_logs() as logs:
         result = await import_env_once(
-            store, _config(PROPOSAL_BRIEFS_PER_TICK="4"), today=DAY, earlier=[Record({"per_tick": 99}).source()]
+            store, _config(JOB_BRIEFS_PER_TICK="4"), today=DAY, earlier=[Record({"per_tick": 99}).source()]
         )
     assert result.imported == {}, "neither the refused record value nor the variable it won over"
     assert [(r.key, r.variable) for r in result.refused] == [("per_tick", "the sample table: per_tick")]
@@ -129,7 +129,7 @@ async def test_a_record_that_cannot_be_read_imports_nothing_and_marks_nothing(db
     with pytest.raises(ConnectionResetError):
         await import_env_once(
             store,
-            _config(PROPOSAL_BRIEFS_PER_TICK="4"),
+            _config(JOB_BRIEFS_PER_TICK="4"),
             earlier=[_source("sample", "the sample table", broken)],
         )
     row = await store.document()

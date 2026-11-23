@@ -400,3 +400,71 @@ async def test_a_tick_reads_its_model_and_its_leads_from_one_version_of_the_docu
         "the model and ask_min of one version: the ticket is held under 80, so the finding is written first, "
         f"on custom/first: {written}, {sent}"
     )
+
+
+# ---- the cadence is fixed (#168) --------------------------------------------------------------------------------
+
+
+def _retired_cadence_warnings(**env: str) -> tuple[list[str], list[dict[str, Any]]]:
+    import os
+    from unittest.mock import patch
+
+    from structlog.testing import capture_logs
+
+    from embry0.config import Embry0Config
+    from embry0.services import proposal_briefs
+
+    warn = getattr(proposal_briefs, "warn_retired_cadence", None)
+    assert warn is not None, (
+        "startup must say that PROPOSAL_BRIEFS_PER_TICK and PROPOSAL_BRIEF_INTERVAL_SECONDS are no longer read"
+    )
+    with patch.dict(os.environ, env, clear=True):
+        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
+    with capture_logs() as logs:
+        warned = warn(config)
+    return warned, [e for e in logs if e["event"] == "settings_env_retired"]
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "matches"),
+    [
+        ("PROPOSAL_BRIEFS_PER_TICK", "4", False),
+        ("PROPOSAL_BRIEFS_PER_TICK", "3", True),
+        ("PROPOSAL_BRIEFS_PER_TICK", "many", False),
+        ("PROPOSAL_BRIEF_INTERVAL_SECONDS", "30", False),
+        ("PROPOSAL_BRIEF_INTERVAL_SECONDS", "60.0", True),
+        ("PROPOSAL_BRIEF_INTERVAL_SECONDS", "0", False),
+    ],
+)
+def test_a_cadence_variable_still_set_is_named_in_one_warning_saying_the_cadence_is_fixed(
+    variable: str, value: str, matches: bool
+) -> None:
+    """Neither variable is read any more; the config takes any text for them, so no value stops a start, and only
+    this says the variable does nothing."""
+    warned, events = _retired_cadence_warnings(**{variable: value})
+    assert warned == [variable] and len(events) == 1, f"{variable} is set and no longer read: one warning: {events}"
+    (event,) = events
+    assert (event["log_level"], event["variable"], event["matches"]) == ("warning", variable, matches)
+    assert "3 briefs every 60 s" in event["hint"], "the warning says what runs now"
+    assert set(event) == {"event", "log_level", "variable", "matches", "hint"}, "the value itself is not logged"
+
+
+def test_both_cadence_variables_are_named_and_none_set_warns_nothing() -> None:
+    both = _retired_cadence_warnings(PROPOSAL_BRIEFS_PER_TICK="5", PROPOSAL_BRIEF_INTERVAL_SECONDS="120")
+    assert both[0] == ["PROPOSAL_BRIEFS_PER_TICK", "PROPOSAL_BRIEF_INTERVAL_SECONDS"], both
+    assert [e["variable"] for e in both[1]] == both[0], "one warning each"
+    assert _retired_cadence_warnings() == ([], []), "nothing set, nothing to say"
+
+
+def test_the_writer_runs_at_the_fixed_cadence() -> None:
+    from embry0.services import proposal_briefs
+
+    async def feed() -> list[Proposal]:
+        return []
+
+    writer = ProposalBriefWriter(proposals=feed, settings=brief_reader(feed), briefs=FakeBriefs(), calls=_calls())
+    assert (writer._per_tick, writer._interval) == (3, 60.0), "unless told otherwise, 3 briefs every 60 s"  # noqa: SLF001
+    assert (getattr(proposal_briefs, "PER_TICK", None), getattr(proposal_briefs, "INTERVAL_SECONDS", None)) == (
+        3,
+        60.0,
+    ), "the cadence is a constant of the module, not a setting"

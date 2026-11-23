@@ -8,7 +8,11 @@ holds about the proposal, and again when that changes; the feed reads stored
 briefs only, so a model that is slow, absent or wrong never holds the feed up.
 
 The loop is the one brief writer's (:mod:`embry0.services.brief_writer`,
-#166), with :class:`ProposalBriefs` saying what is briefed. Its instructions
+#166), with :class:`ProposalBriefs` saying what is briefed. It writes at most
+:data:`PER_TICK` briefs every :data:`INTERVAL_SECONDS`: constants, not
+settings (#168), since what it spends is bounded by the budget caps and its
+model by ``background_models.proposal_brief``, and the pace only says how
+soon a new proposal reads in plain words. Its instructions
 are the ``proposal-brief`` agent definition, seeded from :data:`VOICE`; its answer's format is :data:`FORMAT`.
 
 docs/superpowers/specs/2026-10-25-proposal-briefs-design.md.
@@ -27,6 +31,7 @@ from types import MappingProxyType
 from typing import Any, Final
 
 import httpx
+import structlog
 
 from embry0.services.background_models import BackgroundCalls, ModelLookup, model_lookup
 from embry0.services.brief_writer import (
@@ -43,6 +48,19 @@ from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import Proposal
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.leads import LEADS, LeadsSettings
+
+logger = structlog.get_logger(__name__)
+
+#: How many briefs a tick writes, and the seconds between ticks. Not settings (#168): a brief is written once per
+#: version of its proposal, its calls count against the budget caps, and the pace only says how soon a new proposal
+#: reads in plain words. ``PROPOSAL_BRIEFS_PER_TICK`` and ``PROPOSAL_BRIEF_INTERVAL_SECONDS`` set them before.
+PER_TICK: Final = 3
+INTERVAL_SECONDS: Final = 60.0
+#: Each variable that set the cadence before (#168), as ``Embry0Config`` holds it, and the value that runs now.
+_RETIRED: Final = {
+    "proposal_briefs_per_tick": ("PROPOSAL_BRIEFS_PER_TICK", float(PER_TICK)),
+    "proposal_brief_interval_seconds": ("PROPOSAL_BRIEF_INTERVAL_SECONDS", INTERVAL_SECONDS),
+}
 
 #: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
 #: ticks. The system prompt is the agent definition's, which an operator edits (see brief_writer).
@@ -299,8 +317,8 @@ class ProposalBriefWriter(BriefWriter[Proposal, BriefSettings, Brief]):
         settings: Callable[[], Awaitable[BriefSettings]],
         briefs: Any,
         calls: BackgroundCalls,
-        per_tick: int = 3,
-        interval_seconds: float = 60.0,
+        per_tick: int = PER_TICK,
+        interval_seconds: float = INTERVAL_SECONDS,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -313,6 +331,36 @@ class ProposalBriefWriter(BriefWriter[Proposal, BriefSettings, Brief]):
             client=client,
             clock=clock,
         )
+
+
+def warn_retired_cadence(config: Any) -> list[str]:
+    """Warn once, at startup, for each of ``PROPOSAL_BRIEFS_PER_TICK`` and ``PROPOSAL_BRIEF_INTERVAL_SECONDS`` still
+    set: neither is read any more (#168). Returns the variables warned about.
+
+    As ``SCOUT_TICK_SECONDS`` is (:func:`embry0.services.scout.warn_retired_tick`): the variable, whether its value
+    is what runs now (``matches``), and what to do; never the value. Whether it is set, from the environment or
+    ``.env``.
+    """
+    given = getattr(config, "model_fields_set", None) or set()
+    warned: list[str] = []
+    for attribute, (variable, runs) in _RETIRED.items():
+        if attribute not in given:
+            continue
+        try:
+            matches = float(str(getattr(config, attribute, "")).strip()) == runs
+        except ValueError:
+            matches = False
+        logger.warning(
+            "settings_env_retired",
+            variable=variable,
+            matches=matches,
+            hint=(
+                f"no longer read: the proposal brief writer writes at most {PER_TICK} briefs every "
+                f"{INTERVAL_SECONDS:g} s, constants; remove the variable"
+            ),
+        )
+        warned.append(variable)
+    return warned
 
 
 def with_briefs(
