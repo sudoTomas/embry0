@@ -41,24 +41,16 @@ vulnerabilities:
       - usr/lib/node_modules/npm/node_modules/undici/package.json
     statement: npm 12.2.1 vendors undici 6.29.0 and no npm release vendors the fixed 6.29.1 yet; bump npm when one does
     expired_at: 2026-12-15
-  # docker compose v5.6.1 (QA image) links golang.org/x/net 0.58.0; its Go
-  # is fixed (1.26.10). v5.7.0 links 0.60.0, which fixes CVE-2026-78669, but
-  # it reworks how `up` creates and starts containers, which the QA stacks run
-  # through, and was one day old when this was written. Removed by moving to
-  # v5.7.0 or later deliberately. CVE-2026-78661 (x/net/html) is fixed in
-  # x/net 0.62.0, which no compose release links yet: v5.7.0 and compose's
-  # main branch link 0.60.0. compose builds no x/net/html code into the binary
+  # docker compose v5.7.2 (QA image) is built with Go 1.27.4 and links
+  # containerd 2.4.2 and golang.org/x/net 0.60.0. CVE-2026-78661 (x/net/html)
+  # is fixed in x/net 0.62.0, which no compose release links yet: v5.7.2 and
+  # v5.8.0 link 0.60.0. compose builds no x/net/html code into the binary
   # (`go tool nm` lists none of its symbols); Trivy matches the module.
   # Removed by a compose release that links x/net >= 0.62.0.
-  - id: CVE-2026-78669
-    paths:
-      - usr/local/lib/docker/cli-plugins/docker-compose
-    statement: compose v5.6.1 links golang.org/x/net 0.58.0; v5.7.0 has the fix but changes how up starts containers; move to it deliberately
-    expired_at: 2026-12-15
   - id: CVE-2026-78661
     paths:
       - usr/local/lib/docker/cli-plugins/docker-compose
-    statement: compose v5.6.1 links golang.org/x/net 0.58.0; the fix is in x/net 0.62.0, which no compose release links yet (v5.7.0 links 0.60.0); removed by a compose release that links >= 0.62.0
+    statement: compose v5.7.2 links golang.org/x/net 0.60.0; the fix is in x/net 0.62.0, which no compose release links yet (v5.8.0 links 0.60.0); removed by a compose release that links >= 0.62.0
     expired_at: 2026-12-15
   # The vibium binary (QA image): Go standard library 1.26.1. vibium 26.8.21
   # is the newest release and the floor the QA browser-backend contract is

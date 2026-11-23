@@ -18,7 +18,10 @@ RUN echo "OS packages as of ${OS_PACKAGES_REFRESHED}" \
 # compose_log_stream). The compose plugin is only a recommended package of
 # docker-ce-cli, so --no-install-recommends left it out (#342): it is named
 # here, at the release the QA image downloads (Dockerfile.sandbox.qa), so the
-# two read a workspace's project with one compose.
+# two read a workspace's project with one compose. The CLI is pinned too, to
+# the QA image's release: both are Go binaries, and a bump is how a Go or
+# containerd fix arrives (29.10.0 and 5.7.2 are built with Go 1.27.4, and
+# compose links containerd 2.4.2).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates gnupg libpq-dev openssh-client \
     && install -m 0755 -d /etc/apt/keyrings \
@@ -27,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
        https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-        docker-ce-cli docker-compose-plugin=5.6.1-1~debian.12~bookworm \
+        docker-ce-cli=5:29.10.0-1~debian.12~bookworm docker-compose-plugin=5.7.2-1~debian.12~bookworm \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies, at exactly the versions uv.lock pins (#286): the ones
