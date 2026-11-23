@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Annotated, Any, Final, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, ValidationError
 
 #: The file the seed is read from, beside this module.
 SEED_FILE: Final = Path(__file__).with_name("providers.yaml")
@@ -51,6 +51,11 @@ SCHEMA_VERSION: Final = 1
 ANTHROPIC: Final = "anthropic"
 #: A provider's fields only embry0 sets: an overlay that names one is refused.
 SHIPPED_ONLY: Final = frozenset({"runtime", "base_url", "api_root", "model_prefixes", "strip_prefix", "probe_path"})
+#: The chat-completions request fields the executor sets, or reads its answer by (and their older equivalents for
+#: tools): a model's ``request_extras`` may name none of them, and the executor drops any that reach it.
+EXECUTOR_FIELDS: Final = frozenset(
+    {"model", "messages", "tools", "tool_choice", "functions", "function_call", "stream", "stream_options", "n"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,22 +179,10 @@ class ModelEntry(_Model):
     free: bool = Field(default=False, description="priced at $0 on purpose, as a model with no price never is")
     chat_only: bool = Field(default=False, description="served without tool calling on the provider's API")
     request_extras: dict[str, JsonValue] = Field(
-        default_factory=dict, max_length=16, description="extra chat-completions body fields the model needs"
+        default_factory=dict,
+        max_length=16,
+        description="extra chat-completions body fields the model needs; never one the executor sets",
     )
-
-    @model_validator(mode="after")
-    def _priced(self) -> ModelEntry:
-        if self.free and self.prices:
-            raise ValueError("a model is free or has prices, not both")
-        if not self.free and not self.prices:
-            raise ValueError("a model needs its prices, or free: true; one with neither would run unmetered")
-        days = [price.from_ for price in self.prices]
-        if any(day is None for day in days[1:]):
-            raise ValueError("only the first price may have no from date")
-        dated = [day for day in days if day is not None]
-        if dated != sorted(set(dated)):
-            raise ValueError("the prices' from dates must be in order, each day once")
-        return self
 
 
 class ProviderEntry(_Model):
@@ -204,37 +197,13 @@ class ProviderEntry(_Model):
     default_price: Rates | None = Field(default=None, description="the price of a routed model with no entry")
     models: dict[ModelId, ModelEntry] = Field(default_factory=dict, max_length=500)
 
-    @model_validator(mode="after")
-    def _ids_route_here(self) -> ProviderEntry:
-        stray = [model for model in self.models if not model.startswith(tuple(self.model_prefixes))]
-        if stray:
-            raise ValueError(f"{len(stray)} model id(s) do not start with one of this provider's model prefixes")
-        return self
-
 
 class CatalogueDocument(_Model):
+    """The document's shape. What holds across its fields (a model priced or free, ids that route to their
+    provider, prefixes that do not overlap) is checked by :func:`parse`, which names every such problem at once."""
+
     version: Literal[1] = SCHEMA_VERSION
     providers: dict[Name, ProviderEntry] = Field(min_length=1, max_length=32)
-
-    @model_validator(mode="after")
-    def _coherent(self) -> CatalogueDocument:
-        anthropic = self.providers.get(ANTHROPIC)
-        if anthropic is None or anthropic.runtime != "sdk":
-            raise ValueError(f"the catalogue needs the {ANTHROPIC!r} provider, with runtime sdk")
-        off = [name for name, entry in self.providers.items() if entry.runtime == "sdk" and not entry.enabled]
-        if off:
-            raise ValueError(f"an sdk provider is always on: {', '.join(off)}")
-        unknown = sorted(set(self.providers) - set(ENVIRONMENT))
-        if unknown:
-            raise ValueError(f"not a provider embry0 ships: {', '.join(unknown)}")
-        prefixes = [(prefix, name) for name, entry in self.providers.items() for prefix in entry.model_prefixes]
-        for prefix, name in prefixes:
-            for other, other_name in prefixes:
-                if other_name != name and other.startswith(prefix):
-                    raise ValueError(
-                        f"the model prefixes of {name} and {other_name} overlap, so a model id could route to either"
-                    )
-        return self
 
 
 # ---- what an overlay may write ----
@@ -398,11 +367,67 @@ def _provider(name: str, entry: ProviderEntry, day: date) -> ModelProvider:
 
 
 def parse(data: Any) -> CatalogueDocument:
-    """``data`` (a document as YAML reads it) as a complete catalogue; :class:`CatalogueInvalid` when it is not one."""
+    """``data`` (a document as YAML reads it) as a complete catalogue; :class:`CatalogueInvalid` naming every
+    problem when it is not one: those of its shape, else every one of what must hold across its fields."""
     try:
-        return CatalogueDocument.model_validate(data)
+        document = CatalogueDocument.model_validate(data)
     except ValidationError as error:
         raise CatalogueInvalid(_problems(error)) from None
+    problems = _coherence_problems(document)
+    if problems:
+        raise CatalogueInvalid(problems)
+    return document
+
+
+def _coherence_problems(document: CatalogueDocument) -> list[Problem]:
+    """Every problem of what must hold across a well-shaped document's fields, each where it is."""
+    problems: list[Problem] = []
+    anthropic = document.providers.get(ANTHROPIC)
+    if anthropic is None or anthropic.runtime != "sdk":
+        problems.append(Problem(("providers",), "anthropic", f"the catalogue needs the {ANTHROPIC!r} provider, sdk"))
+    for name, entry in document.providers.items():
+        where: tuple[str | int, ...] = ("providers", name)
+        if name not in ENVIRONMENT:
+            problems.append(Problem(where, "not_shipped", "not a provider embry0 ships"))
+        if entry.runtime == "sdk" and not entry.enabled:
+            problems.append(Problem((*where, "enabled"), "always_on", "an sdk provider is always on"))
+        for model, spec in entry.models.items():
+            problems += _model_problems((*where, "models", model), model, spec, entry)
+    prefixes = [(prefix, name) for name, entry in document.providers.items() for prefix in entry.model_prefixes]
+    for prefix, name in prefixes:
+        for other, other_name in prefixes:
+            if other_name != name and other.startswith(prefix):
+                problems.append(
+                    Problem(
+                        ("providers", other_name, "model_prefixes"),
+                        "prefix_overlap",
+                        f"overlaps a model prefix of {name}, so a model id could route to either",
+                    )
+                )
+    return problems
+
+
+def _model_problems(where: tuple[str | int, ...], model: str, spec: ModelEntry, entry: ProviderEntry) -> list[Problem]:
+    problems: list[Problem] = []
+    if not model.startswith(tuple(entry.model_prefixes)):
+        problems.append(Problem(where, "prefix", "the id does not start with one of its provider's model prefixes"))
+    if spec.free and spec.prices:
+        problems.append(Problem(where, "priced_and_free", "a model is free or has prices, not both"))
+    if not spec.free and not spec.prices:
+        problems.append(
+            Problem(where, "unpriced", "a model needs its prices, or free: true; one with neither would run unmetered")
+        )
+    days = [price.from_ for price in spec.prices]
+    if any(day is None for day in days[1:]):
+        problems.append(Problem((*where, "prices"), "undated", "only the first price may have no from date"))
+    dated = [day for day in days if day is not None]
+    if dated != sorted(set(dated)):
+        problems.append(Problem((*where, "prices"), "out_of_order", "the from dates must be in order, each day once"))
+    for key in sorted(EXECUTOR_FIELDS & set(spec.request_extras)):
+        problems.append(
+            Problem((*where, "request_extras", key), "executor_field", "set by the executor, not by request_extras")
+        )
+    return problems
 
 
 @cache
@@ -412,8 +437,9 @@ def seed() -> Catalogue:
 
 
 def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
-    """``base`` with a deployment's ``overlay`` merged in, field by field; :class:`CatalogueInvalid` naming every
-    problem of the overlay, or of the catalogue it makes, when either is wrong.
+    """``base`` with a deployment's ``overlay`` merged in, field by field; :class:`CatalogueInvalid` when the overlay
+    or the catalogue it makes is wrong, naming every problem: what the overlay may not set, and either its own
+    shape's problems or, when its shape is right, every problem of the catalogue it makes.
 
     The overlay names shipped providers only, and of each only what an
     operator decides (``enabled``, ``factors``, ``default_price``, ``models``).
@@ -426,26 +452,12 @@ def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
     """
     if overlay is None:
         return base
-    problems: list[Problem] = []
-    providers = overlay.get("providers") if isinstance(overlay, Mapping) else None
-    for name, entry in providers.items() if isinstance(providers, Mapping) else ():
-        if not isinstance(entry, Mapping):
-            continue
-        if name not in base.providers:
-            problems.append(
-                Problem(("providers", name), "not_shipped", "not a provider embry0 ships; a catalogue changes those")
-            )
-        for key in sorted(SHIPPED_ONLY & set(entry)):
-            problems.append(Problem(("providers", name, key), "shipped_only", "set by embry0, not by a catalogue"))
-        for key in ("enabled", "factors"):
-            if key in entry and entry[key] is None:
-                problems.append(Problem(("providers", name, key), "null", "null takes out a model or a default price"))
-    if problems:
-        raise CatalogueInvalid(problems)
+    cleaned, problems = _without_what_a_catalogue_may_not_set(base, overlay)
     try:
-        parsed = CatalogueOverlay.model_validate(overlay)
+        parsed = CatalogueOverlay.model_validate(cleaned)
     except ValidationError as error:
-        raise CatalogueInvalid(_problems(error)) from None
+        # The overlay's own shape is wrong: nothing can be merged, so the problems end here.
+        raise CatalogueInvalid([*problems, *_problems(error)]) from None
     merged = base.model_dump(by_alias=True)
     for name, entry in parsed.providers.items():
         target = merged["providers"][name]
@@ -459,9 +471,40 @@ def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
                 problems += _merge_models(name, target["models"], value)
             else:
                 target[key] = value
+    try:
+        document = parse(merged)
+    except CatalogueInvalid as invalid:
+        problems += invalid.problems
     if problems:
         raise CatalogueInvalid(problems)
-    return parse(merged)
+    return document
+
+
+def _without_what_a_catalogue_may_not_set(base: CatalogueDocument, overlay: Any) -> tuple[Any, list[Problem]]:
+    """``overlay`` without the providers embry0 does not ship, the fields only embry0 sets and the nulls only a
+    model or a default price takes, and a problem for each, so the rest is still checked and merged."""
+    providers = overlay.get("providers") if isinstance(overlay, Mapping) else None
+    if not isinstance(providers, Mapping):
+        return overlay, []
+    problems: list[Problem] = []
+    kept: dict[Any, Any] = {}
+    for name, entry in providers.items():
+        if not isinstance(entry, Mapping):
+            kept[name] = entry
+            continue
+        if name not in base.providers:
+            problems.append(
+                Problem(("providers", name), "not_shipped", "not a provider embry0 ships; a catalogue changes those")
+            )
+            continue
+        dropped = SHIPPED_ONLY & set(entry)
+        for key in sorted(dropped):
+            problems.append(Problem(("providers", name, key), "shipped_only", "set by embry0, not by a catalogue"))
+        nulls = {key for key in ("enabled", "factors") if key in entry and entry[key] is None}
+        for key in sorted(nulls):
+            problems.append(Problem(("providers", name, key), "null", "null takes out a model or a default price"))
+        kept[name] = {key: value for key, value in entry.items() if key not in dropped | nulls}
+    return {**overlay, "providers": kept}, problems
 
 
 def _merge_models(provider: str, models: dict[str, Any], overlay: Mapping[str, ModelOverlay | None]) -> list[Problem]:

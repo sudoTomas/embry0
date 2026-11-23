@@ -296,14 +296,18 @@ def _refused(overlay: Any) -> list[tuple[str, str]]:
         ({"providers": {"groq": {"model_prefixes": ["g"]}}}, "providers.groq.model_prefixes", "set by embry0"),
         ({"providers": {"openai": {"enabled": None}}}, "providers.openai.enabled", "null takes out"),
         ({"providers": {"openai": {"enabeld": True}}}, "providers.openai.enabeld", "Extra inputs"),
-        ({"providers": {"xai": {"enabled": False}}}, "", "an sdk provider is always on"),
+        ({"providers": {"xai": {"enabled": False}}}, "providers.xai.enabled", "an sdk provider is always on"),
         ({"providers": {"openai": {"models": {"gpt-new": {}}}}}, "providers.openai.models.gpt-new", "needs its prices"),
         (
             {"providers": {"openai": {"models": {"gpt-new": {"free": True, "prices": [{"in": 1, "out": 1}]}}}}},
             "providers.openai.models.gpt-new",
             "free or has prices",
         ),
-        ({"providers": {"openai": {"models": {"claude-x": {"free": True}}}}}, "providers.openai", "do not start with"),
+        (
+            {"providers": {"openai": {"models": {"claude-x": {"free": True}}}}},
+            "providers.openai.models.claude-x",
+            "does not start with",
+        ),
         (
             {"providers": {"openai": {"models": {"gpt-6-luna": {"prices": [{"in": -1, "out": 1}]}}}}},
             "providers.openai.models.gpt-6-luna.prices.0.in",
@@ -327,7 +331,7 @@ def _refused(overlay: Any) -> list[tuple[str, str]]:
                     "openai": {"models": {"gpt-6-luna": {"prices": [{"in": 1, "out": 1}, {"in": 2, "out": 2}]}}}
                 }
             },
-            "providers.openai.models.gpt-6-luna",
+            "providers.openai.models.gpt-6-luna.prices",
             "only the first price may have no from date",
         ),
         (
@@ -345,7 +349,7 @@ def _refused(overlay: Any) -> list[tuple[str, str]]:
                     }
                 }
             },
-            "providers.openai.models.gpt-6-luna",
+            "providers.openai.models.gpt-6-luna.prices",
             "in order, each day once",
         ),
         (
@@ -404,3 +408,65 @@ def test_the_sandbox_image_carries_the_seed() -> None:
     for dockerfile in ("infra/Dockerfile.sandbox",):
         text = (root / dockerfile).read_text(encoding="utf-8")
         assert "COPY embry0/agents/ /app/embry0/agents/" in text, f"{dockerfile} no longer copies embry0/agents/"
+
+
+def test_request_extras_may_not_name_a_field_the_executor_sets() -> None:
+    problems = _refused(
+        {
+            "providers": {
+                "openai": {
+                    "models": {
+                        "gpt-6-luna": {
+                            "request_extras": {
+                                "model": "gpt-6.1-sol",
+                                "messages": [],
+                                "stream": True,
+                                "reasoning_effort": "none",
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
+    named = sorted(loc.rsplit(".", 1)[1] for loc, msg in problems if "set by the executor" in msg)
+    assert named == ["messages", "model", "stream"], f"the executor's own fields are not each refused: {problems}"
+    assert not any(loc.endswith("reasoning_effort") for loc, _ in problems), "a model's own field was refused"
+
+
+def test_every_problem_of_an_overlay_and_of_the_catalogue_it_makes_is_named() -> None:
+    problems = _refused(
+        {
+            "providers": {
+                "mistral": {"enabled": True},
+                "openai": {
+                    "api_root": "https://proxy.example",
+                    "models": {"gpt-new": {}, "gpt-6-luna": {"request_extras": {"model": "gpt-6.1-sol"}}},
+                },
+                "xai": {"enabled": False},
+            }
+        }
+    )
+    assert sorted(loc for loc, _ in problems) == [
+        "providers.mistral",
+        "providers.openai.api_root",
+        "providers.openai.models.gpt-6-luna.request_extras.model",
+        "providers.openai.models.gpt-new",
+        "providers.xai.enabled",
+    ], problems
+
+
+def test_every_problem_across_a_document_s_fields_is_named() -> None:
+    document = catalogue.seed().document.model_dump(by_alias=True)
+    document["providers"]["openai"]["models"]["gpt-6-luna"]["prices"] = []
+    document["providers"]["groq"]["models"]["groq/openai/gpt-oss-20b"]["free"] = True
+    document["providers"]["xai"]["enabled"] = False
+    document["providers"]["openai"]["model_prefixes"] = ["gpt-", "groq/openai/"]
+    with pytest.raises(CatalogueInvalid) as caught:
+        parse(document)
+    assert sorted(".".join(map(str, p.loc)) for p in caught.value.problems) == [
+        "providers.groq.models.groq/openai/gpt-oss-20b",
+        "providers.openai.model_prefixes",
+        "providers.openai.models.gpt-6-luna",
+        "providers.xai.enabled",
+    ], caught.value.problems

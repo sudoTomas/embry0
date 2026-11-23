@@ -51,13 +51,14 @@ The schema is `embry0/agents/catalogue.py`; the seed, `embry0/agents/providers.y
 
 **What an overlay may set.** Of a shipped provider: `enabled`, `factors` (key by key), `default_price` (`null` takes it out) and `models`. A model the seed has takes each field the overlay gives it, with `prices` and `request_extras` replaced whole. A model made `free` drops its prices, and one given prices is no longer free. A new model must be complete, and `null` takes a model out. Everything else of a provider (runtime, addresses, prefixes, how its ids reach its API, its probe) is embry0's, because routing and the executors are built on it: an overlay that names one is refused. Providers embry0 does not ship are refused until the credential and address work below exists.
 
-**Validation** answers every problem at once, with where it is and what is wrong, never the value:
+**Validation** names every problem it finds, each with where it is and what is wrong, never the value. Of an overlay, these come back together: what it may not set, and then either its own shape's problems or, when its shape is right, every problem of the catalogue it makes. The checks:
 
 - the schema's types, strictly (`"5"` is no price, `"true"` no flag);
 - prices finite and at least 0, their `from` days in order with only the first undated;
 - a model priced or free; every model id starting with its provider's prefix;
 - no two providers' prefixes overlapping, so a model id routes to one provider only;
-- `anthropic` present; the Agent SDK providers always on.
+- `anthropic` present; the Agent SDK providers always on;
+- a model's `request_extras` naming no field the executor sets or reads its answer by (`model`, `messages`, `tools`, `tool_choice`, `functions`, `function_call`, `stream`, `stream_options`, `n`). The executor also drops any such field that reaches it, and sets its own after a model's extras, so its own always win.
 
 **Kept out of the document.** Where each key is read from is code (`ENVIRONMENT` in the schema module). The custom provider's address comes from its credential or `CUSTOM_LLM_BASE_URL`.
 

@@ -171,6 +171,14 @@ def test_the_sandbox_group_installs_every_package_the_baked_code_imports():
         "code the sandbox images carry imports packages the `sandbox` group does not install; "
         f"add them to the group in pyproject.toml: {missing}"
     )
+    # Named in the group itself, not only installed through another package's dependencies: a package that
+    # stops depending on one the baked code imports must not take it out of the images.
+    named = set(map(_canonical, _sandbox_group()))
+    unnamed = {dist: sorted(where) for dist, where in imports.items() if dist not in named}
+    assert not unnamed, (
+        "code the sandbox images carry imports packages the `sandbox` group installs only through another "
+        f"package's dependencies; name them in the group in pyproject.toml: {unnamed}"
+    )
 
 
 def test_every_sandbox_group_package_is_imported_by_the_baked_code():

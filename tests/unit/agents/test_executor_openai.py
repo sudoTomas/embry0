@@ -133,6 +133,42 @@ def test_a_model_that_needs_request_fields_gets_them(catalog_endpoint, server, m
     assert catalog_endpoint == ["https://api.openai.com/v1"]
 
 
+def test_a_model_s_extra_fields_never_replace_the_executor_s_own(catalog_endpoint, server, monkeypatch) -> None:
+    """The catalogue refuses request_extras that name a field the executor sets; whatever reaches the wire anyway,
+    the request still carries the routed model, the run's messages and the executor's tools, and is not streamed."""
+    monkeypatch.setenv("EMBRY0_LLM_OPENAI_API_KEY", _KEY)
+    routed = eo.provider_named("openai")
+    assert routed is not None
+    extras = {"model": "gpt-6.1-sol", "messages": [], "stream": True, "tools": [], "reasoning_effort": "none"}
+    with_extras = dataclasses.replace(routed, request_extras={"gpt-6-luna": extras})
+    monkeypatch.setattr(eo, "provider_named", lambda name: with_extras if name == "openai" else None)
+    server.answer(completion(content="ok"))
+    _run(_invocation(provider="openai", model="gpt-6-luna"))
+    body = server.chat_requests()[0]["json"]
+    assert body["model"] == "gpt-6-luna", f"a model's extra fields replaced the routed model: {body['model']!r}"
+    assert [m["role"] for m in body["messages"]][:2] == ["system", "user"], (
+        "a model's extra fields replaced the messages"
+    )
+    assert body["tools"], "a model's extra fields replaced the executor's tools"
+    assert "stream" not in body, "a model's extra fields turned streaming on"
+    assert body["reasoning_effort"] == "none", "the model's own extra field was dropped"
+
+
+def test_the_executor_s_fields_win_over_an_extra_field_the_filter_misses(catalog_endpoint, server, monkeypatch) -> None:
+    """The second guard alone: with no field filtered, the routed model and the run's messages still win."""
+    monkeypatch.setenv("EMBRY0_LLM_OPENAI_API_KEY", _KEY)
+    monkeypatch.setattr(eo, "EXECUTOR_FIELDS", frozenset())
+    routed = eo.provider_named("openai")
+    assert routed is not None
+    with_extras = dataclasses.replace(routed, request_extras={"gpt-6-luna": {"model": "gpt-6.1-sol", "messages": []}})
+    monkeypatch.setattr(eo, "provider_named", lambda name: with_extras if name == "openai" else None)
+    server.answer(completion(content="ok"))
+    _run(_invocation(provider="openai", model="gpt-6-luna"))
+    body = server.chat_requests()[0]["json"]
+    assert body["model"] == "gpt-6-luna", "an extra field the filter missed replaced the routed model"
+    assert body["messages"], "an extra field the filter missed replaced the messages"
+
+
 def test_a_denied_tool_is_answered_as_an_error_and_never_run(custom, workspace) -> None:
     custom.answer(completion(tool_calls=[tool_call("c1", "Bash", {"command": "rm -rf /"})]))
     custom.answer(completion(content="stopped"))
