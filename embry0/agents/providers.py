@@ -144,10 +144,12 @@ def provider_models(provider: ModelProvider) -> tuple[str, ...]:
 def model_rates(model: str, catalogue: Catalogue | None = None) -> tuple[float, float] | None:
     """``model``'s (input, output) $/Mtok now: OpenRouter's live price, its own entry in the installed catalogue
     (its price in force today), else its provider's default rates."""
+    cat = catalogue if catalogue is not None else current()
+    if model in cat.withheld:  # its price is not in force (catalogue.merge_stored): unpriced, so it does not run
+        return None
     live = catalog_rates(model)
     if live is not None:
         return live
-    cat = catalogue if catalogue is not None else current()
     rates = cat.rates(model)
     return rates if rates is not None else cat.default_rates(model)
 

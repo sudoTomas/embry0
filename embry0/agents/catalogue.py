@@ -316,11 +316,17 @@ class Catalogue:
 
     document: CatalogueDocument
     providers: tuple[ModelProvider, ...]
+    #: Models with no price, whatever the document or a provider's default says: a stored overlay set one this
+    #: release refuses (:func:`merge_stored`), so nothing runs on them until the catalogue is written again.
+    withheld: frozenset[str] = frozenset()
 
     @classmethod
-    def build(cls, document: CatalogueDocument, *, today: date | None = None) -> Catalogue:
+    def build(
+        cls, document: CatalogueDocument, *, today: date | None = None, withheld: frozenset[str] = frozenset()
+    ) -> Catalogue:
         day = today if today is not None else datetime.now(UTC).date()
-        return cls(document, tuple(_provider(name, entry, day) for name, entry in document.providers.items()))
+        providers = tuple(_provider(name, entry, day, withheld) for name, entry in document.providers.items())
+        return cls(document, providers, frozenset(withheld))
 
     def named(self, name: str | None) -> ModelProvider | None:
         """The provider called ``name``, enabled or not."""
@@ -354,6 +360,8 @@ class Catalogue:
         first price applies before every dated one. A model whose prices all
         start later has none yet. ``free`` is (0, 0).
         """
+        if model in self.withheld:
+            return None
         day = (at if at is not None else datetime.now(UTC)).astimezone(UTC).date()
         for entry in self.document.providers.values():
             found = entry.models.get(model)
@@ -363,6 +371,8 @@ class Catalogue:
 
     def default_rates(self, model: str) -> tuple[float, float] | None:
         """The default price of the provider whose prefix ``model`` routes by, when it has one."""
+        if model in self.withheld:
+            return None
         for entry in self.document.providers.values():
             if entry.default_price is not None and model.startswith(tuple(entry.model_prefixes)):
                 return entry.default_price.pair
@@ -379,9 +389,13 @@ def _in_force(model: ModelEntry, day: date) -> tuple[float, float] | None:
     return current
 
 
-def _provider(name: str, entry: ProviderEntry, day: date) -> ModelProvider:
+def _provider(name: str, entry: ProviderEntry, day: date, withheld: frozenset[str] = frozenset()) -> ModelProvider:
     env = ENVIRONMENT[name]
-    pricing = {model: rates for model, spec in entry.models.items() if (rates := _in_force(spec, day)) is not None}
+    pricing = {
+        model: rates
+        for model, spec in entry.models.items()
+        if model not in withheld and (rates := _in_force(spec, day)) is not None
+    }
     return ModelProvider(
         name=name,
         base_url=entry.base_url,
@@ -499,7 +513,9 @@ def seed() -> Catalogue:
     return Catalogue.build(parse(yaml.safe_load(SEED_FILE.read_text(encoding="utf-8"))))
 
 
-def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
+def merge(
+    base: CatalogueDocument, overlay: Any, shipped: Mapping[str, Mapping[str, Any]] | None = None
+) -> CatalogueDocument:
     """``base`` with a deployment's ``overlay`` merged in, field by field; :class:`CatalogueInvalid` when the overlay
     or the catalogue it makes is wrong, naming every problem: what the overlay may not set, and either its own
     shape's problems or, when its shape is right, every problem of the catalogue it makes.
@@ -512,6 +528,14 @@ def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
     given prices is no longer free; a new one must be complete; ``null``
     takes one out. ``null`` for ``default_price`` takes the provider's out.
     Every other value is kept.
+
+    ``shipped`` is what the stored overlay's writes recorded of each model it
+    names, as a release shipped it then (:func:`shipped_entries`). A model the
+    overlay changes that ``base`` no longer has, but ``shipped`` does, is kept
+    as the deployment's own only when the overlay gives it prices of its own,
+    a price of a release that dropped the model being no price to trust; it
+    keeps the chat-only flag and request extras it was shipped with, unless
+    the overlay sets them. Without prices it is a problem ("no_longer_shipped").
     """
     if overlay is None:
         return base
@@ -531,7 +555,7 @@ def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
             elif key == "default_price":
                 target["default_price"] = value.model_dump(by_alias=True) if value is not None else None
             elif key == "models":
-                problems += _merge_models(name, target["models"], value)
+                problems += _merge_models(name, target["models"], value, (shipped or {}).get(name) or {})
             else:
                 target[key] = value
     try:
@@ -543,75 +567,216 @@ def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
     return document
 
 
-def merge_stored(base: CatalogueDocument, overlay: Any) -> tuple[CatalogueDocument, list[Problem]]:
+@dataclass(frozen=True)
+class StoredRead:
+    """What a stored overlay makes with a release's seed (:func:`merge_stored`)."""
+
+    document: CatalogueDocument
+    #: The problem of each part left out, and of each price that leaves a model unpriced.
+    refused: list[Problem] = field(default_factory=list)
+    #: Models left unpriced: the overlay set their price, and this release refuses it.
+    withheld: frozenset[str] = frozenset()
+    #: Models kept as the deployment's own: a release dropped them, and the overlay gives them prices.
+    notes: list[Problem] = field(default_factory=list)
+
+
+def merge_stored(
+    base: CatalogueDocument, overlay: Any, shipped: Mapping[str, Mapping[str, Any]] | None = None
+) -> StoredRead:
     """What a stored ``overlay`` makes with ``base``, this release's seed, however the seed moved since the overlay
     was written: the catalogue of every part of it that still applies, and the problems of the parts that do not.
 
     A write is checked whole (:func:`merge`). A stored overlay meets the seed
     of a later release, which may have taken out a model or a provider the
-    overlay names, made a field embry0's own, or tightened a bound. Rather
-    than lose the whole overlay, and with it every provider the deployment
-    turned on and every price it set, each part that no longer applies is
+    overlay names, made a field embry0's own, tightened a bound or dropped a
+    top-level key. Rather than lose the whole overlay, and with it every
+    provider the deployment turned on, each part that no longer applies is
     left out and the rest stays in force (the design's "Seed drift"):
 
     - ``null`` for a model the seed no longer has: what it asked for holds,
       so it is dropped with no problem;
     - a provider the seed no longer ships: its whole entry is left out;
-    - a model entry the release refuses (an override of a model the seed
-      dropped that is no complete model on its own, a value a bound now
-      refuses): that model's entry is left out, and the seed's model, if any,
-      stays as shipped; an override that is a complete model is kept as the
-      deployment's own model;
+    - a model the seed dropped that the overlay changed: kept as the
+      deployment's own when the overlay gives it prices (``shipped`` keeps its
+      chat-only flag and extras), and named in ``notes``; else left out;
+    - a model entry the release refuses: left out, the seed's model, if any,
+      as shipped;
     - a provider field the release refuses (``enabled``, ``factors``,
-      ``default_price``, ``refresh_hours``, a field embry0 now sets, a key it
-      no longer knows): that field is left out.
+      ``refresh_hours``, a field embry0 now sets, a key it no longer knows):
+      that field is left out;
+    - a top-level key the release does not know: left out.
 
-    Only a top level that is no overlay at all leaves nothing of it, the seed
-    in force with that problem. A part is left out after every problem the
+    A price is never replaced by another the deployment did not set: when
+    a model's entry that set its ``prices`` or ``free`` is left out, the model
+    is ``withheld``, unpriced so nothing runs on it, and when a provider's
+    ``default_price`` is, the provider has none, so its models with no price
+    of their own are unpriced; the provider stays on for its other models.
+
+    Only a top level that is no overlay at all (not a mapping, another
+    ``version``, ``providers`` not a mapping) leaves nothing of it, the seed in
+    force with that problem. A part is left out after every problem the
     release finds is named, then the rest is merged again, until it merges.
     """
     if overlay is None:
-        return base, []
+        return StoredRead(base)
     if not isinstance(overlay, Mapping):
-        return base, [Problem((), "not_a_mapping", "the stored catalogue is not a mapping; none of it is in force")]
-    working: dict[Any, Any] = copy.deepcopy(dict(overlay))
+        return StoredRead(
+            base, [Problem((), "not_a_mapping", "the stored catalogue is not a mapping; none of it is in force")]
+        )
+    recorded = shipped or {}
+    working: dict[Any, Any] = restored(copy.deepcopy(dict(overlay)))
     left_out: list[Problem] = []
+    withheld: set[str] = set()
     while True:
         try:
-            return merge(base, working), left_out
+            document = merge(base, working, recorded)
         except CatalogueInvalid as invalid:
             problems = invalid.problems
+        else:
+            return StoredRead(document, left_out, frozenset(withheld), _kept_as_own(base, working, recorded))
         removed = False
         for problem in problems:
-            if _leave_out(working, problem.loc):
-                removed = True
-                if problem.type != "not_found":  # a null for a model already gone asked for what holds
-                    left_out.append(problem)
+            part = _leave_out(working, problem.loc)
+            if part is None:
+                continue
+            removed = True
+            if problem.type != "not_found":  # a null for a model already gone asked for what holds
+                left_out.append(problem)
+            if part.priced_model is not None:
+                withheld.add(part.priced_model[1])
+                left_out.append(
+                    Problem(
+                        ("providers", part.priced_model[0], "models", part.priced_model[1]),
+                        "withheld",
+                        "the price the catalogue set is not in force, so the model is unpriced and nothing runs on "
+                        "it until the catalogue is written again",
+                    )
+                )
+            if part.default_price is not None:
+                left_out.append(
+                    Problem(
+                        ("providers", part.default_price, "default_price"),
+                        "withheld",
+                        "the default price the catalogue set is not in force, so this provider's models with no "
+                        "price of their own are unpriced until the catalogue is written again",
+                    )
+                )
         if not removed:  # nothing attributable to a part of the overlay: none of it is in force
             unplaced = [p for p in problems if p.type != "not_found"]
-            return base, [*left_out, *unplaced, Problem((), "not_applied", "none of the stored catalogue is in force")]
+            return StoredRead(
+                base, [*left_out, *unplaced, Problem((), "not_applied", "none of the stored catalogue is in force")]
+            )
 
 
-def _leave_out(overlay: dict[Any, Any], loc: tuple[str | int, ...]) -> bool:
-    """Take the part of ``overlay`` a problem at ``loc`` is in out of it: a provider's entry, a model's entry or a
-    provider's field. False when ``loc`` names no part still there."""
+@dataclass(frozen=True)
+class _Part:
+    """What :func:`_leave_out` took out that set a price: a model's (provider, model), a provider's default."""
+
+    priced_model: tuple[str, str] | None = None
+    default_price: str | None = None
+
+
+def _leave_out(overlay: dict[Any, Any], loc: tuple[str | int, ...]) -> _Part | None:
+    """Take the part of ``overlay`` a problem at ``loc`` is in out of it: a provider's entry, a model's entry, a
+    provider's field or a top-level key the release does not know. A ``default_price`` is set to null rather than
+    taken out, so the seed's never stands in for it. None when ``loc`` names no part still there."""
+    if loc and loc[0] not in ("providers", "version") and loc[0] in overlay:
+        del overlay[loc[0]]
+        return _Part()
     providers = overlay.get("providers")
     if len(loc) < 2 or loc[0] != "providers" or not isinstance(providers, dict) or loc[1] not in providers:
-        return False
+        return None
     name = loc[1]
     entry = providers[name]
     if len(loc) == 2 or not isinstance(entry, dict):
         del providers[name]
-        return True
+        return _Part()
     key = loc[2]
     models = entry.get("models")
     if key == "models" and len(loc) >= 4 and isinstance(models, dict) and loc[3] in models:
-        del models[loc[3]]
-        return True
+        spec = models.pop(loc[3])
+        priced = isinstance(spec, Mapping) and ("prices" in spec or "free" in spec)
+        return _Part(priced_model=(str(name), str(loc[3])) if priced else None)
+    if key == "default_price" and entry.get(key) is not None:
+        entry[key] = None
+        return _Part(default_price=str(name))
     if key in entry:
         del entry[key]
-        return True
-    return False
+        return _Part()
+    return None
+
+
+def _kept_as_own(
+    base: CatalogueDocument, overlay: Mapping[str, Any], recorded: Mapping[str, Mapping[str, Any]]
+) -> list[Problem]:
+    """A note for each model a release dropped that the merged ``overlay`` keeps as the deployment's own."""
+    notes: list[Problem] = []
+    providers = overlay.get("providers")
+    for name, entry in (providers or {}).items() if isinstance(providers, Mapping) else ():
+        models = entry.get("models") if isinstance(entry, Mapping) else None
+        if not isinstance(models, Mapping) or name not in base.providers:
+            continue
+        for model, spec in models.items():
+            if spec is not None and model not in base.providers[name].models and model in (recorded.get(name) or {}):
+                notes.append(
+                    Problem(
+                        ("providers", name, "models", model),
+                        "kept_as_own",
+                        "this release no longer ships the model: it is the deployment's own, at the catalogue's "
+                        "prices, chat-only and with the extras it was last shipped with unless the catalogue says",
+                    )
+                )
+    return notes
+
+
+def stored_form(value: Any) -> Any:
+    """``value`` (an overlay as YAML reads it) as JSON holds it: a ``from`` day as its ISO text."""
+    if isinstance(value, Mapping):
+        return {key: stored_form(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [stored_form(item) for item in value]
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def restored(overlay: dict[Any, Any]) -> dict[Any, Any]:
+    """``overlay`` read back from JSON (:func:`stored_form`): each price's ``from`` day a ``date`` again, in place.
+    A ``from`` that is no ISO day stays text, for the schema to refuse."""
+    providers = overlay.get("providers")
+    for entry in providers.values() if isinstance(providers, dict) else ():
+        models = entry.get("models") if isinstance(entry, dict) else None
+        for spec in models.values() if isinstance(models, dict) else ():
+            prices = spec.get("prices") if isinstance(spec, dict) else None
+            for price in prices if isinstance(prices, list) else ():
+                day = price.get("from") if isinstance(price, dict) else None
+                if isinstance(day, str) and len(day) == 10:
+                    try:
+                        price["from"] = date.fromisoformat(day)
+                    except ValueError:
+                        pass
+    return overlay
+
+
+def shipped_entries(
+    base: CatalogueDocument, overlay: Any, previous: Mapping[str, Mapping[str, Any]] | None = None
+) -> dict[str, dict[str, Any]]:
+    """For each model ``overlay`` names, the shipped entry it is written against, in JSON form: ``base``'s, or what
+    ``previous`` recorded of one a release has dropped since. :func:`merge` reads it once a release drops the model."""
+    out: dict[str, dict[str, Any]] = {}
+    providers = overlay.get("providers") if isinstance(overlay, Mapping) else None
+    for name, entry in providers.items() if isinstance(providers, Mapping) else ():
+        models = entry.get("models") if isinstance(entry, Mapping) else None
+        if not isinstance(models, Mapping):
+            continue
+        shipped = base.providers[name].models if name in base.providers else {}
+        before = (previous or {}).get(name) or {}
+        for model in models:
+            if model in shipped:
+                out.setdefault(str(name), {})[str(model)] = shipped[model].model_dump(mode="json", by_alias=True)
+            elif isinstance(before.get(model), Mapping):
+                out.setdefault(str(name), {})[str(model)] = dict(before[model])
+    return out
 
 
 def _without_what_a_catalogue_may_not_set(base: CatalogueDocument, overlay: Any) -> tuple[Any, list[Problem]]:
@@ -641,7 +806,12 @@ def _without_what_a_catalogue_may_not_set(base: CatalogueDocument, overlay: Any)
     return {**overlay, "providers": kept}, problems
 
 
-def _merge_models(provider: str, models: dict[str, Any], overlay: Mapping[str, ModelOverlay | None]) -> list[Problem]:
+def _merge_models(
+    provider: str,
+    models: dict[str, Any],
+    overlay: Mapping[str, ModelOverlay | None],
+    recorded: Mapping[str, Any],
+) -> list[Problem]:
     problems: list[Problem] = []
     for model, entry in overlay.items():
         if entry is None:
@@ -651,6 +821,24 @@ def _merge_models(provider: str, models: dict[str, Any], overlay: Mapping[str, M
                 )
             continue
         given = entry.model_dump(by_alias=True, exclude_unset=True)
+        was = recorded.get(model) if model not in models else None
+        if isinstance(was, Mapping):
+            if "prices" not in given:
+                problems.append(
+                    Problem(
+                        ("providers", provider, "models", model),
+                        "no_longer_shipped",
+                        "this release no longer ships the model: give it prices of its own to keep it, or take it out",
+                    )
+                )
+                continue
+            # What it was shipped with that no price says: chat-only unless known otherwise, its extras.
+            models[model] = {
+                "chat_only": was.get("chat_only") is not False,
+                "request_extras": dict(was.get("request_extras") or {}),
+                **given,
+            }
+            continue
         if model in models:
             models[model].update(given)
             if "free" in given and given["free"] and "prices" not in given:

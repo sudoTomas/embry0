@@ -183,6 +183,9 @@ The MCP tools are `provider_catalogue_get`, `provider_catalogue_set` (whole
 text, `expected_generation`, `dry_run`, `confirm=true`),
 `provider_catalogue_revisions` and `provider_catalogue_undo`.
 
+A `from` day is stored as its ISO text and read back as a day, so a dated
+price written in one process is in force, dated, in every other.
+
 A write is in force at once in the process that took it, and every other
 process installs it within ten seconds: routing, the model pickers, the
 checks that a model is offered and priced, the turn and time budgets, and
@@ -224,13 +227,22 @@ stored overlay is read part by part:
 |---|---|
 | `null` for a model the release took out too | as asked: the model is gone, and nothing is reported |
 | a provider the release no longer ships | the rest; that provider's entry is left out |
-| fields of a model the release took out | the overlay's entry as the deployment's own model, when it is a whole one (its `prices` or `free: true`); else that model's entry is left out |
+| fields of a model the release took out | when they give it `prices` of its own: the deployment's own model at those prices, chat-only and with the request extras it was last shipped with unless the overlay says (each write records what the shipped catalogue said of every model it names, in `provider_catalogue.shipped`), named in `notes`; else that model's entry is left out |
 | a field the release made its own, a key it no longer knows, a value a bound now refuses | the rest; that field, or that model's entry, is left out |
+| a top-level key the release does not know | the rest; that key is left out |
 | no overlay at all at its top level (not a mapping, another `version`) | the shipped catalogue, with that problem |
 
+A price is never replaced by one the deployment did not set. When a model's
+entry that set its `prices` or `free` is left out, the model is unpriced
+(`withheld` in `refused`), so the resolver and every write refuse it until the
+catalogue is written again; when a provider's `default_price` is left out, the
+provider has none, so its models without a price of their own are unpriced.
+The provider stays on for its other models: that is narrower than turning it
+off.
+
 At a process's start every part that still applies is in force; nothing the
-deployment turned on is turned off, and no price it set is dropped, because
-something else in the overlay no longer applies. A process already running when
+deployment turned on is turned off because something else in the overlay no
+longer applies. A process already running when
 a later overlay this release refuses part of is written keeps the catalogue it
 runs on. Either way each part left out is named in `refused` by
 `GET /api/v1/config/providers/catalog`, whose `in_force` says `in_part` or

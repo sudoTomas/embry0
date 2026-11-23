@@ -436,6 +436,73 @@ async def test_a_write_is_checked_whole_however_the_stored_one_is_read(
     assert sorted(p.type for p in refused.value.problems) == ["not_found", "not_shipped"]
 
 
+def _drop_from_the_seed(monkeypatch: pytest.MonkeyPatch, provider: str, model: str) -> None:
+    """From here on this process runs a later release, whose seed no longer has ``model``."""
+    from embry0.services import provider_catalogue_store
+
+    data = catalogue.seed().document.model_dump(mode="json", by_alias=True)
+    del data["providers"][provider]["models"][model]
+    later = catalogue.Catalogue.build(catalogue.parse(data))
+    monkeypatch.setattr(catalogue, "seed", lambda: later)
+    monkeypatch.setattr(provider_catalogue_store, "seed", lambda: later)
+
+
+SOL_REPRICED = (
+    "providers:\n  openai:\n    enabled: true\n    models:\n      gpt-6.1-sol: {prices: [{in: 3.0, out: 12.0}]}\n"
+)
+
+
+async def test_a_model_a_release_drops_stays_as_it_was_shipped_at_the_deployment_s_price(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gpt-6.1-sol is chat-only as shipped; the deployment re-priced it; a later release drops it."""
+    await CatalogueStore(db_with_migrations).save(SOL_REPRICED, actor="a")
+    shipped = await db_with_migrations.fetchval("SELECT shipped FROM provider_catalogue")
+    shipped = json.loads(shipped) if isinstance(shipped, str) else shipped
+    assert shipped["openai"]["gpt-6.1-sol"]["chat_only"] is True, "the write recorded what it was shipped with"
+    _drop_from_the_seed(monkeypatch, "openai", "gpt-6.1-sol")
+    catalogue.install(None)
+    store = CatalogueStore(db_with_migrations)
+    await store.refresh()
+    assert (store.in_force, store.refused) == ("whole", [])
+    assert [p.loc for p in store.notes] == [("providers", "openai", "models", "gpt-6.1-sol")], "kept, unnamed"
+    assert providers.model_rates("gpt-6.1-sol") == (3.0, 12.0)
+    assert providers.chat_only_models(["gpt-6.1-sol"]) == ["gpt-6.1-sol"], "agents would send a chat-only model tools"
+    # Written again, with the drift in place: the record goes with it.
+    again = await store.save(SOL_REPRICED + "# reviewed\n", actor="a")
+    assert again.changed
+    shipped = await db_with_migrations.fetchval("SELECT shipped FROM provider_catalogue")
+    shipped = json.loads(shipped) if isinstance(shipped, str) else shipped
+    assert shipped["openai"]["gpt-6.1-sol"]["chat_only"] is True, "a write after the drift lost the record"
+    assert providers.chat_only_models(["gpt-6.1-sol"]) == ["gpt-6.1-sol"]
+
+
+async def test_a_dated_price_is_stored_and_read_back_by_another_process(
+    store: CatalogueStore, db_with_migrations: DatabasePool
+) -> None:
+    from datetime import UTC, datetime
+
+    text = DEEPSEEK_ON + (
+        "    models:\n      deepseek-flash: {prices: [{in: 1.0, out: 2.0}, {from: 2027-01-01, in: 9.0, out: 9.0}]}\n"
+    )
+    saved = await store.save(text, actor="a")
+    assert saved.revision_id is not None
+    catalogue.install(None)
+    reader = CatalogueStore(db_with_migrations)
+    installed = await reader.refresh()
+    assert (reader.in_force, reader.refused) == ("whole", []), "the dated price was refused on the way back"
+    assert installed.rates("deepseek-flash", at=datetime(2026, 12, 31, tzinfo=UTC)) == (1.0, 2.0)
+    assert installed.rates("deepseek-flash", at=datetime(2027, 1, 1, tzinfo=UTC)) == (9.0, 9.0)
+    revision = await reader.revision(saved.revision_id)
+    assert (
+        revision is not None
+        and revision["after"]["data"]["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"][1]["from"]
+        == "2027-01-01"
+    )
+    undone = await reader.undo(saved.revision_id, actor="b")
+    assert undone.changed and providers.enabled_openai_compatible() == ()
+
+
 # ---- the environment, once ----
 
 
@@ -530,3 +597,38 @@ async def test_a_change_waits_for_a_settings_write_naming_a_model_and_sees_it(
     with pytest.raises(CatalogueInvalid) as refused:
         await asyncio.wait_for(change, 30)
     assert _locs(refused.value) == [("references", "background_models", "deployment", "watcher")]
+
+
+async def test_the_import_keeps_a_dated_price_already_stored(store: CatalogueStore) -> None:
+    text = (
+        DEEPSEEK_ON
+        + "    models:\n      deepseek-flash: {prices: [{in: 1.0, out: 2.0}, {from: 2027-01-01, in: 9.0, out: 9.0}]}\n"
+    )
+    await store.save(text, actor="a")
+    assert await store.import_env(_config(openai_compatible_providers="groq")) == ["providers.enabled"]
+    stored = await store.document()
+    assert stored.data["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"][1]["from"] == "2027-01-01"
+    assert stored.data["providers"]["groq"] == {"enabled": True}
+    assert store.refused == [], "the import wrote what the next read refuses"
+
+
+async def test_a_price_the_release_refuses_leaves_the_model_unpriced_in_force(
+    store: CatalogueStore, db_with_migrations: DatabasePool
+) -> None:
+    """Stored by another hand with a price this release refuses: the model does not run at the seed's price."""
+    await _store_directly(
+        db_with_migrations,
+        {
+            "providers": {
+                "deepseek": {"enabled": True, "models": {"deepseek-flash": {"prices": [{"in": -1, "out": 1}]}}}
+            }
+        },
+    )
+    await store.refresh()
+    assert store.in_force == "in_part"
+    assert ("providers", "deepseek", "models", "deepseek-flash") in [
+        p.loc for p in store.refused if p.type == "withheld"
+    ]
+    assert providers.model_rates("deepseek-flash") is None, "it ran at the seed's price in place of the deployment's"
+    assert providers.unpriced_models(["deepseek-flash"]) == ["deepseek-flash"]
+    assert providers.model_rates("deepseek-v4-pro") == (1.32, 3.96), "DeepSeek's other models stay in service"

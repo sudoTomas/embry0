@@ -50,7 +50,13 @@ async def test_with_nothing_stored_the_catalogue_is_the_shipped_one(client: Asyn
     resp = await client.get(CATALOG)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert (body["yaml_text"], body["data"], body["refused"], body["in_force"]) == ("", {}, [], "whole")
+    assert (body["yaml_text"], body["data"], body["refused"], body["notes"], body["in_force"]) == (
+        "",
+        {},
+        [],
+        [],
+        "whole",
+    )
     assert resp.headers["etag"] == f'"{body["generation"]}"'
     assert body["catalogue"] == catalogue.seed().document.model_dump(mode="json", by_alias=True)
     assert body["catalogue"]["providers"]["deepseek"]["enabled"] is False
@@ -112,6 +118,26 @@ async def test_a_write_is_stored_as_written_in_force_at_once_and_audited(client:
             },
         )
     ]
+
+
+async def test_a_dated_price_is_stored_and_another_process_reads_it(client: AsyncClient) -> None:
+    from datetime import UTC, datetime
+
+    from embry0.services.provider_catalogue_store import CatalogueStore
+
+    text = DEEPSEEK_ON + (
+        "    models:\n      deepseek-flash: {prices: [{in: 1.0, out: 2.0}, {from: 2027-01-01, in: 9.0, out: 9.0}]}\n"
+    )
+    resp = await _put(client, text)
+    assert resp.status_code == 200, resp.text
+    body = (await client.get(CATALOG)).json()
+    assert body["data"]["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"][1]["from"] == "2027-01-01"
+    catalogue.install(None)  # another process
+    reader = CatalogueStore(_db(client))
+    installed = await reader.refresh()
+    assert (reader.in_force, reader.refused) == ("whole", [])
+    assert installed.rates("deepseek-flash", at=datetime(2027, 1, 2, tzinfo=UTC)) == (9.0, 9.0)
+    assert installed.rates("deepseek-flash", at=datetime(2026, 12, 2, tzinfo=UTC)) == (1.0, 2.0)
 
 
 async def test_the_same_text_again_records_nothing(client: AsyncClient) -> None:

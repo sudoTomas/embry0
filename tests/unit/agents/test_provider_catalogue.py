@@ -600,9 +600,17 @@ def _later_seed(*, without_models: dict[str, list[str]] | None = None, without: 
     return catalogue.parse(data)
 
 
-def _stored(base: Any, overlay: Any) -> tuple[Any, list[tuple[str, str]]]:
-    document, refused = catalogue.merge_stored(base, overlay)
-    return document, [(".".join(str(part) for part in p.loc), p.type) for p in refused]
+def _stored(base: Any, overlay: Any, shipped: Any = None) -> tuple[Any, list[tuple[str, str]]]:
+    read = catalogue.merge_stored(base, overlay, shipped)
+    return read.document, [(".".join(str(part) for part in p.loc), p.type) for p in read.refused]
+
+
+def _shipped(*models: tuple[str, str]) -> dict[str, dict[str, Any]]:
+    """What a write recorded of these shipped models (catalogue.shipped_entries), against today's seed."""
+    overlay = {"providers": {provider: {"models": {model: {}}} for provider, model in models}}
+    for provider, model in models:
+        overlay["providers"][provider]["models"][model] = {}
+    return catalogue.shipped_entries(catalogue.seed().document, overlay)
 
 
 def test_a_model_the_overlay_took_out_and_the_seed_dropped_too_changes_nothing() -> None:
@@ -629,20 +637,98 @@ def test_a_provider_the_seed_dropped_is_left_out_and_the_rest_stays() -> None:
     assert document.providers["deepseek"].enabled, "a provider the deployment turned on was turned off"
 
 
-def test_an_override_of_a_model_the_seed_dropped_stays_only_as_a_whole_model() -> None:
-    base = _later_seed(without_models={"openai": ["gpt-6.1-sol"], "deepseek": ["deepseek-v4-pro"]})
+def test_a_model_the_seed_dropped_is_kept_as_the_deployment_s_own_only_with_its_own_prices() -> None:
+    """The overlay re-priced gpt-6.1-sol (chat-only as shipped), made deepseek-v4-pro free, and only touched
+    gpt-6-luna's flag; a later release drops all three."""
+    shipped = _shipped(("openai", "gpt-6.1-sol"), ("openai", "gpt-6-luna"), ("deepseek", "deepseek-v4-pro"))
+    base = _later_seed(without_models={"openai": ["gpt-6.1-sol", "gpt-6-luna"], "deepseek": ["deepseek-v4-pro"]})
     overlay = {
         "providers": {
-            "openai": {"enabled": True, "models": {"gpt-6.1-sol": {"chat_only": False}}},
-            "deepseek": {"enabled": True, "models": {"deepseek-v4-pro": {"prices": [{"in": 1.0, "out": 3.0}]}}},
+            "openai": {
+                "enabled": True,
+                "models": {"gpt-6.1-sol": {"prices": [{"in": 3.0, "out": 12.0}]}, "gpt-6-luna": {"chat_only": True}},
+            },
+            "deepseek": {"enabled": True, "models": {"deepseek-v4-pro": {"free": True}}},
         }
     }
-    document, refused = _stored(base, overlay)
-    assert refused == [("providers.openai.models.gpt-6.1-sol", "unpriced")], "a part of a model is no model"
-    assert "gpt-6.1-sol" not in document.providers["openai"].models and document.providers["openai"].enabled
-    assert document.providers["deepseek"].models["deepseek-v4-pro"].prices[0].pair == (1.0, 3.0), (
-        "an override that is a whole model is kept as the deployment's own"
+    read = catalogue.merge_stored(base, overlay, shipped)
+    kept = read.document.providers["openai"].models["gpt-6.1-sol"]
+    assert (kept.prices[0].pair, kept.chat_only) == ((3.0, 12.0), True), "it lost what it was shipped with"
+    assert [p.loc for p in read.notes] == [("providers", "openai", "models", "gpt-6.1-sol")], "kept, unnamed"
+    refused = sorted((".".join(map(str, p.loc)), p.type) for p in read.refused)
+    assert refused == [
+        ("providers.deepseek.models.deepseek-v4-pro", "no_longer_shipped"),
+        ("providers.deepseek.models.deepseek-v4-pro", "withheld"),
+        ("providers.openai.models.gpt-6-luna", "no_longer_shipped"),
+    ], "only a model with prices of its own is kept"
+    assert read.withheld == frozenset({"deepseek-v4-pro"}), "free said a price: it is withheld, not dropped"
+    assert read.document.providers["openai"].enabled and read.document.providers["deepseek"].enabled
+
+
+def test_a_model_the_deployment_added_is_read_as_written() -> None:
+    """No record: it was never shipped, so it is the deployment's own from the start, chat_only as it says."""
+    overlay = {
+        "providers": {"deepseek": {"enabled": True, "models": {"deepseek-next": {"prices": [{"in": 1.0, "out": 3.0}]}}}}
+    }
+    read = catalogue.merge_stored(catalogue.seed().document, overlay, {})
+    assert (read.refused, read.notes, read.withheld) == ([], [], frozenset())
+    assert read.document.providers["deepseek"].models["deepseek-next"].chat_only is False
+
+
+def test_a_price_left_out_leaves_what_it_priced_unpriced() -> None:
+    """A model's dated prices and the custom provider's default the release refuses: never the seed's in their place."""
+    overlay = {
+        "providers": {
+            "deepseek": {
+                "enabled": True,
+                "models": {
+                    "deepseek-flash": {
+                        "prices": [{"in": 9.0, "out": 9.0, "from": date(2027, 1, 1)}, {"in": 1.0, "out": 1.0}]
+                    }
+                },
+            },
+            "custom": {"enabled": True, "default_price": {"in": 3.0, "out": -15.0}},
+        }
+    }
+    read = catalogue.merge_stored(catalogue.seed().document, overlay)
+    built = catalogue.Catalogue.build(read.document, withheld=read.withheld)
+    assert ("providers", "deepseek", "models", "deepseek-flash") in [
+        p.loc for p in read.refused if p.type == "withheld"
+    ]
+    assert ("providers", "custom", "default_price") in [p.loc for p in read.refused if p.type == "withheld"]
+    assert providers.model_rates("deepseek-flash", built) is None, "the seed's price stood in for the deployment's"
+    assert providers.model_rates("custom/llama3", built) is None, "custom ran at $0 in place of the price set"
+    assert providers.unpriced_models(["deepseek-flash", "custom/llama3"], built) == ["custom/llama3", "deepseek-flash"]
+    assert built.enabled("deepseek") and built.enabled("custom"), "the provider stays on for its other models"
+    assert providers.model_rates("deepseek-v4-pro", built) == (1.32, 3.96)
+
+
+def test_an_unknown_top_level_key_is_left_out_alone() -> None:
+    document, refused = _stored(
+        catalogue.seed().document, {"pricing_policy": "strict", "providers": {"deepseek": {"enabled": True}}}
     )
+    assert refused == [("pricing_policy", "extra_forbidden")]
+    assert document.providers["deepseek"].enabled
+
+
+def test_a_dated_price_survives_its_json_form() -> None:
+    """Stored as JSON (catalogue.stored_form), a from day is ISO text; read back, it is a day again."""
+    overlay = {
+        "providers": {
+            "deepseek": {
+                "models": {
+                    "deepseek-flash": {
+                        "prices": [{"in": 1.0, "out": 1.0}, {"from": date(2027, 1, 1), "in": 9.0, "out": 9.0}]
+                    }
+                }
+            }
+        }
+    }
+    stored = json.loads(json.dumps(catalogue.stored_form(overlay)))
+    assert stored["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"][1]["from"] == "2027-01-01"
+    read = catalogue.merge_stored(catalogue.seed().document, stored)
+    assert read.refused == [], "a dated price read back from JSON was refused"
+    assert read.document.providers["deepseek"].models["deepseek-flash"].prices[1].from_ == date(2027, 1, 1)
 
 
 def test_a_field_or_a_value_the_release_refuses_is_left_out_alone() -> None:
@@ -656,9 +742,11 @@ def test_a_field_or_a_value_the_release_refuses_is_left_out_alone() -> None:
             },
         }
     }
-    document, refused = _stored(catalogue.seed().document, overlay)
-    assert sorted(loc for loc, _ in refused) == [
+    read = catalogue.merge_stored(catalogue.seed().document, overlay)
+    document = read.document
+    assert sorted(".".join(map(str, p.loc)) for p in read.refused) == [
         "providers.deepseek.factors.turns",
+        "providers.deepseek.models.deepseek-flash",
         "providers.deepseek.models.deepseek-flash.prices.0.in",
         "providers.openai.base_url",
         "providers.openai.enabeld",
@@ -666,7 +754,7 @@ def test_a_field_or_a_value_the_release_refuses_is_left_out_alone() -> None:
     assert document.providers["openai"].enabled and document.providers["deepseek"].enabled
     assert document.providers["openai"].base_url == catalogue.seed().document.providers["openai"].base_url
     assert document.providers["deepseek"].factors.turns == 1.0
-    assert document.providers["deepseek"].models["deepseek-flash"].prices[0].pair == (0.30, 1.20), "as shipped"
+    assert read.withheld == frozenset({"deepseek-flash"}), "a price left out: the model is unpriced, not as shipped"
 
 
 @pytest.mark.parametrize("overlay", [["providers"], {"version": 2, "providers": {"deepseek": {"enabled": True}}}])
@@ -680,3 +768,32 @@ def test_an_overlay_that_applies_whole_leaves_nothing_out() -> None:
     overlay = {"providers": {"deepseek": {"enabled": True}}}
     document, refused = _stored(catalogue.seed().document, overlay)
     assert (refused, document) == ([], catalogue.merge(catalogue.seed().document, overlay))
+
+
+def test_a_withheld_model_is_unpriced_even_on_openrouter_s_live_list() -> None:
+    from embry0.agents import openrouter_catalog as oc
+
+    model = "openrouter/openai/gpt-6.1-sol"
+    oc.install(oc.Catalog(models={model: oc.CatalogModel(model, "x", 1.0, 2.0)}, fetched_at=datetime.now(UTC)))
+    try:
+        withheld = catalogue.Catalogue.build(catalogue.seed().document, withheld=frozenset({model}))
+        assert providers.model_rates(model, withheld) is None, "the live list priced a model whose price is withheld"
+        assert providers.model_rates(model, catalogue.seed()) == (1.0, 2.0)
+    finally:
+        oc.install(None)
+
+
+def test_a_withheld_model_has_no_rates_of_its_own_nor_its_provider_s_default() -> None:
+    """custom/qwen's price is refused while the custom provider keeps its default: neither prices it."""
+    overlay = {
+        "providers": {"custom": {"enabled": True, "models": {"custom/qwen": {"prices": [{"in": -1.0, "out": 1.0}]}}}}
+    }
+    read = catalogue.merge_stored(catalogue.seed().document, overlay)
+    built = catalogue.Catalogue.build(read.document, withheld=read.withheld)
+    assert read.withheld == frozenset({"custom/qwen"})
+    assert built.rates("custom/qwen") is None
+    assert built.default_rates("custom/qwen") is None, "the provider's default priced a model whose price is withheld"
+    assert built.default_rates("custom/other") == (0.0, 0.0), "the provider's other models keep its default"
+    shipped_model = catalogue.Catalogue.build(catalogue.seed().document, withheld=frozenset({"deepseek-flash"}))
+    assert shipped_model.rates("deepseek-flash") is None, "the seed's entry priced a model whose price is withheld"
+    assert "deepseek-flash" not in shipped_model.named("deepseek").pricing_usd_per_mtok

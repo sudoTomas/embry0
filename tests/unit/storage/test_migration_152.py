@@ -29,13 +29,18 @@ def test_the_provider_catalogue_migration_is_the_last_entry() -> None:
 async def test_it_stores_one_empty_overlay_and_takes_no_other_row(db_with_migrations: DatabasePool) -> None:
     db = db_with_migrations
     rows = [
-        dict(r) for r in await db.fetch("SELECT scope, yaml_text, data, generation, imported FROM provider_catalogue")
+        dict(r)
+        for r in await db.fetch("SELECT scope, yaml_text, data, generation, imported, shipped FROM provider_catalogue")
     ]
-    assert rows == [{"scope": "deployment", "yaml_text": "", "data": {}, "generation": 1, "imported": []}], rows
+    assert rows == [
+        {"scope": "deployment", "yaml_text": "", "data": {}, "generation": 1, "imported": [], "shipped": {}}
+    ], rows
     with pytest.raises(asyncpg.CheckViolationError):
         await db.execute("INSERT INTO provider_catalogue (scope) VALUES ('repository:acme/app')")
     with pytest.raises(asyncpg.CheckViolationError):
         await db.execute("UPDATE provider_catalogue SET data = '[]'::jsonb")
+    with pytest.raises(asyncpg.CheckViolationError):
+        await db.execute("UPDATE provider_catalogue SET shipped = '[]'::jsonb")
 
 
 @pytest.mark.requires_postgres

@@ -66,11 +66,15 @@ from embry0.agents.catalogue import (
     Catalogue,
     CatalogueInvalid,
     Problem,
+    StoredRead,
     current,
     install,
     merge,
     merge_stored,
+    restored,
     seed,
+    shipped_entries,
+    stored_form,
 )
 from embry0.agents.providers import offered_problem
 from embry0.audit.helpers import emit_audit
@@ -294,6 +298,27 @@ class _Row:
     imported: list[str]
     updated_by: str
     updated_at: datetime | None
+    #: Of each model the overlay names, its shipped entry as the writes saw it (``catalogue.shipped_entries``).
+    shipped: dict[str, Any] = field(default_factory=dict)
+
+
+_COLUMNS: Final = "yaml_text, data, generation, imported, updated_by, updated_at, shipped"
+
+
+def _row(row: Any) -> _Row:
+    def _json(value: Any) -> dict[str, Any]:
+        value = json.loads(value) if isinstance(value, str) else value
+        return dict(value) if isinstance(value, Mapping) else {}
+
+    return _Row(
+        str(row["yaml_text"]),
+        _json(row["data"]),
+        int(row["generation"]),
+        list(row["imported"] or []),
+        str(row["updated_by"]),
+        row["updated_at"],
+        _json(row["shipped"]),
+    )
 
 
 InForce = Literal["whole", "in_part", "earlier"]
@@ -313,6 +338,7 @@ class CatalogueStore:
     metrics: Any = NULL_METRICS
     _installed_generation: int | None = None
     _refused: list[Problem] = field(default_factory=list)
+    _notes: list[Problem] = field(default_factory=list)
     _in_force: InForce = "whole"
     _in_force_generation: int | None = None
 
@@ -320,6 +346,11 @@ class CatalogueStore:
     def refused(self) -> list[Problem]:
         """The problems of each part of the stored overlay this process does not run on: the release refuses it."""
         return list(self._refused)
+
+    @property
+    def notes(self) -> list[Problem]:
+        """Models a release dropped that the stored overlay keeps as the deployment's own, at its own prices."""
+        return list(self._notes)
 
     @property
     def in_force(self) -> InForce:
@@ -331,24 +362,10 @@ class CatalogueStore:
         return self._in_force_generation
 
     async def document(self) -> _Row:
-        row = await self.db.fetchrow(
-            "SELECT yaml_text, data, generation, imported, updated_by, updated_at FROM provider_catalogue "
-            "WHERE scope = $1",
-            SCOPE,
-        )
+        row = await self.db.fetchrow(f"SELECT {_COLUMNS} FROM provider_catalogue WHERE scope = $1", SCOPE)
         if row is None:  # migration 152 inserts it; a test database may not have
             return _Row("", {}, 0, [], "", None)
-        data = row["data"]
-        if isinstance(data, str):
-            data = json.loads(data)
-        return _Row(
-            str(row["yaml_text"]),
-            dict(data or {}),
-            int(row["generation"]),
-            list(row["imported"] or []),
-            str(row["updated_by"]),
-            row["updated_at"],
-        )
+        return _row(row)
 
     async def refresh(self) -> Catalogue:
         """Install the stored catalogue when its generation moved since the last look; answer what is installed."""
@@ -387,17 +404,28 @@ class CatalogueStore:
         All of it applies: installed. At this store's first install (the
         process's start), the parts that apply are installed and the rest
         left out (``catalogue.merge_stored``), so a seed that moved never
-        turns off what the deployment turned on, nor drops its prices. Once
-        the process runs on a catalogue, a later overlay this release refuses
-        part of changes nothing: it keeps the catalogue it has. Either way the
-        refused parts are :attr:`refused`, the gauge counts them and a warning
-        is logged; :meth:`_take` audits them.
+        turns off what the deployment turned on; a price that is left out
+        leaves what it priced unpriced, never priced at a value the deployment
+        did not set. Once the process runs on a catalogue, a later overlay this
+        release refuses part of changes nothing: it keeps the catalogue it has.
+        Either way the refused parts are :attr:`refused`, the gauge counts them
+        and a warning is logged; :meth:`_take` audits them. Models kept as the
+        deployment's own are :attr:`notes`, logged.
         """
-        candidate, refused = built(stored.data)
+        candidate, read = built(stored)
+        refused = read.refused
         if not refused or self._installed_generation is None:
             install(candidate)
             self._in_force = "in_part" if refused else "whole"
             self._in_force_generation = stored.generation
+            self._notes = read.notes
+            if read.notes:
+                logger.warning(
+                    "provider_catalogue_models_kept_as_own",
+                    generation=stored.generation,
+                    models=[".".join(str(part) for part in note.loc) for note in read.notes[:20]],
+                    msg="this release no longer ships these models: the catalogue keeps them as the deployment's own",
+                )
         else:
             self._in_force = "earlier"
         self._refused = refused
@@ -418,8 +446,8 @@ class CatalogueStore:
         """``text``'s overlay and the catalogue it makes, refused naming every problem: its own, and each model
         something names that the catalogue ``stored`` makes offers and the new one does not."""
         data = load_text(text)
-        after = Catalogue.build(merge(seed().document, data or None))
-        problems = broken_references(await self.references(conn), built(stored.data)[0], after)
+        after = Catalogue.build(merge(seed().document, data or None, stored.shipped))
+        problems = broken_references(await self.references(conn), built(stored)[0], after)
         if problems:
             raise CatalogueInvalid(problems)
         return data, after
@@ -455,7 +483,7 @@ class CatalogueStore:
             data, _after = await self._checked(conn, text, stored)
             if text == stored.yaml_text:
                 return SaveResult(stored.generation, None, False)
-            generation = await self._write(conn, text, data, actor=actor)
+            generation = await self._write(conn, text, data, actor=actor, previous=stored.shipped)
             revision_id = await ConfigRevisionsRepository(self.db).append(
                 conn,
                 scope=SCOPE,
@@ -493,7 +521,7 @@ class CatalogueStore:
                 raise NotUndoable(WHY_NOT)
             text = str(before_doc.get("yaml_text") or "")
             data, _after = await self._checked(conn, text, stored)
-            generation = await self._write(conn, text, data, actor=actor)
+            generation = await self._write(conn, text, data, actor=actor, previous=stored.shipped)
             new_revision = await ConfigRevisionsRepository(self.db).append(
                 conn,
                 scope=SCOPE,
@@ -521,7 +549,7 @@ class CatalogueStore:
             pending = [key for key in ENV_IMPORTS if key not in stored.imported]
             if not pending:
                 return []
-            overlay = json.loads(json.dumps(stored.data or {}))
+            overlay = restored(json.loads(json.dumps(stored.data or {})))
             providers = overlay.setdefault("providers", {})
             variables: list[str] = []
             for key in pending:
@@ -546,7 +574,7 @@ class CatalogueStore:
                     variables.append(env_name(spec.attr))
             if imported:
                 try:
-                    merge(seed().document, overlay)
+                    merge(seed().document, overlay, stored.shipped)
                 except CatalogueInvalid as invalid:
                     logger.warning("provider_catalogue_env_refused", problems=[str(p) for p in invalid.problems[:10]])
                     imported = []
@@ -555,7 +583,9 @@ class CatalogueStore:
                 day = datetime.now(UTC).date().isoformat()
                 text = f"# Imported once from {', '.join(variables)} on {day}; the variables are ignored now.\n"
                 text += yaml.safe_dump(overlay, sort_keys=False, default_flow_style=False)
-                generation = await self._write(conn, text, overlay, actor=actor, imported=ledger)
+                generation = await self._write(
+                    conn, text, overlay, actor=actor, imported=ledger, previous=stored.shipped
+                )
                 await ConfigRevisionsRepository(self.db).append(
                     conn,
                     scope=SCOPE,
@@ -599,54 +629,50 @@ class CatalogueStore:
             yield current()
 
     async def _write(
-        self, conn: Any, text: str, data: Mapping[str, Any], *, actor: str, imported: list[str] | None = None
+        self,
+        conn: Any,
+        text: str,
+        data: Mapping[str, Any],
+        *,
+        actor: str,
+        previous: Mapping[str, Any],
+        imported: list[str] | None = None,
     ) -> int:
+        """Store ``text`` and its values in JSON form (a ``from`` day as its ISO text), with the shipped entry of
+        each model they name (``catalogue.shipped_entries``: this release's, or ``previous``'s for one it dropped)."""
         generation = await conn.fetchval(
             "UPDATE provider_catalogue SET yaml_text = $2, data = $3::jsonb, generation = generation + 1, "
-            "imported = COALESCE($5, imported), updated_by = $4, updated_at = NOW() WHERE scope = $1 "
-            "RETURNING generation",
+            "imported = COALESCE($5, imported), updated_by = $4, updated_at = NOW(), shipped = $6::jsonb "
+            "WHERE scope = $1 RETURNING generation",
             SCOPE,
             text,
-            dict(data),
+            stored_form(data),
             actor,
             imported,
+            shipped_entries(seed().document, data, previous),
         )
         return int(generation)
 
 
 async def _held_row(conn: Any, lock: str) -> _Row:
-    row = await conn.fetchrow(
-        "SELECT yaml_text, data, generation, imported, updated_by, updated_at FROM provider_catalogue "
-        f"WHERE scope = $1{lock}",
-        SCOPE,
-    )
+    row = await conn.fetchrow(f"SELECT {_COLUMNS} FROM provider_catalogue WHERE scope = $1{lock}", SCOPE)
     if row is None:  # migration 152 inserts it
         await conn.execute("INSERT INTO provider_catalogue (scope) VALUES ($1) ON CONFLICT DO NOTHING", SCOPE)
         return await _held_row(conn, lock)
-    data = row["data"]
-    if isinstance(data, str):
-        data = json.loads(data)
-    return _Row(
-        str(row["yaml_text"]),
-        dict(data or {}),
-        int(row["generation"]),
-        list(row["imported"] or []),
-        str(row["updated_by"]),
-        row["updated_at"],
-    )
+    return _row(row)
 
 
-def built(data: Mapping[str, Any]) -> tuple[Catalogue, list[Problem]]:
-    """The catalogue a stored overlay makes with this release's seed: every part of it that applies, and the
-    problems of each part that does not (``catalogue.merge_stored``)."""
-    document, refused = merge_stored(seed().document, dict(data) or None)
-    return Catalogue.build(document), refused
+def built(stored: _Row) -> tuple[Catalogue, StoredRead]:
+    """The catalogue a stored overlay makes with this release's seed: every part of it that applies, its models
+    whose price is left out unpriced, and why (``catalogue.merge_stored``)."""
+    read = merge_stored(seed().document, dict(stored.data) or None, stored.shipped)
+    return Catalogue.build(read.document, withheld=read.withheld), read
 
 
 async def held_catalogue(conn: Any) -> Catalogue:
     """The stored catalogue, its row read ``FOR SHARE`` on ``conn``: the lock lasts as long as ``conn``'s
     transaction (a settings write's, ``embry0.settings.write_context``)."""
-    return built((await _held_row(conn, " FOR SHARE")).data)[0]
+    return built(await _held_row(conn, " FOR SHARE"))[0]
 
 
 def _matches(expected: int | Collection[int] | None, generation: int) -> bool:
@@ -656,7 +682,7 @@ def _matches(expected: int | Collection[int] | None, generation: int) -> bool:
 
 
 def _document(text: str, data: Mapping[str, Any]) -> dict[str, Any]:
-    return {"yaml_text": text, "data": dict(data)}
+    return {"yaml_text": text, "data": stored_form(data)}
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

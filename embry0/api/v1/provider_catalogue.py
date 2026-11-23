@@ -112,8 +112,11 @@ async def get_provider_catalogue(
     release takes, the parts it refuses named in ``refused`` (a release that
     took out a model or a provider the overlay names, at the start); or
     ``earlier``, the overlay of ``in_force_generation``, when a later one this
-    release refuses part of was written while the process ran. ``?format=yaml``
-    answers the overlay's text alone. Any key."""
+    release refuses part of was written while the process ran. A price left out
+    leaves what it priced unpriced (``withheld`` in ``refused``). ``notes``
+    names each model a release dropped that the overlay keeps as the
+    deployment's own, at its own prices. ``?format=yaml`` answers the
+    overlay's text alone. Any key."""
     store = _store(request)
     installed = await store.refresh()
     stored = await store.document()
@@ -132,6 +135,7 @@ async def get_provider_catalogue(
         "in_force": store.in_force,
         "in_force_generation": store.in_force_generation,
         "refused": [problem.to_dict() for problem in store.refused],
+        "notes": [problem.to_dict() for problem in store.notes],
     }
 
 

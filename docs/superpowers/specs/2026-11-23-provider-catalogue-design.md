@@ -89,9 +89,16 @@ A write is checked whole (`catalogue.merge`). A stored overlay meets the seed of
 |---|---|
 | `null` for a model the seed no longer has | what it asked for holds: dropped, not reported |
 | a provider the seed no longer ships | its entry is left out, reported |
-| fields of a model the seed dropped | kept as the deployment's own model when it is a whole one (`prices` or `free`), since that is what a write of it now would be; else that model's entry is left out, reported |
-| a field embry0 now sets, a key it no longer knows, a value a bound now refuses | that provider field, or that model's entry, is left out, reported; the seed's value stands |
-| a top level that is no overlay (not a mapping, another `version`) | nothing of it applies: the seed, reported |
+| fields of a model the seed dropped | kept as the deployment's own model only when they state `prices` of their own (a price of the release that dropped the model is no price to trust, and `free: true` alone says nothing of what it costs); it keeps the chat-only flag and request extras it was shipped with (`shipped`, below), so a chat-only model is never sent tools; named in `notes`. Without prices that model's entry is left out, reported |
+| a field embry0 now sets, a key it no longer knows, a value a bound now refuses | that provider field, or that model's entry, is left out, reported; the seed's value stands, but never for a price (below) |
+| a top-level key embry0 does not know | that key is left out, reported |
+| a top level that is no overlay (not a mapping, another `version`, `providers` not a mapping) | nothing of it applies: the seed, reported |
+
+**A price fails closed.** A price is never replaced by one the deployment did not set. When a model's entry that stated `prices` or `free` is left out, the model is withheld (`Catalogue.withheld`): unpriced whatever the seed or a provider default says, so the resolver refuses it and every write that names it is refused; `refused` says so (`withheld`). When a provider's `default_price` is left out, it is set to null rather than to the seed's: the provider's models without a price of their own are unpriced. Of the two fail-closed choices, an unpriced model and a provider turned off, the unpriced model is narrower, so the provider stays on for its other models.
+
+**What a write records.** Each write stores, beside the overlay, the shipped entry of every model the overlay names (`provider_catalogue.shipped`, JSON): this release's, or, for a model a release has dropped since, what the previous write recorded. That is how a later release knows a dropped model's chat-only flag and extras. A write checks a dropped model against that record too, so writing the drifted text again keeps it, and a write without prices of its own refuses it (`no_longer_shipped`).
+
+**JSON form.** The overlay's values are stored as JSON: a price's `from` day as its ISO text, read back as a day (`catalogue.stored_form`, `catalogue.restored`), so a dated price written in one process is in force in every other.
 
 Every problem the release finds is attributed to its part, the parts are left out, and the rest is merged again until it merges; each pass leaves out at least one part, so it ends.
 

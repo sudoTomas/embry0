@@ -4787,7 +4787,9 @@ deliverable under an "Assumptions" heading.$seed$
         # (embry0/agents/providers.yaml) is merged with it field by field. An
         # empty overlay is the seed. generation counts writes, for If-Match
         # and for every process to see a write. imported is the one-time
-        # environment import's ledger. Its changes are config_revisions rows
+        # environment import's ledger. shipped is, of each model the overlay
+        # names, its shipped entry as the writes saw it, so a release that
+        # drops the model still knows what it was. Its changes are config_revisions rows
         # with surface 'provider_catalogue'. The row is inserted here, so a
         # reader never meets a missing one; the application writes its
         # content, since SQL cannot validate it.
@@ -4800,7 +4802,8 @@ deliverable under an "Assumptions" heading.$seed$
             imported    TEXT[] NOT NULL DEFAULT '{}',
             updated_by  TEXT NOT NULL DEFAULT '',
             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            shipped     JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(shipped) = 'object')
         );
         INSERT INTO provider_catalogue (scope) VALUES ('deployment') ON CONFLICT (scope) DO NOTHING;
         COMMENT ON TABLE provider_catalogue IS
