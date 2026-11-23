@@ -123,11 +123,11 @@ async def test_an_import_keeps_the_comments_already_written(db_with_migrations: 
     store = SettingsStore(db_with_migrations, TEST_CATALOG)
     text = "# our policy\nother:\n  limit: 2  # reviewed\n"
     await store.save(text, load_yaml(text), actor="alex@example.com")
-    await import_env_once(store, _config(PROPOSAL_BRIEFS_PER_TICK="7"), today=DAY)
+    await import_env_once(store, _config(JOB_BRIEFS_PER_TICK="7"), today=DAY)
     row = await store.document()
     assert row["yaml_text"] == (
         "# our policy\nother:\n  limit: 2  # reviewed\n\n"
-        "# Imported from the environment on 2026-10-28: PROPOSAL_BRIEFS_PER_TICK.\nsample:\n  per_tick: 7\n"
+        "# Imported from the environment on 2026-10-28: JOB_BRIEFS_PER_TICK.\nsample:\n  per_tick: 7\n"
     )
     assert row["data"] == {"other": {"limit": 2}, "sample": {"per_tick": 7}}
 

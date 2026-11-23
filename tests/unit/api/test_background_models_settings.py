@@ -361,91 +361,102 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
         scout_model="custom/scout",
-        proposal_briefs_per_tick=4,
-        proposal_brief_interval_seconds=61.0,
+        # No longer read (#168): the proposal briefs keep their fixed cadence, and startup warns.
+        proposal_briefs_per_tick="4",
+        proposal_brief_interval_seconds="61",
         job_briefs_per_tick=5,
         job_brief_interval_seconds=62.0,
     )
     app = create_app(config)
-    async with lifespan(app):
-        state = app.state
+    with capture_logs() as startup_logs:
+        async with lifespan(app):
+            state = app.state
 
-        async def scout() -> Any:
-            # The scout reads its model with its section, from one snapshot a tick.
-            return (await state.scout.settings()).models
+            async def scout() -> Any:
+                # The scout reads its model with its section, from one snapshot a tick.
+                return (await state.scout.settings()).models
 
-        async def proposal_brief() -> Any:
-            # The proposal briefs read their model with the leads section, from one snapshot a tick.
-            return (await state.proposal_brief_writer._settings()).models  # noqa: SLF001
+            async def proposal_brief() -> Any:
+                # The proposal briefs read their model with the leads section, from one snapshot a tick.
+                return (await state.proposal_brief_writer._settings()).models  # noqa: SLF001
 
-        async def slop_judge() -> Any:
-            # The meter reads its judge's model with its enrollment, from one snapshot a tick (#165).
-            return (await state.slop_meter._read()).models  # noqa: SLF001
+            async def slop_judge() -> Any:
+                # The meter reads its judge's model with its enrollment, from one snapshot a tick (#165).
+                return (await state.slop_meter._read()).models  # noqa: SLF001
 
-        async def job_brief() -> Any:
-            # The job briefs read their model from one snapshot a tick, on the same brief writer (#166).
-            settings = getattr(state.job_brief_writer, "_settings", None)
-            assert settings is not None, "the job briefs read their model and their prompt through one reader (#166)"
-            return (await settings()).models
+            async def job_brief() -> Any:
+                # The job briefs read their model from one snapshot a tick, on the same brief writer (#166).
+                settings = getattr(state.job_brief_writer, "_settings", None)
+                assert settings is not None, (
+                    "the job briefs read their model and their prompt through one reader (#166)"
+                )
+                return (await settings()).models
 
-        readers = {
-            "proposal_brief": proposal_brief,
-            "job_brief": job_brief,
-            "slop_judge": slop_judge,
-            "scout": scout,
-        }
+            readers = {
+                "proposal_brief": proposal_brief,
+                "job_brief": job_brief,
+                "slop_judge": slop_judge,
+                "scout": scout,
+            }
 
-        async def read() -> dict[str, str]:
-            out = {feature: (await reader())("acme/widgets") for feature, reader in readers.items()}
-            out["watcher"] = await app_module._watcher_local_first_model(app, "acme/widgets")()  # noqa: SLF001
-            return out
+            async def read() -> dict[str, str]:
+                out = {feature: (await reader())("acme/widgets") for feature, reader in readers.items()}
+                out["watcher"] = await app_module._watcher_local_first_model(app, "acme/widgets")()  # noqa: SLF001
+                return out
 
-        assert await read() == {
-            "proposal_brief": "custom/watcher",
-            "job_brief": "custom/watcher",
-            "slop_judge": "custom/watcher",
-            "scout": "custom/scout",
-            "watcher": "custom/watcher",
-        }, "the boot imported SCOUT_MODEL and the provider settings' watcher model into what each feature reads"
-        await state.settings.set_keys(
-            "background_models", {"default": "custom/next", "job_brief": False}, actor="alex@example.com"
-        )
-        assert await read() == {
-            "proposal_brief": "custom/next",
-            "job_brief": "",
-            "slop_judge": "custom/next",
-            "scout": "custom/scout",
-            "watcher": "custom/next",
-        }, "a write reaches every running feature's next read, with no restart"
-        calls = state.background_calls
-        assert isinstance(calls, module.BackgroundCalls)
-        assert isinstance(calls._spend, BackgroundSpendRepository) and isinstance(calls._gate, BudgetGate)  # noqa: SLF001
-        assert calls._gate._settings == state.budget_policy.settings, (  # noqa: SLF001
-            "the background calls' gate reads the caps through the application's budget policy"
-        )
-        for loop in (state.proposal_brief_writer, state.job_brief_writer, state.slop_meter):
-            assert loop._calls is calls, f"{type(loop).__name__} calls through the metered path"  # noqa: SLF001
-
-        # One brief writer (#166): both loops are it, each with its own cadence and count, and each tick asks with
-        # its agent definition's voice, seeded at the boot; an edit reaches the next tick.
-        from embry0.services.brief_writer import BriefWriter
-        from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
-
-        loops = {
-            "proposal-brief": (state.proposal_brief_writer, 4, 61.0),
-            "job-brief": (state.job_brief_writer, 5, 62.0),
-        }
-        for agent_type, (writer, per_tick, interval) in loops.items():
-            assert isinstance(writer, BriefWriter), f"the {agent_type} loop is the one brief writer"
-            assert (writer._per_tick, writer._interval) == (per_tick, interval), (  # noqa: SLF001
-                f"the {agent_type} loop keeps its own per-tick count and cadence from the config"
+            assert await read() == {
+                "proposal_brief": "custom/watcher",
+                "job_brief": "custom/watcher",
+                "slop_judge": "custom/watcher",
+                "scout": "custom/scout",
+                "watcher": "custom/watcher",
+            }, "the boot imported SCOUT_MODEL and the provider settings' watcher model into what each feature reads"
+            await state.settings.set_keys(
+                "background_models", {"default": "custom/next", "job_brief": False}, actor="alex@example.com"
             )
-            shipped = BUILTIN_SEED[agent_type]["system_prompt"]
-            assert (await writer._settings()).voice == shipped, f"the boot seeded {agent_type}"  # noqa: SLF001
-            await state.agent_defs_repo.update(agent_type, system_prompt="Write every brief in plain German.")
-            assert (await writer._settings()).voice == "Write every brief in plain German.", (  # noqa: SLF001
-                f"an edit of {agent_type} reaches its loop's next tick, with no restart"
+            assert await read() == {
+                "proposal_brief": "custom/next",
+                "job_brief": "",
+                "slop_judge": "custom/next",
+                "scout": "custom/scout",
+                "watcher": "custom/next",
+            }, "a write reaches every running feature's next read, with no restart"
+            calls = state.background_calls
+            assert isinstance(calls, module.BackgroundCalls)
+            assert isinstance(calls._spend, BackgroundSpendRepository) and isinstance(calls._gate, BudgetGate)  # noqa: SLF001
+            assert calls._gate._settings == state.budget_policy.settings, (  # noqa: SLF001
+                "the background calls' gate reads the caps through the application's budget policy"
             )
+            for loop in (state.proposal_brief_writer, state.job_brief_writer, state.slop_meter):
+                assert loop._calls is calls, f"{type(loop).__name__} calls through the metered path"  # noqa: SLF001
+
+            # One brief writer (#166): both loops are it, each with its own cadence and count, and each tick asks with
+            # its agent definition's voice, seeded at the boot; an edit reaches the next tick.
+            from embry0.services.brief_writer import BriefWriter
+            from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+            loops = {
+                "proposal-brief": (state.proposal_brief_writer, 3, 60.0),
+                "job-brief": (state.job_brief_writer, 5, 62.0),
+            }
+            for agent_type, (writer, per_tick, interval) in loops.items():
+                assert isinstance(writer, BriefWriter), f"the {agent_type} loop is the one brief writer"
+                assert (writer._per_tick, writer._interval) == (per_tick, interval), (  # noqa: SLF001
+                    f"the {agent_type} loop keeps its own per-tick count and cadence: the proposal briefs' fixed "
+                    "(PROPOSAL_BRIEFS_PER_TICK and PROPOSAL_BRIEF_INTERVAL_SECONDS no longer change it), the job "
+                    "briefs' from the config"
+                )
+                shipped = BUILTIN_SEED[agent_type]["system_prompt"]
+                assert (await writer._settings()).voice == shipped, f"the boot seeded {agent_type}"  # noqa: SLF001
+                await state.agent_defs_repo.update(agent_type, system_prompt="Write every brief in plain German.")
+                assert (await writer._settings()).voice == "Write every brief in plain German.", (  # noqa: SLF001
+                    f"an edit of {agent_type} reaches its loop's next tick, with no restart"
+                )
+
+    retired = [e["variable"] for e in startup_logs if e["event"] == "settings_env_retired"]
+    assert retired == ["PROPOSAL_BRIEFS_PER_TICK", "PROPOSAL_BRIEF_INTERVAL_SECONDS"], (
+        f"the boot says each proposal brief cadence variable still set is no longer read: {retired}"
+    )
 
 
 # What each feature ran on before the section, as origin/main's app.py read it: the watcher on W, the

@@ -2768,20 +2768,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     # Proposal briefs (spec 2026-10-25): writes each owner proposal in plain
-    # words on its model, a few a minute; the feed only reads them. The held
-    # tickets (below their repository's `leads.ask_min`) come last. Each tick
-    # reads its model and the leads section from one settings snapshot, and
-    # its prompt from the proposal-brief agent definition (#166).
+    # words on its model, a few a minute (constants, #168); the feed only reads
+    # them. The held tickets (below their repository's `leads.ask_min`) come
+    # last. Each tick reads its model and the leads section from one settings
+    # snapshot, and its prompt from the proposal-brief agent definition (#166).
     from embry0.api.v1.proposals import open_proposals
-    from embry0.services.proposal_briefs import ProposalBriefWriter, brief_settings
+    from embry0.services.proposal_briefs import ProposalBriefWriter, brief_settings, warn_retired_cadence
 
+    warn_retired_cadence(config)
     app.state.proposal_brief_writer = ProposalBriefWriter(
         proposals=lambda: open_proposals(app.state),
         settings=brief_settings(app.state.settings, app.state.agent_defs_repo),
         briefs=app.state.proposal_briefs_repo,
         calls=app.state.background_calls,
-        per_tick=config.proposal_briefs_per_tick,
-        interval_seconds=config.proposal_brief_interval_seconds,
     )
     brief_task = asyncio.create_task(app.state.proposal_brief_writer.start())
     app.state.background_tasks.add(brief_task)

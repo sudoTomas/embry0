@@ -46,7 +46,7 @@ def test_every_field_is_in_its_section_table_with_its_description_and_variable()
         assert (SAMPLE.model.model_fields[key].description or "") in row
     per_tick = next(line for line in block.splitlines() if line.startswith("| `per_tick` |"))
     assert per_tick == (
-        "| `per_tick` | whole number | `3` | ≥ 1, ≤ 20 | organization | `PROPOSAL_BRIEFS_PER_TICK` "
+        "| `per_tick` | whole number | `3` | ≥ 1, ≤ 20 | organization | `JOB_BRIEFS_PER_TICK` "
         "| Items the sample loop handles each tick. |"
     )
 
