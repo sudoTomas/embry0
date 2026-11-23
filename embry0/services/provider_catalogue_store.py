@@ -29,11 +29,18 @@ against what it wrote.
 ``embry0.agents.providers`` answers from it. :meth:`CatalogueStore.refresh`
 asks the database for the generation and reads the document only when it
 moved: the lifespan calls it every few seconds (:data:`REFRESH_SECONDS`), a
-write here at once, and the catalogue routes before they answer. A stored
-overlay the running release refuses (a seed entry it changed is gone) is never
-installed: the seed is, with a warning logged once and the problems reported
-by ``GET /config/providers/catalog``. A database error keeps what is
-installed.
+write here at once, and the catalogue routes before they answer. A database
+error keeps what is installed.
+
+**Seed drift.** A stored overlay meets the seed of whatever release reads it,
+which may have taken out a model or a provider it names. At a process's start
+every part that still applies is installed and the rest left out
+(``catalogue.merge_stored``); a running process that reads a later overlay
+this release refuses part of keeps the catalogue it has (:meth:`CatalogueStore._install`).
+Either way each refused part is named by ``GET /config/providers/catalog``,
+counted by ``embry0_provider_catalogue_refused_parts`` (alert
+``Embry0ProviderCatalogueRefused``), logged, and audited as
+``provider_catalogue.refused``.
 
 **The environment, once.** ``OPENAI_COMPATIBLE_PROVIDERS`` and
 ``OPENROUTER_CATALOG_REFRESH_HOURS`` were read from the environment before the
@@ -50,7 +57,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapp
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import structlog
 import yaml
@@ -62,10 +69,12 @@ from embry0.agents.catalogue import (
     current,
     install,
     merge,
+    merge_stored,
     seed,
 )
 from embry0.agents.providers import offered_problem
 from embry0.audit.helpers import emit_audit
+from embry0.metrics.loop import NULL_METRICS
 from embry0.settings.env import env_name, is_set
 from embry0.settings.registry import EnvImport
 from embry0.storage.database import DatabasePool
@@ -287,6 +296,12 @@ class _Row:
     updated_at: datetime | None
 
 
+InForce = Literal["whole", "in_part", "earlier"]
+"""How much of the stored overlay a process runs on: all of it; at its start, every part this release takes (the
+rest is :attr:`CatalogueStore.refused`); or, for an overlay this release refuses part of once it runs, the catalogue
+it ran on before."""
+
+
 @dataclass
 class CatalogueStore:
     """The deployment's catalogue overlay: read, checked writes with history and undo, and what is installed."""
@@ -294,13 +309,26 @@ class CatalogueStore:
     db: DatabasePool
     references: ReferenceReader = field(default=read_references)
     audit_log_path: str | None = None
+    #: ``LoopMetrics`` (``embry0_provider_catalogue_refused_parts``); the null one records nothing.
+    metrics: Any = NULL_METRICS
     _installed_generation: int | None = None
     _refused: list[Problem] = field(default_factory=list)
+    _in_force: InForce = "whole"
+    _in_force_generation: int | None = None
 
     @property
     def refused(self) -> list[Problem]:
-        """Why the stored overlay is not the one installed, when the running release refuses it."""
+        """The problems of each part of the stored overlay this process does not run on: the release refuses it."""
         return list(self._refused)
+
+    @property
+    def in_force(self) -> InForce:
+        return self._in_force
+
+    @property
+    def in_force_generation(self) -> int | None:
+        """The generation of the stored overlay this process runs on (all of it, or the parts it takes)."""
+        return self._in_force_generation
 
     async def document(self) -> _Row:
         row = await self.db.fetchrow(
@@ -332,20 +360,59 @@ class CatalogueStore:
         if generation is None or int(generation) == self._installed_generation:
             return current()
         stored = await self.document()
-        self._install(stored)
+        await self._take(stored)
         return current()
 
-    def _install(self, stored: _Row) -> None:
-        installed, self._refused = built(stored.data)
-        if self._refused:  # once per generation: a store installs each generation once
+    async def _take(self, stored: _Row) -> None:
+        """Install what ``stored`` makes (:meth:`_install`); a part this release refuses is audited, once a
+        generation."""
+        if self._install(stored):
+            await emit_audit(
+                self.db,
+                "provider_catalogue.refused",
+                actor="embry0:provider-catalogue",
+                details={
+                    "generation": stored.generation,
+                    "in_force": self._in_force,
+                    "in_force_generation": self._in_force_generation,
+                    "parts": [".".join(str(part) for part in problem.loc) for problem in self._refused[:50]],
+                    "count": len(self._refused),
+                },
+                audit_log_path=self.audit_log_path,
+            )
+
+    def _install(self, stored: _Row) -> bool:
+        """Install the catalogue ``stored`` makes with this release's seed; True when the release refuses a part.
+
+        All of it applies: installed. At this store's first install (the
+        process's start), the parts that apply are installed and the rest
+        left out (``catalogue.merge_stored``), so a seed that moved never
+        turns off what the deployment turned on, nor drops its prices. Once
+        the process runs on a catalogue, a later overlay this release refuses
+        part of changes nothing: it keeps the catalogue it has. Either way the
+        refused parts are :attr:`refused`, the gauge counts them and a warning
+        is logged; :meth:`_take` audits them.
+        """
+        candidate, refused = built(stored.data)
+        if not refused or self._installed_generation is None:
+            install(candidate)
+            self._in_force = "in_part" if refused else "whole"
+            self._in_force_generation = stored.generation
+        else:
+            self._in_force = "earlier"
+        self._refused = refused
+        self._installed_generation = stored.generation
+        self.metrics.provider_catalogue_refused(len(refused))
+        if refused:
             logger.warning(
                 "provider_catalogue_refused",
                 generation=stored.generation,
-                problems=[str(problem) for problem in self._refused[:10]],
-                msg="the stored catalogue does not combine with this release's; the shipped one is in force",
+                in_force=self._in_force,
+                in_force_generation=self._in_force_generation,
+                problems=[str(problem) for problem in refused[:10]],
+                msg="this release refuses part of the stored provider catalogue; that part is not in force",
             )
-        install(installed)
-        self._installed_generation = stored.generation
+        return bool(refused)
 
     async def _checked(self, conn: Any, text: str, stored: _Row) -> tuple[dict[str, Any], Catalogue]:
         """``text``'s overlay and the catalogue it makes, refused naming every problem: its own, and each model
@@ -528,7 +595,7 @@ class CatalogueStore:
         async with self.db.transaction() as conn:
             stored = await _held_row(conn, " FOR SHARE")
             if stored.generation != self._installed_generation:
-                self._install(stored)
+                await self._take(stored)
             yield current()
 
     async def _write(
@@ -570,12 +637,10 @@ async def _held_row(conn: Any, lock: str) -> _Row:
 
 
 def built(data: Mapping[str, Any]) -> tuple[Catalogue, list[Problem]]:
-    """The catalogue a stored overlay makes with this release's seed, and no problems; the seed and why, when this
-    release refuses it."""
-    try:
-        return Catalogue.build(merge(seed().document, dict(data) or None)), []
-    except CatalogueInvalid as invalid:
-        return seed(), list(invalid.problems)
+    """The catalogue a stored overlay makes with this release's seed: every part of it that applies, and the
+    problems of each part that does not (``catalogue.merge_stored``)."""
+    document, refused = merge_stored(seed().document, dict(data) or None)
+    return Catalogue.build(document), refused
 
 
 async def held_catalogue(conn: Any) -> Catalogue:

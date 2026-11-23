@@ -106,11 +106,14 @@ async def get_provider_catalogue(
 
     ``yaml_text`` is the overlay as written (empty: the shipped catalogue as it
     is), ``data`` its values, ``generation`` the version to name in a write's
-    ``If-Match`` (also the ``ETag``). ``catalogue`` is what every job runs on:
-    the shipped catalogue with the overlay merged in. ``refused`` names why
-    the stored overlay is not in force, when this release refuses it (the
-    shipped catalogue is then). ``?format=yaml`` answers the overlay's text
-    alone. Any key."""
+    ``If-Match`` (also the ``ETag``). ``catalogue`` is what this process runs
+    on: the shipped catalogue with the overlay merged in. ``in_force`` says how
+    much of the overlay that is: ``whole``; ``in_part``, every part this
+    release takes, the parts it refuses named in ``refused`` (a release that
+    took out a model or a provider the overlay names, at the start); or
+    ``earlier``, the overlay of ``in_force_generation``, when a later one this
+    release refuses part of was written while the process ran. ``?format=yaml``
+    answers the overlay's text alone. Any key."""
     store = _store(request)
     installed = await store.refresh()
     stored = await store.document()
@@ -126,6 +129,8 @@ async def get_provider_catalogue(
         "updated_by": shown(stored.updated_by) if stored.updated_by else stored.updated_by,
         "updated_at": stored.updated_at.isoformat() if stored.updated_at is not None else None,
         "catalogue": installed.document.model_dump(mode="json", by_alias=True),
+        "in_force": store.in_force,
+        "in_force_generation": store.in_force_generation,
         "refused": [problem.to_dict() for problem in store.refused],
     }
 

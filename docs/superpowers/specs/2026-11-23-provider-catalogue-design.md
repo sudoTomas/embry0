@@ -77,7 +77,28 @@ One row, `provider_catalogue` (migration 152): the overlay's YAML as written, co
 
 ## Readers
 
-`embry0.agents.providers` keeps its functions and answers every one from the catalogue installed in the process (`catalogue.current()`): the seed until a deployment's own is installed. The orchestrator imports the environment and installs the stored catalogue at startup, before anything routes a model; a write installs it at once in the process that took it, and every other process reads the stored generation every ten seconds and installs a new one. A stored overlay the running release refuses is never installed: the seed is, with a warning once per generation, and `GET` names why. OpenRouter's live-list loop reads its switch (`enabled`) and its interval (`refresh_hours`) from the installed catalogue each minute. The resolver sends every model routed to a provider other than Anthropic its rates in force with the run (`pricing_usd_per_mtok`, which sandbox images already read), so a sandbox, which carries the shipped catalogue, meters a model the overlay re-priced or added at the overlay's rates; its request extras and the rest of the provider record follow in PR 3.
+`embry0.agents.providers` keeps its functions and answers every one from the catalogue installed in the process (`catalogue.current()`): the seed until a deployment's own is installed. The orchestrator imports the environment and installs the stored catalogue at startup, before anything routes a model; a write installs it at once in the process that took it, and every other process reads the stored generation every ten seconds and installs a new one; a stored overlay this release refuses part of is read as "Seed drift" below says. OpenRouter's live-list loop reads its switch (`enabled`) and its interval (`refresh_hours`) from the installed catalogue each minute. The resolver sends every model routed to a provider other than Anthropic its rates in force with the run (`pricing_usd_per_mtok`, which sandbox images already read), so a sandbox, which carries the shipped catalogue, meters a model the overlay re-priced or added at the overlay's rates where embry0 prices a run from its tokens (the chat-completions providers, grok's direct executor); its request extras and the rest of the provider record follow in PR 3. An SDK-runtime run (grok on the Agent SDK) is charged what the CLI reports, its per-turn estimates priced from the sandbox's shipped table, so the catalogue's prices for an SDK-runtime provider drive no charge until PR 3.
+
+**What every key reads.** The document holds no address an operator gives and no key's source, so any key reads all of it: the YAML with its comments, each revision's reason and its text before and after, and every value, `request_extras` such as `chat_template_kwargs` included. The docs tell operators to keep secrets out of it.
+
+### Seed drift
+
+A write is checked whole (`catalogue.merge`). A stored overlay meets the seed of whatever release reads it, which may have taken out a model or a provider the overlay names, made a field embry0's own, or tightened a bound. Losing the whole overlay then would turn off every provider the deployment turned on and drop every price it set (the custom provider back to $0), on an ordinary release. So a stored overlay is read part by part (`catalogue.merge_stored`); a part is a provider's entry, a model's entry, or a provider's field:
+
+| Drift | Decision |
+|---|---|
+| `null` for a model the seed no longer has | what it asked for holds: dropped, not reported |
+| a provider the seed no longer ships | its entry is left out, reported |
+| fields of a model the seed dropped | kept as the deployment's own model when it is a whole one (`prices` or `free`), since that is what a write of it now would be; else that model's entry is left out, reported |
+| a field embry0 now sets, a key it no longer knows, a value a bound now refuses | that provider field, or that model's entry, is left out, reported; the seed's value stands |
+| a top level that is no overlay (not a mapping, another `version`) | nothing of it applies: the seed, reported |
+
+Every problem the release finds is attributed to its part, the parts are left out, and the rest is merged again until it merges; each pass leaves out at least one part, so it ends.
+
+**Where it is read.** At a process's start (a store's first install), every part that applies is installed: never the bare seed for enablement while any of the overlay applies. A process already running keeps the catalogue it runs on when a later overlay this release refuses part of is written: a rolling deploy's old process reading a newer release's overlay, or a hand at the database. A write and an undo are strict, so writing the drifted text again names each part, and a write without them puts the whole overlay back in force.
+
+**Raised, not only logged.** Each refused part is named by `GET /config/providers/catalog` (`refused`, with `in_force`: `whole`, `in_part` or `earlier`, and `in_force_generation`), logged (`provider_catalogue_refused`), audited once a generation in each process (`provider_catalogue.refused`), and counted by the gauge `embry0_provider_catalogue_refused_parts`. The gauge is seeded 0 when the process starts, so the shipped rule `Embry0ProviderCatalogueRefused` (`infra/prometheus/provider-catalogue.rules.yml`, `(max(...) or vector(0)) > 0` for 5 minutes) has a series to read from the first scrape; its `promtool` tests show it quiet at 0, firing at 2, firing on one process of two, and clearing once fixed.
+
 
 The modules that still import a shipped constant read only what an overlay cannot change: a provider's name, address, prefixes or probe path (`provider_probe`, `metrics/labels`, the credential schema's list of the family), or run in the sandbox (`agents/executor`, PR 3). The sandbox reads no table once each invocation carries its provider record (PR 3).
 
@@ -96,7 +117,8 @@ Each PR is reviewed and merged before the next.
    - the one-time import of `OPENAI_COMPATIBLE_PROVIDERS` and `OPENROUTER_CATALOG_REFRESH_HOURS`, after which neither variable turns anything on;
    - checking settings, tier, fallback and agent writes against the stored catalogue, and refusing to take out a model that a tier, the fallback order, an agent or `background_models` names;
    - the bounds on a write; the credential code, the OpenRouter loop and the messages reading the installed catalogue.
-3. **Sandbox independence.** Each invocation carries its provider record: runtime, upstream id, request extras, the rates in force at its start, cache factors, and the key's variable. The rates are recorded on the trace. This needs a sandbox image rebuild.
+   - a stored overlay read part by part against a moved seed ("Seed drift"), with its gauge, audit row and alert rule.
+3. **Sandbox independence.** Each invocation carries its provider record: runtime, upstream id, request extras, the rates in force at its start, cache factors, and the key's variable. The rates are recorded on the trace. An SDK-runtime run (grok on the Agent SDK) is charged from the catalogue's rates and the run's tokens, not the CLI's `total_cost_usd`, and its per-turn estimates use the same rates, so re-pricing a `grok-` model changes its charge. This needs a sandbox image rebuild.
 4. **Credentials.** The LLM names leave `credentials_provider_check`; a credential's provider is checked against the catalogue; the frontend reads the list from the API.
 5. **`custom` defaults** with the one-time import of what a deployment relied on; the local-only request fields move to per-model `request_extras`.
 6. **The Providers page** edits the catalogue (models, prices, enabled, where each field comes from) with a preview, and the docs.

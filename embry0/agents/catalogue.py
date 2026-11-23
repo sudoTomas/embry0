@@ -33,6 +33,7 @@ it imports only the standard library, pydantic and PyYAML.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -540,6 +541,77 @@ def merge(base: CatalogueDocument, overlay: Any) -> CatalogueDocument:
     if problems:
         raise CatalogueInvalid(problems)
     return document
+
+
+def merge_stored(base: CatalogueDocument, overlay: Any) -> tuple[CatalogueDocument, list[Problem]]:
+    """What a stored ``overlay`` makes with ``base``, this release's seed, however the seed moved since the overlay
+    was written: the catalogue of every part of it that still applies, and the problems of the parts that do not.
+
+    A write is checked whole (:func:`merge`). A stored overlay meets the seed
+    of a later release, which may have taken out a model or a provider the
+    overlay names, made a field embry0's own, or tightened a bound. Rather
+    than lose the whole overlay, and with it every provider the deployment
+    turned on and every price it set, each part that no longer applies is
+    left out and the rest stays in force (the design's "Seed drift"):
+
+    - ``null`` for a model the seed no longer has: what it asked for holds,
+      so it is dropped with no problem;
+    - a provider the seed no longer ships: its whole entry is left out;
+    - a model entry the release refuses (an override of a model the seed
+      dropped that is no complete model on its own, a value a bound now
+      refuses): that model's entry is left out, and the seed's model, if any,
+      stays as shipped; an override that is a complete model is kept as the
+      deployment's own model;
+    - a provider field the release refuses (``enabled``, ``factors``,
+      ``default_price``, ``refresh_hours``, a field embry0 now sets, a key it
+      no longer knows): that field is left out.
+
+    Only a top level that is no overlay at all leaves nothing of it, the seed
+    in force with that problem. A part is left out after every problem the
+    release finds is named, then the rest is merged again, until it merges.
+    """
+    if overlay is None:
+        return base, []
+    if not isinstance(overlay, Mapping):
+        return base, [Problem((), "not_a_mapping", "the stored catalogue is not a mapping; none of it is in force")]
+    working: dict[Any, Any] = copy.deepcopy(dict(overlay))
+    left_out: list[Problem] = []
+    while True:
+        try:
+            return merge(base, working), left_out
+        except CatalogueInvalid as invalid:
+            problems = invalid.problems
+        removed = False
+        for problem in problems:
+            if _leave_out(working, problem.loc):
+                removed = True
+                if problem.type != "not_found":  # a null for a model already gone asked for what holds
+                    left_out.append(problem)
+        if not removed:  # nothing attributable to a part of the overlay: none of it is in force
+            unplaced = [p for p in problems if p.type != "not_found"]
+            return base, [*left_out, *unplaced, Problem((), "not_applied", "none of the stored catalogue is in force")]
+
+
+def _leave_out(overlay: dict[Any, Any], loc: tuple[str | int, ...]) -> bool:
+    """Take the part of ``overlay`` a problem at ``loc`` is in out of it: a provider's entry, a model's entry or a
+    provider's field. False when ``loc`` names no part still there."""
+    providers = overlay.get("providers")
+    if len(loc) < 2 or loc[0] != "providers" or not isinstance(providers, dict) or loc[1] not in providers:
+        return False
+    name = loc[1]
+    entry = providers[name]
+    if len(loc) == 2 or not isinstance(entry, dict):
+        del providers[name]
+        return True
+    key = loc[2]
+    models = entry.get("models")
+    if key == "models" and len(loc) >= 4 and isinstance(models, dict) and loc[3] in models:
+        del models[loc[3]]
+        return True
+    if key in entry:
+        del entry[key]
+        return True
+    return False
 
 
 def _without_what_a_catalogue_may_not_set(base: CatalogueDocument, overlay: Any) -> tuple[Any, list[Problem]]:

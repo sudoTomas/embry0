@@ -191,7 +191,12 @@ each run on a provider other than Anthropic is sent its model's rates in
 force, and where embry0 prices a run from its tokens (the chat-completions
 providers, grok's direct executor) a model the overlay re-priced or added is
 metered at the overlay's price; a model's `request_extras` stay the shipped ones in a sandbox until
-each run carries its whole provider record (the next part of #173). It is refused, with nothing stored,
+each run carries its whole provider record (the next part of #173). **Not yet
+for an SDK-runtime provider** (xAI's grok on the Agent SDK, its default): such a
+run is charged what the CLI reports (`total_cost_usd`) and its per-turn
+estimates come from the sandbox's shipped table, so re-pricing a `grok-` model
+in the catalogue changes no run's charge until that same change carries the
+catalogue's rates into SDK runs. It is refused, with nothing stored,
 by a 422 naming every problem and never a value: the YAML's own (a syntax
 error, an alias, a key written twice), past 256 KiB (413), an overlay field
 it may not set, a catalogue it makes that cannot be (a chat-completions model
@@ -204,10 +209,38 @@ A write of any of those, in turn, is checked against the stored catalogue
 with its row held, so a change of the catalogue and a write naming a model
 never pass each other.
 
-When a release no longer combines with a stored overlay (it changes a provider
-the release no longer ships, for example), the shipped
-catalogue is in force alone, the start logs `provider_catalogue_refused`, and
-`GET` answers why in `refused`; a write that fixes the overlay puts it back in
+**Everything in the document is readable by every key**, a key with a
+repository allowlist included: the YAML as written with its comments, each
+change's reason, the text before and after each change, and every value,
+`request_extras` such as `chat_template_kwargs` among them. Keep secrets out of
+it; a key belongs in the [credential registry](credentials.md).
+
+**When a release moves the shipped catalogue.** A stored overlay meets the
+shipped catalogue of whatever release reads it, which may have taken out a
+model or a provider the overlay names. A write is always checked whole, but a
+stored overlay is read part by part:
+
+| What the overlay names | What is in force |
+|---|---|
+| `null` for a model the release took out too | as asked: the model is gone, and nothing is reported |
+| a provider the release no longer ships | the rest; that provider's entry is left out |
+| fields of a model the release took out | the overlay's entry as the deployment's own model, when it is a whole one (its `prices` or `free: true`); else that model's entry is left out |
+| a field the release made its own, a key it no longer knows, a value a bound now refuses | the rest; that field, or that model's entry, is left out |
+| no overlay at all at its top level (not a mapping, another `version`) | the shipped catalogue, with that problem |
+
+At a process's start every part that still applies is in force; nothing the
+deployment turned on is turned off, and no price it set is dropped, because
+something else in the overlay no longer applies. A process already running when
+a later overlay this release refuses part of is written keeps the catalogue it
+runs on. Either way each part left out is named in `refused` by
+`GET /api/v1/config/providers/catalog`, whose `in_force` says `in_part` or
+`earlier` (and `in_force_generation` which overlay); it is logged
+(`provider_catalogue_refused`), audited once a generation
+(`provider_catalogue.refused`), and counted by the gauge
+`embry0_provider_catalogue_refused_parts`, on which the shipped rule
+`Embry0ProviderCatalogueRefused` fires after 5 minutes
+([metrics.md](ops/metrics.md#provider-catalogue)). Write the catalogue again
+without those parts: the write names each one, and puts the whole overlay in
 force.
 
 ### Adding a key

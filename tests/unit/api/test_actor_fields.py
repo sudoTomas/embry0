@@ -287,6 +287,8 @@ def _catalogue(app: Any, mp: pytest.MonkeyPatch, actors: tuple[str, ...]) -> Non
         refresh=AsyncMock(return_value=seed()),
         document=AsyncMock(return_value=stored),
         refused=[],
+        in_force="whole",
+        in_force_generation=2,
         revisions=AsyncMock(return_value=rows),
         revision=AsyncMock(return_value=rows[0]),
     )

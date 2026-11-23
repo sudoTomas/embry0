@@ -1292,6 +1292,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # stored catalogue is installed for every reader before anything routes a
     # model. A background task (below) picks up a write another process made.
     try:
+        from embry0.metrics.loop import NULL_METRICS
         from embry0.services.provider_catalogue_store import CatalogueStore, read_references
         from embry0.services.provider_catalogue_store import log_ignored_env as log_ignored_catalogue_env
         from embry0.storage.repositories.provider_config import ProviderConfigRepository
@@ -1305,6 +1306,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             db,
             references=catalogue_references,
             audit_log_path=str(config.audit_log_path) if config.audit_log_path else None,
+            metrics=getattr(app.state, "loop_metrics", None) or NULL_METRICS,
         )
         try:
             await app.state.provider_catalogue.import_env(config)

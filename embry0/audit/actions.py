@@ -50,6 +50,8 @@ AuditAction = Literal[
     "provider_catalogue.updated",
     "provider_catalogue.change_undone",
     "provider_catalogue.bootstrapped",
+    # This release refuses part of the stored provider catalogue: that part is not in force (#173)
+    "provider_catalogue.refused",
     # The Slop-O-Meter removed what it kept of a repository that left its scope, or refused to (#165)
     "slop_meter.pruned",
     "slop_meter.prune.refused",
@@ -185,6 +187,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "provider_catalogue.updated": "Provider catalogue changed",
     "provider_catalogue.change_undone": "Provider catalogue change undone",
     "provider_catalogue.bootstrapped": "Provider catalogue imported from the environment",
+    "provider_catalogue.refused": "Part of the provider catalogue is not in force",
     "slop_meter.pruned": "Slop-O-Meter data of a repository removed",
     "slop_meter.prune.refused": "Slop-O-Meter removal refused",
     "background_enrollment.blocked": "Background enrollment held by a repository name",

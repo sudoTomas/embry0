@@ -50,7 +50,7 @@ async def test_with_nothing_stored_the_catalogue_is_the_shipped_one(client: Asyn
     resp = await client.get(CATALOG)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert (body["yaml_text"], body["data"], body["refused"]) == ("", {}, [])
+    assert (body["yaml_text"], body["data"], body["refused"], body["in_force"]) == ("", {}, [], "whole")
     assert resp.headers["etag"] == f'"{body["generation"]}"'
     assert body["catalogue"] == catalogue.seed().document.model_dump(mode="json", by_alias=True)
     assert body["catalogue"]["providers"]["deepseek"]["enabled"] is False
@@ -68,6 +68,20 @@ async def test_a_read_answers_what_another_process_wrote(client: AsyncClient) ->
     body = (await client.get(CATALOG)).json()
     assert body["yaml_text"] == DEEPSEEK_ON
     assert body["catalogue"]["providers"]["deepseek"]["enabled"] is True, "the catalogue in force was not the stored"
+
+
+async def test_a_read_says_how_much_of_the_stored_overlay_is_in_force(client: AsyncClient) -> None:
+    """An overlay an earlier release stored names a provider this one does not ship: the rest is in force."""
+    await _db(client).execute(
+        "UPDATE provider_catalogue SET data = $1::jsonb, generation = generation + 1",
+        {"providers": {"retired": {"enabled": True}, "deepseek": {"enabled": True}}},
+    )
+    body = (await client.get(CATALOG)).json()
+    assert (body["in_force"], body["in_force_generation"]) == ("in_part", body["generation"])
+    assert body["catalogue"]["providers"]["deepseek"]["enabled"] is True, "a part that applies was not in force"
+    assert [p["loc"] for p in body["refused"]] == [["providers", "retired"]]
+    clean = (await client.get(CATALOG)).json()
+    assert clean["refused"] == body["refused"], "read again, the same answer"
 
 
 # ---- writing ----

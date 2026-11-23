@@ -319,19 +319,121 @@ async def test_another_process_installs_a_write_on_its_next_look(db_with_migrati
     assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"]
 
 
-async def test_a_stored_overlay_this_release_refuses_leaves_the_shipped_catalogue(
-    store: CatalogueStore, db_with_migrations
-) -> None:
-    await db_with_migrations.execute(
-        "UPDATE provider_catalogue SET data = $1::jsonb, generation = generation + 1",
-        {"providers": {"retired": {"enabled": True}}},
+# ---- a release that moved the seed (the design's "Seed drift") ----
+
+
+#: What an earlier release stored: OpenAI on with gpt-6.1-sol taken out, Groq on, the custom provider on at a price.
+DRIFTED = {
+    "providers": {
+        "openai": {"enabled": True, "models": {"gpt-6.1-sol": None}},
+        "groq": {"enabled": True},
+        "custom": {"enabled": True, "default_price": {"in": 1.0, "out": 2.0}},
+    }
+}
+
+
+@pytest.fixture
+def later_release(monkeypatch: pytest.MonkeyPatch) -> catalogue.Catalogue:
+    """This process runs a later release, whose seed has no gpt-6.1-sol and no Groq."""
+    from embry0.services import provider_catalogue_store
+
+    data = catalogue.seed().document.model_dump(mode="json", by_alias=True)
+    del data["providers"]["openai"]["models"]["gpt-6.1-sol"]
+    del data["providers"]["groq"]
+    later = catalogue.Catalogue.build(catalogue.parse(data))
+    monkeypatch.setattr(catalogue, "seed", lambda: later)
+    monkeypatch.setattr(provider_catalogue_store, "seed", lambda: later)
+    return later
+
+
+def _metrics() -> Any:
+    from prometheus_client import CollectorRegistry
+
+    from embry0.metrics.loop import LoopMetrics
+
+    return LoopMetrics(CollectorRegistry())
+
+
+def _refused_parts(metrics: Any) -> float | None:
+    from embry0.metrics.loop import sample
+
+    return sample(metrics.registry, "embry0_provider_catalogue_refused_parts")
+
+
+async def _store_directly(db: DatabasePool, data: dict[str, Any]) -> int:
+    """``data`` stored as another release, or a hand at the database, would: no check."""
+    return int(
+        await db.fetchval(
+            "UPDATE provider_catalogue SET data = $1::jsonb, generation = generation + 1 RETURNING generation", data
+        )
     )
+
+
+async def _refusal_audits(db: DatabasePool) -> list[dict[str, Any]]:
+    rows = await db.fetch("SELECT details FROM audit_log WHERE action = 'provider_catalogue.refused' ORDER BY id")
+    return [r["details"] if isinstance(r["details"], dict) else json.loads(r["details"]) for r in rows]
+
+
+async def test_at_the_start_every_part_that_applies_is_in_force_and_the_rest_reported(
+    db_with_migrations: DatabasePool, later_release: catalogue.Catalogue
+) -> None:
+    """A release that dropped a model the overlay took out, and a provider it turned on, turns off nothing else."""
+    generation = await _store_directly(db_with_migrations, DRIFTED)
+    metrics = _metrics()
+    assert _refused_parts(metrics) == 0.0, "seeded 0, so an alert on it can be told from one that never fires"
+    store = CatalogueStore(db_with_migrations, metrics=metrics)
     with capture_logs() as logs:
-        installed = await store.refresh()
         await store.refresh()
-    assert installed.document == catalogue.seed().document
+        await store.refresh()
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["openai", "custom"], "turned off"
+    assert providers.model_rates("custom/llama3") == (1.0, 2.0), "the custom provider's price was dropped"
+    assert [(p.loc, p.type) for p in store.refused] == [(("providers", "groq"), "not_shipped")]
+    assert (store.in_force, store.in_force_generation) == ("in_part", generation)
+    assert _refused_parts(metrics) == 1.0
+    assert [e["event"] for e in logs].count("provider_catalogue_refused") == 1, "once a generation"
+    audits = await _refusal_audits(db_with_migrations)
+    assert audits == [
+        {
+            "generation": generation,
+            "in_force": "in_part",
+            "in_force_generation": generation,
+            "parts": ["providers.groq"],
+            "count": 1,
+        }
+    ], "audited once a generation"
+
+
+async def test_a_running_process_keeps_its_catalogue_when_a_later_overlay_is_refused_in_part(
+    store: CatalogueStore, db_with_migrations: DatabasePool
+) -> None:
+    metrics = _metrics()
+    store.metrics = metrics
+    first = (await store.save(DEEPSEEK_CHEAP, actor="a")).generation
+    later = await _store_directly(db_with_migrations, {"providers": {"retired": {"enabled": True}}})
+    await store.refresh()
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"], "it dropped what it ran on"
+    assert providers.model_rates("deepseek-flash") == (0.1, 0.2)
+    assert (store.in_force, store.in_force_generation) == ("earlier", first)
     assert [p.loc for p in store.refused] == [("providers", "retired")]
-    assert [e["event"] for e in logs].count("provider_catalogue_refused") == 1, "warned once per generation"
+    assert _refused_parts(metrics) == 1.0
+    assert [(a["generation"], a["in_force"]) for a in await _refusal_audits(db_with_migrations)] == [(later, "earlier")]
+    fixed = await store.save("providers:\n  groq: {enabled: true}\n", actor="a")
+    assert (store.in_force, store.in_force_generation, store.refused) == ("whole", fixed.generation, [])
+    assert _refused_parts(metrics) == 0.0, "a fix clears it"
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["groq"]
+
+
+async def test_a_write_is_checked_whole_however_the_stored_one_is_read(
+    db_with_migrations: DatabasePool, later_release: catalogue.Catalogue
+) -> None:
+    """The release refuses a write of the drifted text, naming each part, so a person fixes it."""
+    store = CatalogueStore(db_with_migrations)
+    await _store_directly(db_with_migrations, DRIFTED)
+    await store.refresh()
+    text = "providers:\n  openai: {enabled: true, models: {gpt-6.1-sol: null}}\n  groq: {enabled: true}\n"
+    with pytest.raises(CatalogueInvalid) as refused:
+        await store.save(text, actor="a")
+    assert sorted(p.type for p in refused.value.problems) == ["not_found", "not_shipped"]
 
 
 # ---- the environment, once ----

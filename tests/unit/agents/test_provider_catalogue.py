@@ -584,3 +584,99 @@ def test_only_a_provider_with_a_live_list_takes_refresh_hours() -> None:
         assert [loc for loc, _ in _refused({"providers": {"openrouter": {"refresh_hours": hours}}})] == [
             "providers.openrouter.refresh_hours"
         ], hours
+
+
+# ---- a stored overlay and a seed that moved since (the design's "Seed drift") ----
+
+
+def _later_seed(*, without_models: dict[str, list[str]] | None = None, without: list[str] | None = None) -> Any:
+    """The seed of a later release: these models and providers taken out."""
+    data = catalogue.seed().document.model_dump(mode="json", by_alias=True)
+    for provider, models in (without_models or {}).items():
+        for model in models:
+            del data["providers"][provider]["models"][model]
+    for provider in without or []:
+        del data["providers"][provider]
+    return catalogue.parse(data)
+
+
+def _stored(base: Any, overlay: Any) -> tuple[Any, list[tuple[str, str]]]:
+    document, refused = catalogue.merge_stored(base, overlay)
+    return document, [(".".join(str(part) for part in p.loc), p.type) for p in refused]
+
+
+def test_a_model_the_overlay_took_out_and_the_seed_dropped_too_changes_nothing() -> None:
+    """The review's case: a release drops gpt-6.1-sol, which the overlay had nulled; nothing else is lost."""
+    overlay = {
+        "providers": {
+            "openai": {"enabled": True, "models": {"gpt-6.1-sol": None}},
+            "custom": {"enabled": True, "default_price": {"in": 1.0, "out": 2.0}},
+        }
+    }
+    base = _later_seed(without_models={"openai": ["gpt-6.1-sol"]})
+    with pytest.raises(CatalogueInvalid):
+        catalogue.merge(base, overlay)  # a write of it is refused: the model is not there to take out
+    document, refused = _stored(base, overlay)
+    assert refused == [], "what the null asked for holds: no problem"
+    assert document.providers["openai"].enabled and document.providers["custom"].enabled
+    assert document.providers["custom"].default_price == catalogue.Rates.model_validate({"in": 1.0, "out": 2.0})
+
+
+def test_a_provider_the_seed_dropped_is_left_out_and_the_rest_stays() -> None:
+    overlay = {"providers": {"groq": {"enabled": True}, "deepseek": {"enabled": True}}}
+    document, refused = _stored(_later_seed(without=["groq"]), overlay)
+    assert refused == [("providers.groq", "not_shipped")]
+    assert document.providers["deepseek"].enabled, "a provider the deployment turned on was turned off"
+
+
+def test_an_override_of_a_model_the_seed_dropped_stays_only_as_a_whole_model() -> None:
+    base = _later_seed(without_models={"openai": ["gpt-6.1-sol"], "deepseek": ["deepseek-v4-pro"]})
+    overlay = {
+        "providers": {
+            "openai": {"enabled": True, "models": {"gpt-6.1-sol": {"chat_only": False}}},
+            "deepseek": {"enabled": True, "models": {"deepseek-v4-pro": {"prices": [{"in": 1.0, "out": 3.0}]}}},
+        }
+    }
+    document, refused = _stored(base, overlay)
+    assert refused == [("providers.openai.models.gpt-6.1-sol", "unpriced")], "a part of a model is no model"
+    assert "gpt-6.1-sol" not in document.providers["openai"].models and document.providers["openai"].enabled
+    assert document.providers["deepseek"].models["deepseek-v4-pro"].prices[0].pair == (1.0, 3.0), (
+        "an override that is a whole model is kept as the deployment's own"
+    )
+
+
+def test_a_field_or_a_value_the_release_refuses_is_left_out_alone() -> None:
+    overlay = {
+        "providers": {
+            "openai": {"enabled": True, "base_url": "https://elsewhere.test", "enabeld": True},
+            "deepseek": {
+                "enabled": True,
+                "factors": {"turns": 99},
+                "models": {"deepseek-flash": {"prices": [{"in": -1, "out": 1}]}},
+            },
+        }
+    }
+    document, refused = _stored(catalogue.seed().document, overlay)
+    assert sorted(loc for loc, _ in refused) == [
+        "providers.deepseek.factors.turns",
+        "providers.deepseek.models.deepseek-flash.prices.0.in",
+        "providers.openai.base_url",
+        "providers.openai.enabeld",
+    ]
+    assert document.providers["openai"].enabled and document.providers["deepseek"].enabled
+    assert document.providers["openai"].base_url == catalogue.seed().document.providers["openai"].base_url
+    assert document.providers["deepseek"].factors.turns == 1.0
+    assert document.providers["deepseek"].models["deepseek-flash"].prices[0].pair == (0.30, 1.20), "as shipped"
+
+
+@pytest.mark.parametrize("overlay", [["providers"], {"version": 2, "providers": {"deepseek": {"enabled": True}}}])
+def test_an_overlay_that_is_none_at_all_leaves_the_seed_and_says_so(overlay: Any) -> None:
+    document, refused = _stored(catalogue.seed().document, overlay)
+    assert document == catalogue.seed().document
+    assert refused and refused[-1][1] in {"not_a_mapping", "not_applied"}, refused
+
+
+def test_an_overlay_that_applies_whole_leaves_nothing_out() -> None:
+    overlay = {"providers": {"deepseek": {"enabled": True}}}
+    document, refused = _stored(catalogue.seed().document, overlay)
+    assert (refused, document) == ([], catalogue.merge(catalogue.seed().document, overlay))
