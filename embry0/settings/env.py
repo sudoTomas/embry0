@@ -65,14 +65,14 @@ def _retired() -> dict[str, str]:
     """Each ``Embry0Config`` attribute no longer read at all, with what runs instead. The config keeps each one
     release, so startup (``settings_env_retired``) and ``embry0 config`` can say so. Read from the constants that
     replaced them, so the line never says other than what runs."""
-    from embry0.services import proposal_briefs, scout
+    from embry0.services import job_briefs, proposal_briefs, scout
 
-    briefs = f"the proposal brief writer writes at most {proposal_briefs.PER_TICK} briefs every "
-    briefs += f"{proposal_briefs.INTERVAL_SECONDS:g} s, constants"
     return {
         "scout_tick_seconds": f"the scout ticks every {scout.TICK_SECONDS:g} s, a constant",
-        "proposal_briefs_per_tick": briefs,
-        "proposal_brief_interval_seconds": briefs,
+        "proposal_briefs_per_tick": f"{proposal_briefs.CADENCE}, constants",
+        "proposal_brief_interval_seconds": f"{proposal_briefs.CADENCE}, constants",
+        "job_briefs_per_tick": f"{job_briefs.CADENCE}, constants",
+        "job_brief_interval_seconds": f"{job_briefs.CADENCE}, constants",
     }
 
 

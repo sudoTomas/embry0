@@ -11,7 +11,11 @@ hash of its inputs and the prompt's version. Nothing waits on it: a job with
 no brief yet shows its task.
 
 The loop is the one brief writer's (:mod:`embry0.services.brief_writer`,
-#166), with :class:`JobBriefs` saying what is briefed. Its instructions are
+#166), with :class:`JobBriefs` saying what is briefed. It writes at most
+:data:`PER_TICK` briefs every :data:`INTERVAL_SECONDS`: constants, not
+settings, as the proposal briefs' are (#168, #665), since what it spends is
+bounded by the budget caps and its model by ``background_models.job_brief``,
+and the pace only says how soon a job reads in plain words. Its instructions are
 the ``job-brief`` agent definition, seeded from :data:`VOICE`; its answer's format is :data:`FORMAT`.
 
 docs/superpowers/specs/2026-10-26-job-briefs-design.md.
@@ -41,9 +45,34 @@ from embry0.services.brief_writer import (
     cut_title,
     system_prompt,
 )
+from embry0.services.brief_writer import (
+    warn_retired_cadence as warn_retired,
+)
 from embry0.services.lead_kinds import id_pattern
 from embry0.storage.database import read_jsonb_text
 from embry0.workflows.row_behaviour import WORKFLOW_PIPELINES, builtin_template, delivers
+
+#: How many briefs a tick writes, and the seconds between ticks. Not settings (#665), as the proposal briefs' are not
+#: (#168): a brief is written once per version of its job, its calls count against the budget caps, and the pace only
+#: says how soon a job reads in plain words. ``JOB_BRIEFS_PER_TICK`` and ``JOB_BRIEF_INTERVAL_SECONDS`` set them
+#: before.
+PER_TICK: Final = 3
+INTERVAL_SECONDS: Final = 60.0
+#: What runs instead of the retired variables, as the warning and ``embry0 config`` say it.
+CADENCE: Final = f"the job brief writer writes at most {PER_TICK} briefs every {INTERVAL_SECONDS:g} s"
+#: Each variable that set the cadence before, as ``Embry0Config`` holds it, and the value that runs now.
+_RETIRED: Final = {
+    "job_briefs_per_tick": ("JOB_BRIEFS_PER_TICK", float(PER_TICK)),
+    "job_brief_interval_seconds": ("JOB_BRIEF_INTERVAL_SECONDS", INTERVAL_SECONDS),
+}
+
+
+def warn_retired_cadence(config: Any) -> list[str]:
+    """Warn once, at startup, for each of ``JOB_BRIEFS_PER_TICK`` and ``JOB_BRIEF_INTERVAL_SECONDS`` still set:
+    neither is read any more (#665). Returns the variables warned about
+    (:func:`embry0.services.brief_writer.warn_retired_cadence`)."""
+    return warn_retired(config, _RETIRED, writer=CADENCE)
+
 
 #: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
 #: ticks. The system prompt is the agent definition's, which an operator edits (see brief_writer).
@@ -343,8 +372,8 @@ class JobBriefWriter(BriefWriter[Mapping[str, Any], JobBriefSettings, JobBrief])
         store: Any,
         settings: Callable[[], Awaitable[JobBriefSettings]],
         calls: BackgroundCalls,
-        per_tick: int = 3,
-        interval_seconds: float = 60.0,
+        per_tick: int = PER_TICK,
+        interval_seconds: float = INTERVAL_SECONDS,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
