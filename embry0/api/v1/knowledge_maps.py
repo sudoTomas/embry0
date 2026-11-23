@@ -690,11 +690,25 @@ async def _start_fix(
     issue_id = await request.app.state.issues_repo.create(
         title=f"Fix {node.get('label') or node['id']}"[:300],
         body=task,
-        labels=["embry0-map", f"map:{slug}"],
+        labels=await _map_issue_labels(request, repo, slug, remove=False),
         repo=repo,
         created_by="map-send",
     )
     return await _dispatch_issue(request, issue_id, "open", tracker="", by=by, run_with=run_with)
+
+
+async def _map_issue_labels(request: Request, repo: str, slug: str, *, remove: bool) -> list[str]:
+    """The labels of an issue a map's part opens in ``repo`` (#180): ``maps.labels`` and ``map:<slug>``, and for a
+    removal ``leads.labels`` and ``lead:weed``, as the repository reads them, without any trigger label."""
+    from embry0.services.own_issues import own_issue_labels, section_for
+    from embry0.settings.sections.leads import LEADS
+    from embry0.settings.sections.maps import MAPS
+
+    state = request.app.state
+    labels = [*(await section_for(state, MAPS, repo)).labels, f"map:{slug}"]
+    if remove:
+        labels += [*(await section_for(state, LEADS, repo)).labels, "lead:weed"]
+    return await own_issue_labels(state, repo, labels)
 
 
 async def _start_analysis(request: Request, repo: str, title: str, task: str, by: str, run_with: Any) -> str:
@@ -704,12 +718,16 @@ async def _start_analysis(request: Request, repo: str, title: str, task: str, by
     refusal = await executor.dispatch_refusal(actor=by)
     if refusal is not None:
         raise HTTPException(status_code=429, detail=refusal.public_message)
+    from embry0.services.own_issues import section_for
+    from embry0.settings.sections.maps import MAPS
+
     jobs = request.app.state.jobs_repo
     job_id: str = await jobs.create(
         repo=repo,
         task=task,
         trace_id=f"trc-{uuid.uuid4().hex[:12]}",
-        pipeline_template="analysis-default",
+        # #180: the template the repository's settings name, which a write checked records analysis jobs.
+        pipeline_template=(await section_for(request.app.state, MAPS, repo)).analysis_template,
         pipeline_config=apply_run_with(None, run_with),
         dispatched_by=by,
     )
@@ -765,7 +783,7 @@ async def _send_together(
         if kind == "analysis":
             job["job_id"] = await _start_analysis(request, repo, title, task, body.by, run_with)
         else:
-            labels = ["embry0-map", f"map:{slug}", *(["embry0-lead", "lead:weed"] if kind == "remove" else [])]
+            labels = await _map_issue_labels(request, repo, slug, remove=kind == "remove")
             issue_id = await request.app.state.issues_repo.create(
                 title=title, body=task, labels=labels, repo=repo, created_by="map-send"
             )

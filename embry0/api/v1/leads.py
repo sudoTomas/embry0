@@ -223,12 +223,18 @@ async def start_lead(request: Request, lead_id: str, *, by: str, run_with: RunWi
         return await _start_ticket(request, row, by, run_with)
     if kind == "review":
         return await _start_review(request, row, by, run_with)
-    # ci, flaky, alert: work nobody wrote up becomes an issue in embry0 with the task, then runs as one.
-    labels = ["embry0-lead", f"lead:{kind}"]
+    # ci, flaky, alert, crack, weed: work nobody wrote up becomes an issue in embry0 with the task, then runs as one.
+    # #180: labelled leads.labels as the lead's repository reads it, and lead:<kind>, never with a trigger label.
+    from embry0.services.own_issues import own_issue_labels, section_for
+    from embry0.settings.sections.leads import LEADS
+
+    repo_name = str(row.get("repo") or "")
+    wanted = [*(await section_for(request.app.state, LEADS, repo_name)).labels, f"lead:{kind}"]
     if row.get("area"):
         from embry0.services.areas import Area
 
-        labels.append(f"area:{Area(str(row['area'])).slug}")
+        wanted.append(f"area:{Area(str(row['area'])).slug}")
+    labels = await own_issue_labels(request.app.state, repo_name, wanted)
     issue_id = await request.app.state.issues_repo.create(
         title=str(row["title"])[:300],
         body=lead_task(row),

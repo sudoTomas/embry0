@@ -602,3 +602,52 @@ async def test_a_refused_batch_marks_every_part_of_it_with_the_reason(app: FastA
         ).json()
     assert result["jobs"][0]["error"] == "the daily budget is spent"
     assert [r["error"] for r in result["results"]] == ["the daily budget is spent"] * 2
+
+
+class _Settings:
+    """The settings store as its readers use it: ``snapshot()`` of the documents of each scope given."""
+
+    def __init__(self, **documents: dict[str, Any]) -> None:
+        self.documents = documents
+
+    async def snapshot(self) -> Any:
+        from embry0.settings.sections import CATALOG
+        from embry0.settings.store import build_snapshot
+
+        rows = [
+            {"scope": scope, "data": data, "generation": 1, "updated_at": None}
+            for scope, data in {"deployment": {}, **self.documents}.items()
+        ]
+        return build_snapshot(CATALOG, rows, log=False)
+
+
+async def test_a_maps_issues_and_analyses_follow_its_repositorys_settings_and_carry_no_trigger_label(
+    app: FastAPI,
+) -> None:
+    """#180: maps.labels and maps.analysis_template as the map's repository reads them, leads.labels on a removal,
+    and a label that is a trigger label now (it became one after it was written) left off."""
+    app.state.settings = _Settings(
+        **{
+            "organization:acme": {"leads": {"labels": ["team-lead", "later"]}},
+            "repository:acme/shop": {"maps": {"labels": ["team-map"], "analysis_template": "deep-look"}},
+        }
+    )
+    app.state.integration_repo = SimpleNamespace(get_trigger_labels=AsyncMock(return_value=["embry0", "Later"]))
+    created: dict[str, list[str]] = {}
+    async with await _client(app) as client:
+        await _upload(client, _doc(nodes=[*_doc()["nodes"], TABLE]))
+        for kind, body in (
+            ("fix", {"node_ids": ["script:util.mjs"], "kind": "fix"}),
+            ("remove", {"node_ids": [PROBE], "kind": "remove"}),
+            ("together", {"node_ids": [PROBE, "table:old_backup"], "kind": "remove", "together": True}),
+            ("analysis", {"node_ids": ["script:util.mjs"], "kind": "analysis"}),
+        ):
+            sent = await client.post("/api/v1/maps/shop/send", json={**body, "by": "ann"}, headers=HEADERS)
+            assert sent.status_code == 202, sent.text
+            created[kind] = app.state.issues_repo.create.await_args.kwargs["labels"]
+    assert created["fix"] == ["team-map", "map:shop"], f"a fix's issue: {created['fix']}"
+    assert created["remove"] == ["team-lead", "lead:weed"], f"a removal accepts the part's lead: {created['remove']}"
+    assert created["together"] == ["team-map", "map:shop", "team-lead", "lead:weed"], created["together"]
+    assert app.state.jobs_repo.create.await_args.kwargs["pipeline_template"] == "deep-look", (
+        "a part sent for analysis runs the template its repository's settings name"
+    )

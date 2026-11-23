@@ -360,6 +360,14 @@ leads:
   # repository.
   # backlog_interval_hours: 24.0
 
+  # The labels on the issue a lead opens when a person accepts it (every kind
+  # but ticket and review, which run on their own ticket or pull request),
+  # beside the one naming its kind, such as lead:ci. At most 10, each at most
+  # 50 characters; none may be one of the deployment's trigger labels, so an
+  # issue embry0 runs itself never starts a job again.
+  # labels:
+  # - embry0-lead
+
   # Most new leads each finder adds per repository in a day, the most severe
   # first; a lead already stored is always kept up to date. 0 adds none.
   # max_new_per_repo_per_day: 5
@@ -524,6 +532,22 @@ leads:
   # its labels; a ticket that reads as both small and large has the effort of
   # a large one.
   # large_estimate_min: 5.0
+
+# The template a map's part is analysed with, and the labels on the issues a
+# map opens.
+maps:
+  # The pipeline template a part of a map sent for analysis runs. A write that
+  # changes it must name a template this deployment has that records its jobs
+  # as analysis jobs. A template a document names cannot be deleted, renamed
+  # or changed to stop recording analysis jobs.
+  # analysis_template: analysis-default
+
+  # The labels on the issue a map's part opens when it is sent for a fix or a
+  # removal, beside the one naming the map: map: and its slug. At most 10,
+  # each at most 50 characters; none may be one of the deployment's trigger
+  # labels, so an issue embry0 runs itself never starts a job again.
+  # labels:
+  # - embry0-map
 
 # Whether the work of a coding run that stopped before it committed is
 # committed and pushed, and that commit's subject.

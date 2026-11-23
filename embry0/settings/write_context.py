@@ -28,6 +28,8 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from embry0.settings.sections.background_models import BACKGROUND_MODELS, CATALOGUE
+from embry0.settings.sections.leads import LEADS
+from embry0.settings.sections.maps import ANALYSIS_TEMPLATES, MAPS, TRIGGER_LABELS, fold_label
 from embry0.settings.sections.slop_policy import ROUTE_TEMPLATES, SLOP_POLICY
 
 if TYPE_CHECKING:
@@ -109,10 +111,38 @@ def route_template_checker(rows: Iterable[Mapping[str, Any]]) -> Callable[[str],
     return problem
 
 
+def analysis_template_checker(rows: Iterable[Mapping[str, Any]]) -> Callable[[str], str | None]:
+    """``name -> problem``: why a map's part cannot be analysed with the template ``name``, of ``rows``.
+
+    A template the rows do not hold is none; one they hold must record its jobs as analysis jobs
+    (``row_behaviour.analysis_job_problem``).
+    """
+    from embry0.workflows.row_behaviour import analysis_job_problem
+
+    templates = {str(row["name"]): row for row in rows}
+
+    def problem(name: str) -> str | None:
+        row = templates.get(name)
+        if row is None:
+            return f"no pipeline template named {name!r}: GET /api/v1/pipelines/templates lists them"
+        return analysis_job_problem(row)
+
+    return problem
+
+
+async def trigger_labels_on(conn: Any) -> frozenset[str]:
+    """The deployment's trigger labels, folded as the trigger compares them, read on ``conn``: the stored ones,
+    else ``TRIGGER_LABELS``, else the default (``IntegrationConfigRepository.resolve_trigger_labels``)."""
+    from embry0.storage.repositories.integration_config import resolved_trigger_labels
+
+    stored = await conn.fetchval("SELECT trigger_labels FROM integration_config WHERE id = 'default'")
+    return frozenset(fold_label(label) for label in resolved_trigger_labels(stored).labels if label.strip())
+
+
 async def deployment_reads(conn: Any, sections: frozenset[str]) -> dict[str, Any]:
     """The part of a write's context the database holds: the pipeline templates, for a write that may change
-    ``slop_policy``, and the stored provider catalogue, for one that may change ``background_models``; nothing
-    for any other.
+    ``slop_policy`` or ``maps``, the deployment's trigger labels, for one that may change ``maps`` or ``leads``,
+    and the stored provider catalogue, for one that may change ``background_models``; nothing for any other.
 
     ``conn`` is the write's connection, inside its transaction, and the rows
     are read ``FOR SHARE``: a template a policy is checked against cannot be
@@ -126,11 +156,20 @@ async def deployment_reads(conn: Any, sections: frozenset[str]) -> dict[str, Any
     run reads on the pool, where the lock ends with the statement.
     """
     found: dict[str, Any] = {}
-    if SLOP_POLICY.name in sections:
-        rows = await conn.fetch(
-            "SELECT name, default_for_kind, job_kind, graph_definition FROM pipeline_templates FOR SHARE"
-        )
-        found[ROUTE_TEMPLATES] = route_template_checker([dict(row) for row in rows])
+    if SLOP_POLICY.name in sections or MAPS.name in sections:
+        rows = [
+            dict(row)
+            for row in await conn.fetch(
+                "SELECT name, default_for_kind, job_kind, graph_definition FROM pipeline_templates FOR SHARE"
+            )
+        ]
+        if SLOP_POLICY.name in sections:
+            found[ROUTE_TEMPLATES] = route_template_checker(rows)
+        if MAPS.name in sections:
+            found[ANALYSIS_TEMPLATES] = analysis_template_checker(rows)
+    if MAPS.name in sections or LEADS.name in sections:
+        # #180: a label embry0 puts on its own issues may not be one that starts a job.
+        found[TRIGGER_LABELS] = await trigger_labels_on(conn)
     if BACKGROUND_MODELS.name in sections:
         from embry0.services.provider_catalogue_store import held_catalogue
 

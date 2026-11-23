@@ -164,6 +164,22 @@ def code_job_problem(template: Mapping[str, Any]) -> str | None:
     return None
 
 
+def analysis_job_problem(template: Mapping[str, Any]) -> str | None:
+    """Why a map's part cannot be analysed with ``template`` (``maps.analysis_template``); None when it can.
+
+    A part sent for analysis runs as a read-only analysis job: the template must record its jobs as analysis jobs
+    (:func:`recorded_kind`). The words name the template, never a value of another key.
+    """
+    name = str(template.get("name") or "")
+    kind = recorded_kind(template)
+    if kind is None:
+        # A copy of analysis-default is one: the kind came from default_for_kind, which a copy does not take.
+        return f"{name!r} does not say what kind of job it runs: set its job_kind to analysis"
+    if kind != "analysis":
+        return f"{name!r} records its jobs as {kind} jobs, so a part sent for analysis would not run as one"
+    return None
+
+
 def full_pipeline_problem(template: Mapping[str, Any]) -> str | None:
     """Why a job pinned to the full pipeline cannot be sent to ``template`` by a policy; None when it can.
 

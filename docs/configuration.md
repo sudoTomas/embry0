@@ -543,6 +543,7 @@ Whether the finders run, which ones and how often, and which leads are offered a
 | `finders` | list of text | `["ticket", "ci", "alert", "flaky", "review"]` | each one of `"ticket"`, `"ci"`, `"alert"`, `"flaky"`, `"review"` | organization | `LEADS_FINDERS` | The finders that run, each named once: ticket (backlog tickets nobody labelled for embry0), ci (checks failing on the default branch), alert (dependency and code-scanning alerts), flaky (a check that failed and then passed on one commit), review (review threads nobody answered). An empty list runs none. |
 | `interval_hours` | number | `6.0` | ≥ 0.25, ≤ 8760 |  | `LEADS_INTERVAL_HOURS` | Hours between passes of the finders; the backlog intake keeps its own interval. |
 | `backlog_interval_hours` | number | `24.0` | ≥ 1.0, ≤ 8760 |  | `LEADS_BACKLOG_INTERVAL_HOURS` | Hours between backlog intakes (ticket), which read Linear once for every repository. |
+| `labels` | list of text | `["embry0-lead"]` |  | organization |  | The labels on the issue a lead opens when a person accepts it (every kind but ticket and review, which run on their own ticket or pull request), beside the one naming its kind, such as lead:ci. At most 10, each at most 50 characters; none may be one of the deployment's trigger labels, so an issue embry0 runs itself never starts a job again. |
 | `max_new_per_repo_per_day` | whole number | `5` | ≥ 0, ≤ 1000 | organization | `LEADS_MAX_NEW_PER_REPO_PER_DAY` | Most new leads each finder adds per repository in a day, the most severe first; a lead already stored is always kept up to date. 0 adds none. |
 | `review_stale_days` | whole number | `3` | ≥ 0, ≤ 365 | organization | `LEADS_REVIEW_STALE_DAYS` | Days a review thread waits for an answer before it is a lead. |
 | `flaky_commits` | whole number | `10` | ≥ 1, ≤ 50 | organization | `LEADS_FLAKY_COMMITS` | Newest commits of the default branch the flaky-check finder reads. |
@@ -555,6 +556,15 @@ Whether the finders run, which ones and how often, and which leads are offered a
 | `epic_title_words` | list of text | `["epic"]` |  | organization |  | Words that make a ticket an epic by its title, unlabelled: a title starting with one in brackets ([Epic] ...) or followed by a colon or a dash, with an optional scope in parentheses (Epic: ..., epic(billing): ...), in any case. It takes the not_ready weight. At most 32, each at most 40 characters. |
 | `small_estimate_max` | number | `2.0` | ≥ 0, ≤ 1000 | organization |  | A ticket whose tracker estimate is at most this reads as small, whatever its labels. |
 | `large_estimate_min` | number | `5.0` | ≥ 0, ≤ 1000 | organization |  | A ticket whose tracker estimate is at least this reads as large, whatever its labels; a ticket that reads as both small and large has the effort of a large one. |
+
+#### `maps`
+
+The template a map's part is analysed with, and the labels on the issues a map opens.
+
+| Key | Type | Default | Allowed | Overridable by | Imported from | Description |
+|---|---|---|---|---|---|---|
+| `analysis_template` | text | `"analysis-default"` | at least 1 characters, at most 100 characters | organization, repository |  | The pipeline template a part of a map sent for analysis runs. A write that changes it must name a template this deployment has that records its jobs as analysis jobs. A template a document names cannot be deleted, renamed or changed to stop recording analysis jobs. |
+| `labels` | list of text | `["embry0-map"]` |  | organization, repository |  | The labels on the issue a map's part opens when it is sent for a fix or a removal, beside the one naming the map: map: and its slug. At most 10, each at most 50 characters; none may be one of the deployment's trigger labels, so an issue embry0 runs itself never starts a job again. |
 
 #### `salvage`
 
