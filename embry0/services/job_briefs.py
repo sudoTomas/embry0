@@ -52,7 +52,6 @@ from embry0.services.lead_kinds import id_pattern
 from embry0.storage.database import read_jsonb_text
 from embry0.workflows.row_behaviour import WORKFLOW_PIPELINES, builtin_template, delivers
 
-#: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
 #: How many briefs a tick writes, and the seconds between ticks. Not settings (#665), as the proposal briefs' are not
 #: (#168): a brief is written once per version of its job, its calls count against the budget caps, and the pace only
 #: says how soon a job reads in plain words. ``JOB_BRIEFS_PER_TICK`` and ``JOB_BRIEF_INTERVAL_SECONDS`` set them
@@ -75,6 +74,7 @@ def warn_retired_cadence(config: Any) -> list[str]:
     return warn_retired(config, _RETIRED, writer=CADENCE)
 
 
+#: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
 #: ticks. The system prompt is the agent definition's, which an operator edits (see brief_writer).
 PROMPT_VERSION = 1
 #: The key of ``background_models`` job briefs run on, and what their spend is recorded under.
