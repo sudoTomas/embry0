@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 from embry0.execution.events import EventType, contract, render_markdown
@@ -84,6 +85,26 @@ def test_no_literal_event_dict_outside_the_contract_module() -> None:
 API_DOC = REPO / "docs" / "api.md"
 BEGIN = "<!-- events:begin -->"
 END = "<!-- events:end -->"
+
+
+#: Where an agent run writes its rows: the executor, its tool loop and run_agent_node. The ask-user row the executor
+#: relays from the sandbox (embry0/sandbox/ask_user.py) goes through the same writer.
+_AGENT_PATH = ("embry0/agents/executor.py", "embry0/agents/_tool_loop.py", "embry0/orchestration/nodes/agent.py")
+
+
+def test_every_row_an_agent_run_writes_may_carry_its_app() -> None:
+    """#107: a QA sub-task's writer tags every row its nested agent writes with the app it runs for
+    (embry0/workflows/qa/nodes.py, _tagged_writer), and the job's event stream persists it. The contract admitted app
+    only on progress and the qa_* rows, so it described a stream the backend does not send. Each event type the
+    agent path builds admits it, and a type added there later has to as well."""
+    names = {"agent_ask_user"}
+    for rel in _AGENT_PATH:
+        names |= set(re.findall(r"events\.([a-z_]+)\(", (REPO / rel).read_text(encoding="utf-8")))
+    shape = contract()
+    built = sorted(name for name in names if name in shape)
+    assert len(built) >= 10, f"the scan found too few event types to mean anything: {built}"
+    refused = [name for name in built if "app" not in shape[name]["required"] + shape[name]["optional"]]
+    assert refused == [], f"rows a nested QA agent writes with its app that the contract refuses app on: {refused}"
 
 
 def test_api_doc_events_section_is_rendered_from_the_contract() -> None:

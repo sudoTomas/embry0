@@ -85,19 +85,32 @@ class BaseEvent(TypedDict):
     parent_tool_use_id: NotRequired[str]
 
 
-class AgentStartedEvent(BaseEvent):
+class AgentRunEvent(BaseEvent):
+    """A row an agent run writes: the executor's, its tool loop's and the
+    ask-user row it relays.
+
+    A QA sub-task's writer tags each with the app the sub-task checks
+    (embry0/workflows/qa/nodes.py), so the rows of agents running for several
+    apps at once say which app's agent wrote them; node, agent and run_id
+    cannot (#107).
+    """
+
+    app: NotRequired[str]
+
+
+class AgentStartedEvent(AgentRunEvent):
     model: str
     max_turns: int
     # Spec 3.3: the skill sources the SDK loaded as plugins; absent when none.
     skill_sources: NotRequired[list[str]]
 
 
-class TurnStartEvent(BaseEvent):
+class TurnStartEvent(AgentRunEvent):
     turn_number: int
     model: str
 
 
-class TurnUsageEvent(BaseEvent):
+class TurnUsageEvent(AgentRunEvent):
     input_tokens: int
     output_tokens: int
     cache_read_tokens: int
@@ -106,19 +119,19 @@ class TurnUsageEvent(BaseEvent):
     model: str
 
 
-class TextEvent(BaseEvent):
+class TextEvent(AgentRunEvent):
     text: str
     truncated: NotRequired[bool]
     original_length: NotRequired[int]
 
 
-class ThinkingEvent(BaseEvent):
+class ThinkingEvent(AgentRunEvent):
     text: str
     truncated: NotRequired[bool]
     original_length: NotRequired[int]
 
 
-class ToolCallEvent(BaseEvent):
+class ToolCallEvent(AgentRunEvent):
     tool_id: str
     tool_name: str
     summary: str
@@ -128,7 +141,7 @@ class ToolCallEvent(BaseEvent):
     redacted: NotRequired[dict[str, Any]]
 
 
-class ToolResultEvent(BaseEvent):
+class ToolResultEvent(AgentRunEvent):
     tool_id: str
     content: str
     is_error: bool
@@ -138,21 +151,21 @@ class ToolResultEvent(BaseEvent):
     redacted: NotRequired[dict[str, Any]]
 
 
-class SubagentStartEvent(BaseEvent):
+class SubagentStartEvent(AgentRunEvent):
     tool_id: str
     name: str
 
 
-class SubagentEndEvent(BaseEvent):
+class SubagentEndEvent(AgentRunEvent):
     tool_id: str
     is_error: bool
 
 
-class ContextCompactedEvent(BaseEvent):
+class ContextCompactedEvent(AgentRunEvent):
     pre_tokens: NotRequired[int]
 
 
-class AgentAskUserEvent(BaseEvent):
+class AgentAskUserEvent(AgentRunEvent):
     question: str
     category: str
     options: list[str]
@@ -160,7 +173,7 @@ class AgentAskUserEvent(BaseEvent):
     suggested_answer: NotRequired[str]
 
 
-class CostUpdateEvent(BaseEvent):
+class CostUpdateEvent(AgentRunEvent):
     cost_usd: float
     duration_ms: int
     duration_api_ms: int
@@ -171,7 +184,7 @@ class CostUpdateEvent(BaseEvent):
     cache_creation_tokens: int
 
 
-class AgentCompletedEvent(BaseEvent):
+class AgentCompletedEvent(AgentRunEvent):
     is_error: bool
     error_code: str | None
     error_message: str
@@ -188,7 +201,7 @@ class AgentCompletedEvent(BaseEvent):
     original_length: NotRequired[int]
 
 
-class ErrorEvent(BaseEvent):
+class ErrorEvent(AgentRunEvent):
     message: str
     code: NotRequired[str]
     tool_name: NotRequired[str]
