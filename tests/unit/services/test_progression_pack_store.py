@@ -460,10 +460,10 @@ async def test_a_draft_whose_timezone_the_database_no_longer_knows_is_not_activa
 @pytest.mark.parametrize(
     ("text", "loc", "kind"),
     [
-        (DEFAULT + "\ntimezone: UTC\n", ("timezone",), "duplicate_key"),
+        (DEFAULT + "\ntimezone: UTC\n", (), "duplicate_key"),
         (
             DEFAULT.replace("  max_level: 99\n", "  max_level: 99\n  max_level: 50\n"),
-            ("curve", "max_level"),
+            ("curve",),
             "duplicate_key",
         ),
         (

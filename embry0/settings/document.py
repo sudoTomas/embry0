@@ -82,7 +82,8 @@ def placed(problem: Problem) -> Problem:
 class DocumentInvalid(ValueError):
     """The document has problems; ``problems`` lists every one, each once, as :func:`placed` says it: no place
     below a section's field names a key the operator wrote, and no message repeats a key, a tag or an alias name
-    the operator wrote (a key written twice is told by its lines, a YAML message's quoted text by ``…``).
+    the operator wrote (a key written twice is placed at the mapping holding it and told by its lines, a YAML message's
+    quoted text by ``…`` unless it is one character or one of PyYAML's own token names).
 
     The one exception is a section or a field the catalog does not have: its name is said, with the nearest one
     the catalog has, so a typo is seen at once. Those two levels hold the catalog's words, and a name written
@@ -101,18 +102,46 @@ class DocumentTooLarge(ValueError):
 # ---- parsing ----------------------------------------------------------------
 
 
-#: Text PyYAML quotes in a message: a tag, an alias or a token as written, or one character.
-_QUOTED: Final = re.compile(r"'((?:\\.|[^'\\])*)'")
+#: Text PyYAML quotes in a message: a tag, an alias or a token as written, or one character. It quotes with
+#: ``repr``, so in single quotes, or in double quotes when the text holds a single one.
+_QUOTED: Final = re.compile(r"'((?:\\.|[^'\\])*)'" r'|"((?:\\.|[^"\\])*)"')
+#: PyYAML's names for its own tokens, as its parser quotes them ("expected <block end>, but found '<scalar>'"):
+#: fixed by the library, never text the operator wrote, so a message keeps them.
+YAML_TOKEN_IDS: Final = frozenset(
+    {
+        "<stream start>",
+        "<stream end>",
+        "<directive>",
+        "<document start>",
+        "<document end>",
+        "<block sequence start>",
+        "<block mapping start>",
+        "<block end>",
+        "<alias>",
+        "<anchor>",
+        "<tag>",
+        "<scalar>",
+        "[",
+        "]",
+        "{",
+        "}",
+        "?",
+        ":",
+        "-",
+        ",",
+    }
+)
 
 
 def _unquoted(text: str) -> str:
-    """``text`` with each quoted part longer than one character (``\\t`` counts as one) said as ``'…'``: PyYAML
-    quotes tags and alias names as written, at any length, and a 422 repeats nothing written."""
+    """``text`` with each quoted part said as ``'…'``, unless it is one character (``\\t`` counts as one) or one
+    of PyYAML's token names: PyYAML quotes tags and alias names as written, at any length, and a 422 repeats
+    nothing written."""
 
     def one(match: re.Match[str]) -> str:
-        inner = match[1]
+        inner = match[1] if match[1] is not None else match[2]
         single = len(inner) == 1 or (len(inner) == 2 and inner[0] == "\\")
-        return match[0] if single else "'…'"
+        return match[0] if single or inner in YAML_TOKEN_IDS else "'…'"
 
     return _QUOTED.sub(one, text)
 

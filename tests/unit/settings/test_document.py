@@ -281,13 +281,15 @@ def _load_problems(text: str) -> list[tuple[tuple[Any, ...], str]] | str:
 
 
 def test_a_section_written_twice_is_refused_not_merged_silently() -> None:
-    assert _load_problems("sample:\n  per_tick: 1\nsample:\n  mode: 'on'\n") == [(("sample",), "duplicate_key")], (
-        "YAML would keep only the second section, silently"
+    assert _load_problems("sample:\n  per_tick: 1\nsample:\n  mode: 'on'\n") == [((), "duplicate_key")], (
+        "YAML would keep only the second section, silently; placed at the mapping that holds it"
     )
 
 
 def test_a_key_written_twice_in_a_section_is_refused() -> None:
-    assert _load_problems("sample:\n  per_tick: 1\n  per_tick: 2\n") == [(("sample", "per_tick"), "duplicate_key")]
+    assert _load_problems("sample:\n  per_tick: 1\n  per_tick: 2\n") == [(("sample",), "duplicate_key")], (
+        "placed at the mapping that holds the key, not at the key"
+    )
 
 
 def test_a_document_nested_too_deeply_is_refused_not_a_crash() -> None:
@@ -487,6 +489,11 @@ _WRITTEN_KEY = "zz-written-key"
         f"leads:\n  offer_min: !<tag:example.org,2026:{_WRITTEN_KEY}> 4\n",
         f"%TAG !e! tag:example.org,2026:\n---\nleads:\n  offer_min: !e!{_WRITTEN_KEY} 4\n",
         f"leads:\n  offer_min: !{_WRITTEN_KEY}!x 4\n",
+        f"leads:\n  offer_min: !{_WRITTEN_KEY}'x 4\n",
+        f"leads:\n  offer_min: !<tag:zz'{_WRITTEN_KEY}> 4\n",
+        f"%TAG !e! tag:zz'{_WRITTEN_KEY}:\n---\nleads:\n  offer_min: !e!b 4\n",
+        f"leads:\n  offer_min: !{_WRITTEN_KEY}%27x 4\n",
+        f"leads:\n  offer_min: !{_WRITTEN_KEY}%27x%22y 4\n",
         f"leads:\n  offer_min: *{_WRITTEN_KEY}\n",
         f"{_WRITTEN_KEY}: *{_WRITTEN_KEY}\n",
         f"leads:\n  ask_severities:\n    {_WRITTEN_KEY}:\n      {_WRITTEN_KEY}: 1\n",
@@ -507,6 +514,11 @@ _WRITTEN_KEY = "zz-written-key"
         "verbatim tag",
         "expanded tag",
         "tag handle",
+        "tag with a quote",
+        "verbatim tag with a quote",
+        "tag prefix with a quote",
+        "escaped quote in a tag",
+        "both quotes in a tag",
         "undefined alias",
         "undefined alias at the top",
         "key below a field",
@@ -526,6 +538,40 @@ def test_no_problem_under_a_mapping_names_the_key_the_operator_wrote(text: str) 
     for problem in found:
         assert len(problem["loc"]) <= 2, f"placed no deeper than the section's field: {problem}"
         assert _WRITTEN_KEY not in json.dumps(problem), f"the 422 repeats the key written: {problem}"
+
+
+@pytest.mark.parametrize(
+    ("text", "said"),
+    [
+        ("a:\n  b: 1\n c: 2\n", "line 3, column 2: expected <block end>, but found '<block mapping start>'"),
+        ("a: [1, 2\n", "line 2, column 1: expected ',' or ']', but got '<stream end>'"),
+        ("- a\nb: 1\n", "line 2, column 1: expected <block end>, but found '?'"),
+        ("a: &' 1\n", 'line 1, column 5: expected alphabetic or numeric character, but found "\'"'),
+    ],
+)
+def test_a_yaml_message_keeps_pyyaml_s_own_token_names_and_one_character(text: str, said: str) -> None:
+    """A token name and one character, in either quote PyYAML uses, are not what the operator wrote: kept."""
+    with pytest.raises(DocumentInvalid) as caught:
+        load_yaml(text)
+    assert [p.msg for p in caught.value.problems] == [f"The YAML cannot be read: {said}"]
+
+
+def test_the_token_names_a_message_keeps_are_exactly_pyyaml_s() -> None:
+    """An exact list: PyYAML's own names for its tokens, which no operator writes. A new one in an upgrade fails
+    here, to be read and added, not passed through unread."""
+    import yaml.tokens
+
+    from embry0.settings import document
+
+    ids = {
+        token.id
+        for token in vars(yaml.tokens).values()
+        if isinstance(token, type)
+        and issubclass(token, yaml.tokens.Token)
+        and isinstance(getattr(token, "id", None), str)
+    }
+    assert getattr(document, "YAML_TOKEN_IDS", None) == ids, "the kept token names are not PyYAML's"
+    assert len(ids) == 20
 
 
 def test_a_key_written_twice_in_a_json_document_is_told_without_the_key() -> None:

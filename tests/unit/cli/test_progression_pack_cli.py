@@ -57,18 +57,20 @@ def test_check_passes_the_shipped_default(tmp_path: Path, capsys: pytest.Capture
 
 
 @pytest.mark.parametrize(
-    ("text", "keys"), [(BAD, ["curve.max_level", "mystery"]), (TWICE, ["timezone"])], ids=["invalid", "twice"]
+    ("text", "keys"), [(BAD, ["curve.max_level", "mystery"]), (TWICE, [None])], ids=["invalid", "twice"]
 )
 def test_check_exits_1_with_the_messages_a_write_is_refused_with(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str, keys: list[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str, keys: list[str | None]
 ) -> None:
+    """``keys`` is each line's place, None for a problem placed at the document (a key written twice is placed at
+    the mapping that holds it, here the document, and told by its lines)."""
     with pytest.raises(PackInvalid) as refused:  # the API's own validator, as a write meets it
         read_text(text)
     expected = [str(p) for p in refused.value.problems]
     assert run(_args("check", file=_file(tmp_path, text))) == REFUSED
     printed = capsys.readouterr().err.splitlines()
     assert printed == expected, "check prints exactly the API's problems, one per line, as key: message"
-    assert [line.split(":", 1)[0] for line in printed] == keys
+    assert [line.split(":", 1)[0] if p.loc else None for line, p in zip(printed, refused.value.problems)] == keys
 
 
 def test_check_of_a_missing_or_oversized_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
