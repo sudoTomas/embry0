@@ -1,4 +1,8 @@
-"""The backlog intake (spec 2026-10-25): which tickets read as ready, and which are left to other paths."""
+"""The backlog intake (spec 2026-10-25): which tickets read as ready, and which are left to other paths.
+
+Each ticket is read with the ``leads`` section's default vocabulary here;
+``test_readiness.py`` reads it in an organization's own words.
+"""
 
 from __future__ import annotations
 
@@ -8,16 +12,16 @@ import pytest
 
 from embry0.execution.forge_client import Listing
 from embry0.services.leads import Lead, lead_id
-from embry0.services.leads.backlog import (
-    effort_of,
-    find_github_tickets,
-    linear_leads,
-    paths_in,
-    readiness,
-    severity_of,
-    ticket_lead,
-)
+from embry0.services.leads.backlog import find_github_tickets, linear_leads, paths_in, ticket_lead
+from embry0.services.leads.readiness import Readiness
+from embry0.settings.sections.leads import LeadsSettings
 from tests.unit.services.leads.fakes import FakeForge
+
+#: The reading the default section gives: the vocabulary the intake held in its code before #168.
+DEFAULT = Readiness.of(LeadsSettings())
+readiness = DEFAULT.score
+effort_of = DEFAULT.effort
+severity_of = DEFAULT.severity
 
 READY_BODY = (
     "The export fails with `ValueError: invalid date` when the start date is empty.\n"
@@ -87,6 +91,7 @@ def test_a_ticket_lead_says_why_it_is_offered_and_how_it_starts():
         labels=["bug"],
         priority=2,
         min_score=40,
+        readiness=DEFAULT,
     )
     assert isinstance(lead, Lead)
     assert lead.id == lead_id("ticket", "acme/web", "linear:ENG-12")
@@ -95,7 +100,15 @@ def test_a_ticket_lead_says_why_it_is_offered_and_how_it_starts():
     assert lead.action == "Put the trigger label on the ticket and start its pipeline"
     assert lead.data == {"tracker": "linear", "key": "ENG-12", "readiness": lead.data["readiness"]}
     idea = ticket_lead(
-        repo="acme/web", tracker="github", key="3", title="Idea", body="", url=None, labels=[], min_score=40
+        repo="acme/web",
+        tracker="github",
+        key="3",
+        title="Idea",
+        body="",
+        url=None,
+        labels=[],
+        min_score=40,
+        readiness=DEFAULT,
     )
     assert idea is None
 
@@ -119,7 +132,9 @@ async def test_linear_tickets_someone_holds_labelled_or_tracked_are_left_alone()
         _ticket("ENG-5", labels=("bug", "Embry0")),
         _ticket("ENG-6", assigned=True, mine=True),
     ]
-    leads = await linear_leads("acme/web", tickets, trigger_labels=["embry0"], tracked=tracked, min_score=40)
+    leads = await linear_leads(
+        "acme/web", tickets, trigger_labels=["embry0"], tracked=tracked, min_score=40, readiness=DEFAULT
+    )
     assert [lead.data["key"] for lead in leads] == ["ENG-1", "ENG-6"]
 
 
@@ -138,9 +153,13 @@ async def test_github_issues_nobody_holds_and_not_yet_tracked_become_leads():
         {"number": 5, "title": "Rethink billing", "body": "", "labels": [{"name": "epic"}]},
     ]
     client = FakeForge({"/repos/acme/web/issues": Listing(issues, complete=True)})
-    result = await find_github_tickets(client, "acme/web", trigger_labels=["embry0"], tracked=_untracked, min_score=40)
+    result = await find_github_tickets(
+        client, "acme/web", trigger_labels=["embry0"], tracked=_untracked, min_score=40, readiness=DEFAULT
+    )
     assert [lead.data["key"] for lead in result.leads] == ["1"] and result.complete
     partial = FakeForge({"/repos/acme/web/issues": Listing(issues, complete=False)})
     assert not (
-        await find_github_tickets(partial, "acme/web", trigger_labels=[], tracked=_untracked, min_score=40)
+        await find_github_tickets(
+            partial, "acme/web", trigger_labels=[], tracked=_untracked, min_score=40, readiness=DEFAULT
+        )
     ).complete

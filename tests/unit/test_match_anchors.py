@@ -78,6 +78,9 @@ UNCHECKED: dict[tuple[str, str], str] = {
         "an old path's own route regex, matched the way Starlette matches it, to list every route a path reaches"
     ),
     ("embry0/workflows/verification/gate.py", "rx"): "a failure-line parser from _FAILURE_LINE_RES, read line by line",
+    ("embry0/services/leads/readiness.py", "self.epic"): (
+        "an epic title's start, built from an organization's words at run time by _epic_title; anchored by ^ alone"
+    ),
 }
 
 # Only these nodes are evaluated to find a pattern's value: names, attributes,

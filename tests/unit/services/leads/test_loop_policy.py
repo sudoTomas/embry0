@@ -4,8 +4,10 @@
   runs a pass as soon as it is turned on, and follows ``interval_hours`` as
   the section says it at each look.
 - Each repository's pass follows its organization's layer: its finders, its
-  daily cap and the readiness a backlog ticket needs to be offered
-  (``offer_min``); the backlog is read only when some repository runs it.
+  daily cap, the readiness a backlog ticket needs to be offered
+  (``offer_min``) and the words that readiness is read in (#168), from
+  Linear and from GitHub alike; the backlog is read only when some
+  repository runs it.
 - A pass by hand (``POST /leads/run``) runs whether leads are on or not.
 
 The section is read through ``tests.fixtures.leads``, the real snapshot, so
@@ -20,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from embry0.execution.forge_client import Listing
 from embry0.services.leads import FinderResult
 from embry0.services.leads.loop import LeadsLoop
 from tests.fixtures.areas import no_areas_for
@@ -50,10 +53,11 @@ def _failing(*repos_checks: tuple[str, list[str]]) -> FakeForge:
 
 
 class Linear:
-    """A Linear backlog with one ready ticket per repository; counts its reads."""
+    """A Linear backlog with one ready ticket per repository, labelled ``labels``; counts its reads."""
 
-    def __init__(self, *repos: str) -> None:
+    def __init__(self, *repos: str, labels: tuple[str, ...] = ("bug",)) -> None:
         self.repos = repos
+        self.labels = labels
         self.reads = 0
 
     async def list_backlog_tickets(self) -> tuple[list[Any], bool]:
@@ -61,7 +65,11 @@ class Linear:
         tickets = [
             SimpleNamespace(
                 issue=SimpleNamespace(
-                    key=f"ENG-{i}", title=f"Fix the export for ENG-{i}", body=READY_BODY, url="u", labels=["bug"]
+                    key=f"ENG-{i}",
+                    title=f"Fix the export for ENG-{i}",
+                    body=READY_BODY,
+                    url="u",
+                    labels=list(self.labels),
                 ),
                 repo=repo,
                 assigned=False,
@@ -183,6 +191,57 @@ async def test_a_backlog_ticket_is_offered_by_its_organization_s_offer_min() -> 
     assert summary[ACME]["ticket"] == {}, f"acme's offer_min of 80 offers no ticket scoring 75: {summary[ACME]}"
     assert summary[GLOBEX]["ticket"] == {"found": 1, "new": 1}, f"the deployment's 40 offers it: {summary[GLOBEX]}"
     assert [row["repo"] for row in store.rows.values()] == [GLOBEX]
+
+
+def _issues(*repos: str, labels: tuple[str, ...]) -> FakeForge:
+    """Each repository has one open GitHub issue, as ready as the Linear tickets, labelled ``labels``."""
+    return FakeForge(
+        {
+            f"/repos/{repo}/issues": Listing(
+                [
+                    {
+                        "number": 7,
+                        "title": "Fix the export for issue 7",
+                        "body": READY_BODY,
+                        "labels": [{"name": label} for label in labels],
+                        "html_url": "u",
+                    }
+                ],
+                complete=True,
+            )
+            for repo in repos
+        }
+    )
+
+
+async def test_an_organization_s_own_labels_and_words_decide_its_tickets_readiness() -> None:
+    """Every ticket is labelled kind/bug and reads 75 with it as a ready label, 65 without. The deployment
+    offers from 70: acme's layer names kind/bug a ready label, so its tickets are offered from Linear and from
+    GitHub alike, and globex's, read in the default words, are not."""
+    assert "readiness_labels" in leads_section().model.model_fields, (
+        "an organization's layer may set the labels its tickets' readiness is read by"
+    )
+    settings = MemorySettings(
+        {"enabled": True, "finders": ["ticket"], "offer_min": 70},
+        {"acme": {"readiness_labels": {"ready": ["kind/bug"]}}},
+    )
+    store = MemoryLeads()
+    linear = Linear(ACME, GLOBEX, labels=("kind/bug",))
+    forge = _issues(ACME, GLOBEX, labels=("Kind/Bug",))
+    summary = await _loop(settings, store, forge, [T0], repos=(ACME, GLOBEX), linear=linear).tick()
+
+    assert summary[ACME]["ticket"] == {"found": 2, "new": 2}, f"acme's words offer both its tickets: {summary}"
+    assert summary[GLOBEX]["ticket"] == {}, f"globex's tickets read 65 in the default words: {summary}"
+    read = sorted((row["repo"], row["source_key"], row["data"]["readiness"]) for row in store.rows.values())
+    assert read == [(ACME, "github:7", 75), (ACME, "linear:ENG-1", 75)], (
+        f"each finder scores acme's tickets with acme's ready label: {read}"
+    )
+
+    settings.organizations["acme"]["readiness_weights"] = {"ready_label": 0}
+    again = await _loop(settings, store, forge, [T0], repos=(ACME, GLOBEX), linear=linear).tick()
+    assert again[ACME]["ticket"] == {"gone": 2}, (
+        f"acme's ready label now weighs nothing, so its tickets read 65 and the next intake closes both: {again}"
+    )
 
 
 async def test_the_backlog_is_read_only_when_some_repository_runs_the_ticket_finder() -> None:

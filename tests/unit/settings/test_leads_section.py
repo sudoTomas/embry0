@@ -72,7 +72,10 @@ def test_the_section_reads_as_an_operator_writes_it() -> None:
             "ask_severities": {"crack": ["medium", "high", "critical"], "weed": []},
         }
     }, f"the leads section is stored as written: {data}"
-    assert _read(data) == data["leads"], "and read back the same by a tick"
+    read = _read(data)
+    assert read is not None and {key: read[key] for key in data["leads"]} == data["leads"], (
+        "and read back the same by a tick"
+    )
 
 
 def test_nothing_written_is_how_leads_ran_before_the_section_but_off() -> None:
@@ -87,10 +90,86 @@ def test_nothing_written_is_how_leads_ran_before_the_section_but_off() -> None:
         "offer_min": 40,
         "ask_min": 60,
         "ask_severities": {"crack": ["high", "critical"], "weed": ["high", "critical"]},
+        "readiness_labels": {
+            "ready": [
+                "bug",
+                "chore",
+                "dependencies",
+                "docs",
+                "documentation",
+                "maintenance",
+                "refactor",
+                "tech debt",
+                "tech-debt",
+                "test",
+                "tests",
+            ],
+            "small": [
+                "easy",
+                "good first issue",
+                "good-first-issue",
+                "s",
+                "size/s",
+                "size/xs",
+                "size:s",
+                "size:xs",
+                "small",
+                "xs",
+            ],
+            "large": ["l", "large", "size/l", "size/xl", "size:l", "size:xl", "xl"],
+            "not_ready": [
+                "blocked",
+                "design",
+                "discussion",
+                "epic",
+                "idea",
+                "needs design",
+                "needs discussion",
+                "needs-design",
+                "question",
+                "research",
+                "rfc",
+                "spike",
+                "wontfix",
+            ],
+            "urgent": ["critical", "p0", "security", "sev1", "urgent"],
+            "high": ["high", "p1", "regression", "sev2"],
+        },
+        "readiness_weights": {
+            "description_short": 5,
+            "description": 20,
+            "description_full": 25,
+            "paths": 20,
+            "error": 10,
+            "done": 15,
+            "ready_label": 10,
+            "small": 10,
+            "large": -10,
+            "not_ready": -30,
+            "short_title": -10,
+        },
+        "done_phrases": [
+            "acceptance criteria",
+            "done when",
+            "definition of done",
+            "expected behavior",
+            "expected behaviors",
+            "expected behaviour",
+            "expected behaviours",
+            "expected result",
+            "expected results",
+            "steps to reproduce",
+            "should",
+            "- [ ]",
+        ],
+        "epic_title_words": ["epic"],
+        "small_estimate_max": 2.0,
+        "large_estimate_min": 5.0,
     }, (
         "every default is the value the LEADS_* variables and PROPOSALS_TICKET_MIN_READINESS had, "
-        "except enabled: leads are opt-in now; and which severities of a crack or a weed are asked in "
-        "chat is what the code held before (#166)"
+        "except enabled: leads are opt-in now; which severities of a crack or a weed are asked in "
+        "chat is what the code held before (#166); and the words a ticket's readiness is read in are "
+        "the ones the backlog intake held in its code (#168)"
     )
 
 
@@ -322,11 +401,20 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "offer_min",
         "ask_min",
         "ask_severities",
+        "readiness_labels",
+        "readiness_weights",
+        "done_phrases",
+        "epic_title_words",
+        "small_estimate_max",
+        "large_estimate_min",
     }, (
         "an organization chooses what one of its repositories' passes does: its finders, its daily cap, "
-        "when a review is stale, how far flakiness is read, which tickets are offered and asked, and which "
-        "severities of a kind its people are asked about in chat; whether the one loop runs and how often "
-        "stay the deployment's"
+        "when a review is stale, how far flakiness is read, which tickets are offered and asked, the words "
+        "its tickets' readiness is read in, and which severities of a kind its people are asked about in "
+        "chat; whether the one loop runs and how often stay the deployment's"
+    )
+    assert section.merged_keys == {"ask_severities", "readiness_labels", "readiness_weights"}, (
+        "the mappings a layer writes entry by entry: kinds, label roles and signals"
     )
     assert section.repo_keys == frozenset(), "which repositories leads read is the repository scope rule's (#165)"
     assert {key: env_name(imported.attr) for key, imported in section.imports().items()} == {
@@ -424,3 +512,155 @@ def test_the_effective_view_gives_each_kind_of_a_merged_key_its_source() -> None
     ], acme["entries"]
     finders = next(k for s in effective_view(CATALOG, snapshot, [], config)["sections"] for k in s["keys"])
     assert "entries" not in finders, "only a merged key carries entries"
+
+
+# The words a ticket's readiness is read in (#168, spec 2026-11-23).
+
+#: A value each vocabulary key takes, so a test of what it refuses first shows the key exists: a section without
+#: it refuses every value as an unknown key, which would pass for the refusal tested.
+VOCABULARY = {
+    "readiness_labels": {"ready": ["kind/bug"]},
+    "readiness_weights": {"done": 20},
+    "done_phrases": ["acceptance criteria"],
+    "epic_title_words": ["initiative"],
+    "small_estimate_max": 3,
+    "large_estimate_min": 8,
+}
+
+
+def _vocabulary_is_a_key(key: str) -> None:
+    assert _problems({key: VOCABULARY[key]}) == [], f"{key} is a key of the leads section and takes a good value"
+
+
+def test_an_organization_s_vocabulary_reads_as_its_operator_writes_it() -> None:
+    text = (
+        "leads:\n"
+        "  readiness_labels:\n"
+        "    ready: [kind/bug, Type::Bug]\n"
+        "    not_ready: []\n"
+        "  readiness_weights: {done: 20, short_title: 0}\n"
+        "  done_phrases: [acceptance criteria, Akzeptanzkriterien, '- [x]']\n"
+        "  epic_title_words: [initiative]\n"
+        "  small_estimate_max: 3\n"
+        "  large_estimate_min: 8\n"
+    )
+    stored = _stored(load_yaml(text))
+    assert not isinstance(stored, list), f"a vocabulary in other words and another language is accepted: {stored}"
+    read = _read(stored)
+    assert read is not None
+    assert (read["readiness_labels"]["ready"], read["readiness_labels"]["not_ready"]) == (
+        ["kind/bug", "Type::Bug"],
+        [],
+    ), "labels are kept as written; they are compared case-folded"
+    assert read["readiness_labels"]["urgent"] == ["critical", "p0", "security", "sev1", "urgent"], (
+        "a role the document does not name keeps the default's labels"
+    )
+    assert (read["readiness_weights"]["done"], read["readiness_weights"]["paths"]) == (20, 20)
+    assert (read["small_estimate_max"], read["large_estimate_min"]) == (3, 8)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("readiness_labels", {"omen-role": ["x"]}),
+        ("readiness_labels", {"ready": "bug"}),
+        ("readiness_labels", {"ready": [7]}),
+        ("readiness_labels", ["ready"]),
+        ("readiness_labels", {"ready": ["bug", " BUG "]}),
+        ("readiness_labels", {"ready": ["  "]}),
+        ("readiness_labels", {"ready": ["x" * 65]}),
+        ("readiness_labels", {"ready": [f"label-{n}" for n in range(65)]}),
+        ("readiness_labels", {"ready": ["kind\tbug"]}),
+        ("readiness_weights", {"omen-signal": 5}),
+        ("readiness_weights", {"done": 101}),
+        ("readiness_weights", {"done": -101}),
+        ("readiness_weights", {"done": 2.5}),
+        ("readiness_weights", {"done": True}),
+        ("readiness_weights", {"done": "5"}),
+        ("readiness_weights", [5]),
+        ("done_phrases", "should"),
+        ("done_phrases", ["should", "Should"]),
+        ("done_phrases", [""]),
+        ("done_phrases", ["x" * 81]),
+        ("done_phrases", [f"phrase {n}" for n in range(101)]),
+        ("done_phrases", ["done\nwhen"]),
+        ("done_phrases", ["done‮when"]),
+        ("epic_title_words", ["epic", "EPIC"]),
+        ("epic_title_words", ["x" * 41]),
+        ("epic_title_words", [f"w{n}" for n in range(33)]),
+        ("small_estimate_max", -1),
+        ("small_estimate_max", 1001),
+        ("large_estimate_min", "5"),
+    ],
+)
+def test_a_vocabulary_value_out_of_bounds_is_refused_naming_the_key(key: str, value: Any) -> None:
+    _vocabulary_is_a_key(key)
+    found = _problems({key: value})
+    assert found and all(loc[:2] == ("leads", key) for loc, _ in found), (
+        f"{value!r} must be refused as leads.{key}: {found}"
+    )
+    assert all(len(loc) == 2 or isinstance(loc[2], int) for loc, _ in found), (
+        f"a refusal's place names the key, at most an index, never a name the operator wrote: {found}"
+    )
+
+
+def test_every_vocabulary_problem_is_named_at_once_and_none_is_repeated_back() -> None:
+    for key in VOCABULARY:
+        _vocabulary_is_a_key(key)
+    found = _problems(
+        {
+            "readiness_labels": {"zz-omen-role": ["zz-a"], "ready": ["zz-dup", "ZZ-DUP"], "small": ["zz-" * 30]},
+            "readiness_weights": {"zz-omen-signal": 5, "done": 777},
+            "done_phrases": ["zz-should", "ZZ-Should"],
+        }
+    )
+    assert sorted(loc for loc, _ in found) == [
+        ("leads", "done_phrases"),
+        ("leads", "readiness_labels"),
+        ("leads", "readiness_weights"),
+    ], f"every bad key is named by its own key, all at once: {found}"
+    messages = dict(((loc[1], msg) for loc, msg in found))
+    assert "name only the roles" in messages["readiness_labels"], messages
+    assert "ready lists a label twice" in messages["readiness_labels"], messages
+    assert "small lists a label longer than 64 characters" in messages["readiness_labels"], messages
+    assert "name only the signals" in messages["readiness_weights"], messages
+    assert "done is worth from -100 to 100 points" in messages["readiness_weights"], messages
+    for _, msg in found:
+        assert "zz-" not in msg.casefold() and "777" not in msg, f"a refusal never repeats what was written: {msg!r}"
+
+
+def test_an_organization_s_layer_replaces_the_label_roles_and_signals_it_names_and_inherits_the_rest() -> None:
+    from tests.fixtures.leads import leads_policy
+
+    _vocabulary_is_a_key("readiness_labels")
+    assert {"readiness_labels", "readiness_weights"} <= leads_section().merged_keys, (
+        "a layer merges the label roles and signals it names over what it inherits"
+    )
+    policy = leads_policy(
+        {"readiness_labels": {"small": ["xs"]}, "readiness_weights": {"done": 30}},
+        organizations={
+            "acme": {"readiness_labels": {"ready": ["kind/bug"]}, "readiness_weights": {"paths": 5}},
+        },
+    )
+    acme, globex = policy.repo("acme/web"), policy.repo("globex/api")
+    assert acme.readiness_labels["ready"] == ("kind/bug",), "acme's ready labels replace the role whole"
+    assert acme.readiness_labels["small"] == ("xs",), "the role acme does not name is the deployment's"
+    assert acme.readiness_labels["not_ready"] == globex.readiness_labels["not_ready"] != (), (
+        "and a role neither names is the default's"
+    )
+    assert (acme.readiness_weights["paths"], acme.readiness_weights["done"]) == (5, 30), (
+        "acme's paths weight, the deployment's done weight"
+    )
+    assert (globex.readiness_labels["ready"][0], globex.readiness_weights["paths"]) == ("bug", 20), (
+        "an organization without a layer reads the deployment's document over the defaults"
+    )
+
+
+def test_an_organization_s_lists_of_phrases_and_words_replace_the_inherited_ones_whole() -> None:
+    from tests.fixtures.leads import leads_policy
+
+    _vocabulary_is_a_key("done_phrases")
+    policy = leads_policy(organizations={"acme": {"done_phrases": ["akzeptanzkriterien"], "epic_title_words": []}})
+    assert policy.repo("acme/web").done_phrases == ("akzeptanzkriterien",)
+    assert policy.repo("acme/web").epic_title_words == ()
+    assert "should" in policy.repo("globex/api").done_phrases

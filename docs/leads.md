@@ -24,7 +24,7 @@ leads:
     weed: [high, critical]
 ```
 
-Those are the defaults, except `enabled`, which is `false`. The loop always runs: every 5 minutes it reads the section, does nothing while `enabled` is false, and otherwise runs a pass `interval_hours` after the last one ended (it wakes for that even between its 5-minute looks, so passes are spaced exactly as before the section), so turning leads on, off, or changing any key needs no restart. `POST /api/v1/leads/run` runs a pass by hand whether leads are on or not, and the leads already stored stay until answered.
+Those are the defaults, except `enabled`, which is `false`; the words a backlog ticket's readiness is read in are keys of the section too ([backlog tickets](#backlog-tickets)). The loop always runs: every 5 minutes it reads the section, does nothing while `enabled` is false, and otherwise runs a pass `interval_hours` after the last one ended (it wakes for that even between its 5-minute looks, so passes are spaced exactly as before the section), so turning leads on, off, or changing any key needs no restart. `POST /api/v1/leads/run` runs a pass by hand whether leads are on or not, and the leads already stored stay until answered.
 
 **Upgrading.** Leads used to be on by default (`LEADS_ENABLED=true`), so they ran on every deployment that left the variable unset, whether or not a finder ever stored anything. The first start of the release that moved them into the section keeps them on wherever they ran: when `LEADS_ENABLED` is not set and the deployment existed before, it writes `enabled: true` into the document, under a comment saying why, once. The evidence is any record a deployment in use holds from before that release first started: a registered repository, a job, or a `ticket`, `ci`, `alert`, `flaky` or `review` lead (open or gone). The import records that moment once (the database's clock when the process began, before the migrations), so a new deployment, whose tables did not exist then, never shows any, even if it registers a repository while a failed check waits for its retry or before its next start: its leads start off. `LEADS_ENABLED=true` or `false`, when set, is imported as any variable is. If the check fails at the start, leads read off and the check is asked again in the same run until it answers ([configuration.md](configuration.md#settings-document), *From the environment*). `embry0 settings import-env` leaves `enabled` out of the file it writes and says on stderr what a running deployment keeps.
 
@@ -76,21 +76,69 @@ Those are the defaults. Which repositories it reads is `background.scout`, off u
 
 ## Backlog tickets
 
-A ticket is offered only when it reads as ready, a 0 to 100 score from the ticket alone, and the score is at least `leads.offer_min`:
+A ticket is offered only when it reads as ready, a 0 to 100 score from the ticket alone, and the score is at least `leads.offer_min`. The score adds the points of each signal the ticket shows and is kept within 0 to 100; its reasons are in the proposal's summary. A model-based reading of readiness is not part of this version. By default, before any document says otherwise:
 
-- a description (+5 short, +20 from 80 characters, +25 from 400);
-- file paths (+20), quoted error text (+10), what done looks like ("expected", "steps to reproduce", a checklist; +15);
-- a label such as bug, chore, refactor, docs or dependencies (+10); small by label or estimate (+10), large (-10);
-- an epic, design, question, spike or blocked label (-30); a title of three words or fewer (-10).
+<!-- readiness-table:start -->
 
-The score and its reasons are in the proposal's summary. A model-based reading of readiness is not part of this version.
+| Signal | Points | When |
+| --- | --- | --- |
+| `description_short` | +5 | a description shorter than 80 characters, not blank |
+| `description` | +20 | a description of 80 to 399 characters |
+| `description_full` | +25 | a description of 400 characters or more |
+| `paths` | +20 | the title or the description names a file path |
+| `error` | +10 | the title or the description quotes error text (a traceback, an exception, an HTTP 5xx) |
+| `done` | +15 | the description holds a done phrase |
+| `ready_label` | +10 | a `ready` label |
+| `small` | +10 | a `small` label, or an estimate of at most 2 |
+| `large` | -10 | a `large` label, or an estimate of at least 5 |
+| `not_ready` | -30 | a `not_ready` label, or else an epic by its title |
+| `short_title` | -10 | a title of 3 words or fewer |
+
+| Role | Labels | A ticket with one |
+| --- | --- | --- |
+| `ready` | `bug`, `chore`, `dependencies`, `docs`, `documentation`, `maintenance`, `refactor`, `tech debt`, `tech-debt`, `test`, `tests` | reads as ready to start |
+| `small` | `easy`, `good first issue`, `good-first-issue`, `s`, `size/s`, `size/xs`, `size:s`, `size:xs`, `small`, `xs` | reads as small |
+| `large` | `l`, `large`, `size/l`, `size/xl`, `size:l`, `size:xl`, `xl` | reads as large |
+| `not_ready` | `blocked`, `design`, `discussion`, `epic`, `idea`, `needs design`, `needs discussion`, `needs-design`, `question`, `research`, `rfc`, `spike`, `wontfix` | reads as not ready |
+| `urgent` | `critical`, `p0`, `security`, `sev1`, `urgent` | makes the lead critical when the tracker gives no priority |
+| `high` | `high`, `p1`, `regression`, `sev2` | makes the lead high when the tracker gives no priority |
+
+Done phrases (`done_phrases`): `acceptance criteria`, `done when`, `definition of done`, `expected behavior`, `expected behaviors`, `expected behaviour`, `expected behaviours`, `expected result`, `expected results`, `steps to reproduce`, `should`, `- [ ]`.
+
+Epic title words (`epic_title_words`): `epic`.
+
+<!-- readiness-table:end -->
+
+Those defaults are what the code held before they became settings, so a deployment that writes none scores every ticket as it did. Organizations label and write their tickets their own way, so every word the score reads is a key of the `leads` section an organization's layer may set, per repository through that layer like the thresholds below:
+
+```yaml
+leads:
+  readiness_labels:            # by role; a role named here replaces that role's labels
+    ready: [kind/bug, kind/chore, type::bug]
+    not_ready: [kind/epic, needs-triage]
+  readiness_weights:           # by signal; a signal named here replaces its points
+    done: 20
+    short_title: 0
+  done_phrases: [acceptance criteria, definition of done, akzeptanzkriterien]
+  epic_title_words: [epic, initiative]
+  small_estimate_max: 3        # estimates in the tracker's own scale
+  large_estimate_min: 8
+```
+
+- **Labels** (`readiness_labels`) match a ticket's labels without regard to case or surrounding spaces. A ticket can hold labels of several roles: each adds its signal.
+- **Done phrases** (`done_phrases`) are matched as written, in any case and any language, as whole words: where a phrase starts or ends with a letter or a digit, the text beside it must not be one, so `done when` reads in "Done when:" and not in "undone whenever", while `- [ ]` reads anywhere. No phrase can make reading a ticket slow: a phrase is never made into a pattern.
+- **Epic title words** (`epic_title_words`) make an unlabelled ticket an epic when its title starts with one in brackets (`[Epic] ...`) or followed by a colon or a dash, with an optional scope in parentheses (`Epic: ...`, `epic(billing): ...`). It takes the `not_ready` points, once, as a `not_ready` label would.
+- **Estimates** (`small_estimate_max`, `large_estimate_min`) read a tracker's estimate in its own scale; a ticket that reads as both small and large takes both signals, and the effort of a large one.
+- **File paths and error text** are read by the code, not by words an organization sets.
+
+`readiness_labels` and `readiness_weights` are written entry by entry, as `ask_severities` is: the deployment's document replaces only the roles and signals it names over the defaults, and an organization's layer only those it names over the deployment's, so an organization that names its own `ready` labels keeps every other role's. The lists of phrases and title words, and the estimates, are replaced whole. A value the section does not take is refused with a 422 naming each problem, never repeating what was written.
+
+A change is read at the next backlog intake (`leads.backlog_interval_hours`, 24 hours by default) or at once by `POST /api/v1/leads/run` with `"backlog": true`. That intake scores every ticket again: a stored lead is updated, and one that now scores below `offer_min` is closed.
 
 Two thresholds read that one score, each per repository through its organization's layer:
 
 - **`leads.offer_min`** (40): a ticket scoring below it is not stored as a lead at all, so it is never offered, on the page or in chat.
 - **`leads.ask_min`** (60): an offered ticket scoring below it is *held*. `GET /api/v1/proposals` leaves it out unless `include_held=true`, so a chat assistant does not ask it, and no ask is queued for it; the Owner proposals page shows it folded; the brief writer writes its brief after the others; and its decision card marks the readiness. It can still be read, accepted, declined and snoozed by id.
-
-The labels, weights and words the score reads are in the code for now; they become an organization's own vocabulary in a later change (#168).
 
 ## What reaches chat
 
@@ -104,7 +152,7 @@ leads:
     alert: [critical]         # only critical alerts are asked
 ```
 
-The default is what the code held before the key: only a crack or a weed graded high or critical is asked. The key is written entry by entry, not whole: the deployment's document overrides only the kinds it names and keeps the default for every other kind, and an organization's layer overrides only the kinds it names over the deployment's. So `{alert: [critical]}`, in the deployment's document or in an organization's layer, asks only critical alerts and still only cracks and weeds graded high or critical. It is the one key merged entry by entry instead of replaced whole ([layers](configuration.md#settings-document)); `GET /api/v1/config/settings/effective` says where each kind's entry comes from. To ask every severity of a kind in one organization, list all of them. A kind or a severity the catalogue does not know is refused with a 422 naming the key, never repeating what was written.
+The default is what the code held before the key: only a crack or a weed graded high or critical is asked. The key is written entry by entry, not whole: the deployment's document overrides only the kinds it names and keeps the default for every other kind, and an organization's layer overrides only the kinds it names over the deployment's. So `{alert: [critical]}`, in the deployment's document or in an organization's layer, asks only critical alerts and still only cracks and weeds graded high or critical. It is merged entry by entry instead of replaced whole, as the readiness labels and weights are ([layers](configuration.md#settings-document)); `GET /api/v1/config/settings/effective` says where each kind's entry comes from. To ask every severity of a kind in one organization, list all of them. A kind or a severity the catalogue does not know is refused with a 422 naming the key, never repeating what was written.
 
 ## A lead's life
 
