@@ -724,3 +724,38 @@ def test_a_phrase_may_join_its_parts_as_persian_and_emoji_do_and_holds_no_other_
     assert _problems({"readiness_labels": {"ready": ["\u0628\u0627\u06af\u200c\u0647\u0627"]}}) == []
     for other in ("done\u202ewhen", "done\u200bwhen", "done\u2066when"):
         assert [loc for loc, _ in _problems({"done_phrases": [other]})] == [("leads", "done_phrases")], other
+
+
+@pytest.mark.parametrize(
+    ("value", "named"),
+    [
+        (
+            {"crack": "high", "zz-omen-kind": ["high"], "weed": ["zz-urgent-ish"]},
+            [
+                "crack is a list of severities",
+                "name only kinds whose proposals carry a severity",
+                "weed lists a severity",
+            ],
+        ),
+        (
+            {"crack": [3], "weed": ["high", "high"]},
+            ["crack lists a severity that is none of", "weed names a severity twice"],
+        ),
+        ({"crack": {"zz-high": 1}, "alert": ["zz-x"]}, ["crack is a list of severities", "alert lists a severity"]),
+    ],
+)
+def test_ask_severities_names_every_problem_at_once_a_wrong_shape_included(value: Any, named: list[str]) -> None:
+    """An entry of the wrong shape is one problem among the key's others, not the only one reported (#655)."""
+    assert _problems({"ask_severities": {"crack": ["high"]}}) == [], "ask_severities is a key of the leads section"
+    found = _problems({"ask_severities": value})
+    assert [loc for loc, _ in found] == [("leads", "ask_severities")], f"one problem, at the key: {found}"
+    message = found[0][1]
+    assert all(part in message for part in named), f"every problem is named, {named}: {message!r}"
+    assert "zz-" not in message.casefold(), f"and none of what was written: {message!r}"
+
+
+def test_ask_severities_of_another_shape_than_a_mapping_says_what_to_write() -> None:
+    found = _problems({"ask_severities": ["crack"]})
+    assert [(loc, "write a mapping of kind to a list of severities" in msg) for loc, msg in found] == [
+        (("leads", "ask_severities"), True)
+    ], found
