@@ -94,3 +94,18 @@ async def test_a_lookup_lets_go_of_an_issue_it_did_not_take(first_hears: Any, fi
         f"the second create's lookup did not find its own #8 (it answered {read}, {found}): the first lookup still "
         f"holds it ({first.claimed!r})"
     )
+
+
+async def test_a_lookup_that_takes_an_issue_holds_it_until_its_create_links_it() -> None:
+    """#646 review: the claim is dropped on every way out that does not take the issue, and only those. A lookup
+    that takes #8 keeps holding it until its create links #8 and resolves, so a second create's lookup, looking
+    before the first links, does not take #8 too."""
+    sync = _github()
+    first, second = _two_creates(sync)
+    read, found = await _lookup(sync, first, _answers(lambda: False))
+    assert read and found is not None and found["number"] == 8, (read, found)
+    assert first.claimed == "8", f"the lookup took #8 and let go of it before its create linked it: {first.claimed!r}"
+    read, found = await _lookup(sync, second, _answers(lambda: False))
+    assert (read, found) == (True, None), (
+        f"a second create's lookup took #{found and found['number']}, which the first holds until it links it"
+    )
