@@ -405,3 +405,21 @@ async def test_the_lifespan_imports_the_variables_and_installs_what_another_proc
         assert [p.name for p in providers.enabled_openai_compatible()] == ["groq"], "the write was never picked up"
     ledger = await db_with_migrations.fetchval("SELECT imported FROM provider_catalogue")
     assert sorted(ledger) == ["openrouter.refresh_hours", "providers.enabled"]
+
+
+@pytest.mark.parametrize("as_text", [True, False], ids=["text", "Path"])
+async def test_a_write_and_its_undo_are_audited_to_the_database_and_the_file(
+    client: AsyncClient, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, as_text: bool
+) -> None:
+    from pathlib import Path
+
+    path = tmp_path / "audit" / "audit.jsonl"
+    monkeypatch.setattr(client.app.state.config, "audit_log_path", str(path) if as_text else path)  # type: ignore[attr-defined]
+    put = await _put(client, DEEPSEEK_ON)
+    assert put.status_code == 200, put.text
+    undone = await client.post(f"{CATALOG}/revisions/{put.json()['revision_id']}/undo")
+    assert undone.status_code == 200, undone.text
+    expected = ["provider_catalogue.updated", "provider_catalogue.change_undone"]
+    assert [action for action, _ in await _audits(client)] == expected
+    lines = Path(path).read_text().splitlines()
+    assert [json.loads(line)["action"] for line in lines] == expected

@@ -397,7 +397,7 @@ def _warn_and_audit_dev_mode(flag_name: str, audit_log_path: object) -> None:
     try:
         from embry0.audit.logger import emit_audit_event
 
-        path = audit_log_path if isinstance(audit_log_path, Path) else None
+        path = audit_log_path if isinstance(audit_log_path, Path | str) else None
         emit_audit_event(
             "dev_mode_enabled",
             actor="system",
@@ -1305,7 +1305,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.provider_catalogue = CatalogueStore(
             db,
             references=catalogue_references,
-            audit_log_path=str(config.audit_log_path) if config.audit_log_path else None,
+            audit_log_path=config.audit_log_path,
             metrics=getattr(app.state, "loop_metrics", None) or NULL_METRICS,
         )
         try:

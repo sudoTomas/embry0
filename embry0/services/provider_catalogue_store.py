@@ -57,6 +57,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapp
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Final, Literal
 
 import structlog
@@ -334,7 +335,7 @@ class CatalogueStore:
 
     db: DatabasePool
     references: ReferenceReader = field(default=read_references)
-    audit_log_path: str | None = None
+    audit_log_path: Path | None = None
     #: ``LoopMetrics`` (``embry0_provider_catalogue_refused_parts``); the null one records nothing.
     metrics: Any = NULL_METRICS
     _installed_generation: int | None = None
