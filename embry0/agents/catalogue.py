@@ -51,8 +51,22 @@ SCHEMA_VERSION: Final = 1
 ANTHROPIC: Final = "anthropic"
 #: A provider's fields only embry0 sets: an overlay that names one is refused.
 SHIPPED_ONLY: Final = frozenset({"runtime", "base_url", "api_root", "model_prefixes", "strip_prefix", "probe_path"})
+#: The chat-completions request fields a model's ``request_extras`` may set: the ones that change neither which model
+#: answers nor what its tokens cost, so the run is metered as the model it was routed to. Anything else is refused
+#: where it is named. A field joins the list here, with a test, once it is known to change neither (spec 2026-11-23).
+REQUEST_EXTRAS: Final = frozenset(
+    {
+        "chat_template_kwargs",
+        "max_completion_tokens",
+        "max_tokens",
+        "reasoning_effort",
+        "response_format",
+        "temperature",
+        "top_p",
+    }
+)
 #: The chat-completions request fields the executor sets, or reads its answer by (and their older equivalents for
-#: tools): a model's ``request_extras`` may name none of them, and the executor drops any that reach it.
+#: tools). None is in :data:`REQUEST_EXTRAS`; the executor also drops any that reach it, and sets its own last.
 EXECUTOR_FIELDS: Final = frozenset(
     {"model", "messages", "tools", "tool_choice", "functions", "function_call", "stream", "stream_options", "n"}
 )
@@ -181,7 +195,7 @@ class ModelEntry(_Model):
     request_extras: dict[str, JsonValue] = Field(
         default_factory=dict,
         max_length=16,
-        description="extra chat-completions body fields the model needs; never one the executor sets",
+        description="extra chat-completions body fields the model needs, from REQUEST_EXTRAS only",
     )
 
 
@@ -423,9 +437,14 @@ def _model_problems(where: tuple[str | int, ...], model: str, spec: ModelEntry, 
     dated = [day for day in days if day is not None]
     if dated != sorted(set(dated)):
         problems.append(Problem((*where, "prices"), "out_of_order", "the from dates must be in order, each day once"))
-    for key in sorted(EXECUTOR_FIELDS & set(spec.request_extras)):
+    for key in sorted(set(spec.request_extras) - REQUEST_EXTRAS):
         problems.append(
-            Problem((*where, "request_extras", key), "executor_field", "set by the executor, not by request_extras")
+            Problem(
+                (*where, "request_extras", key),
+                "not_allowed",
+                "not a field request_extras may set: it takes only those that change neither which model answers "
+                "nor what it costs",
+            )
         )
     return problems
 
@@ -500,7 +519,7 @@ def _without_what_a_catalogue_may_not_set(base: CatalogueDocument, overlay: Any)
         dropped = SHIPPED_ONLY & set(entry)
         for key in sorted(dropped):
             problems.append(Problem(("providers", name, key), "shipped_only", "set by embry0, not by a catalogue"))
-        nulls = {key for key in ("enabled", "factors") if key in entry and entry[key] is None}
+        nulls = {key for key in ("enabled", "factors", "models") if key in entry and entry[key] is None}
         for key in sorted(nulls):
             problems.append(Problem(("providers", name, key), "null", "null takes out a model or a default price"))
         kept[name] = {key: value for key, value in entry.items() if key not in dropped | nulls}

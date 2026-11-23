@@ -133,13 +133,28 @@ def test_a_model_that_needs_request_fields_gets_them(catalog_endpoint, server, m
     assert catalog_endpoint == ["https://api.openai.com/v1"]
 
 
+#: The fields the executor sets or reads its answer by, written out here, not read from the code.
+_EXECUTOR_FIELDS = [
+    "model",
+    "messages",
+    "tools",
+    "tool_choice",
+    "functions",
+    "function_call",
+    "stream",
+    "stream_options",
+    "n",
+]
+
+
 def test_a_model_s_extra_fields_never_replace_the_executor_s_own(catalog_endpoint, server, monkeypatch) -> None:
-    """The catalogue refuses request_extras that name a field the executor sets; whatever reaches the wire anyway,
-    the request still carries the routed model, the run's messages and the executor's tools, and is not streamed."""
+    """The catalogue refuses request_extras outside its allowlist; whatever reaches the wire anyway, the request still
+    carries the routed model, the run's messages and the executor's tools, and none of the executor's other fields."""
     monkeypatch.setenv("EMBRY0_LLM_OPENAI_API_KEY", _KEY)
     routed = eo.provider_named("openai")
     assert routed is not None
-    extras = {"model": "gpt-6.1-sol", "messages": [], "stream": True, "tools": [], "reasoning_effort": "none"}
+    extras: dict[str, Any] = {field: "from-the-extras" for field in _EXECUTOR_FIELDS}
+    extras["reasoning_effort"] = "none"
     with_extras = dataclasses.replace(routed, request_extras={"gpt-6-luna": extras})
     monkeypatch.setattr(eo, "provider_named", lambda name: with_extras if name == "openai" else None)
     server.answer(completion(content="ok"))
@@ -149,8 +164,9 @@ def test_a_model_s_extra_fields_never_replace_the_executor_s_own(catalog_endpoin
     assert [m["role"] for m in body["messages"]][:2] == ["system", "user"], (
         "a model's extra fields replaced the messages"
     )
-    assert body["tools"], "a model's extra fields replaced the executor's tools"
-    assert "stream" not in body, "a model's extra fields turned streaming on"
+    assert isinstance(body["tools"], list) and body["tools"], "a model's extra fields replaced the executor's tools"
+    leaked = sorted(field for field, value in body.items() if value == "from-the-extras")
+    assert leaked == [], f"a model's extra fields reached the request: {leaked}"
     assert body["reasoning_effort"] == "none", "the model's own extra field was dropped"
 
 

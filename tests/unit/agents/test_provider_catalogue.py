@@ -410,28 +410,86 @@ def test_the_sandbox_image_carries_the_seed() -> None:
         assert "COPY embry0/agents/ /app/embry0/agents/" in text, f"{dockerfile} no longer copies embry0/agents/"
 
 
-def test_request_extras_may_not_name_a_field_the_executor_sets() -> None:
+#: Fields a model's request_extras may set, written out here, not read from the code: adding one to the allowlist
+#: (catalogue.REQUEST_EXTRAS) means adding it here too.
+_ALLOWED_EXTRAS = {
+    "chat_template_kwargs": {"enable_thinking": False},
+    "max_completion_tokens": 512,
+    "max_tokens": 512,
+    "reasoning_effort": "none",
+    "response_format": {"type": "json_object"},
+    "temperature": 0.2,
+    "top_p": 0.9,
+}
+#: Fields it may not: the executor's own, and ones that change which model answers or what it costs.
+_REFUSED_EXTRAS = [
+    "model",
+    "messages",
+    "tools",
+    "tool_choice",
+    "functions",
+    "function_call",
+    "stream",
+    "stream_options",
+    "n",
+    "models",
+    "route",
+    "service_tier",
+    "modalities",
+    "audio",
+    "prediction",
+    "web_search_options",
+    "plugins",
+    "provider",
+]
+
+
+def test_the_allowlist_is_the_one_written_here() -> None:
+    assert catalogue.REQUEST_EXTRAS == set(_ALLOWED_EXTRAS), "the allowlist moved without its test"
+
+
+@pytest.mark.parametrize("field", sorted(_ALLOWED_EXTRAS))
+def test_request_extras_takes_a_field_that_changes_neither_model_nor_price(field: str) -> None:
+    doc = _merged(
+        {"providers": {"openai": {"models": {"gpt-6-luna": {"request_extras": {field: _ALLOWED_EXTRAS[field]}}}}}}
+    )
+    assert doc.providers["openai"].models["gpt-6-luna"].request_extras == {field: _ALLOWED_EXTRAS[field]}
+
+
+@pytest.mark.parametrize("field", _REFUSED_EXTRAS)
+def test_request_extras_refuses_any_other_field_naming_where(field: str) -> None:
+    problems = _refused(
+        {"providers": {"openrouter": {"models": {"openrouter/openai/gpt-6.1-sol": {"request_extras": {field: "x"}}}}}}
+    )
+    where = f"providers.openrouter.models.openrouter/openai/gpt-6.1-sol.request_extras.{field}"
+    assert [loc for loc, _ in problems] == [where], f"{field} was not refused where it is: {problems}"
+
+
+def test_a_routing_list_is_refused_with_its_alias() -> None:
     problems = _refused(
         {
             "providers": {
-                "openai": {
+                "openrouter": {
                     "models": {
-                        "gpt-6-luna": {
-                            "request_extras": {
-                                "model": "gpt-6.1-sol",
-                                "messages": [],
-                                "stream": True,
-                                "reasoning_effort": "none",
-                            }
+                        "openrouter/openai/gpt-6.1-sol": {
+                            "request_extras": {"models": ["openrouter/anthropic/claude-opus-x"], "route": "fallback"}
                         }
                     }
                 }
             }
         }
     )
-    named = sorted(loc.rsplit(".", 1)[1] for loc, msg in problems if "set by the executor" in msg)
-    assert named == ["messages", "model", "stream"], f"the executor's own fields are not each refused: {problems}"
-    assert not any(loc.endswith("reasoning_effort") for loc, _ in problems), "a model's own field was refused"
+    assert sorted(loc.rsplit(".", 1)[1] for loc, _ in problems) == ["models", "route"], problems
+
+
+def test_null_models_is_refused_not_a_crash() -> None:
+    problems = _refused({"providers": {"openai": {"models": None}}})
+    assert problems == [("providers.openai.models", "null takes out a model or a default price")], problems
+
+
+def test_a_field_only_embry0_sets_is_named_beside_a_wrong_shape() -> None:
+    problems = _refused({"providers": {"openai": {"api_root": "https://proxy.example", "enabled": "yes"}}})
+    assert sorted(loc for loc, _ in problems) == ["providers.openai.api_root", "providers.openai.enabled"], problems
 
 
 def test_every_problem_of_an_overlay_and_of_the_catalogue_it_makes_is_named() -> None:

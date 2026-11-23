@@ -42,7 +42,7 @@ providers:
         prices: [{in: 2.0, out: 10.0}, {from: 2026-12-01, in: 4.0, out: 20.0}]
         free: false             # $0 on purpose; a model is priced or free, never neither
         chat_only: false        # served without tool calling
-        request_extras: {}      # chat-completions body fields the model needs
+        request_extras: {}      # chat-completions body fields the model needs, from an allowlist
 ```
 
 The schema is `embry0/agents/catalogue.py`; the seed, `embry0/agents/providers.yaml`, holds today's table.
@@ -58,7 +58,10 @@ The schema is `embry0/agents/catalogue.py`; the seed, `embry0/agents/providers.y
 - a model priced or free; every model id starting with its provider's prefix;
 - no two providers' prefixes overlapping, so a model id routes to one provider only;
 - `anthropic` present; the Agent SDK providers always on;
-- a model's `request_extras` naming no field the executor sets or reads its answer by (`model`, `messages`, `tools`, `tool_choice`, `functions`, `function_call`, `stream`, `stream_options`, `n`). The executor also drops any such field that reaches it, and sets its own after a model's extras, so its own always win.
+- a model's `request_extras` naming only fields of an allowlist (`REQUEST_EXTRAS` in the schema module): those that change neither which model answers nor what its tokens cost. Today that is `reasoning_effort`, `temperature`, `top_p`, `max_tokens`, `max_completion_tokens`, `response_format` and `chat_template_kwargs`. Anything else is refused where it is named: the executor's own fields, a provider's routing (OpenRouter's `models` and `route`, `provider`, `plugins`), and fields that keep the model but change its price (`service_tier`, `modalities`, `audio`, `prediction`, `web_search_options`). The executor also drops any of its own fields that reach it, and sets its own after a model's extras, so its own always win;
+- `null` only for a model (taking it out) or a default price, never for `enabled`, `factors` or `models`.
+
+**Adding a field to the allowlist.** First check, against the providers that accept it, that the field changes neither which model serves the request nor how its tokens are priced. Then add it to `REQUEST_EXTRAS` and to the test's own list of allowed fields (`tests/unit/agents/test_provider_catalogue.py`, which compares the two), with a case that a model takes it.
 
 **Kept out of the document.** Where each key is read from is code (`ENVIRONMENT` in the schema module). The custom provider's address comes from its credential or `CUSTOM_LLM_BASE_URL`.
 
