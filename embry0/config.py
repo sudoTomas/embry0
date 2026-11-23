@@ -653,6 +653,13 @@ class Embry0Config(BaseSettings):
     local_llm_max_request_bytes: Annotated[int, NOT_SECRET] = 8 * 1024 * 1024
     local_llm_context_tokens: Annotated[int, NOT_SECRET] = 0
     local_llm_slot_wait_seconds: Annotated[int, NOT_SECRET] = 900
+    # Read once, at the first start of the release that stored the provider
+    # catalogue (ADR 0031), into its document: which OpenAI-compatible
+    # providers are on, and how often OpenRouter's live model list is read
+    # again. Ignored after that; the catalogue decides
+    # (embry0/services/provider_catalogue_store.py).
+    openai_compatible_providers: Annotated[str, NOT_SECRET] = ""
+    openrouter_catalog_refresh_hours: Annotated[str, NOT_SECRET] = ""
     # The largest model request the xai- and auth-proxy forward. Every agent
     # turn resends the whole conversation, and a 300k-token prompt is more
     # than a megabyte of JSON. Over it, the run ends as ERR_CONTEXT_WINDOW_EXCEEDED.

@@ -3,21 +3,21 @@
 ``GET https://openrouter.ai/api/v1/models`` answers without a key; the key a
 job with no repository binding would run with is sent when one resolves.
 ``embry0.agents.openrouter_catalog.parse`` decides what is kept and at what
-price. A refresh runs at start when the stored list is older than the
-interval, then every ``OPENROUTER_CATALOG_REFRESH_HOURS`` (24 by default;
-0 stops the loop, POST /config/providers/openrouter/catalog/refresh still
-works), and on demand.
+price. While the provider catalogue turns OpenRouter on, a refresh runs when
+the list in force is older than OpenRouter's ``refresh_hours`` there (24 as
+shipped; 0 stops the loop, POST /config/providers/openrouter/catalog/refresh
+still works), and on demand. The loop reads both each minute, so a change to
+the catalogue applies without a restart.
 
 A failed refresh, an answer that is not the list, or one with fewer than
 ``MIN_MODELS`` models it would keep, changes nothing in force: the last good
 list stays, and the error is stored beside it for the LLM Providers page.
-With no list ever stored, OpenRouter's static entry in providers.py serves.
+With no list ever stored, OpenRouter's entry in the provider catalogue serves.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -35,25 +35,30 @@ MODELS_URL: Final = "https://openrouter.ai/api/v1/models"
 TIMEOUT_SECONDS: Final = 30.0
 MIN_MODELS: Final = 10
 """A list with fewer models than this is taken for a broken answer, not OpenRouter's catalog."""
-REFRESH_SETTING: Final = "OPENROUTER_CATALOG_REFRESH_HOURS"
 DEFAULT_REFRESH_HOURS: Final = 24.0
 RETRY_SECONDS: Final = 3600.0
 """How soon the loop tries again after a failed read."""
+LOOK_SECONDS: Final = 60.0
+"""How often the loop looks again at whether OpenRouter is on and how often to read its list."""
 
 Fetch = Callable[[str | None], Awaitable[Any]]
 """Given the key (or None), returns OpenRouter's decoded ``GET /models`` answer; raises on a failed read."""
 
 
-def refresh_hours(environ: dict[str, str] | None = None) -> float:
-    """The refresh interval in hours; 0 turns the loop off. A value that is not a number is the default."""
-    raw = (os.environ if environ is None else environ).get(REFRESH_SETTING, "").strip()
-    if not raw:
-        return DEFAULT_REFRESH_HOURS
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        logger.warning("openrouter_catalog_refresh_setting_invalid", value=raw, default=DEFAULT_REFRESH_HOURS)
-        return DEFAULT_REFRESH_HOURS
+def refresh_hours() -> float:
+    """OpenRouter's ``refresh_hours`` in the installed provider catalogue; 0 stops the loop."""
+    from embry0.agents.catalogue import current as installed
+
+    entry = installed().document.providers.get(PROVIDER)
+    hours = entry.refresh_hours if entry is not None else None
+    return DEFAULT_REFRESH_HOURS if hours is None else hours
+
+
+def enabled() -> bool:
+    """Whether the installed provider catalogue turns OpenRouter on."""
+    from embry0.agents.catalogue import current as installed
+
+    return installed().enabled(PROVIDER)
 
 
 async def fetch_models(secret: str | None) -> Any:
@@ -77,13 +82,17 @@ class OpenRouterCatalogService:
         *,
         resolve_secret: Callable[[str], Awaitable[str | None]] | None = None,
         fetch: Fetch = fetch_models,
-        interval_hours: float = DEFAULT_REFRESH_HOURS,
+        interval_hours: float | Callable[[], float] = DEFAULT_REFRESH_HOURS,
+        enabled: Callable[[], bool] = lambda: True,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._repo = repo
         self._resolve_secret = resolve_secret
         self._fetch = fetch
-        self._interval_hours = interval_hours
+        self._interval = interval_hours if callable(interval_hours) else (lambda: float(interval_hours))
+        self._enabled = enabled
+        self._sleep = sleep
         self._now = now
         self._lock = asyncio.Lock()
         self._skipped: dict[str, int] = {}
@@ -149,23 +158,34 @@ class OpenRouterCatalogService:
             "skipped": dict(self._skipped),
             "last_error": self._last_error,
             "last_error_at": self._last_error_at.isoformat() if self._last_error_at is not None else None,
-            "refresh_hours": self._interval_hours,
+            "refresh_hours": self._interval(),
         }
 
     async def start(self) -> None:
-        """Refresh when the list in force is older than the interval, then on the interval; runs until cancelled."""
-        if self._interval_hours <= 0:
-            return
-        interval = timedelta(hours=self._interval_hours)
+        """While OpenRouter is on, refresh when the list in force is older than the interval; runs until cancelled.
+
+        It looks again at least every :data:`LOOK_SECONDS`, so turning
+        OpenRouter on or off, or changing the interval, applies within a
+        minute. A failed read is tried again after :data:`RETRY_SECONDS` (or
+        the interval, if shorter), not the interval later.
+        """
+        retry_at: datetime | None = None
         while True:
+            hours = self._interval()
+            if hours <= 0 or not self._enabled():
+                await self._sleep(LOOK_SECONDS)
+                continue
+            interval = timedelta(hours=hours)
             catalog = current()
-            if catalog is not None:
-                wait = (catalog.fetched_at + interval - self._now()).total_seconds()
-                if wait > 0:
-                    await asyncio.sleep(wait)
-            if (await self.refresh())["last_error"] is not None:
-                # A failed read is tried again within the hour, not the next day.
-                await asyncio.sleep(min(RETRY_SECONDS, interval.total_seconds()))
+            due = [
+                m for m in (catalog.fetched_at + interval if catalog is not None else None, retry_at) if m is not None
+            ]
+            wait = (max(due) - self._now()).total_seconds() if due else 0.0
+            if wait > 0:
+                await self._sleep(min(wait, LOOK_SECONDS))
+                continue
+            failed = (await self.refresh())["last_error"] is not None
+            retry_at = self._now() + min(timedelta(seconds=RETRY_SECONDS), interval) if failed else None
 
     async def _secret(self) -> str | None:
         if self._resolve_secret is None:

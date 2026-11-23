@@ -17,6 +17,8 @@ The providers, their models and prices are the provider catalogue
 ([ADR 0031](adr/0031-provider-catalogue.md)): its schema is
 `embry0/agents/catalogue.py`, and embry0 ships its values in
 `embry0/agents/providers.yaml`, which `embry0/agents/providers.py` routes by.
+A deployment changes it with an overlay of its own (below,
+[Changing the catalogue](#changing-the-catalogue)).
 Routing is per-agent by model id: when a
 resolved model matches a provider prefix (`grok-*` → xAI), the in-sandbox
 executor overlays `{ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY}` on the CLI
@@ -42,8 +44,8 @@ id that routes to a provider without a price entry is therefore refused:
 - and, if a run on one still happens, the direct executor records the run as
   an `ERR_INVALID_CONFIG` error naming the model instead of a $0 cost.
 
-To bring a new grok model into service, add it to `models` and
-`pricing_usd_per_mtok` together. What the flat rates leave out (long-context
+To bring a new grok model into service, add it with its `prices` under
+`xai`'s `models` in the catalogue overlay. What the flat rates leave out (long-context
 and cached-input pricing) is listed under the limits below.
 
 The account is a row in the credential registry (`docs/credentials.md`): an xAI `llm_api_key` is injected as `XAI_API_KEY`, and an xAI `llm_oauth` is served by the xai-proxy for that credential id. `XAI_API_KEY` in the orchestrator `.env` is the resolver's last step, and an import source, not the only place a grok job can authenticate.
@@ -60,13 +62,17 @@ The Claude CLI is not involved, so the CLI's MCP, hooks and session resume are
 replaced by the loop's own: builtin tools and MCP stdio servers, every call
 gated by `gate_tool_call` in the sandbox, and the text-transcript resume.
 
-**Off by default.** `OPENAI_COMPATIBLE_PROVIDERS` in the root `.env` names the
-providers this deployment offers, comma-separated, for example
-`OPENAI_COMPATIBLE_PROVIDERS=openai,deepseek,custom`. A provider it does not
-name routes no model, is listed on no catalog surface (`GET /config/models`,
-the LLM Providers page, `GET /agents`), and takes no credential. With the
-setting unset every model routes as before. The orchestrator reads it per
-request; the sandbox does not need it.
+**Off by default.** The catalogue's `enabled` turns a provider on:
+`providers: {deepseek: {enabled: true}}` in the overlay
+([Changing the catalogue](#changing-the-catalogue)), in force at once, with no
+restart. A provider that is off routes no model, is listed on no catalog
+surface (`GET /config/models`, the LLM Providers page, `GET /agents`), and
+takes no credential. The sandbox does not need it.
+
+`OPENAI_COMPATIBLE_PROVIDERS` named them before the catalogue did. The first
+start of a release with the catalogue imports it once into `enabled`; after
+that it is ignored, and a start that still finds it set logs
+`provider_catalogue_env_ignored`.
 
 | Provider | Model ids | API root | Key (env fallback) | Listed models, $/Mtok in / out | Tool calling |
 |---|---|---|---|---|---|
@@ -91,7 +97,7 @@ its peak hours and the table carries the peak rate; OpenRouter passes the
 upstream price through and charges a fee on credit purchases, which is not
 modelled. A model of these providers runs only when it is listed with a price,
 as for grok (#219); to bring another into service, add it under its provider's
-`models` in `embry0/agents/providers.yaml`, with its `prices`. OpenRouter's models and prices come from its
+`models` in the catalogue overlay, with its `prices`. OpenRouter's models and prices come from its
 live list instead (below). A custom server bills nothing per token, so
 any `custom/` model is priced at $0 instead of refused, and a job's
 `budget_usd` does not bound it. A `custom/` id is not listed, so it cannot be
@@ -121,23 +127,133 @@ search fee the token price does not show); a negative price (OpenRouter's
 routers, priced per request); a zero or missing price on a model that is not
 free.
 
-When it is read: at start when the stored list is older than
-`OPENROUTER_CATALOG_REFRESH_HOURS` (24 by default), then on that interval while
-`openrouter` is in `OPENAI_COMPATIBLE_PROVIDERS`, and on demand with **Read the
-list now** on the OpenRouter card, which is
+When it is read: while the catalogue turns `openrouter` on, whenever the list in
+force is older than OpenRouter's `refresh_hours` in the catalogue (24 as
+shipped), and on demand with **Read the list now** on the OpenRouter card, which is
 `POST /api/v1/config/providers/openrouter/catalog/refresh` (admin; returns
 `{"source", "models", "fetched_at", "skipped", "last_error", "last_error_at",
-"refresh_hours"}`). `0` turns the schedule off. A read that fails, or that
-yields fewer than ten models, changes nothing in force: the last good list
-stays and the error is shown beside it, and the loop tries again within the
-hour. With no list ever read, the static entry above serves.
+"refresh_hours"}`). `0` turns the schedule off. The loop looks each minute
+whether OpenRouter is on and at its interval, so a change to either applies
+without a restart. `OPENROUTER_CATALOG_REFRESH_HOURS` set the interval before
+the catalogue did; it is imported once into `refresh_hours`, then ignored. A
+read that fails, or that yields fewer than ten models, changes nothing in
+force: the last good list stays and the error is shown beside it, and the loop
+tries again within the hour. With no list ever read, the static entry above
+serves.
 
 A run on a model of the list carries its rates to the sandbox
 (`pricing_usd_per_mtok` in the runner config), since the sandbox has no copy of
-the list. A sandbox image built before this reads no rates and ends a finished
+the list; so does a run on any provider other than Anthropic, at the rates of
+the deployment's catalogue. A sandbox image built before this reads no rates and ends a finished
 run as "cost unknown"; the orchestrator then prices the run from its token
 counts and keeps the outcome the agent reached, and logs
 `catalog_model_priced_by_orchestrator` until the image is rebuilt.
+
+### Changing the catalogue
+
+The shipped catalogue moves with each release. A deployment's changes are an
+overlay merged into it field by field, stored in `provider_catalogue`
+(migration 152) as YAML, comments and all. It names only what differs: per
+provider embry0 ships, `enabled`, `factors` (`turns`, `timeout`),
+`default_price`, OpenRouter's `refresh_hours`, and `models`, where a new id
+comes with its `prices` (`[{in, out}]`, US dollars per million tokens, each
+with an optional `from` day) or `free: true`, a listed one changes the fields
+the overlay names, and `null` takes one out. A provider's runtime, addresses,
+prefixes and key variables are embry0's, and an overlay that names one is
+refused.
+
+```yaml
+# DeepSeek for the light tier, at the off-peak rate
+providers:
+  deepseek:
+    enabled: true
+    models:
+      deepseek-flash: {prices: [{in: 0.15, out: 0.60}]}
+```
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/v1/config/providers/catalog` | any key | the overlay as written (`yaml_text`) and its values, its `generation` (also the `ETag`), who changed it last, `catalogue` (the shipped one with the overlay merged in, what every job runs on), and `refused` (below); `?format=yaml` answers the overlay alone |
+| `GET /api/v1/config/providers/catalog/shipped` | any key | the shipped catalogue, as YAML |
+| `PUT /api/v1/config/providers/catalog` | admin, no repository allowlist | replace the overlay with the body (`Content-Type: application/yaml`); `?dry_run=true` stores nothing and answers the diff; `If-Match: "<generation>"` refuses a write over a newer one (409); `?reason=` is recorded |
+| `GET /api/v1/config/providers/catalog/revisions[/{id}]` | any key | its changes, newest first, or one with its text before and after |
+| `POST /api/v1/config/providers/catalog/revisions/{id}/undo` | admin, no repository allowlist | put back what the newest change replaced, while it is still what is stored (else 409) |
+
+The MCP tools are `provider_catalogue_get`, `provider_catalogue_set` (whole
+text, `expected_generation`, `dry_run`, `confirm=true`),
+`provider_catalogue_revisions` and `provider_catalogue_undo`.
+
+A `from` day is stored as its ISO text and read back as a day, so a dated
+price written in one process is in force, dated, in every other.
+
+A write is in force at once in the process that took it, and every other
+process installs it within ten seconds: routing, the model pickers, the
+checks that a model is offered and priced, the turn and time budgets, and
+what the orchestrator prices. A sandbox carries the shipped catalogue, so
+each run on a provider other than Anthropic is sent its model's rates in
+force, and where embry0 prices a run from its tokens (the chat-completions
+providers, grok's direct executor) a model the overlay re-priced or added is
+metered at the overlay's price; a model's `request_extras` stay the shipped ones in a sandbox until
+each run carries its whole provider record (the next part of #173). **Not yet
+for an SDK-runtime provider** (xAI's grok on the Agent SDK, its default): such a
+run is charged what the CLI reports (`total_cost_usd`) and its per-turn
+estimates come from the sandbox's shipped table, so re-pricing a `grok-` model
+in the catalogue changes no run's charge until that same change carries the
+catalogue's rates into SDK runs. It is refused, with nothing stored,
+by a 422 naming every problem and never a value: the YAML's own (a syntax
+error, an alias, a key written twice), past 256 KiB (413), an overlay field
+it may not set, a catalogue it makes that cannot be (a chat-completions model
+without a price, prefixes of two providers that are on overlapping), a
+`request_extras` value past 4,096 bytes as JSON or nested deeper than 32, and
+any model a tier, the fallback order, an agent definition or a
+`background_models` value names that the change would take out, leave without
+a price or turn off (`loc` `references.<where>`). Change what names it first.
+A write of any of those, in turn, is checked against the stored catalogue
+with its row held, so a change of the catalogue and a write naming a model
+never pass each other.
+
+**Everything in the document is readable by every key**, a key with a
+repository allowlist included: the YAML as written with its comments, each
+change's reason, the text before and after each change, and every value,
+`request_extras` such as `chat_template_kwargs` among them. Keep secrets out of
+it; a key belongs in the [credential registry](credentials.md).
+
+**When a release moves the shipped catalogue.** A stored overlay meets the
+shipped catalogue of whatever release reads it, which may have taken out a
+model or a provider the overlay names. A write is always checked whole, but a
+stored overlay is read part by part:
+
+| What the overlay names | What is in force |
+|---|---|
+| `null` for a model the release took out too | as asked: the model is gone, and nothing is reported |
+| a provider the release no longer ships | the rest; that provider's entry is left out |
+| fields of a model the release took out | when they give it `prices` of its own: the deployment's own model at those prices, chat-only and with the request extras it was last shipped with unless the overlay says (each write records what the shipped catalogue said of every model it names, and keeps what it recorded of a model a release dropped, in `provider_catalogue.shipped`; an undo puts back the record of the side it restores), named in `notes`; else that model's entry is left out |
+| a field the release made its own, a key it no longer knows, a value a bound now refuses | the rest; that field, or that model's entry, is left out |
+| a top-level key the release does not know | the rest; that key is left out |
+| no overlay at all at its top level (not a mapping, another `version`) | the shipped catalogue, with that problem |
+
+A price is never replaced by one the deployment did not set. When a model's
+entry that set its `prices` or `free` is left out, the model is unpriced
+(`withheld` in `refused`), so the resolver and every write refuse it until the
+catalogue is written again; when a provider's `default_price` is left out, the
+provider has none, so its models without a price of their own are unpriced.
+The provider stays on for its other models: that is narrower than turning it
+off.
+
+At a process's start every part that still applies is in force; nothing the
+deployment turned on is turned off because something else in the overlay no
+longer applies. A process already running when
+a later overlay this release refuses part of is written keeps the catalogue it
+runs on. Either way each part left out is named in `refused` by
+`GET /api/v1/config/providers/catalog`, whose `in_force` says `in_part` or
+`earlier` (and `in_force_generation` which overlay); it is logged
+(`provider_catalogue_refused`), audited once a generation
+(`provider_catalogue.refused`), and counted by the gauge
+`embry0_provider_catalogue_refused_parts`, on which the shipped rule
+`Embry0ProviderCatalogueRefused` fires after 5 minutes
+([metrics.md](ops/metrics.md#provider-catalogue)). Write the catalogue again
+without those parts: the write names each one, and puts the whole overlay in
+force.
 
 ### Adding a key
 
@@ -147,8 +263,8 @@ credential registry and becomes the provider's global binding, in place of the
 global key it had, so every repository without a binding of its own uses it.
 The steps below are the same by hand.
 
-1. Name the provider in `OPENAI_COMPATIBLE_PROVIDERS` and restart the
-   orchestrator.
+1. Turn the provider on in the catalogue
+   ([Changing the catalogue](#changing-the-catalogue)).
 2. Store the key in the [credential registry](credentials.md) and bind it,
    at global scope for every repository or at repo or owner scope:
 

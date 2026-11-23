@@ -985,6 +985,41 @@ class Embry0Client:
     async def settings_undo(self, revision_id: int) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/config/settings/revisions/{int(revision_id)}/undo"))
 
+    async def provider_catalogue_get(self) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", "/api/v1/config/providers/catalog"))
+
+    async def provider_catalogue_set(
+        self, text: str, *, dry_run: bool = False, expected_generation: int | None = None, reason: str = ""
+    ) -> dict[str, Any]:
+        """Replace the provider catalogue overlay (raw-YAML PUT); ``dry_run`` only reports what it would change.
+        ``expected_generation`` goes in ``If-Match``, so a catalogue someone else changed since is not overwritten."""
+        params: dict[str, Any] = {"source": "person"}
+        if dry_run:
+            params["dry_run"] = 1
+        if reason:
+            params["reason"] = reason
+        headers = {"Content-Type": "application/yaml"}
+        if expected_generation is not None:
+            headers["If-Match"] = f'"{int(expected_generation)}"'
+        return _as_dict(
+            await self._request(
+                "PUT", "/api/v1/config/providers/catalog", params=params, content=text.encode("utf-8"), headers=headers
+            )
+        )
+
+    async def provider_catalogue_revisions(self, *, limit: int = 20) -> dict[str, Any]:
+        return _as_dict(
+            await self._request("GET", "/api/v1/config/providers/catalog/revisions", params={"limit": limit})
+        )
+
+    async def provider_catalogue_revision(self, revision_id: int) -> dict[str, Any]:
+        return _as_dict(await self._request("GET", f"/api/v1/config/providers/catalog/revisions/{int(revision_id)}"))
+
+    async def provider_catalogue_undo(self, revision_id: int) -> dict[str, Any]:
+        return _as_dict(
+            await self._request("POST", f"/api/v1/config/providers/catalog/revisions/{int(revision_id)}/undo")
+        )
+
     async def org_webhook_install(self, owner: str) -> dict[str, Any]:
         return _as_dict(await self._request("POST", f"/api/v1/orgs/{owner}/webhook"))
 

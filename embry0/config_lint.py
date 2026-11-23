@@ -64,6 +64,15 @@ _UNDECLARED_KEYS: Final[frozenset[str]] = frozenset(
     {"XAI_DIRECT_EXECUTOR", "EMBRY0_API_URL", "EMBRY0_URL", "ASK_USER_ROUNDS_CAP"}
 )
 
+
+def _provider_variables() -> frozenset[str]:
+    """Each provider's key and address variables (``catalogue.ENVIRONMENT``): the credential resolver reads them,
+    not a config field, and they share prefixes config fields own (``OPENAI_``, ``OPENROUTER_``)."""
+    from embry0.agents.catalogue import ENVIRONMENT
+
+    return frozenset(name for env in ENVIRONMENT.values() for name in (env.api_key, env.base_url) if name)
+
+
 _SUGGESTION_CUTOFF: Final[float] = 0.85
 
 
@@ -92,8 +101,9 @@ def find_unknown_env_vars(environ: Mapping[str, str], declared: set[str]) -> lis
     """Env keys that look like a misspelled ``declared`` name, sorted by key."""
     prefixes = tuple({name.split("_", 1)[0] + "_" for name in declared if "_" in name})
     findings: list[UnknownEnvVar] = []
+    providers = _provider_variables()
     for name in sorted(environ):
-        if name in declared or name in RESERVED_ENV_KEYS or name in _UNDECLARED_KEYS:
+        if name in declared or name in RESERVED_ENV_KEYS or name in _UNDECLARED_KEYS or name in providers:
             continue
         if name.startswith(_IGNORED_PREFIXES) or not name.startswith(prefixes):
             continue

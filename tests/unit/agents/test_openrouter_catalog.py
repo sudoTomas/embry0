@@ -17,6 +17,7 @@ from embry0.agents.providers import (
     provider_models,
     unpriced_models,
 )
+from tests.fixtures.provider_catalogue import enable_providers
 
 OPUS = "openrouter/anthropic/claude-opus-5.5"
 
@@ -65,7 +66,7 @@ def _no_catalog_after() -> Iterator[None]:
 
 @pytest.fixture
 def openrouter_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
 
 
 def _install(payload: dict[str, Any] = PAYLOAD) -> list[oc.CatalogModel]:

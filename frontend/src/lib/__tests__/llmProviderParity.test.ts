@@ -2,13 +2,13 @@
 // lists: a provider added there fails here instead of going missing from the
 // dashboard, and one removed there is not offered and then refused on save.
 import { describe, expect, it } from "vitest";
-import catalogPy from "../../../../embry0/agents/providers.py?raw";
+import catalogueApiPy from "../../../../embry0/api/v1/provider_catalogue.py?raw";
 import catalogYaml from "../../../../embry0/agents/providers.yaml?raw";
 import registryPy from "../../../../embry0/services/credentials/providers.py?raw";
 import schemaPy from "../../../../embry0/api/schemas/credentials.py?raw";
 import {
   ALWAYS_ON_LLM_PROVIDERS,
-  ENABLE_SETTING,
+  ENABLE_ROUTE,
   LLM_PROVIDERS,
   OPENAI_COMPATIBLE_PROVIDERS,
   llmProviderStates,
@@ -55,10 +55,13 @@ describe("LLM providers match the backend", () => {
     expect([...LLM_PROVIDERS].sort()).toEqual(accepted.filter((name) => !NOT_LLM.includes(name)).sort());
   });
 
-  it("names the setting that enables the family", () => {
-    expect(ENABLE_SETTING).toBe(
-      capture(catalogPy, /^ENABLE_SETTING: Final = "([A-Z_]+)"/m, "ENABLE_SETTING in embry0/agents/providers.py"),
+  it("names the route that turns the family on", () => {
+    const path = capture(
+      catalogueApiPy,
+      /^@router\.put\("([^"]+)"/m,
+      "the PUT route of embry0/api/v1/provider_catalogue.py",
     );
+    expect(ENABLE_ROUTE).toBe(`PUT /api/v1${path}`);
   });
 
   it("sends a custom provider's API root under the metadata key the schema takes", () => {

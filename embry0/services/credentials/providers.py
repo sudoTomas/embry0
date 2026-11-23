@@ -34,8 +34,8 @@ LLM_PROVIDERS: dict[str, LlmProvider] = {
 OpenAI-compatible ones."""
 
 
-def llm_providers(environ: Mapping[str, str] | None = None) -> dict[str, LlmProvider]:
-    """This deployment's LLM providers: the two above plus those OPENAI_COMPATIBLE_PROVIDERS enables.
+def llm_providers() -> dict[str, LlmProvider]:
+    """This deployment's LLM providers: the two above plus those the provider catalogue turns on.
 
     An OpenAI-compatible provider takes an API key only. Its host is its API's; the
     custom provider has none of its own (each credential names its base URL).
@@ -43,15 +43,15 @@ def llm_providers(environ: Mapping[str, str] | None = None) -> dict[str, LlmProv
     from embry0.agents.providers import enabled_openai_compatible
 
     table = dict(LLM_PROVIDERS)
-    for provider in enabled_openai_compatible(environ):
+    for provider in enabled_openai_compatible():
         host = (urlparse(provider.openai_base_url).hostname or "").lower()
         table[provider.name] = LlmProvider(provider.name, host, ("llm_api_key",))
     return table
 
 
-def default_host(provider: str, environ: Mapping[str, str] | None = None) -> str:
+def default_host(provider: str) -> str:
     try:
-        return llm_providers(environ)[provider].host
+        return llm_providers()[provider].host
     except KeyError:
         raise ValueError(f"unknown llm provider {provider!r}") from None
 
@@ -79,7 +79,7 @@ def env_fallback(
     catalog ``api_key_env``; the custom provider only together with its base URL
     (``env_fallback_metadata``).
     """
-    if provider not in llm_providers(environ):
+    if provider not in llm_providers():
         raise ValueError(f"unknown llm provider {provider!r}")
     if provider == "anthropic" and getattr(config, "default_auth_mode", None) == "api_key":
         api_key = (environ.get("ANTHROPIC_API_KEY") or "").strip()

@@ -1,0 +1,34 @@
+# Part of the stored provider catalogue is not in force (#173, ADR 0031). Load
+# this into the Prometheus that scrapes the orchestrator's /metrics
+# (docs/ops/metrics.md, "Where it is exposed").
+#
+# embry0_provider_catalogue_refused_parts counts the parts of the deployment's
+# catalogue overlay (a provider's entry, a model's entry, a provider's field)
+# this release refuses, so the process does not run on them: a release took out
+# a model or a provider the overlay names, or the overlay was written by a
+# later release or by hand. A person fixes it by writing the catalogue again
+# without those parts; nothing clears it by itself, so 5 minutes is enough to
+# ride out a rolling deploy whose old process reads a newer overlay.
+#
+# The gauge is seeded 0 when the process starts, and the expression is
+# `or vector(0)` all the same, so a missing series evaluates to 0 instead of to
+# nothing (a rule that produces no series cannot be told from a rule that never
+# fires, CLAUDE.md). The max has no labels, so there is no join to get wrong.
+# Tested by provider-catalogue.rules.test.yml (promtool test rules).
+groups:
+  - name: embry0-provider-catalogue
+    rules:
+      - alert: Embry0ProviderCatalogueRefused
+        expr: |
+          (max(embry0_provider_catalogue_refused_parts) or vector(0)) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Part of the provider catalogue is not in force"
+          description: >-
+            This release refuses part of the deployment's provider catalogue, so
+            jobs do not run on that part. GET /api/v1/config/providers/catalog
+            names each part in refused, as does the audit log
+            (provider_catalogue.refused); write the catalogue again without them.
+            docs/providers.md, "Changing the catalogue".

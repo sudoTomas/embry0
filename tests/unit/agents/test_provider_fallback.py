@@ -20,6 +20,7 @@ from embry0.agents.fallback import (
 )
 from embry0.agents.resolver import resolve_agent_invocation
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+from tests.fixtures.provider_catalogue import enable_providers
 
 UNTIL = datetime(2026, 10, 26, tzinfo=UTC)
 ANTHROPIC_PAUSED = Pause("anthropic", "quota_exhausted", UNTIL)
@@ -28,7 +29,7 @@ TO_GROK = {"anthropic": ModelFallback.for_pause(ANTHROPIC_PAUSED, "grok-4.7")}
 
 @pytest.fixture(autouse=True)
 def _openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
 
 
 def _resolve(agent_type: str, *, fallbacks: Any = None, job_models: dict[str, str] | None = None, **kw: Any):

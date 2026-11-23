@@ -18,6 +18,7 @@ from embry0.agents.fallback import Pause
 from embry0.services.credentials.fallback import job_account_failures, plan_model_fallbacks
 from embry0.services.credentials.resolver import CredentialMissingError, ResolvedCredential
 from embry0.services.issue_executor import IssueExecutor
+from tests.fixtures.provider_catalogue import enable_providers
 
 UNTIL = datetime(2026, 10, 26, tzinfo=UTC)
 ORDER = ["grok-4.7", "openrouter/openai/gpt-6.1-sol"]
@@ -25,7 +26,7 @@ ORDER = ["grok-4.7", "openrouter/openai/gpt-6.1-sol"]
 
 @pytest.fixture(autouse=True)
 def _openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
 
 
 class FakeResolver:

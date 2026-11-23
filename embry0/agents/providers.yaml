@@ -51,7 +51,7 @@ providers:
       grok-4.7: {prices: [{in: 2.0, out: 6.0}]}
 
   # The OpenAI-compatible providers below run on OpenAICompatibleExecutor and are
-  # off until OPENAI_COMPATIBLE_PROVIDERS names them. Prices are the providers'
+  # off until a deployment's overlay turns them on (enabled). Prices are the providers'
   # published list prices as of 2026-10-18 (docs/providers.md names the pages).
   openai:
     runtime: chat_completions
@@ -73,6 +73,8 @@ providers:
     strip_prefix: true
     # GET /models answers without a key, so it proves nothing about one.
     probe_path: /key
+    # How often its live model list (embry0/services/openrouter_catalog.py) is read again.
+    refresh_hours: 24
     models:
       # OpenRouter passes the upstream provider's price through; its credit-purchase
       # fee is not modelled. Its live catalog (embry0/agents/openrouter_catalog.py)

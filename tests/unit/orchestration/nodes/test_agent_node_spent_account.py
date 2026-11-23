@@ -12,6 +12,7 @@ from embry0.execution.agent_runner import AgentOutput
 from embry0.orchestration.nodes.agent import run_agent_node
 from embry0.services.account_waits import LOCAL_BUSY, AccountWait, AccountWaitInterrupt
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+from tests.fixtures.provider_catalogue import enable_providers
 
 _ROW = {
     "model_heavy": "claude-opus-5",
@@ -261,7 +262,7 @@ async def test_a_forced_local_run_with_no_slot_waits_instead_of_failing(monkeypa
     async def _slots(_config: Any) -> tuple[_Slots, int]:
         return _Slots(), 1
 
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
     monkeypatch.setattr(agent_mod, "_local_slots", _slots)
     monkeypatch.setattr(agent_mod, "_slot_wait_seconds", lambda _config: 0.0)
     with pytest.raises(AccountWaitInterrupt) as stopped:
@@ -285,7 +286,7 @@ async def test_a_forced_local_run_with_no_slot_leaves_its_wait_where_it_cannot_p
     async def _slots(_config: Any) -> tuple[_Slots, int]:
         return _Slots(), 1
 
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
     monkeypatch.setattr(agent_mod, "_local_slots", _slots)
     monkeypatch.setattr(agent_mod, "_slot_wait_seconds", lambda _config: 0.0)
     updates, ran, _traces, _health, _seen = await _run(

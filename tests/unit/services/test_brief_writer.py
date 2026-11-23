@@ -28,6 +28,7 @@ import pytest
 
 from embry0.services import job_briefs, proposal_briefs
 from embry0.services.proposals import Proposal
+from tests.fixtures.provider_catalogue import enable_providers
 
 GOLDEN = json.loads((Path(__file__).resolve().parents[2] / "fixtures" / "brief_requests.json").read_text())
 #: The headers a brief request sets; the client library adds the rest.
@@ -49,7 +50,7 @@ GOOD_JOB = {
 
 @pytest.fixture(autouse=True)
 def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
 
 
 class Store:

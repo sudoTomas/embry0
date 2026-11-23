@@ -337,6 +337,13 @@ class LoopMetrics:
             "can be stored under (the Slop-O-Meter removes nothing meanwhile); 0 otherwise.",
             registry=r,
         )
+        # #173: seeded 0 at construction, as the gauge above, for Embry0ProviderCatalogueRefused.
+        self._provider_catalogue_refused_parts = Gauge(
+            "embry0_provider_catalogue_refused_parts",
+            "Parts of the stored provider catalogue (a provider's entry, a model's entry, a provider's field) this "
+            "process does not run on because this release refuses them; 0 when all of it is in force.",
+            registry=r,
+        )
 
         # ---- the DB snapshot itself ---------------------------------------
         self.snapshot_last_success = Gauge(
@@ -524,6 +531,11 @@ class LoopMetrics:
     def background_enrollment_blocked(self, blocked: bool) -> None:
         """Whether the last run of the background enrollment import was held by an unaddressable name (#165)."""
         self._background_enrollment_blocked.set(1 if blocked else 0)
+
+    @_never_raises
+    def provider_catalogue_refused(self, parts: int) -> None:
+        """How many parts of the stored provider catalogue this release refuses (#173); set at each install."""
+        self._provider_catalogue_refused_parts.set(parts)
 
     # ---- runner / infrastructure -------------------------------------------
 

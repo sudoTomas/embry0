@@ -291,7 +291,7 @@ describe("RepoAccountsSection", () => {
       "1 other AI company is switched on here but has no account. This repository does not use it.",
     );
     expect(screen.getByTestId("llm-not-enabled")).toHaveTextContent(
-      "Not enabled in this deployment: OpenRouter, Google, Groq, DeepSeek. Name a provider in OPENAI_COMPATIBLE_PROVIDERS to bind its account here.",
+      "Not enabled in this deployment: OpenRouter, Google, Groq, DeepSeek. Turn one on in the provider catalogue (PUT /api/v1/config/providers/catalog) to bind its account here.",
     );
     await user.selectOptions(screen.getByLabelText(/^custom account/i), "cred-00000000000d");
     expect(mockSet).toHaveBeenLastCalledWith(

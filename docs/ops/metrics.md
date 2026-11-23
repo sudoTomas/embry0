@@ -253,6 +253,22 @@ process starts, so the series exists before the first block. The rule
 `infra/prometheus/background-enrollment.rules*.yml`; it fires after 30 minutes
 at 1, since the import retries on its own at least every 15.
 
+## Provider catalogue
+
+| Metric | Type | Labels |
+|---|---|---|
+| `embry0_provider_catalogue_refused_parts` | gauge | — |
+
+How many parts of the deployment's stored provider catalogue (a provider's
+entry, a model's entry, a provider's field) this process does not run on,
+because its release refuses them: a release took out a model or a provider the
+overlay names, or a later release or a hand at the database wrote it
+([Changing the catalogue](../providers.md#changing-the-catalogue)). Set at each
+install of a stored overlay and seeded 0 when the process starts. The rule
+`Embry0ProviderCatalogueRefused` and its `promtool` tests are in
+`infra/prometheus/provider-catalogue.rules*.yml`; it fires after 5 minutes
+above 0, since only a person writing the catalogue again clears it.
+
 ## The snapshot itself
 
 | Metric | Type | Labels |

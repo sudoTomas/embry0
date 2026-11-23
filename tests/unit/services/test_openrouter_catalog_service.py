@@ -12,10 +12,14 @@ import pytest
 from embry0.agents import openrouter_catalog as oc
 from embry0.services.openrouter_catalog import (
     DEFAULT_REFRESH_HOURS,
+    LOOK_SECONDS,
     MIN_MODELS,
+    RETRY_SECONDS,
     OpenRouterCatalogService,
+    enabled,
     refresh_hours,
 )
+from tests.fixtures.provider_catalogue import enable_providers
 
 NOW = datetime(2026, 10, 25, 12, tzinfo=UTC)
 
@@ -154,25 +158,116 @@ async def test_loading_nothing_or_a_broken_row_never_raises() -> None:
     assert oc.current() is None
 
 
-async def test_the_loop_waits_for_a_fresh_list_and_is_off_at_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    await _service(FakeRepo(), FakeFetch(), interval_hours=0).start()  # returns at once
+class _Stop(Exception):
+    """Ends the loop at a chosen wait."""
 
-    sleeps: list[float] = []
+
+def _sleeps(limit: int) -> tuple[list[float], Any]:
+    waits: list[float] = []
 
     async def sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-        raise StopAsyncIteration  # stop the loop at its first wait
+        waits.append(seconds)
+        if len(waits) >= limit:
+            raise _Stop
 
-    monkeypatch.setattr("embry0.services.openrouter_catalog.asyncio.sleep", sleep)
+    return waits, sleep
+
+
+async def test_the_loop_waits_for_a_list_to_age_looking_each_minute() -> None:
+    clock = {"now": NOW}
+    waits, sleep = _sleeps(3)
+
+    async def advancing(seconds: float) -> None:
+        clock["now"] += timedelta(seconds=seconds)
+        await sleep(seconds)
+
     oc.install(oc.Catalog(models={}, fetched_at=NOW - timedelta(hours=6)))
-    with pytest.raises(StopAsyncIteration):
-        await _service(FakeRepo(), FakeFetch(), interval_hours=24).start()
-    assert sleeps == [pytest.approx(18 * 3600)], "a list read 6 h ago is read again 18 h later"
+    fetch = FakeFetch()
+    service = OpenRouterCatalogService(
+        FakeRepo(), fetch=fetch, interval_hours=lambda: 24.0, now=lambda: clock["now"], sleep=advancing
+    )
+    with pytest.raises(_Stop):
+        await service.start()
+    assert waits == [LOOK_SECONDS] * 3, "it looks again each minute while the list is fresh"
+    assert fetch.keys == [], "a list read 6 h ago was read again before 24 h"
 
 
-@pytest.mark.parametrize(
-    ("raw", "hours"),
-    [("", DEFAULT_REFRESH_HOURS), ("6", 6.0), ("0", 0.0), ("-3", 0.0), ("soon", DEFAULT_REFRESH_HOURS)],
-)
-def test_the_interval_setting(raw: str, hours: float) -> None:
-    assert refresh_hours({"OPENROUTER_CATALOG_REFRESH_HOURS": raw}) == hours
+async def test_the_loop_reads_a_list_once_it_is_older_than_the_interval() -> None:
+    oc.install(oc.Catalog(models={}, fetched_at=NOW - timedelta(hours=30)))
+    fetch = FakeFetch(_payload())
+    waits, sleep = _sleeps(1)
+    service = OpenRouterCatalogService(
+        FakeRepo(), fetch=fetch, interval_hours=lambda: 24.0, now=lambda: NOW, sleep=sleep
+    )
+    with pytest.raises(_Stop):
+        await service.start()
+    assert len(fetch.keys) == 1, "a list older than the interval was not read"
+    assert waits == [LOOK_SECONDS], "after a good read the list is fresh again"
+
+
+class _Fetched(BaseException):
+    """A read the loop should not have made: not an Exception, so the refresh's own handling cannot keep it."""
+
+
+async def _no_read(secret: str | None) -> Any:
+    raise _Fetched
+
+
+@pytest.mark.parametrize(("hours", "on"), [(0.0, True), (24.0, False)])
+async def test_the_loop_reads_nothing_while_off_and_looks_again(hours: float, on: bool) -> None:
+    waits, sleep = _sleeps(3)
+    service = OpenRouterCatalogService(
+        FakeRepo(), fetch=_no_read, interval_hours=lambda: hours, enabled=lambda: on, now=lambda: NOW, sleep=sleep
+    )
+    with pytest.raises(_Stop):  # _Fetched instead: it read the list while off
+        await service.start()
+    assert waits == [LOOK_SECONDS] * 3
+
+
+async def test_turning_openrouter_on_reads_its_list_within_a_look() -> None:
+    state = {"on": False}
+    fetch = FakeFetch(_payload())
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        state["on"] = True
+        if len(waits) >= 2:
+            raise _Stop
+
+    service = OpenRouterCatalogService(
+        FakeRepo(), fetch=fetch, interval_hours=lambda: 24.0, enabled=lambda: state["on"], now=lambda: NOW, sleep=sleep
+    )
+    with pytest.raises(_Stop):
+        await service.start()
+    assert len(fetch.keys) == 1, "turned on, the list was not read at the next look"
+
+
+async def test_a_failed_read_is_tried_again_after_the_retry_wait() -> None:
+    clock = {"now": NOW}
+    fetch = FakeFetch(httpx.ConnectError("down"), _payload())
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        clock["now"] += timedelta(seconds=seconds)
+        if len(fetch.keys) >= 2 or len(waits) > 200:
+            raise _Stop
+
+    service = OpenRouterCatalogService(
+        FakeRepo(), fetch=fetch, interval_hours=lambda: 24.0, now=lambda: clock["now"], sleep=sleep
+    )
+    with pytest.raises(_Stop):
+        await service.start()
+    assert len(fetch.keys) == 2, "the failed read was not tried again"
+    assert sum(waits[:-1]) == pytest.approx(RETRY_SECONDS), "tried again sooner or later than the retry wait"
+    assert max(waits) <= LOOK_SECONDS, "it stopped looking each minute while it waited to retry"
+
+
+def test_the_interval_and_the_switch_are_the_catalogues(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert (refresh_hours(), enabled()) == (DEFAULT_REFRESH_HOURS, False), "as shipped: 24 h, OpenRouter off"
+    enable_providers(monkeypatch, "openrouter", openrouter={"refresh_hours": 6})
+    assert (refresh_hours(), enabled()) == (6.0, True)
+    assert _service(FakeRepo(), FakeFetch()).status()["refresh_hours"] == DEFAULT_REFRESH_HOURS
+    service = OpenRouterCatalogService(FakeRepo(), interval_hours=refresh_hours)
+    assert service.status()["refresh_hours"] == 6.0, "the status reads the interval in force"

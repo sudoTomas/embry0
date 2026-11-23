@@ -460,10 +460,11 @@ def _priced_from_the_catalog(result: Any, invocation: Any, agent_type: str) -> A
     """Price a catalog model's run here when the sandbox could not.
 
     A sandbox image built before OpenRouter's live catalog reads no
-    ``pricing_usd_per_mtok`` from its config, finds the model in no price
-    table of its own and ends a finished run as an error ("cost unknown").
-    The orchestrator has the rates and the run's token counts, so it prices
-    the run and keeps the outcome the agent reached. Any other result is
+    ``pricing_usd_per_mtok`` from its config; if its own copy of the shipped
+    catalogue has no price for the model (one of the live list, or one the
+    deployment's catalogue added), it ends a finished run as an error ("cost
+    unknown"). The orchestrator has the rates and the run's token counts, so it
+    prices the run and keeps the outcome the agent reached. Any other result is
     returned as it came.
     """
     rates = invocation.pricing_usd_per_mtok
@@ -487,7 +488,7 @@ def _priced_from_the_catalog(result: Any, invocation: Any, agent_type: str) -> A
         agent_type=agent_type,
         model=invocation.model,
         cost_usd=cost,
-        hint="the sandbox image predates OpenRouter's live catalog; rebuild it",
+        hint="the sandbox image predates the rates each run carries; rebuild it",
     )
     return replace(result, is_error=False, error_message="", error_code=None, cost_usd=cost or 0.0)
 

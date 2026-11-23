@@ -24,6 +24,7 @@ from structlog.testing import capture_logs
 
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
+from tests.fixtures.provider_catalogue import enable_providers
 
 BRIEF = {"title": "Stop retrying a saved email", "problem": "It retries.", "fix": "Stop it.", "size": "small"}
 
@@ -80,7 +81,7 @@ def _body(usage: str | None) -> str:
 
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai,custom")
+    enable_providers(monkeypatch, "openai", "custom")
 
 
 async def _ask(calls: Any, model: str, client: httpx.AsyncClient, feature: str = "job_brief") -> str:
@@ -232,7 +233,7 @@ async def test_a_spend_that_cannot_be_stored_refuses_the_feature_s_hosted_calls_
 
 
 async def test_a_model_with_no_price_warns_once_an_hour(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
     module = _module()
     now = [0.0]
     calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate(), clock=lambda: now[0])

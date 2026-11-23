@@ -14,12 +14,14 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``skill_source_remove``, ``inline_skill_put``, ``inline_skill_remove``,
 ``agent_skill_add``, ``agent_skill_remove``, ``standard_set``,
 ``standard_audit``, ``progression_pack_set``, ``progression_pack_reset``,
-``settings_set``, ``settings_set_keys``, ``settings_undo``, ``proposal_accept``,
+``settings_set``, ``settings_set_keys``, ``settings_undo``,
+``provider_catalogue_set``, ``provider_catalogue_undo``, ``proposal_accept``,
 ``proposal_decline``, ``proposal_snooze``, ``areas_set``, ``areas_map``,
 ``areas_proposal_decide``, ``areas_undo``) require
 ``confirm=true``; without it they return an instructive refusal instead of
-acting. ``progression_pack_set``, ``settings_set``, ``settings_set_keys`` and
-``areas_set`` with ``dry_run=true`` store nothing and run without it.
+acting. ``progression_pack_set``, ``settings_set``, ``settings_set_keys``,
+``provider_catalogue_set`` and ``areas_set`` with ``dry_run=true`` store
+nothing and run without it.
 """
 
 from __future__ import annotations
@@ -1506,6 +1508,62 @@ async def settings_undo(revision_id: int, confirm: bool = False) -> dict[str, An
     if not confirm:
         return _confirmation_refusal("settings_undo", f"undo settings change {revision_id}")
     return await _get_client().settings_undo(revision_id)
+
+
+@_tool
+async def provider_catalogue_get() -> dict[str, Any]:
+    """The provider catalogue: the model providers agents can run on, their models and prices. ``yaml_text`` is
+    the deployment's overlay as written (empty: the catalogue embry0 ships, unchanged); ``data`` its values;
+    ``generation`` the version to pass to provider_catalogue_set as ``expected_generation``; ``catalogue`` the
+    catalogue in force, the shipped one with the overlay merged in, field by field; ``refused`` why a stored
+    overlay is not in force, when this release refuses it. Read-only; any key."""
+    return await _get_client().provider_catalogue_get()
+
+
+@_tool
+async def provider_catalogue_set(
+    text: str, expected_generation: int | None = None, dry_run: bool = False, reason: str = "", confirm: bool = False
+) -> dict[str, Any]:
+    """Replace the WHOLE provider catalogue overlay with ``text``, YAML (comments are kept). The overlay names
+    only what differs from the catalogue embry0 ships, per provider: ``enabled`` (the OpenAI-compatible ones are
+    off until on), ``factors`` (turns, timeout), ``default_price``, ``refresh_hours`` (OpenRouter's live list) and
+    ``models``: add one with its ``prices`` ([{in, out}] in US dollars per million tokens, each with an optional
+    ``from`` day) or ``free: true``, change a field of one, take one out with null. A provider's runtime,
+    addresses and prefixes are embry0's. Read it with provider_catalogue_get, edit its ``yaml_text`` and send all
+    of it back with ``expected_generation`` set to the ``generation`` that read returned (409 when it moved). A
+    catalogue with problems is refused with a 422 naming every one, never a value, among them a change that would
+    take out, leave unpriced or turn off a model a tier, the fallback order, an agent or background_models
+    names; nothing is stored then. With ``dry_run=true`` nothing is stored and no confirm is needed. A real write
+    is in force at once, is a revision with ``reason``, and can be undone with provider_catalogue_undo. Needs an
+    admin key without a repository allowlist. Requires confirm=true for a real write."""
+    common: dict[str, Any] = {"expected_generation": expected_generation, "reason": reason}
+    if dry_run:
+        return await _get_client().provider_catalogue_set(text, dry_run=True, **common)
+    if not confirm:
+        return _confirmation_refusal("provider_catalogue_set", "replace the provider catalogue overlay")
+    return await _get_client().provider_catalogue_set(text, **common)
+
+
+@_tool
+async def provider_catalogue_revisions(revision_id: int | None = None, limit: int = 20) -> dict[str, Any]:
+    """The provider catalogue's changes, newest first, up to ``limit`` (1 to 100): each with its ``id``,
+    ``actor``, ``source`` (person, file, bootstrap, restore), ``reason``, ``created_at`` and ``undoable`` (only
+    the newest change, while it is still what is stored). With ``revision_id``, that one change with its text
+    before and after. Read-only; any key."""
+    if revision_id is not None:
+        return await _get_client().provider_catalogue_revision(revision_id)
+    return await _get_client().provider_catalogue_revisions(limit=limit)
+
+
+@_tool
+async def provider_catalogue_undo(revision_id: int, confirm: bool = False) -> dict[str, Any]:
+    """Put back what provider catalogue change ``revision_id`` replaced. Only the newest change can be undone,
+    while the stored overlay is still what it wrote (else 409), and only while that earlier text still makes a
+    catalogue (else 422). The undo is in force at once and is itself a revision (source ``restore``). Needs an
+    admin key without a repository allowlist. Requires confirm=true."""
+    if not confirm:
+        return _confirmation_refusal("provider_catalogue_undo", f"undo provider catalogue change {revision_id}")
+    return await _get_client().provider_catalogue_undo(revision_id)
 
 
 @_tool

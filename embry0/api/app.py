@@ -531,6 +531,18 @@ async def _clean_orphaned_sandboxes(runtime: "AgentRuntime", sandbox_mgr: object
         logger.warning("orphaned_container_scan_failed", exc_info=True)
 
 
+async def _refresh_provider_catalogue(store: Any) -> None:
+    """Install the stored provider catalogue whenever another process wrote it (embry0.services.provider_catalogue_store)."""
+    from embry0.services.provider_catalogue_store import REFRESH_SECONDS
+
+    while True:
+        await asyncio.sleep(REFRESH_SECONDS)
+        try:
+            await store.refresh()
+        except Exception:
+            logger.warning("provider_catalogue_refresh_failed", exc_info=True)
+
+
 async def _xai_token_refresh_loop(registry: object, proxy_mgr: object, health: object) -> None:
     """Refresh every registered xAI account and push it; act on the proxy's upstream counts.
 
@@ -861,6 +873,10 @@ async def _init_app_state(
         from embry0.settings.store import SettingsStore
 
         app.state.settings = SettingsStore(db)
+    if not hasattr(app.state, "provider_catalogue"):
+        from embry0.services.provider_catalogue_store import CatalogueStore
+
+        app.state.provider_catalogue = CatalogueStore(db)
     # The budget every reader enforces (#171): the settings document's
     # section, and the old readers for a key the import has not imported,
     # which it tries again while it runs.
@@ -1269,6 +1285,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         # A loop's own snapshot() reads the document again on its first tick.
         logger.critical("settings_first_read_failed", exc_info=True)
+
+    # The provider catalogue (#173, ADR 0031): the deployment's overlay of the
+    # shipped one. OPENAI_COMPATIBLE_PROVIDERS and
+    # OPENROUTER_CATALOG_REFRESH_HOURS are imported into it once; then the
+    # stored catalogue is installed for every reader before anything routes a
+    # model. A background task (below) picks up a write another process made.
+    try:
+        from embry0.metrics.loop import NULL_METRICS
+        from embry0.services.provider_catalogue_store import CatalogueStore, read_references
+        from embry0.services.provider_catalogue_store import log_ignored_env as log_ignored_catalogue_env
+        from embry0.storage.repositories.provider_config import ProviderConfigRepository
+
+        tiers_repo = ProviderConfigRepository(db)
+
+        async def catalogue_references(conn: Any) -> Any:
+            return await read_references(conn, tiers=tiers_repo.get)
+
+        app.state.provider_catalogue = CatalogueStore(
+            db,
+            references=catalogue_references,
+            audit_log_path=str(config.audit_log_path) if config.audit_log_path else None,
+            metrics=getattr(app.state, "loop_metrics", None) or NULL_METRICS,
+        )
+        try:
+            await app.state.provider_catalogue.import_env(config)
+        except Exception:
+            logger.critical("provider_catalogue_import_failed", exc_info=True)
+        await app.state.provider_catalogue.refresh()
+        await log_ignored_catalogue_env(app.state.provider_catalogue, config)
+    except Exception:
+        logger.critical("provider_catalogue_unavailable", exc_info=True)
 
     # The progression content pack (#176): a stored pack written in an older
     # schema is upgraded here, once, before anything reads it. One that cannot
@@ -2595,25 +2642,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.leads_loop = None
         logger.critical("leads_unavailable", exc_info=True)
 
+    # The provider catalogue another process writes is installed here within
+    # REFRESH_SECONDS (embry0.services.provider_catalogue_store).
+    store = getattr(app.state, "provider_catalogue", None)
+    if store is not None:
+        refresher = asyncio.create_task(_refresh_provider_catalogue(store))
+        app.state.background_tasks.add(refresher)
+        refresher.add_done_callback(app.state.background_tasks.discard)
     # OpenRouter's live model list (docs/providers.md): the stored list is put
-    # in force now, and refreshed daily while OpenRouter is enabled. Without
-    # one, OpenRouter's static entry serves.
+    # in force now, and read again on OpenRouter's refresh_hours while the
+    # provider catalogue turns it on. Without one, OpenRouter's entry in the
+    # catalogue serves.
     try:
-        from embry0.agents.providers import OPENROUTER, enabled_openai_compatible
         from embry0.api.v1.config import job_key_resolver
-        from embry0.services.openrouter_catalog import OpenRouterCatalogService, refresh_hours
+        from embry0.services.openrouter_catalog import OpenRouterCatalogService, enabled, refresh_hours
         from embry0.storage.repositories.provider_catalogs import ProviderCatalogsRepository
 
         app.state.openrouter_catalog = OpenRouterCatalogService(
             ProviderCatalogsRepository(db),
             resolve_secret=job_key_resolver(app.state),
-            interval_hours=refresh_hours(),
+            interval_hours=refresh_hours,
+            enabled=enabled,
         )
         await app.state.openrouter_catalog.load()
-        if OPENROUTER in enabled_openai_compatible():
-            catalog_task = asyncio.create_task(app.state.openrouter_catalog.start())
-            app.state.background_tasks.add(catalog_task)
-            catalog_task.add_done_callback(app.state.background_tasks.discard)
+        # It reads the list while the catalogue turns OpenRouter on, every refresh_hours, and looks again each minute.
+        catalog_task = asyncio.create_task(app.state.openrouter_catalog.start())
+        app.state.background_tasks.add(catalog_task)
+        catalog_task.add_done_callback(app.state.background_tasks.discard)
     except Exception:
         app.state.openrouter_catalog = None
         logger.critical("openrouter_catalog_unavailable", exc_info=True)
@@ -3235,6 +3290,7 @@ def _register_routers(app: FastAPI) -> None:
         progression,
         progression_pack,
         proposals,
+        provider_catalogue,
         qa_artifacts,
         qa_config,
         qa_dashboard,
@@ -3315,6 +3371,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(config.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
     # Spec 2026-10-28: operator policy in one settings document, one section per feature.
     app.include_router(settings.router, prefix="/api/v1", tags=["settings"], dependencies=auth_deps)
+    app.include_router(provider_catalogue.router, prefix="/api/v1", tags=["config"], dependencies=auth_deps)
     # The dashboard's settings in effect (ui section, #177): read before it draws its home and navigation.
     app.include_router(ui.router, prefix="/api/v1", tags=["settings"], dependencies=auth_deps)
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"], dependencies=auth_deps)

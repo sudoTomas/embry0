@@ -570,7 +570,7 @@ class CredentialResolver:
         a registry error is not, so a broken read never moves a job. The job's
         own pin is the caller's to check (``job_pinned``).
         """
-        if provider not in llm_providers(self._environ):
+        if provider not in llm_providers():
             return Pause(provider, "not_enabled")
         unusable: list[Mapping[str, Any]] = []
         try:
@@ -680,7 +680,7 @@ class CredentialResolver:
         )
 
     def _check_llm_provider(self, provider: str) -> None:
-        if provider not in llm_providers(self._environ):
+        if provider not in llm_providers():
             raise ValueError(f"unknown llm provider {provider!r}")
 
     async def _uses(self, job_id: str) -> list[dict[str, Any]]:
@@ -775,9 +775,7 @@ class CredentialResolver:
                 id=None,
                 kind=kind,
                 provider=provider,
-                host=base_url_host(metadata["base_url"])
-                if "base_url" in metadata
-                else default_host(provider, self._environ),
+                host=base_url_host(metadata["base_url"]) if "base_url" in metadata else default_host(provider),
                 label=key,
                 secret=secret,
                 git_author_name=None,

@@ -16,7 +16,7 @@ import asyncpg
 
 from embry0.storage.database import DatabasePool
 
-RevisionSurface = Literal["settings"]
+RevisionSurface = Literal["settings", "provider_catalogue"]
 RevisionSource = Literal["person", "file", "bootstrap", "restore", "upgrade"]
 
 KEEP_PER_SURFACE: Final = 100

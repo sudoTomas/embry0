@@ -129,6 +129,9 @@ NOT_ANSWERED: dict[str, str] = {
     "/api/v1/orgs/{owner}/webhook": "the owner's hook, read from the forge (test_repository_reads_inventory.py)",
     "/api/v1/pipelines/templates/{template_id}": "a stored pipeline template, which no repository's work makes",
     "/api/v1/progression/pack/versions/{version}": "a stored version of the content pack, of which there is a draft only",
+    "/api/v1/config/providers/catalog/revisions/{revision_id}": (
+        "a change of the provider catalogue, which no repository's work makes (test_provider_catalogue_api.py)"
+    ),
     "/api/v1/config/providers/{provider_name}/usage": (
         "what the provider says the deployment's key spent, from the provider, which this app configures none of: "
         "another stage"

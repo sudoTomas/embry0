@@ -7,11 +7,17 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from embry0.services.credentials.resolver import CredentialResolver, CredentialUnavailableError
+from tests.fixtures.provider_catalogue import enable_providers
 from tests.unit.services.credentials.test_resolve_llm import LlmRepo, _row
 from tests.unit.services.credentials.test_resolver import FakeSecrets, _cfg
 
 POOL = _row("pool", "tok-pool", provider="openrouter", kind="llm_api_key")
 CHOSEN = _row("chosen", "tok-chosen", provider="openrouter", kind="llm_api_key")
+
+
+@pytest.fixture(autouse=True)
+def _openrouter_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_providers(monkeypatch, "openrouter")
 
 
 def _resolver(*rows, pins=None, broken=False):
@@ -24,8 +30,7 @@ def _resolver(*rows, pins=None, broken=False):
             raise RuntimeError("db down")
         return (pins or {}).get(job_id, {})
 
-    env = {"OPENAI_COMPATIBLE_PROVIDERS": "openrouter"}
-    return repo, CredentialResolver(repo, FakeSecrets(), _cfg(), environ=env, job_pins=job_pins)
+    return repo, CredentialResolver(repo, FakeSecrets(), _cfg(), environ={}, job_pins=job_pins)
 
 
 async def test_the_chosen_key_serves_the_job_over_its_bindings():

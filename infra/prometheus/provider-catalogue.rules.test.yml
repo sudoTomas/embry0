@@ -1,0 +1,68 @@
+# promtool test rules provider-catalogue.rules.test.yml
+# Series carry the labels a real scrape of the orchestrator gives them, one
+# sample a minute: sparser samples go stale between scrapes (5m lookback) and
+# then no `for` is ever satisfied.
+rule_files:
+  - provider-catalogue.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Seeded 0 and never refused: quiet.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_provider_catalogue_refused_parts{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x240'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: Embry0ProviderCatalogueRefused
+        exp_alerts: []
+
+  # Two parts refused from minute 10: quiet before the 5 m `for` has passed, firing after.
+  # This is the rule shown able to fire.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_provider_catalogue_refused_parts{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x10 2x60'
+    alert_rule_test:
+      - eval_time: 13m
+        alertname: Embry0ProviderCatalogueRefused
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: Embry0ProviderCatalogueRefused
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Part of the provider catalogue is not in force"
+              description: "This release refuses part of the deployment's provider catalogue, so jobs do not run on that part. GET /api/v1/config/providers/catalog names each part in refused, as does the audit log (provider_catalogue.refused); write the catalogue again without them. docs/providers.md, \"Changing the catalogue\"."
+
+  # Refused on one process of two (a rolling deploy's old one), then fixed: fires on the max, then clears.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_provider_catalogue_refused_parts{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '1x30 0x60'
+      - series: 'embry0_provider_catalogue_refused_parts{instance="embry0-orchestrator-b:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: Embry0ProviderCatalogueRefused
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Part of the provider catalogue is not in force"
+              description: "This release refuses part of the deployment's provider catalogue, so jobs do not run on that part. GET /api/v1/config/providers/catalog names each part in refused, as does the audit log (provider_catalogue.refused); write the catalogue again without them. docs/providers.md, \"Changing the catalogue\"."
+      - eval_time: 60m
+        alertname: Embry0ProviderCatalogueRefused
+        exp_alerts: []
+
+  # No series at all (an older orchestrator, a scrape that lost it): `or vector(0)` keeps it 0, quiet.
+  - interval: 1m
+    input_series:
+      - series: 'up{instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: Embry0ProviderCatalogueRefused
+        exp_alerts: []

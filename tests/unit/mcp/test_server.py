@@ -71,6 +71,10 @@ EXPECTED_TOOLS = {
     "progression_pack_get",
     "progression_pack_set",
     "progression_pack_reset",
+    "provider_catalogue_get",
+    "provider_catalogue_set",
+    "provider_catalogue_revisions",
+    "provider_catalogue_undo",
     "settings_get",
     "settings_effective",
     "settings_schema",
@@ -146,6 +150,8 @@ CONFIRM_GATED = {
     "standard_audit",
     "progression_pack_set",
     "progression_pack_reset",
+    "provider_catalogue_set",
+    "provider_catalogue_undo",
     "settings_set",
     "settings_set_keys",
     "settings_undo",
@@ -253,6 +259,8 @@ async def test_confirm_gated_tools_refuse_without_confirm(fake_client):
         await server.progression_pack_reset(),
         await server.settings_set("asks:\n  enabled: true\n", expected_generation=3),
         await server.settings_undo(12),
+        await server.provider_catalogue_set("providers: {}\n", expected_generation=3),
+        await server.provider_catalogue_undo(12),
         await server.credential_bind("acme/widgets", "cred-000000000009"),
     ]
     for refusal in refusals:
@@ -288,6 +296,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
     assert await server.progression_pack_reset(confirm=True) == {"called": "progression_pack_reset"}
     assert await server.settings_set("asks:\n  enabled: true\n", confirm=True) == {"called": "settings_set"}
     assert await server.settings_undo(12, confirm=True) == {"called": "settings_undo"}
+    assert await server.provider_catalogue_set("providers: {}\n", confirm=True) == {"called": "provider_catalogue_set"}
+    assert await server.provider_catalogue_undo(12, confirm=True) == {"called": "provider_catalogue_undo"}
     assert await server.credential_bind(
         "acme/widgets", "cred-000000000009", role="forge", pinned=True, confirm=True
     ) == {"called": "credential_bind"}
@@ -320,6 +330,8 @@ async def test_confirm_gated_tools_pass_through_with_confirm(fake_client):
         "progression_pack_reset",
         "settings_set",
         "settings_undo",
+        "provider_catalogue_set",
+        "provider_catalogue_undo",
         "credential_bind",
     ]
 
@@ -874,3 +886,21 @@ def test_the_instructions_point_at_the_setup_prompt():
     assert "the prompt setup" in text
     # Scoped to the setup tools: env_set takes a value (#599 review).
     assert "No setup tool takes a secret" in text and "never through env_set" in text
+
+
+async def test_provider_catalogue_tools_pass_through(fake_client):
+    """A dry run stores nothing and needs no confirm; a revision id reads that one change."""
+    assert await server.provider_catalogue_get() == {"called": "provider_catalogue_get"}
+    assert await server.provider_catalogue_set("providers: {}\n", dry_run=True, expected_generation=4) == {
+        "called": "provider_catalogue_set"
+    }
+    await server.provider_catalogue_set("providers: {}\n", reason="r", confirm=True)
+    await server.provider_catalogue_revisions(limit=3)
+    await server.provider_catalogue_revisions(revision_id=9)
+    assert fake_client.calls == [
+        ("provider_catalogue_get", (), {}),
+        ("provider_catalogue_set", ("providers: {}\n",), {"dry_run": True, "expected_generation": 4, "reason": ""}),
+        ("provider_catalogue_set", ("providers: {}\n",), {"expected_generation": None, "reason": "r"}),
+        ("provider_catalogue_revisions", (), {"limit": 3}),
+        ("provider_catalogue_revision", (9,), {}),
+    ]

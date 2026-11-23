@@ -277,6 +277,17 @@ async def pg_pool() -> AsyncIterator[asyncpg.Pool]:
 
 
 @pytest.fixture(autouse=True)
+def _the_shipped_provider_catalogue() -> Iterator[None]:
+    """The installed provider catalogue is process-wide (#173): every test starts on the shipped one, and one a test
+    or a store installed is not left for the next."""
+    from embry0.agents import catalogue
+
+    catalogue.install(None)
+    yield
+    catalogue.install(None)
+
+
+@pytest.fixture(autouse=True)
 def _no_leaked_image_pins() -> Iterator[None]:
     """Image pins are process-wide (#523). A test that installs them, directly or
     by running the startup path, must not change how later tests name images."""

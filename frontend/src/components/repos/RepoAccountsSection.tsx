@@ -8,7 +8,7 @@ import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useRepoCredentials, useSetRepoCredentials } from "@/hooks/useCredentials";
 import { useModelsCatalog } from "@/hooks/useProvider";
-import { ENABLE_SETTING, llmProviderStates, usableLlmProviders, type LlmProviderName } from "@/lib/llmProviders";
+import { ENABLE_ROUTE, llmProviderStates, usableLlmProviders, type LlmProviderName } from "@/lib/llmProviders";
 import type { Binding, BindingInput, RepoCredentials } from "@/lib/types/credentials";
 import { providerLabel } from "@/lib/status";
 import { useIsAdmin } from "@/stores/authStore";
@@ -208,8 +208,8 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
         )}
         {notEnabled.length > 0 && (
           <p data-testid="llm-not-enabled" className="text-xs text-muted-foreground">
-            Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Name a provider in{" "}
-            <span className="font-mono">{ENABLE_SETTING}</span> to bind its account here.
+            Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Turn one on in the provider
+            catalogue (<span className="font-mono">{ENABLE_ROUTE}</span>) to bind its account here.
           </p>
         )}
       </Card>

@@ -13,6 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from embry0.agents import openrouter_catalog as oc
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
+from tests.fixtures.provider_catalogue import enable_providers
 
 OPUS = "openrouter/anthropic/claude-opus-5.5"
 XHR = {"X-Requested-With": "XMLHttpRequest"}
@@ -34,7 +35,7 @@ def _catalog() -> Iterator[None]:
 
 @pytest.fixture
 def app(monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
     provider_repo = MagicMock()
     provider_repo.get = AsyncMock(

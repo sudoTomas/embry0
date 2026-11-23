@@ -18,6 +18,7 @@ import pytest
 from embry0.settings.document import DocumentInvalid, check, load_yaml, read_sections
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
+from tests.fixtures.provider_catalogue import enable_providers
 
 FEATURES = ("watcher", "context_audit", "scout", "proposal_brief", "job_brief", "slop_judge")
 
@@ -54,7 +55,7 @@ def _model_of(values: dict[str, Any], feature: str) -> str:
 
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai,custom")
+    enable_providers(monkeypatch, "openai", "custom")
 
 
 def test_the_section_reads_as_an_operator_writes_it() -> None:
@@ -177,16 +178,16 @@ def test_the_default_must_serve_every_feature(providers: None) -> None:
 
 
 def test_a_local_model_needs_the_custom_provider_on_a_write(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "")
+    enable_providers(monkeypatch)
     found = _stored({"background_models": {"default": "custom/qwen"}}, context=_write_context())
-    assert isinstance(found, list) and "custom provider enabled" in found[0][1], found
+    assert isinstance(found, list) and "custom provider turned on" in found[0][1], found
 
 
 def test_a_stored_model_the_catalogue_no_longer_offers_is_still_read(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reading never consults the catalogue: OpenRouter's live list arrives after startup, and a provider can be
     turned off. Either would otherwise turn a stored choice into null, the feature into none, silently."""
     _section()
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "")
+    enable_providers(monkeypatch)
     sections = read_sections(
         CATALOG, {"background_models": {"default": "custom/gone", "job_brief": "openrouter/acme/new-model"}}
     )
@@ -195,7 +196,7 @@ def test_a_stored_model_the_catalogue_no_longer_offers_is_still_read(monkeypatch
 
 
 def test_offline_the_shape_is_checked_and_the_catalogue_is_not(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "")
+    enable_providers(monkeypatch)
     assert _stored({"background_models": {"default": "custom/qwen"}}) == {
         "background_models": {"default": "custom/qwen"}
     }, "`embry0 settings check` runs where the deployment's providers are not known; the write checks them"
@@ -228,7 +229,7 @@ def test_a_stored_model_its_provider_no_longer_offers_never_blocks_a_change_to_a
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _section()
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai")
+    enable_providers(monkeypatch, "openai")
     stored = {"background_models": {"default": "custom/qwen"}}
     document = {"background_models": {"default": "custom/qwen", "scout": False}}
     assert check(CATALOG, document, stored=stored, context=_write_context()).data == document, (

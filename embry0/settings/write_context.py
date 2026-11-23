@@ -24,10 +24,14 @@ module's catalogue and changes nothing in it.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any
 
-from embry0.settings.sections.background_models import CATALOGUE
+from embry0.settings.sections.background_models import BACKGROUND_MODELS, CATALOGUE
 from embry0.settings.sections.slop_policy import ROUTE_TEMPLATES, SLOP_POLICY
+
+if TYPE_CHECKING:
+    from embry0.agents.catalogue import Catalogue
 
 #: Builds the context of one write; the store's default is :func:`deployment_context`.
 WriteContext = Callable[[], Mapping[str, Any]]
@@ -36,10 +40,11 @@ WriteContext = Callable[[], Mapping[str, Any]]
 WriteReads = Callable[[Any, frozenset[str]], Awaitable[Mapping[str, Any]]]
 
 
-def model_use_problem(model: str, needs: Iterable[str]) -> str | None:
+def model_use_problem(model: str, needs: Iterable[str], catalogue: Catalogue | None = None) -> str | None:
     """Why this deployment cannot run ``model`` for a use that ``needs`` some things of it, or None.
 
-    ``model`` must be one the catalogue offers (``known_models``, or a
+    ``catalogue`` is the provider catalogue to check against, the installed
+    one by default. ``model`` must be one the catalogue offers (``known_models``, or a
     ``custom/<model>`` of the operator's own server, with the custom provider
     enabled) and priced, so what it costs is counted. Each need:
 
@@ -58,17 +63,17 @@ def model_use_problem(model: str, needs: Iterable[str]) -> str | None:
         unpriced_models,
     )
 
-    if model not in known_models() and not is_custom_model(model):
+    if model not in known_models(catalogue) and not is_custom_model(model, catalogue):
         return (
             "not a model this deployment offers: GET /api/v1/config/models lists them, and a model of your own "
-            "server is custom/<model>, with the custom provider enabled (OPENAI_COMPATIBLE_PROVIDERS)"
+            "server is custom/<model>, with the custom provider turned on in the provider catalogue"
         )
-    if unpriced_models([model]):
+    if unpriced_models([model], catalogue):
         return "this model has no price, so what it spends could not be counted against the budget caps"
     wanted = set(needs)
-    if "tools" in wanted and chat_only_models([model]):
+    if "tools" in wanted and chat_only_models([model], catalogue):
         return "its provider serves it without tool calling, and the agents of this feature call tools"
-    provider = provider_for_model(model)
+    provider = provider_for_model(model, catalogue)
     if "chat" in wanted and (provider is None or provider.runtime != "chat_completions"):
         return "this is asked over chat completions, which only custom/<model> or an OpenAI-compatible provider serves"
     return None
@@ -106,20 +111,32 @@ def route_template_checker(rows: Iterable[Mapping[str, Any]]) -> Callable[[str],
 
 async def deployment_reads(conn: Any, sections: frozenset[str]) -> dict[str, Any]:
     """The part of a write's context the database holds: the pipeline templates, for a write that may change
-    ``slop_policy``; nothing for any other.
+    ``slop_policy``, and the stored provider catalogue, for one that may change ``background_models``; nothing
+    for any other.
 
     ``conn`` is the write's connection, inside its transaction, and the rows
     are read ``FOR SHARE``: a template a policy is checked against cannot be
-    deleted or renamed before the write commits. A change of a template takes
-    its row ``FOR UPDATE`` before it reads the settings documents
-    (``embry0.services.slop_routing``), so of a write naming a template and a
-    change of that template, one waits for the other and sees what it wrote.
-    A write of another section takes no lock. A dry run reads on the pool,
-    where the lock ends with the statement.
+    deleted or renamed before the write commits, nor the catalogue a model is
+    checked against changed. A change of a template takes its row ``FOR
+    UPDATE`` before it reads the settings documents
+    (``embry0.services.slop_routing``), and so does a change of the catalogue
+    (``embry0.services.provider_catalogue_store``), so of a write naming a
+    template or a model and a change of what it names, one waits for the other
+    and sees what it wrote. A write of another section takes no lock. A dry
+    run reads on the pool, where the lock ends with the statement.
     """
-    if SLOP_POLICY.name not in sections:
-        return {}
-    rows = await conn.fetch(
-        "SELECT name, default_for_kind, job_kind, graph_definition FROM pipeline_templates FOR SHARE"
-    )
-    return {ROUTE_TEMPLATES: route_template_checker([dict(row) for row in rows])}
+    found: dict[str, Any] = {}
+    if SLOP_POLICY.name in sections:
+        rows = await conn.fetch(
+            "SELECT name, default_for_kind, job_kind, graph_definition FROM pipeline_templates FOR SHARE"
+        )
+        found[ROUTE_TEMPLATES] = route_template_checker([dict(row) for row in rows])
+    if BACKGROUND_MODELS.name in sections:
+        from embry0.services.provider_catalogue_store import held_catalogue
+
+        found[CATALOGUE] = partial(_model_use_problem_in, await held_catalogue(conn))
+    return found
+
+
+def _model_use_problem_in(catalogue: Catalogue, model: str, needs: Iterable[str]) -> str | None:
+    return model_use_problem(model, needs, catalogue)

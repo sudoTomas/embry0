@@ -10,7 +10,7 @@ A credential has a `kind`, a `provider`, a `host`, a `label` unique per provider
 |---|---|---|
 | `forge_token` | `github`, `gitlab` | clone, push, pull and merge requests, forge API calls |
 | `llm_oauth`, `llm_api_key` | `anthropic`, `xai` | agent runs |
-| `llm_api_key` | `openai`, `openrouter`, `google`, `groq`, `deepseek`, `custom`, each once `OPENAI_COMPATIBLE_PROVIDERS` names it ([providers.md](providers.md#openai-compatible-providers)) | agent runs |
+| `llm_api_key` | `openai`, `openrouter`, `google`, `groq`, `deepseek`, `custom`, each while the provider catalogue turns it on ([providers.md](providers.md#openai-compatible-providers)) | agent runs |
 | `ssh_key` | `ssh` | orchestrator-side deploys (later release) |
 | `tailnet_api_key` | `tailscale` | reading a tailnet's devices to import and probe [hosts](hosts.md) |
 

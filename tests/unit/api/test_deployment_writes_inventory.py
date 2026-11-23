@@ -64,6 +64,7 @@ DEPLOYMENT_WIDE: dict[tuple[str, str], Callable[[Mapping[str, str]], Any]] = {
     ("POST", "/api/v1/config/provider/test"): lambda v: None,
     ("POST", "/api/v1/config/providers/{provider_name}/test"): lambda v: None,
     ("POST", "/api/v1/config/providers/openrouter/catalog/refresh"): lambda v: None,
+    ("PUT", "/api/v1/config/providers/catalog"): lambda v: "providers:\n  deepseek: {enabled: true}\n",
     ("POST", "/api/v1/agents"): lambda v: {"type": "helper", "description": "Helps.", "model": "claude-sonnet-4-5"},
     ("PUT", "/api/v1/agents/{agent_type}"): lambda v: {"description": "Forges the change, carefully."},
     ("DELETE", "/api/v1/agents/{agent_type}"): lambda v: None,
@@ -108,7 +109,7 @@ DEPLOYMENT_WIDE: dict[tuple[str, str], Callable[[Mapping[str, str]], Any]] = {
 #: Deployment-wide routes whose unrestricted call needs a service or a network this app does not have, and so does
 #: not reach its own answer here; the refusal of the limited key, a dependency that runs first, is still checked.
 NO_ANSWER_HERE: dict[tuple[str, str], str] = {
-    ("POST", "/api/v1/config/providers/{provider_name}/test"): "the providers are named by OPENAI_COMPATIBLE_PROVIDERS",
+    ("POST", "/api/v1/config/providers/{provider_name}/test"): "the providers are turned on in the provider catalogue",
     ("POST", "/api/v1/config/providers/openrouter/catalog/refresh"): "OpenRouter's list is read where it is configured",
     ("POST", "/api/v1/skills/sources/{source_id}/sync"): "skill sync starts with the production lifespan",
     ("POST", "/api/v1/credentials/xai/device-login"): "asks xAI for a device code over the network",
@@ -126,6 +127,9 @@ OTHER_RULES: dict[tuple[str, str], str] = {
     ("DELETE", "/api/v1/apikeys/{key_id}"): "revokes only keys within the caller's list (repository writes inventory)",
     ("POST", "/api/v1/config/settings/revisions/{revision_id}/undo"): "the settings document, by the layer undone",
     ("PUT", "/api/v1/config/budget"): "writes the settings document's budget section, refused as it is",
+    ("POST", "/api/v1/config/providers/catalog/revisions/{revision_id}/undo"): (
+        "the provider catalogue: refused to a key with an allowlist (test_provider_catalogue_api.py)"
+    ),
     **{
         (method, path): "the progression pack: refused to a key with an allowlist (test_progression_pack_api.py)"
         for method, path in (

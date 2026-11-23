@@ -6,9 +6,9 @@ repositories hold their work from the start. :func:`deployment_reads_app`
 starts it as a deployment that has none of its own records: no person, no
 global variable, no model credential in the environment or the registry, no
 connection test, no integration, nothing for the retention sweeps to remove.
-The OpenAI-compatible providers OpenRouter and the custom one are enabled
-(configuration, not a record), so their catalog entries and OpenRouter's
-spend route answer.
+The provider catalogue turns the OpenAI-compatible providers OpenRouter and
+the custom one on (configuration, not a record), so their catalog entries and
+OpenRouter's spend route answer.
 
 :meth:`Deployment.add_deployment_wide` then gives the deployment records of
 every kind that belongs to it rather than to a repository:
@@ -26,7 +26,8 @@ every kind that belongs to it rather than to a repository:
 - what every repository's jobs run on, each carrying :data:`SHARED_MARK`: a
   change of the settings document's deployment layer, a version of the
   content pack, an agent, a pipeline template, a sandbox profile, a skill, the
-  global agent context, the models, and a host linked to the key's repository.
+  global agent context, the models, the provider catalogue, and a host linked
+  to the key's repository.
 
 A host linked to no repository is the deployment's own: its address is one of
 :data:`OWN`'s.
@@ -227,6 +228,8 @@ class Deployment:
         await _ok(app, "PUT", f"/api/v1/skills/inline/{SHARED_MARK}", ops, {"description": "A note.", "body": "Hi."})
         await _ok(app, "PUT", "/api/v1/config/context", ops, {"system_context": SHARED_MARK, "assistant_context": ""})
         await _ok(app, "PUT", "/api/v1/config/provider", ops, {"disabled_models": ["grok-4.7"]})
+        catalogue = await _ok(app, "GET", "/api/v1/config/providers/catalog", ops)
+        await _ok(app, "PUT", "/api/v1/config/providers/catalog", ops, f"{catalogue['yaml_text']}# {SHARED_MARK}\n")
         host = {"name": f"{SHARED_MARK}-host", "transport": "http", "address": "h.test", "repos": [{"repo": COVERED}]}
         await _ok(app, "POST", "/api/v1/hosts", ops, host)
         other = {
@@ -286,8 +289,10 @@ async def deployment_reads_app(db: DatabasePool, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(RateLimitMiddleware, "_over_limit", lambda _self, _key, _max_rpm: False)
     for name in _DEPLOYMENT_ENV:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", ENABLED_PROVIDERS)
     async with repository_writes_app(db, monkeypatch) as (app, keys, values):
+        # The provider catalogue turns them on, as an operator would have before any of this.
+        enabled = "".join(f"  {name}: {{enabled: true}}\n" for name in ENABLED_PROVIDERS.split(","))
+        await app.state.provider_catalogue.save(f"providers:\n{enabled}", actor="embry0:bootstrap", source="bootstrap")
         # What the production lifespan seeds and builds beside _init_app_state.
         await seed_builtin_pipeline_templates(app.state.templates_repo)
         await seed_builtin_sandbox_profiles(app.state.profiles_repo)
