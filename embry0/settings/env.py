@@ -59,3 +59,28 @@ def governed_lines(catalog: Catalog, config: Any) -> list[str]:
         "start of the release that added the section, and ignored after that"
         for v in governed_variables(catalog, config)
     ]
+
+
+def _retired() -> dict[str, str]:
+    """Each ``Embry0Config`` attribute no longer read at all, with what runs instead. The config keeps each one
+    release, so startup (``settings_env_retired``) and ``embry0 config`` can say so. Read from the constants that
+    replaced them, so the line never says other than what runs."""
+    from embry0.services import proposal_briefs, scout
+
+    briefs = f"the proposal brief writer writes at most {proposal_briefs.PER_TICK} briefs every "
+    briefs += f"{proposal_briefs.INTERVAL_SECONDS:g} s, constants"
+    return {
+        "scout_tick_seconds": f"the scout ticks every {scout.TICK_SECONDS:g} s, a constant",
+        "proposal_briefs_per_tick": briefs,
+        "proposal_brief_interval_seconds": briefs,
+    }
+
+
+def retired_lines(config: Any) -> list[str]:
+    """What ``embry0 config`` says about each variable that is set and no longer read at all: it lists every
+    setting with its value, and a retired one would otherwise look like one that runs."""
+    return [
+        f"{env_name(attr)} is no longer read: {what}; remove it"
+        for attr, what in _retired().items()
+        if is_set(config, attr)
+    ]
