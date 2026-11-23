@@ -656,3 +656,33 @@ async def test_a_named_amount_on_a_pause_not_about_the_budget_is_capped_and_said
     assert answered.json()["extra_budget_usd"] == 45.0, answered.json()
     went_on, _ = await _max_retries(state, {"choice": "continue_retrying", "extra_budget_usd": 100.0}, hard=True)
     assert went_on["budget_cap_usd"] == 50.0, f"the node grants what the answer said, $45 past the $5 spent: {went_on}"
+
+
+@pytest.mark.requires_postgres
+async def test_a_resume_naming_an_amount_reads_the_saved_state_and_leaves_the_schema_alone(
+    db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#651 review: the answer read the job's saved state through checkpointer_context, which sets the saver's
+    tables up, so an API request changed the schema. Through the real paused_state, before any job has saved a
+    checkpoint: the resume is answered, with no cap it cannot work out, and no table is created."""
+    from tests.fixtures.repository_writes import COVERED, repository_writes_app
+
+    tables = (
+        "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'checkpoint%'"
+    )
+    job = await _start(_Store(), COVERED)
+    state = {**job, "pipeline_config": {"budget_usd": 10.0}, "total_cost_usd": 10.5}
+    _, pause = await _max_retries(state, {"choice": "abandon"}, hard=True)
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        monkeypatch.setattr(app.state.issue_executor, "schedule_resume", lambda *a, **k: None)
+        await app.state.settings.set_keys(
+            "budget", {"max_budget_per_job_usd": 50.0, "continue_may_exceed_ceiling": False}, actor="test"
+        )
+        before = await app.state.db.fetchval(tables)
+        await _paused_job(app, "job-no-checkpoint", COVERED, pause)
+        answered = await _resume(app, "job-no-checkpoint", {"choice": "continue_retrying", "extra_budget_usd": 100.0})
+        after = await app.state.db.fetchval(tables)
+    assert answered.status_code == 200 and "extra_budget_capped" not in answered.json(), answered.text
+    assert (before, after) == (0, 0), (
+        f"a resume set the checkpoint tables up from an API request: {before} tables before, {after} after"
+    )

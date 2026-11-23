@@ -233,6 +233,23 @@ async def test_a_paused_jobs_saved_state_is_read_without_its_graph(clean_databas
     assert await paused_state("job-never-ran") is None, "a job with no checkpoint has no saved state"
 
 
+async def test_before_any_job_has_run_there_is_no_saved_state_and_no_table_is_made(clean_database_url: str) -> None:
+    """#651 review: the reader an API request uses never sets the saver's tables up; before a job has run there are
+    none, which is no saved state, not an error."""
+    paused_state = getattr(_process(clean_database_url), "paused_state", None)
+    assert paused_state is not None, "the executor cannot read a paused job's saved state"
+    assert await paused_state(JOB) is None, "with no checkpoint tables there is no saved state"
+    conn = await asyncpg.connect(clean_database_url)
+    try:
+        made = await conn.fetchval(
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1)",
+            list(CHECKPOINT_TABLES),
+        )
+    finally:
+        await conn.close()
+    assert made == 0, f"reading a saved state set the saver's tables up: {made} of them now"
+
+
 async def test_a_paused_job_resumes_to_completion_in_a_fresh_process(clean_database_url: str) -> None:
     await _pause(clean_database_url)
 
