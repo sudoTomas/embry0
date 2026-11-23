@@ -262,6 +262,17 @@ def test_start_refuses_a_setting_this_run_s_environment_overrides(
     )
 
 
+def test_an_empty_export_is_called_empty_not_unset(home, monkeypatch, capsys) -> None:
+    """#637 review: an exported empty value is set, though compose reads the default for it; the refusal says so."""
+    (home / ".env").write_text("POSTGRES_PASSWORD=x\nFRONTEND_NETWORK_PREFIX=10.229\n")
+    monkeypatch.setenv("FRONTEND_NETWORK_PREFIX", "")
+    docker = Docker([_net("bridge", "172.17.0.0/16")], _rendered(_config("172.29")))
+    code = _start(monkeypatch, docker)
+    err = capsys.readouterr().err
+    assert code == 1, err
+    assert "FRONTEND_NETWORK_PREFIX is empty in this run's environment" in err, err
+
+
 def test_start_takes_an_environment_that_says_what_the_files_say(home, monkeypatch, capsys) -> None:
     (home / ".env").write_text("POSTGRES_PASSWORD=x\nFRONTEND_NETWORK_PREFIX=10.229\n")
     (home / "infra" / ".env").write_text("POSTGRES_PASSWORD=x\nFRONTEND_NETWORK_PREFIX=10.229\n")

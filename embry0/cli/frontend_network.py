@@ -122,8 +122,10 @@ def disagreements(root: Path, environ: Mapping[str, str] | None = None) -> list[
             other = {name: value for name, value in values.items() if value != here}
             if other:
                 where = " and ".join(f"{_shown(value)} in {name}" for name, value in other.items())
+                # Exported empty: set, and compose then reads the default, as for unset.
+                shown_here = _shown(here) if here is not None else "empty"
                 problems.append(
-                    f"{key} is {_shown(here)} in this run's environment, which compose takes over the env files "
+                    f"{key} is {shown_here} in this run's environment, which compose takes over the env files "
                     f"({where}); another shell and the systemd unit read the files. Put the value in the files and "
                     f"unset it here. An Environment= line in the systemd unit overrides the files the same way."
                 )
