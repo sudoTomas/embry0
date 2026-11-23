@@ -1,6 +1,7 @@
 """The measure the matcher bounds use (tests/fixtures/cpu_cost.py) follows the work, not the host.
 
-- It grows with the work: ten times the same work measures about ten times as much.
+- It grows with the work: ten times the same work measures about ten times as much, within what load moves it.
+- It reads the reference and the work in turns, so load that leaves between them is not read as cheap work.
 - It does not count waiting: a thread that sleeps, as one waiting for a CPU on a busy host does, measures nothing
   for it.
 - A matcher that backtracks measures thousands of passes of re over its text.
@@ -20,13 +21,43 @@ import pytest
 from tests.fixtures.cpu_cost import REFERENCE, ClockTooCoarse, cost, reference_seconds, same
 
 TEXT = "abc/def " * 2000
+#: The runs the growth check takes the least of: more than a matcher's bound takes, since it compares two measures.
+RUNS = 7
+#: How far load moves a measure, measured (#666): with busy loops switching on and off every 1 to 30 ms on both
+#: hyperthreads of the measuring CPU's core, 400 runs of the growth check read one pass of the reference at most
+#: 1.94 times off one, and ten passes at most 2.15 times off ten. The check allows 3 times either way, and still
+#: refuses a measure that does not grow with the work (ten passes read as one) or grows with its square (as 100).
+LOAD_SPREAD = 3.0
 
 
 def test_ten_times_the_work_measures_about_ten_times_as_much() -> None:
-    once = cost(same(lambda: REFERENCE.sub("<m>", TEXT)), [TEXT])
-    ten = cost(same(lambda: [REFERENCE.sub("<m>", TEXT) for _ in range(10)]), [TEXT])
-    assert 0.5 < once < 2, f"the reference measures about one pass of itself: {once:.2f}"
-    assert 5 < ten / once < 20, f"ten passes measured {ten / once:.1f} times one"
+    once = cost(same(lambda: REFERENCE.sub("<m>", TEXT)), [TEXT], runs=RUNS)
+    ten = cost(same(lambda: [REFERENCE.sub("<m>", TEXT) for _ in range(10)]), [TEXT], runs=RUNS)
+    assert 1 / LOAD_SPREAD < once < LOAD_SPREAD, f"the reference measures about one pass of itself: {once:.2f}"
+    assert 10 / LOAD_SPREAD < ten / once < 10 * LOAD_SPREAD, f"ten passes measured {ten / once:.1f} times one"
+
+
+def test_load_that_leaves_between_the_reference_and_the_work_is_not_read_as_cheap_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#666: every reading before the work's first call takes twice as long, as on a CPU shared with a busy loop
+    that then stops. Read all at once before the work, the reference read the busy stretch and the work the quiet
+    one: one pass of the reference measured half a pass of itself. Read in turns, both have a quiet reading."""
+    from tests.fixtures import cpu_cost
+
+    real = cpu_cost.cpu_seconds
+    quiet: list[bool] = []
+
+    def loaded(work: Callable[[], object], *, times: int = 1) -> float:
+        return real(work, times=times) * (1 if quiet else 2)
+
+    def one_pass() -> None:
+        quiet.append(True)
+        REFERENCE.sub("<m>", TEXT)
+
+    monkeypatch.setattr(cpu_cost, "cpu_seconds", loaded)
+    measured = cost(same(one_pass), [TEXT], runs=RUNS)
+    assert measured > 0.75, f"load that left before the work measured one pass of the reference as {measured:.2f}"
 
 
 def test_waiting_is_not_counted() -> None:
