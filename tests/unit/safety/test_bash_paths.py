@@ -747,14 +747,14 @@ def test_hostile_commands_cost_bounded_work(name: str, command: str, limit: str 
 
 #: How many passes of re over their text reading every hostile command may cost, on this thread's CPU clock
 #: (tests/fixtures/cpu_cost.py), not the wall clock, which times the host: they measure about 400 together (a reader
-#: in Python against a pass in C), and the work limits keep them there; the bound catches work no limit counts,
-#: which grows with the commands as the counted work does not. ``tests/unit/test_cpu_cost.py`` shows the measure
-#: following the work.
+#: in Python against a pass in C). ``tests/unit/test_cpu_cost.py`` shows the measure following the work.
 HOSTILE_COST = 4000.0
 
 
 def test_hostile_commands_take_bounded_time_all_together() -> None:
-    """The one clock in these tests, generous: the work limits keep all of them well under it."""
+    """A backstop for gross work no limit counts: ten times what the commands measure. The real guard is
+    :func:`test_hostile_commands_cost_bounded_work`, which holds every kind of work counted to its limit, in units no
+    machine changes; this measure catches only work that escapes every count and grows far past it."""
     from tests.fixtures.cpu_cost import cost, same
 
     texts = [command[: 64 * 1024] for _, command, _ in _HOSTILE]

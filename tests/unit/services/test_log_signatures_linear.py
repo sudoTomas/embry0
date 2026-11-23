@@ -216,7 +216,10 @@ _DEADLINE_SECONDS = 20.0
 #: not the wall clock, which times the host: the rules measure at most about 5 on a line as long as they read and on
 #: each rewritten rule's lines, and under 1 on a line of 256 KiB, cut to what they read; a rule that backtracks, as
 #: ``[\w.+-]*`` before an ``@`` did, about 900 on 16,384 characters, growing with the line
-#: (:func:`test_the_rules_bound_tells_a_rule_that_backtracks`).
+#: (:func:`test_the_rules_bound_tells_a_rule_that_backtracks`). That is what the test at the cap
+#: (:func:`test_a_line_as_long_as_the_rules_read_normalises_at_once`) catches. The 256 KiB child's line is cut to the
+#: cap before any rule reads it (its ``@`` falls past it), so the child catches a cap that stopped cutting, not a
+#: rule that backtracks.
 RULES_COST = 50.0
 
 

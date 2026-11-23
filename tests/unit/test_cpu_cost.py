@@ -5,15 +5,19 @@
   for it.
 - A matcher that backtracks measures thousands of passes of re over its text.
 - Each run measures the work as its first call does it.
+- A clock too coarse to see the work is refused, not read as zero; a short reference runs until the clock sees it.
 """
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from collections.abc import Callable
 
-from tests.fixtures.cpu_cost import REFERENCE, cost, same
+import pytest
+
+from tests.fixtures.cpu_cost import REFERENCE, ClockTooCoarse, cost, reference_seconds, same
 
 TEXT = "abc/def " * 2000
 
@@ -52,3 +56,39 @@ def test_each_run_times_the_work_as_its_first_call_does() -> None:
 
     measured = cost(prepare, [TEXT])
     assert measured > 5, f"work that costs ten passes on its first call measured {measured:.1f}"
+
+
+#: A clock that moves in steps of 15.6 ms, as some platforms' thread clocks do.
+COARSE = 0.0156
+
+
+def _coarse(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.fixtures import cpu_cost
+
+    monkeypatch.setattr(cpu_cost, "_now", lambda: math.floor(time.thread_time() / COARSE) * COARSE)
+    monkeypatch.setattr(cpu_cost, "resolution", lambda: COARSE)
+
+
+def test_work_a_coarse_clock_reads_as_no_time_is_refused_naming_the_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bound on work the clock cannot see would pass measuring nothing: the measure refuses it instead."""
+    _coarse(monkeypatch)
+    with pytest.raises(ClockTooCoarse, match=r"the work read 0 s on time\.thread_time, whose resolution is 0\.0156 s"):
+        cost(same(lambda: None), [TEXT])
+
+
+def test_a_short_reference_on_a_coarse_clock_runs_until_the_clock_reads_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pass over a few characters reads as no time on a coarse clock: it is repeated until it reads ten steps."""
+    fine = reference_seconds(["abc"])
+    _coarse(monkeypatch)
+    coarse = reference_seconds(["abc"])
+    assert fine / 3 < coarse < fine * 3, (
+        f"a pass over 'abc' read {coarse:.2e} s on a coarse clock, {fine:.2e} s on the fine"
+    )
+
+
+def test_a_clock_that_never_moves_is_refused_for_the_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.fixtures import cpu_cost
+
+    monkeypatch.setattr(cpu_cost, "_now", lambda: 0.0)
+    with pytest.raises(ClockTooCoarse, match="passes of the reference read 0 s"):
+        reference_seconds(["abc"])

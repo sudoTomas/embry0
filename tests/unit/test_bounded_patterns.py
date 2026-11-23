@@ -188,15 +188,15 @@ def test_a_rest_that_some_text_fails_does_not_end_a_try(rest: list[Node], text: 
 
 
 #: How many passes of re over the text the match above may cost: it measures under 1 (RE2 reads it), Python's regex
-#: on the same pattern about 500 on a text of 8,000 characters, growing with the text
+#: on the same pattern and the same 20,000 characters 570 to 840, growing with the text
 #: (:func:`test_the_bound_tells_python_s_regex_from_the_pattern`).
 REST_COST = 100.0
 
 
 def test_the_bound_tells_python_s_regex_from_the_pattern() -> None:
-    """The bound can fail: Python's regex, on the first case's pattern, splits a text of 8,000 characters n² ways."""
+    """The bound can fail: Python's regex, on the first case's pattern and text, splits its 20,000 characters n² ways."""
     regex = re.compile(r"[^/]*a[^/]*\Z")
-    text = "a" * 8_000 + "/"
+    text = "a" * 20_000 + "/"
     measured = cost(same(lambda: regex.match(text)), [text], runs=1)
     assert measured > REST_COST, f"Python's regex cost {measured:.0f} passes of re over the text, within the bound"
 
