@@ -541,6 +541,25 @@ async def test_a_fork_or_a_read_only_depth_has_no_bash(from_fork: bool, depth: s
     assert tools == ["Read", "Glob", "Grep"], f"from_fork={from_fork} depth={depth} kept {tools}"
 
 
+@pytest.mark.parametrize(
+    ("from_fork", "depth", "reads_it"),
+    [(True, "full", False), (True, "targeted", False), (False, "read_only", False), (False, "full", True)],
+)
+async def test_a_review_that_runs_nothing_reads_no_configuration_from_the_head(
+    from_fork: bool, depth: str, reads_it: bool
+) -> None:
+    """#58: the checked-out head is the pull request author's. A review that runs nothing has the sandbox read none
+    of its Claude configuration (project settings, CLAUDE.md, commands, skills); a full review of the repository's
+    own branch reads it, as every other agent does."""
+    from embry0.agents.config_builder import build_sdk_options
+    from embry0.sandbox.runner import _invocation_from_config
+
+    shipped = await _shipped(_ready(from_fork=from_fork, depth=depth))
+    sources = build_sdk_options(_invocation_from_config(shipped)).setting_sources
+    assert sources == (["project"] if reads_it else []), f"from_fork={from_fork} depth={depth}: the CLI reads {sources}"
+    assert ("workspace_config" not in shipped) is reads_it, sorted(shipped)
+
+
 async def test_changed_paths_are_read_unquoted_and_without_control_characters() -> None:
     listing = "src/café.py\0with space.py\0evil\x1b[2J\nname.py\0\0"
     out = await init_pr_review_node(_state(), _config(docker=_Docker(files_out=listing)))
