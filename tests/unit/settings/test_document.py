@@ -307,6 +307,36 @@ def test_the_nul_character_is_refused_in_yaml_and_in_json() -> None:
         )
 
 
+def test_a_key_that_is_not_text_is_refused_at_its_mapping_without_repeating_it() -> None:
+    """YAML reads ``7:`` as a number. The 422 names the mapping that holds it, once, never the key: what an
+    operator wrote is not repeated back, in a message or in a place."""
+    for text, place in (
+        ("sample:\n  per_tick: 1\n  7: a\n  8: b\n", ("sample",)),
+        ("7: {}\nsample:\n  per_tick: 1\n", ()),
+    ):
+        try:
+            check(TEST_CATALOG, load_yaml(text), stored={})
+            found: list[dict[str, Any]] = []
+        except DocumentInvalid as exc:
+            found = [p.to_dict() for p in exc.problems if p.type == "key_type"]
+        assert [tuple(p["loc"]) for p in found] == [place], f"one problem, at the mapping: {found}"
+        assert all(part not in ("7", "8", 7, 8) for p in found for part in p["loc"]), found
+        assert all("7" not in p["msg"] and "8" not in p["msg"] for p in found), found
+
+
+@pytest.mark.parametrize("key", ["7", "true", "null", "2026-01-01", "1.5"])
+def test_a_key_yaml_reads_as_another_kind_of_value_is_told_to_be_quoted_whatever_its_kind(key: str) -> None:
+    """``true:``, ``null:`` and a date are refused as a number is, and the message fits each: it names no kind."""
+    try:
+        check(TEST_CATALOG, load_yaml(f"sample:\n  per_tick: 1\n  {key}: a\n"), stored={})
+        found: list[dict[str, Any]] = []
+    except DocumentInvalid as exc:
+        found = [p.to_dict() for p in exc.problems if p.type == "key_type"]
+    assert [p["msg"] for p in found] == ["A key must be text: quote a key YAML would read as another kind of value."], (
+        f"{key}: {found}"
+    )
+
+
 def _brittle_outcome(raw: dict[str, Any]) -> list[tuple[tuple[Any, ...], str]] | str:
     try:
         check(Catalog((BRITTLE,)), raw, stored={})

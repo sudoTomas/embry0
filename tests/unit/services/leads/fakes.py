@@ -73,6 +73,7 @@ class MemoryLeads:
                 "source_key": lead.source_key,
                 "title": lead.title,
                 "severity": lead.severity,
+                "data": dict(lead.data),
                 "area": (areas or {}).get(lead.id),
                 "state": "open",
                 "first_seen": old["first_seen"] if old else now,

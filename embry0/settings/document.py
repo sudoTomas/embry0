@@ -209,6 +209,10 @@ def _close(word: str, options: Iterable[str]) -> str:
     return f" Did you mean '{match[0]}'?" if match else ""
 
 
+#: What a key YAML read as a number, ``true``, ``null`` or a date is told: it names no kind, so it fits each.
+KEY_NOT_TEXT: Final = "A key must be text: quote a key YAML would read as another kind of value."
+
+
 def _json_problems(value: Any, loc: Loc) -> list[Problem]:
     """Values YAML or JSON can hold and the stored document cannot: dates, binary, sets,
     non-text keys, infinities, and the NUL character, which Postgres refuses."""
@@ -217,10 +221,13 @@ def _json_problems(value: Any, loc: Loc) -> list[Problem]:
     while stack:
         current, where = stack.pop()
         if isinstance(current, dict):
+            if any(not isinstance(key, str) for key in current):
+                # Placed at the mapping, once: the key is what the operator wrote, and a 422 repeats nothing written.
+                out.append(Problem(where, "key_type", KEY_NOT_TEXT))
             for key, inner in current.items():
                 if not isinstance(key, str):
-                    out.append(Problem((*where, str(key)), "key_type", "A key must be text."))
-                elif "\x00" in key:
+                    continue
+                if "\x00" in key:
                     out.append(Problem(where, "nul_character", "A key cannot hold the NUL character."))
                 else:
                     stack.append((inner, (*where, key)))
@@ -422,11 +429,13 @@ def check(
                     "dashboard's editor read-only. Leave it out to edit the document on the dashboard.",
                 )
             )
+    if any(not isinstance(key, str) for key in raw):
+        # At the document, once, for the reason above: the name is what the operator wrote.
+        problems.append(Problem((), "key_type", "A section name must be text."))
     for key, value in raw.items():
         if key in DOCUMENT_KEYS:
             continue
         if not isinstance(key, str):
-            problems.append(Problem((str(key),), "key_type", "A section name must be text."))
             continue
         section = catalog.get(key)
         if section is None:

@@ -242,6 +242,38 @@ async def test_each_bad_leads_value_is_a_422_naming_its_key_and_nothing_is_store
     assert (await app.state.settings.snapshot()).get(leads_section()).ask_min == 60, "so no reader ever reads it"
 
 
+async def test_each_bad_readiness_word_is_a_422_naming_every_problem_and_nothing_is_stored(
+    app: Any, client: AsyncClient
+) -> None:
+    """The words a ticket's readiness is read in (#168): every problem of every key at once, none repeated."""
+    assert "readiness_labels" in leads_section().model.model_fields, "the leads section holds the readiness words"
+    text = (
+        "leads:\n"
+        "  readiness_labels: {zz-omen-role: [zz-a], ready: [zz-dup, ZZ-DUP]}\n"
+        "  readiness_weights: {zz-omen-signal: 5, done: 4242}\n"
+        "  done_phrases: [zz-phrase, ZZ-Phrase]\n"
+        "  epic_title_words: [zz-long-word-zz-long-word-zz-long-word-zz-long]\n"
+        "  small_estimate_max: -7\n"
+    )
+    resp = await _put(client, text)
+    assert resp.status_code == 422, f"a bad readiness word is refused when it is written: {resp.text}"
+    detail = resp.json()["detail"]
+    assert sorted(tuple(p["loc"][:2]) for p in detail) == [
+        ("leads", "done_phrases"),
+        ("leads", "epic_title_words"),
+        ("leads", "readiness_labels"),
+        ("leads", "readiness_weights"),
+        ("leads", "small_estimate_max"),
+    ], f"each bad key is refused by its own name: {resp.text}"
+    labels = next(p["msg"] for p in detail if p["loc"][1] == "readiness_labels")
+    assert "name only the roles" in labels and "ready lists a label twice" in labels, (
+        f"one key's every problem is named: {labels}"
+    )
+    assert "zz-" not in resp.text.casefold() and "4242" not in resp.text, "the 422 repeats nothing written"
+    stored = (await client.get(URL)).json()
+    assert (stored["yaml_text"], stored["data"]) == ("", {}), "a refused document stores nothing"
+
+
 def _config(**env: str) -> Embry0Config:
     with patch.dict(os.environ, env, clear=True):
         return Embry0Config(_env_file=None)  # type: ignore[call-arg]

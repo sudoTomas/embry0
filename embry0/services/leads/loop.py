@@ -14,12 +14,13 @@ to date. Nothing here starts work: an owner's yes does (owner proposals).
 The policy is the ``leads`` section of the settings document, read at the
 top of every pass and every look of the schedule, so a change applies with
 no restart. Whether the loop runs and how often are the deployment's; what
-one repository's pass does (its finders, its daily cap, its thresholds) is
-read through its organization's layer. The loop always runs: it looks at
-least every ``TICK_SECONDS``, does nothing while ``leads.enabled`` is false,
-and runs a pass exactly ``interval_hours`` after the last one ended, as the
-loop did before the section (it slept the interval after each pass): when a
-pass falls due before the next look, the loop sleeps only until then.
+one repository's pass does (its finders, its daily cap, its thresholds, the
+words its tickets' readiness is read in) is read through its organization's
+layer. The loop always runs: it looks at least every ``TICK_SECONDS``, does
+nothing while ``leads.enabled`` is false, and runs a pass exactly
+``interval_hours`` after the last one ended, as the loop did before the
+section (it slept the interval after each pass): when a pass falls due
+before the next look, the loop sleeps only until then.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from embry0.services.leads.alerts import find_alerts
 from embry0.services.leads.backlog import Tracked, find_github_tickets, linear_leads
 from embry0.services.leads.ci import find_failing_checks
 from embry0.services.leads.flaky import find_flaky_checks
+from embry0.services.leads.readiness import Readiness
 from embry0.services.leads.reviews import find_unanswered_reviews
 from embry0.settings.layers import SnapshotSection
 from embry0.settings.sections.leads import LeadsSettings
@@ -186,7 +188,7 @@ class LeadsLoop:
                 client = None
             done: dict[str, Any] = {}
             if run_backlog and "ticket" in policy.finders:
-                result, keep = await self._tickets(repo, client, tickets, linear_read, triggers, policy.offer_min)
+                result, keep = await self._tickets(repo, client, tickets, linear_read, triggers, policy)
                 done["ticket"] = await self._store(repo, "ticket", result, now, policy, keep_open=keep)
             for kind, find in self._github_finders(repo, client, now, policy):
                 if kind not in policy.finders:
@@ -222,16 +224,29 @@ class LeadsLoop:
         tickets: Sequence[Any],
         linear_read: bool,
         triggers: Sequence[str],
-        min_score: int,
+        policy: LeadsSettings,
     ) -> tuple[FinderResult, set[str]]:
-        """The repository's backlog leads scoring ``min_score`` or more, and the open ones a source not read
-        whole keeps open."""
-        leads = await linear_leads(repo, tickets, trigger_labels=triggers, tracked=self.tracked, min_score=min_score)
+        """The repository's backlog leads, read in its organization's words (``policy``'s vocabulary) and
+        scoring its ``offer_min`` or more, and the open ones a source not read whole keeps open."""
+        readiness = Readiness.of(policy)
+        leads = await linear_leads(
+            repo,
+            tickets,
+            trigger_labels=triggers,
+            tracked=self.tracked,
+            min_score=policy.offer_min,
+            readiness=readiness,
+        )
         github_read = False
         if client is not None:
             try:
                 github = await find_github_tickets(
-                    client, repo, trigger_labels=triggers, tracked=self.tracked, min_score=min_score
+                    client,
+                    repo,
+                    trigger_labels=triggers,
+                    tracked=self.tracked,
+                    min_score=policy.offer_min,
+                    readiness=readiness,
                 )
                 leads += github.leads
                 github_read = github.complete

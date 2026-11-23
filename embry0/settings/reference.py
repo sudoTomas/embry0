@@ -152,22 +152,26 @@ def render(catalog: Catalog) -> str:
     return "\n".join(lines)
 
 
-def splice(document: str, block: str) -> str:
-    """``document`` with its reference block replaced by ``block``."""
-    start = document.find(START)
-    end = document.find(END)
+def splice(document: str, block: str, *, markers: tuple[str, str] = (START, END)) -> str:
+    """``document`` with its reference block replaced by ``block``: the block between ``markers``, another
+    generated block's if they are not the settings reference's."""
+    opening, closing = markers
+    start = document.find(opening)
+    end = document.find(closing)
     if start < 0 or end < start:
-        raise ValueError(f"the markers {START} and {END} are missing or out of order")
-    return document[:start] + block + document[end + len(END) :]
+        raise ValueError(f"the markers {opening} and {closing} are missing or out of order")
+    return document[:start] + block + document[end + len(closing) :]
 
 
-def committed_block(document: str) -> str:
-    """The reference block as it stands in ``document``, markers included."""
-    start = document.find(START)
-    end = document.find(END)
+def committed_block(document: str, *, markers: tuple[str, str] = (START, END)) -> str:
+    """The reference block as it stands in ``document``, markers included (between ``markers``, as for
+    :func:`splice`)."""
+    opening, closing = markers
+    start = document.find(opening)
+    end = document.find(closing)
     if start < 0 or end < start:
-        raise ValueError(f"the markers {START} and {END} are missing or out of order")
-    return document[start : end + len(END)]
+        raise ValueError(f"the markers {opening} and {closing} are missing or out of order")
+    return document[start : end + len(closing)]
 
 
 def main(argv: list[str] | None = None) -> int:
