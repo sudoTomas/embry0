@@ -9,7 +9,7 @@ import { Overlay } from "@/components/ui/Overlay";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { createFocusTrap } from "@/lib/focus-trap";
-import { ENABLE_SETTING, isLlmProvider, llmProviderStates, type LlmProviderName } from "@/lib/llmProviders";
+import { ENABLE_ROUTE, isLlmProvider, llmProviderStates, type LlmProviderName } from "@/lib/llmProviders";
 import { providerLabel } from "@/lib/status";
 import type { Credential, CredentialCreate, CredentialProvider } from "@/lib/types/credentials";
 
@@ -456,8 +456,8 @@ export function CredentialModal({
                 </Select>
                 {notEnabled.length > 0 && (
                   <p id="credential-llm-provider-hint" className="mt-1 text-xs text-muted-foreground">
-                    Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Name a provider in{" "}
-                    <span className="font-mono">{ENABLE_SETTING}</span> and restart the orchestrator to add its key.
+                    Not enabled in this deployment: {notEnabled.map(providerLabel).join(", ")}. Turn one on in the
+                    provider catalogue (<span className="font-mono">{ENABLE_ROUTE}</span>) to add its key.
                   </p>
                 )}
                 {fieldErrors.provider && (

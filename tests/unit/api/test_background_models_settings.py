@@ -39,6 +39,7 @@ from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
+from tests.fixtures.provider_catalogue import store_providers
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
 pytestmark = pytest.mark.requires_postgres
@@ -70,8 +71,8 @@ def _module() -> Any:
 
 
 @pytest.fixture
-def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai,custom")
+async def providers(db_with_migrations: DatabasePool) -> None:
+    await store_providers(db_with_migrations, "openai", "custom")
 
 
 @pytest.fixture

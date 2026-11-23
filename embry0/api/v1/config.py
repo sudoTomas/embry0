@@ -409,6 +409,16 @@ async def update_provider(
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     _refuse_watcher_local_model(updates)
+    if not updates:
+        return await repo.get()
+    from embry0.api.v1.provider_catalogue import catalogue_held
+
+    # Checked and stored against the stored provider catalogue, which no change can take a model out of meanwhile.
+    async with catalogue_held(request):
+        return await _update_provider(updates, request, repo)
+
+
+async def _update_provider(updates: dict[str, Any], request: Request, repo: ProviderConfigRepository) -> dict[str, Any]:
     if updates:
         # RAV-1297 interlock: the enablement set and the tier assignments
         # must stay mutually consistent — a disabled model in a tier slot

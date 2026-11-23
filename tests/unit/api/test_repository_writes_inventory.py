@@ -72,6 +72,9 @@ NOT_A_REPOSITORYS_AT: dict[str, str] = {
     "/api/v1/config/settings/revisions/{revision_id}/undo": (
         "a revision of the settings document, whose routes check the layer it changed"
     ),
+    "/api/v1/config/providers/catalog/revisions/{revision_id}/undo": (
+        "a change of the provider catalogue, the deployment's: test_deployment_writes_inventory.py"
+    ),
 }
 
 #: Repository routes refused to every key with an allowlist, its own repository's included: the deployment's.

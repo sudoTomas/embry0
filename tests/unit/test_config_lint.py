@@ -204,6 +204,17 @@ def test_removed_sandbox_limit_settings_are_reported():
     )
 
 
+def test_every_providers_key_variable_is_quiet():
+    """The resolver reads each provider's key and address variables, not a config field; a config field owning their
+    prefix (OPENAI_COMPATIBLE_PROVIDERS, OPENROUTER_CATALOG_REFRESH_HOURS) must not make them unknown."""
+    from embry0.agents.catalogue import ENVIRONMENT
+
+    every = {name: "x" for env in ENVIRONMENT.values() for name in (env.api_key, env.base_url) if name}
+    assert {"OPENAI_API_KEY", "OPENROUTER_API_KEY", "CUSTOM_LLM_BASE_URL"} <= set(every), "the table moved"
+    assert find_unknown_env_vars(every, DECLARED) == []
+    assert _names({"OPENAI_API_KY": "x"}) == {"OPENAI_API_KY": None}, "a misspelt one under an owned prefix still warns"
+
+
 def test_findings_are_sorted_by_name():
     findings = find_unknown_env_vars({"WEBHOOK_DEV_MOD": "1", "AUTH_DEV_MOD": "1"}, DECLARED)
     assert [f.name for f in findings] == ["AUTH_DEV_MOD", "WEBHOOK_DEV_MOD"]

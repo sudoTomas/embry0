@@ -11,6 +11,7 @@ from embry0.agents.executor import AgentOutput
 from embry0.orchestration.nodes.agent import run_agent_node
 from embry0.safety.error_codes import ErrorCode
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+from tests.fixtures.provider_catalogue import enable_providers
 
 _LOCAL = "custom/qwen"
 _ROW = {
@@ -26,7 +27,7 @@ _ROW = {
 
 @pytest.fixture(autouse=True)
 def _custom_enabled(monkeypatch):
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
 
 
 class _Db:

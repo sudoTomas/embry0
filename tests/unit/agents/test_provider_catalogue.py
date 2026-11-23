@@ -4,6 +4,7 @@ and ``embry0.agents.providers`` answering from the catalogue installed in the pr
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from typing import Any
@@ -170,8 +171,8 @@ def test_providers_answers_from_the_installed_catalogue(installed: None) -> None
             }
         }
     )
-    assert [p.name for p in providers.routed_providers({})] == ["xai", "openai"], "an enabled provider is not routed"
-    assert [p.name for p in providers.catalog_providers({})] == ["anthropic", "xai", "openai"]
+    assert [p.name for p in providers.routed_providers()] == ["xai", "openai"], "an enabled provider is not routed"
+    assert [p.name for p in providers.catalog_providers()] == ["anthropic", "xai", "openai"]
     assert providers.model_rates("gpt-6-luna") == (0.2, 0.8), "the installed price is not the one read"
     assert providers.model_rates("gpt-7") == (0.0, 0.0), "a free model is not priced at $0"
     assert "gpt-7" in providers.known_models()
@@ -179,14 +180,15 @@ def test_providers_answers_from_the_installed_catalogue(installed: None) -> None
     assert openai is not None and (openai.turn_budget_factor, openai.timeout_factor) == (3.0, 1.0)
     assert providers.model_rates("gemini-4-argon") is None, "a model taken out is still priced"
     catalogue.install(None)
-    assert providers.routed_providers({}) == providers.PROVIDERS, "uninstalling does not return to the seed"
+    assert providers.routed_providers() == providers.PROVIDERS, "uninstalling does not return to the seed"
     assert providers.model_rates("gpt-6-luna") == (0.1, 0.5)
 
 
-def test_the_enabling_variable_still_turns_a_provider_on(installed: None) -> None:
+def test_the_enabling_variable_no_longer_turns_a_provider_on(installed: None, monkeypatch: pytest.MonkeyPatch) -> None:
     _install({"providers": {"groq": {"enabled": True}}})
-    routed = [p.name for p in providers.routed_providers({"OPENAI_COMPATIBLE_PROVIDERS": "deepseek"})]
-    assert routed == ["xai", "groq", "deepseek"], "the catalogue's flag and the variable are not both read"
+    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "deepseek")
+    routed = [p.name for p in providers.routed_providers()]
+    assert routed == ["xai", "groq"], "the variable turned a provider on beside the catalogue's flag"
 
 
 # ---- dated prices ----
@@ -528,3 +530,57 @@ def test_every_problem_across_a_document_s_fields_is_named() -> None:
         "providers.openai.models.gpt-6-luna",
         "providers.xai.enabled",
     ], caught.value.problems
+
+
+# ---- bounds on what a write may hold ----
+
+
+def _extra(value: Any) -> dict[str, Any]:
+    return {"providers": {"openai": {"models": {"gpt-6-luna": {"request_extras": {"response_format": value}}}}}}
+
+
+_EXTRA_AT = "providers.openai.models.gpt-6-luna.request_extras.response_format"
+
+
+def _nested(depth: int) -> Any:
+    value: Any = "leaf"
+    for _ in range(depth):
+        value = {"a": value}
+    return value
+
+
+def test_a_request_extras_value_is_bounded_in_size() -> None:
+    fits = {"type": "text", "pad": "x" * (catalogue.MAX_EXTRA_BYTES - len('{"type":"text","pad":""}'))}
+    assert len(json.dumps(fits, separators=(",", ":"))) == catalogue.MAX_EXTRA_BYTES
+    _merged(_extra(fits))
+    fits["pad"] += "x"
+    problems = _refused(_extra(fits))
+    assert problems == [(_EXTRA_AT, f"larger than {catalogue.MAX_EXTRA_BYTES} bytes as JSON")]
+
+
+def test_a_request_extras_value_is_bounded_in_depth() -> None:
+    _merged(_extra(_nested(catalogue.MAX_EXTRA_DEPTH)))
+    problems = _refused(_extra(_nested(catalogue.MAX_EXTRA_DEPTH + 1)))
+    assert problems == [(_EXTRA_AT, f"nests deeper than {catalogue.MAX_EXTRA_DEPTH} levels")]
+
+
+def test_a_problem_deep_in_a_document_is_named_where_it_starts() -> None:
+    """A thousand-deep value does not make a thousand-part location."""
+    with pytest.raises(CatalogueInvalid) as caught:
+        _merged({"providers": {"openai": {"models": {"gpt-6-luna": {"request_extras": _nested(1000)}}}}})
+    locs = [p.loc for p in caught.value.problems]
+    assert locs and all(len(loc) <= catalogue.MAX_LOC_PARTS for loc in locs), [len(loc) for loc in locs]
+    assert any(loc[-1] == catalogue.LOC_CUT for loc in locs), "a cut location does not say it was cut"
+    assert locs[0][:5] == ("providers", "openai", "models", "gpt-6-luna", "request_extras")
+
+
+def test_only_a_provider_with_a_live_list_takes_refresh_hours() -> None:
+    assert _merged({"providers": {"openrouter": {"refresh_hours": 6}}}).providers["openrouter"].refresh_hours == 6
+    assert _merged({"providers": {"openrouter": {"refresh_hours": 0}}}).providers["openrouter"].refresh_hours == 0
+    assert [loc for loc, _ in _refused({"providers": {"openai": {"refresh_hours": 6}}})] == [
+        "providers.openai.refresh_hours"
+    ]
+    for hours in (-1, 721, float("inf")):
+        assert [loc for loc, _ in _refused({"providers": {"openrouter": {"refresh_hours": hours}}})] == [
+            "providers.openrouter.refresh_hours"
+        ], hours

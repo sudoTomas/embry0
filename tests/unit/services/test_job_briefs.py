@@ -20,6 +20,7 @@ from embry0.services.job_briefs import (
     parse_job_brief,
     user_prompt,
 )
+from tests.fixtures.provider_catalogue import enable_providers
 
 GOOD = {
     "title": "Find why the worker crash-looped and stop it",
@@ -191,7 +192,7 @@ def _writer(
 
 @pytest.fixture
 def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
 
 
 async def test_the_writer_takes_jobs_in_the_store_s_order_a_few_a_tick(custom_enabled: None) -> None:

@@ -132,3 +132,31 @@ async def test_settings_set_keys_patches_one_section_with_a_json_object() -> Non
         assert request.headers["Content-Type"] == "application/json"
         assert json.loads(request.content) == values, "a null goes as null: it takes the key out"
     assert json.loads(seen[2].content) == {}, "an empty change still sends an object"
+
+
+async def test_provider_catalogue_paths_body_and_if_match() -> None:
+    seen: list[httpx.Request] = []
+    client = _client(seen)
+    text = "# DeepSeek on\nproviders:\n  deepseek: {enabled: true}\n"
+    await client.provider_catalogue_get()
+    await client.provider_catalogue_set(text, dry_run=True, expected_generation=4)
+    await client.provider_catalogue_set(text, reason="DeepSeek on")
+    await client.provider_catalogue_revisions(limit=5)
+    await client.provider_catalogue_revision(12)
+    await client.provider_catalogue_undo(12)
+    assert [(r.method, r.url.path) for r in seen] == [
+        ("GET", "/api/v1/config/providers/catalog"),
+        ("PUT", "/api/v1/config/providers/catalog"),
+        ("PUT", "/api/v1/config/providers/catalog"),
+        ("GET", "/api/v1/config/providers/catalog/revisions"),
+        ("GET", "/api/v1/config/providers/catalog/revisions/12"),
+        ("POST", "/api/v1/config/providers/catalog/revisions/12/undo"),
+    ]
+    assert dict(seen[1].url.params) == {"source": "person", "dry_run": "1"}
+    assert seen[1].headers["If-Match"] == '"4"', "the generation read guards the dry run"
+    assert dict(seen[2].url.params) == {"source": "person", "reason": "DeepSeek on"}
+    assert "If-Match" not in seen[2].headers
+    for put in seen[1:3]:
+        assert put.content == text.encode() and put.headers["Content-Type"] == "application/yaml"
+    assert dict(seen[3].url.params) == {"limit": "5"}
+    assert seen[5].content == b""

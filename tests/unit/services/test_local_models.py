@@ -11,6 +11,7 @@ from embry0.agents.fallback import Pause, runnable_fallback_models
 from embry0.services._executor_run import _resolve_local_first
 from embry0.services.credentials.fallback import plan_model_fallbacks
 from embry0.services.local_slots import LocalSlots
+from tests.fixtures.provider_catalogue import enable_providers
 from tests.unit.services.test_provider_fallback_precheck import FakeResolver, _policy
 from tests.unit.services.test_watcher import _config, _service
 
@@ -19,7 +20,7 @@ _LOCAL = "custom/qwen"
 
 @pytest.fixture(autouse=True)
 def _custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom,openrouter")
+    enable_providers(monkeypatch, "custom", "openrouter")
 
 
 class _Leases:
@@ -114,7 +115,7 @@ async def test_the_pre_check_drops_a_preference_it_cannot_serve(resolver: FakeRe
 
 
 async def test_no_preference_while_the_custom_provider_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
     resolved: dict[str, Any] = {}
     assert await _resolve_local_first(FakeResolver({}), "acme/app", _LOCAL, resolved, "job-1") is None
 

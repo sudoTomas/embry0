@@ -14,6 +14,7 @@ from embry0.api.served import ServedRoute
 from embry0.api.session import TIER_ADMIN
 from embry0.api.v1._audit import audit
 from embry0.api.v1._skill_writes import check_added_skills
+from embry0.api.v1.provider_catalogue import catalogue_held
 from embry0.services import job_briefs, proposal_briefs
 from embry0.services.brief_writer import voice_problem
 from embry0.services.model_enablement import (
@@ -218,6 +219,13 @@ async def create_agent(
     request: Request,
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
+    # Its model is checked and stored against the stored provider catalogue, which no change can take it out of
+    # meanwhile.
+    async with catalogue_held(request):
+        return await _create_agent(req, request, repo)
+
+
+async def _create_agent(req: AgentCreateRequest, request: Request, repo: AgentDefinitionsRepository) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
     await _reject_unrunnable_task(request, req.type, req.quest_template)
     servers = _servers_sent(req.mcp_servers, {})
@@ -267,6 +275,17 @@ async def update_agent(
     req: AgentUpdateRequest,
     request: Request,
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
+) -> dict[str, Any]:
+    if req.model_dump(exclude_unset=True).get("model") is None:
+        return await _update_agent(agent_type, req, request, repo)
+    # A new model is checked and stored against the stored provider catalogue, which no change can take it out of
+    # meanwhile.
+    async with catalogue_held(request):
+        return await _update_agent(agent_type, req, request, repo)
+
+
+async def _update_agent(
+    agent_type: str, req: AgentUpdateRequest, request: Request, repo: AgentDefinitionsRepository
 ) -> dict[str, Any]:
     # exclude_unset: omitted fields stay untouched, while an explicitly-sent
     # null CLEARS the column (RAV-1058 — the dashboard's "inherit default"

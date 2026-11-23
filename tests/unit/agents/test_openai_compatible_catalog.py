@@ -6,6 +6,7 @@ import pytest
 
 from embry0.agents import providers as catalog
 from embry0.agents.providers import provider_for_model
+from tests.fixtures.provider_catalogue import enable_providers
 
 # (provider, a model it serves, the id its API knows that model by)
 _ROUTES = [
@@ -22,7 +23,7 @@ _FAMILY = [name for name, _, _ in _ROUTES]
 @pytest.fixture
 def enable(monkeypatch):
     def _enable(*names: str) -> None:
-        monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", ",".join(names))
+        enable_providers(monkeypatch, *names)
 
     return _enable
 
@@ -40,7 +41,7 @@ def test_each_provider_serves_its_models_once_enabled(enable, name, model, upstr
 
 @pytest.mark.parametrize(("name", "model", "_upstream"), _ROUTES)
 def test_off_by_default_every_model_routes_as_before(monkeypatch, name, model, _upstream) -> None:
-    monkeypatch.delenv("OPENAI_COMPATIBLE_PROVIDERS", raising=False)
+    enable_providers(monkeypatch)
     assert provider_for_model(model) is None, f"{model!r} routed to a provider nobody enabled"
     assert catalog.unpriced_models([model]) == [], "an id that routes nowhere is not price-checked, as before"
     assert name not in {p.name for p in catalog.catalog_providers()}, f"{name} listed while off"
@@ -54,15 +55,17 @@ def test_enabling_one_provider_leaves_the_others_off(enable) -> None:
     assert "deepseek-flash" in catalog.known_models()
 
 
-def test_unknown_names_in_the_setting_enable_nothing(enable) -> None:
-    enable("openia", "", " DeepSeek ")
-    assert [p.name for p in catalog.enabled_openai_compatible()] == ["deepseek"], "names are trimmed, case-folded"
+def test_the_variable_no_longer_turns_a_provider_on(monkeypatch) -> None:
+    """OPENAI_COMPATIBLE_PROVIDERS was imported into the catalogue once (embry0.services.provider_catalogue_store);
+    set later, it turns nothing on."""
+    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "deepseek")
+    assert catalog.enabled_openai_compatible() == (), "the variable turned a provider on"
 
 
 @pytest.mark.parametrize("setting", ["", "openai,openrouter,google,groq,deepseek,custom"])
 def test_xai_routing_does_not_depend_on_the_setting(monkeypatch, setting) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", setting)
-    assert provider_for_model("grok-4.7") is catalog.XAI
+    enable_providers(monkeypatch, *[name for name in setting.split(",") if name])
+    assert provider_for_model("grok-4.7") == catalog.XAI
     assert catalog.XAI.runtime == "sdk", "grok keeps the Agent SDK runtime"
     assert provider_for_model("claude-sonnet-5") is None
 
@@ -98,9 +101,9 @@ def test_listed_prices_are_applied(enable) -> None:
 
 def test_the_sandbox_prices_a_routed_model_without_the_setting(monkeypatch) -> None:
     """The setting lives in the orchestrator's environment, not the sandbox's."""
-    monkeypatch.delenv("OPENAI_COMPATIBLE_PROVIDERS", raising=False)
+    enable_providers(monkeypatch)
     assert catalog.price_usage("deepseek-flash", input_tokens=1_000_000, output_tokens=0) == pytest.approx(0.30)
-    assert catalog.provider_named("deepseek") is catalog.DEEPSEEK
+    assert catalog.provider_named("deepseek") == catalog.DEEPSEEK
 
 
 def _resolve(model: str, tools: list[str]):

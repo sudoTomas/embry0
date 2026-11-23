@@ -73,11 +73,12 @@ async def app(
     its own on them, and the test's tick then found them scouted already (#412).
     """
     monkeypatch.setattr(ScoutLoop, "start", _no_ticks)
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
     with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(  # type: ignore[call-arg]
             _env_file=None,
             database_url=db_with_migrations._url,  # noqa: SLF001
+            # Imported once into the provider catalogue by the lifespan, as an upgrading deployment's would be.
+            openai_compatible_providers="custom",
             auth_dev_mode=True,
             webhook_dev_mode=True,
             api_key="",

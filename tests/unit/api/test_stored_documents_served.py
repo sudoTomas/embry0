@@ -179,6 +179,7 @@ ROWS: dict[str, dict[str, str]] = {
     },
     "watcher_stacks": {"repo": f"'{REPO}'", "logql": "'{app=\"x\"}'"},
     "agent_definitions": {},
+    "provider_catalogue": {},
     "settings_documents": {},
 }
 
@@ -212,6 +213,8 @@ MORE_ROWS: tuple[tuple[str, dict[str, str]], ...] = (
         "repo_areas_proposals",
         {"id": "'areas-proposal-deep'", "repo": f"'{REPO}'", "status": "'pending'", "proposed_text": "'areas: []'"},
     ),
+    # A change of the provider catalogue: its revision routes read config_revisions of their own surface.
+    ("config_revisions", {"id": "4243", "scope": "'deployment'", "surface": "'provider_catalogue'"}),
 )
 
 #: What fills each path parameter, by name; a route with another one is not read.
@@ -239,6 +242,11 @@ PARAMS = {
     "name": "deep-profile",
     "revision_id": "4242",
     "decision_id": f"done:{JOB}",
+}
+
+#: Path parameters a route fills otherwise than :data:`PARAMS`, by its path.
+ROUTE_PARAMS: dict[str, dict[str, str]] = {
+    "/api/v1/config/providers/catalog/revisions/{revision_id}": {"revision_id": "4243"},
 }
 
 #: Query strings a route needs before it answers, by its path.
@@ -349,7 +357,7 @@ def _paths(app: Any) -> list[str]:
             continue
         filled = re.sub(r"{name}", "widgets", path) if "watcher" in path else path
         for name in names:
-            filled = filled.replace("{" + name + "}", PARAMS.get(name, ""))
+            filled = filled.replace("{" + name + "}", {**PARAMS, **ROUTE_PARAMS.get(path, {})}.get(name, ""))
         paths.append(filled + (f"?{QUERY[filled]}" if filled in QUERY else ""))
     return paths
 

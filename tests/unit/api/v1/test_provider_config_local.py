@@ -10,11 +10,12 @@ from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
+from tests.fixtures.provider_catalogue import enable_providers
 
 
 @pytest.fixture
 def app(monkeypatch):
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
     provider_repo = MagicMock()
     provider_repo.get = AsyncMock(return_value={"disabled_models": [], "fallback_models": []})
@@ -58,5 +59,5 @@ async def test_the_local_model_can_end_the_fallback_order(app) -> None:
 
 
 async def test_with_the_custom_provider_off_a_local_model_is_refused(app, monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "")
+    enable_providers(monkeypatch)
     assert (await _put(app, {"fallback_models": ["custom/qwen"]})).status_code == 422

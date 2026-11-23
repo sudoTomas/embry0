@@ -1,0 +1,430 @@
+"""The stored provider catalogue (#173, ADR 0031) against a real Postgres: writes, refusals, history and undo, what
+names a model, installing in every process, and the one-time import of the environment."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+import pytest
+from structlog.testing import capture_logs
+
+from embry0.agents import catalogue, providers
+from embry0.agents.catalogue import CatalogueInvalid
+from embry0.services.provider_catalogue_store import (
+    MAX_TEXT_BYTES,
+    CatalogueStore,
+    CatalogueTooLarge,
+    GenerationMismatch,
+    NotUndoable,
+    RevisionNotFound,
+    held_catalogue,
+    log_ignored_env,
+)
+from embry0.storage.database import DatabasePool
+
+pytestmark = [pytest.mark.requires_postgres]
+
+DEEPSEEK_ON = "providers:\n  deepseek:\n    enabled: true\n"
+#: DeepSeek on, its flash model's price changed.
+DEEPSEEK_CHEAP = DEEPSEEK_ON + "    models:\n      deepseek-flash: {prices: [{in: 0.1, out: 0.2}]}\n"
+
+
+@pytest.fixture
+def store(db_with_migrations: DatabasePool) -> CatalogueStore:
+    return CatalogueStore(db_with_migrations)
+
+
+def _locs(exc: CatalogueInvalid) -> list[tuple[Any, ...]]:
+    return [problem.loc for problem in exc.problems]
+
+
+async def _revisions(db: DatabasePool) -> list[tuple[str, str, str]]:
+    rows = await db.fetch(
+        "SELECT source, actor, reason FROM config_revisions WHERE surface = 'provider_catalogue' ORDER BY id"
+    )
+    return [(r["source"], r["actor"], r["reason"]) for r in rows]
+
+
+# ---- reading and writing ----
+
+
+async def test_nothing_stored_is_the_shipped_catalogue(store: CatalogueStore) -> None:
+    stored = await store.document()
+    assert (stored.yaml_text, stored.data, stored.imported) == ("", {}, []), "migration 152 stores an empty overlay"
+    installed = await store.refresh()
+    assert installed.document == catalogue.seed().document
+    assert providers.enabled_openai_compatible() == (), "the shipped catalogue turns no OpenAI-compatible one on"
+
+
+async def test_a_write_is_in_force_at_once_and_is_a_revision(store: CatalogueStore, db_with_migrations) -> None:
+    before = (await store.document()).generation
+    result = await store.save(DEEPSEEK_CHEAP, actor="ops@example.test", reason="cheaper flash")
+    assert (result.generation, result.changed) == (before + 1, True) and result.revision_id is not None
+    assert "+    enabled: true" in result.diff
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"], "not installed by the write"
+    assert providers.model_rates("deepseek-flash") == (0.1, 0.2)
+    stored = await store.document()
+    assert stored.yaml_text == DEEPSEEK_CHEAP and stored.data["providers"]["deepseek"]["enabled"] is True
+    assert stored.updated_by == "ops@example.test"
+    assert await _revisions(db_with_migrations) == [("person", "ops@example.test", "cheaper flash")]
+
+    again = await store.save(DEEPSEEK_CHEAP, actor="ops@example.test")
+    assert (again.generation, again.revision_id, again.changed) == (before + 1, None, False), "the same text again"
+    assert len(await _revisions(db_with_migrations)) == 1
+
+
+async def test_a_comment_is_kept_as_written(store: CatalogueStore) -> None:
+    text = "# DeepSeek for the light tier\n" + DEEPSEEK_ON
+    await store.save(text, actor="ops@example.test")
+    assert (await store.document()).yaml_text == text
+
+
+async def test_an_empty_text_returns_to_the_shipped_catalogue(store: CatalogueStore) -> None:
+    await store.save(DEEPSEEK_ON, actor="ops@example.test")
+    await store.save("", actor="ops@example.test")
+    assert (await store.document()).data == {}
+    assert providers.enabled_openai_compatible() == ()
+
+
+async def test_a_dry_run_stores_nothing(store: CatalogueStore, db_with_migrations) -> None:
+    generation = (await store.document()).generation
+    preview = await store.preview(DEEPSEEK_ON)
+    assert (preview.generation, preview.changed) == (generation, True) and "deepseek" in preview.diff
+    assert (await store.document()).generation == generation and await _revisions(db_with_migrations) == []
+    assert providers.enabled_openai_compatible() == ()
+    with pytest.raises(CatalogueInvalid):
+        await store.preview("providers: {nobody: {enabled: true}}\n")
+
+
+async def test_if_match_names_the_generation_a_write_replaces(store: CatalogueStore) -> None:
+    generation = (await store.document()).generation
+    with pytest.raises(GenerationMismatch) as stale:
+        await store.save(DEEPSEEK_ON, actor="a", if_generation=generation + 5)
+    assert stale.value.current == generation
+    with pytest.raises(GenerationMismatch):
+        await store.preview(DEEPSEEK_ON, if_generation=generation + 5)
+    assert (await store.document()).generation == generation, "a refused write stored something"
+    saved = await store.save(DEEPSEEK_ON, actor="a", if_generation={generation + 5, generation})
+    assert saved.generation == generation + 1, "If-Match may name several generations"
+
+
+async def test_a_refused_text_names_every_problem_and_stores_nothing(store: CatalogueStore) -> None:
+    generation = (await store.document()).generation
+    text = "providers:\n  nobody: {enabled: true}\n  openai: {base_url: https://elsewhere.test}\n"
+    with pytest.raises(CatalogueInvalid) as refused:
+        await store.save(text, actor="a")
+    locs = _locs(refused.value)
+    assert ("providers", "nobody") in locs and ("providers", "openai", "base_url") in locs, locs
+    assert (await store.document()).generation == generation
+
+
+@pytest.mark.parametrize(
+    ("text", "kind"),
+    [
+        ("providers: [", "yaml_syntax"),
+        ("- a list\n", "not_a_mapping"),
+        ("providers: &a {}\nmore: *a\n", None),
+        ("providers:\n  openai: {enabled: true}\n  openai: {enabled: false}\n", None),
+        ("a\x00b: 1\n", "nul_character"),
+    ],
+)
+async def test_a_text_that_is_not_a_catalogue_is_refused(store: CatalogueStore, text: str, kind: str | None) -> None:
+    with pytest.raises(CatalogueInvalid) as refused:
+        await store.save(text, actor="a")
+    if kind is not None:
+        assert [p.type for p in refused.value.problems] == [kind]
+    assert (await store.document()).yaml_text == ""
+
+
+async def test_a_text_past_the_bound_is_refused(store: CatalogueStore) -> None:
+    filler = "#" + "x" * 1000 + "\n"
+    text = DEEPSEEK_ON + filler * (MAX_TEXT_BYTES // len(filler) + 1)
+    with pytest.raises(CatalogueTooLarge):
+        await store.save(text, actor="a")
+    fits = DEEPSEEK_ON + filler * ((MAX_TEXT_BYTES - len(DEEPSEEK_ON)) // len(filler))
+    assert (await store.save(fits, actor="a")).changed, "a text within the bound is taken"
+
+
+# ---- what names a model ----
+
+
+async def _tiers(db: DatabasePool, **values: Any) -> None:
+    """Store the provider configuration's row with ``values`` (no row is stored at first)."""
+    await db.execute("INSERT INTO provider_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING")
+    for key, value in values.items():
+        await db.execute(
+            f"UPDATE provider_config SET {key} = $1{'::jsonb' if key == 'fallback_models' else ''} WHERE id = 'default'",
+            value,
+        )
+
+
+async def _name_flash_everywhere(db: DatabasePool) -> None:
+    await _tiers(db, model_heavy="deepseek-flash", fallback_models=["deepseek-v4-pro"])
+
+
+async def test_a_change_may_not_take_out_a_model_a_tier_or_the_fallback_names(
+    store: CatalogueStore, db_with_migrations
+) -> None:
+    await store.save(DEEPSEEK_ON, actor="a")
+    await _name_flash_everywhere(db_with_migrations)
+    generation = (await store.document()).generation
+    for text in ("", "providers:\n  deepseek: {enabled: false}\n"):
+        with pytest.raises(CatalogueInvalid) as refused:
+            await store.save(text, actor="a")
+        assert sorted(_locs(refused.value)) == [
+            ("references", "fallback_models", 0),
+            ("references", "tiers", "model_heavy"),
+        ], f"turning DeepSeek off with {text!r}"
+        assert {p.type for p in refused.value.problems} == {"in_use"}
+        assert all("deepseek" not in p.msg for p in refused.value.problems), "a problem repeated the model"
+    with pytest.raises(CatalogueInvalid) as refused:
+        await store.save(DEEPSEEK_ON + "    models: {deepseek-flash: null}\n", actor="a")
+    assert _locs(refused.value) == [("references", "tiers", "model_heavy")], "taking the model out"
+    assert (await store.document()).generation == generation
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"]
+
+
+async def test_a_change_may_not_take_out_a_model_an_agent_or_a_background_feature_names(
+    store: CatalogueStore, db_with_migrations
+) -> None:
+    await store.save(DEEPSEEK_ON, actor="a")
+    await db_with_migrations.execute("UPDATE agent_definitions SET model = 'deepseek-flash' WHERE type = 'developer'")
+    await db_with_migrations.execute(
+        "INSERT INTO settings_documents (scope, yaml_text, data) VALUES "
+        "('deployment', '', '{\"background_models\": {\"watcher\": \"deepseek-v4-pro\"}}'::jsonb) "
+        "ON CONFLICT (scope) DO UPDATE SET data = EXCLUDED.data"
+    )
+    with pytest.raises(CatalogueInvalid) as refused:
+        await store.save("", actor="a")
+    assert sorted(_locs(refused.value)) == [
+        ("references", "agent_definitions", "developer"),
+        ("references", "background_models", "deployment", "watcher"),
+    ]
+
+
+async def test_a_model_nothing_could_run_before_does_not_hold_a_change_up(
+    store: CatalogueStore, db_with_migrations
+) -> None:
+    """A tier naming a model the catalogue does not offer now is not this change's doing."""
+    await _tiers(db_with_migrations, model_heavy="deepseek-flash")
+    assert (await store.save(DEEPSEEK_ON, actor="a")).revision_id is not None, "turning DeepSeek on was held up"
+    await _tiers(db_with_migrations, model_heavy="gone-model")
+    assert (await store.save("", actor="a")).revision_id is not None, "a model nobody offers held a change up"
+
+
+async def test_a_change_waits_for_a_write_naming_a_model_and_sees_it(store: CatalogueStore, db_with_migrations) -> None:
+    """Of a write naming a model and a change taking it out, one waits for the other (CatalogueStore.held)."""
+    await store.save(DEEPSEEK_ON, actor="a")
+    other = CatalogueStore(db_with_migrations)
+    async with other.held() as held:
+        assert held.enabled("deepseek")
+        change = asyncio.create_task(store.save("", actor="b"))
+        await _until_waiting(db_with_migrations)
+        assert not change.done(), "the change did not wait for the held catalogue"
+        await _tiers(db_with_migrations, model_heavy="deepseek-flash")
+    with pytest.raises(CatalogueInvalid) as refused:
+        await asyncio.wait_for(change, 30)
+    assert _locs(refused.value) == [("references", "tiers", "model_heavy")], "the change missed the tier"
+
+
+async def test_a_settings_write_is_checked_against_the_stored_catalogue(db_with_migrations) -> None:
+    """``held_catalogue`` is what a settings write checks ``background_models`` against: the stored catalogue, not
+    the one this process installed."""
+    writer = CatalogueStore(db_with_migrations)
+    await writer.save(DEEPSEEK_ON, actor="a")
+    catalogue.install(None)  # another process: it has not looked yet
+    assert providers.enabled_openai_compatible() == ()
+    async with db_with_migrations.transaction() as conn:
+        held = await held_catalogue(conn)
+    assert held.enabled("deepseek")
+
+
+async def _until_waiting(db: DatabasePool) -> None:
+    for _ in range(300):
+        waiting = await db.fetchval(
+            "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+            "WHERE NOT l.granted AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+        )
+        tuple_waits = await db.fetchval(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+        )
+        if waiting or tuple_waits:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("the change never waited on a lock")
+
+
+# ---- history and undo ----
+
+
+async def test_undo_puts_back_what_the_newest_change_replaced(store: CatalogueStore, db_with_migrations) -> None:
+    await store.save(DEEPSEEK_ON, actor="a")
+    second = await store.save(DEEPSEEK_CHEAP, actor="a")
+    assert second.revision_id is not None
+    undone = await store.undo(second.revision_id, actor="b")
+    assert (await store.document()).yaml_text == DEEPSEEK_ON
+    assert providers.model_rates("deepseek-flash") == (0.30, 1.20), "the undo was not installed"
+    assert undone.revision_id is not None and undone.changed
+    assert (await _revisions(db_with_migrations))[-1] == ("restore", "b", f"undo of change {second.revision_id}")
+
+
+async def test_only_the_newest_change_while_it_is_still_stored_can_be_undone(store: CatalogueStore) -> None:
+    first = await store.save(DEEPSEEK_ON, actor="a")
+    second = await store.save(DEEPSEEK_CHEAP, actor="a")
+    assert first.revision_id is not None and second.revision_id is not None
+    with pytest.raises(NotUndoable):
+        await store.undo(first.revision_id, actor="b")
+    with pytest.raises(RevisionNotFound):
+        await store.undo(second.revision_id + 1000, actor="b")
+    undone = await store.undo(second.revision_id, actor="b")
+    with pytest.raises(NotUndoable):
+        await store.undo(second.revision_id, actor="b")
+    assert undone.revision_id is not None
+
+
+async def test_an_undo_is_checked_as_a_write_is(store: CatalogueStore, db_with_migrations) -> None:
+    first = await store.save(DEEPSEEK_ON, actor="a")
+    assert first.revision_id is not None
+    await _tiers(db_with_migrations, model_heavy="deepseek-flash")
+    with pytest.raises(CatalogueInvalid) as refused:
+        await store.undo(first.revision_id, actor="b")
+    assert _locs(refused.value) == [("references", "tiers", "model_heavy")]
+    assert (await store.document()).yaml_text == DEEPSEEK_ON
+
+
+async def test_revisions_are_the_catalogues_own(store: CatalogueStore, db_with_migrations) -> None:
+    await db_with_migrations.execute(
+        "INSERT INTO config_revisions (scope, surface, before, after, actor, source) "
+        "VALUES ('deployment', 'settings', '{}'::jsonb, '{}'::jsonb, 'x', 'person')"
+    )
+    settings_id = await db_with_migrations.fetchval("SELECT max(id) FROM config_revisions")
+    saved = await store.save(DEEPSEEK_ON, actor="a")
+    assert [r["id"] for r in await store.revisions()] == [saved.revision_id]
+    assert await store.revision(settings_id) is None, "a settings revision read as the catalogue's"
+    with pytest.raises(RevisionNotFound):
+        await store.undo(settings_id, actor="b")
+
+
+# ---- every process ----
+
+
+async def test_another_process_installs_a_write_on_its_next_look(db_with_migrations) -> None:
+    writer, reader = CatalogueStore(db_with_migrations), CatalogueStore(db_with_migrations)
+    await reader.refresh()
+    await writer.save(DEEPSEEK_ON, actor="a")
+    catalogue.install(None)  # the reader's process has the shipped one
+    await reader.refresh()
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"]
+
+
+async def test_a_stored_overlay_this_release_refuses_leaves_the_shipped_catalogue(
+    store: CatalogueStore, db_with_migrations
+) -> None:
+    await db_with_migrations.execute(
+        "UPDATE provider_catalogue SET data = $1::jsonb, generation = generation + 1",
+        {"providers": {"retired": {"enabled": True}}},
+    )
+    with capture_logs() as logs:
+        installed = await store.refresh()
+        await store.refresh()
+    assert installed.document == catalogue.seed().document
+    assert [p.loc for p in store.refused] == [("providers", "retired")]
+    assert [e["event"] for e in logs].count("provider_catalogue_refused") == 1, "warned once per generation"
+
+
+# ---- the environment, once ----
+
+
+def _config(**values: str) -> Any:
+    from embry0.config import Embry0Config
+
+    return Embry0Config(**values)
+
+
+async def test_the_variables_are_imported_once(store: CatalogueStore, db_with_migrations) -> None:
+    config = _config(openai_compatible_providers=" DeepSeek,openia ,groq", openrouter_catalog_refresh_hours="6")
+    with capture_logs() as logs:
+        imported = await store.import_env(config)
+    assert imported == ["providers.enabled", "openrouter.refresh_hours"]
+    stored = await store.document()
+    assert stored.data == {
+        "providers": {"deepseek": {"enabled": True}, "groq": {"enabled": True}, "openrouter": {"refresh_hours": 6.0}}
+    }
+    assert stored.yaml_text.startswith("# Imported once from OPENAI_COMPATIBLE_PROVIDERS, ")
+    assert sorted(stored.imported) == ["openrouter.refresh_hours", "providers.enabled"]
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["groq", "deepseek"]
+    assert any(e["event"] == "provider_catalogue_env_value_dropped" and e["dropped"] == ["openia"] for e in logs)
+    assert [r[0] for r in await _revisions(db_with_migrations)] == ["bootstrap"]
+    audits = await db_with_migrations.fetch(
+        "SELECT details FROM audit_log WHERE action = 'provider_catalogue.bootstrapped'"
+    )
+    assert len(audits) == 1
+    details = audits[0]["details"]
+    details = json.loads(details) if isinstance(details, str) else details
+    assert details["variables"] == ["OPENAI_COMPATIBLE_PROVIDERS", "OPENROUTER_CATALOG_REFRESH_HOURS"]
+
+    assert await store.import_env(_config(openai_compatible_providers="openai")) == [], "imported twice"
+    assert "openai" not in stored.data["providers"]
+    assert [p.name for p in providers.enabled_openai_compatible()] == ["groq", "deepseek"]
+
+
+async def test_an_unset_variable_is_marked_and_never_read_later(store: CatalogueStore, db_with_migrations) -> None:
+    assert await store.import_env(_config()) == []
+    stored = await store.document()
+    assert sorted(stored.imported) == ["openrouter.refresh_hours", "providers.enabled"]
+    assert (stored.yaml_text, await _revisions(db_with_migrations)) == ("", [])
+    assert await store.import_env(_config(openai_compatible_providers="deepseek")) == []
+    assert providers.enabled_openai_compatible() == ()
+
+
+async def test_a_value_the_catalogue_already_holds_writes_nothing(store: CatalogueStore) -> None:
+    assert await store.import_env(_config(openrouter_catalog_refresh_hours="24")) == []
+    assert (await store.document()).yaml_text == ""
+
+
+async def test_a_value_the_catalogue_cannot_take_is_skipped(store: CatalogueStore) -> None:
+    with capture_logs() as logs:
+        assert await store.import_env(_config(openrouter_catalog_refresh_hours="soon")) == []
+    assert any(e["event"] == "provider_catalogue_env_refused" for e in logs)
+    assert "openrouter.refresh_hours" in (await store.document()).imported
+
+
+async def test_an_imported_variable_still_set_is_named_at_every_start(store: CatalogueStore) -> None:
+    config = _config(openai_compatible_providers="deepseek")
+    await store.import_env(config)
+    with capture_logs() as logs:
+        await log_ignored_env(store, config)
+        await log_ignored_env(store, _config())
+    named = [e["variable"] for e in logs if e["event"] == "provider_catalogue_env_ignored"]
+    assert named == ["OPENAI_COMPATIBLE_PROVIDERS"]
+
+
+async def test_the_import_keeps_what_the_overlay_already_holds(store: CatalogueStore) -> None:
+    await store.save(DEEPSEEK_CHEAP, actor="a")
+    await store.import_env(_config(openai_compatible_providers="groq"))
+    data = (await store.document()).data
+    assert data["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"] == [{"in": 0.1, "out": 0.2}]
+    assert data["providers"]["groq"] == {"enabled": True}
+
+
+async def test_a_change_waits_for_a_settings_write_naming_a_model_and_sees_it(
+    store: CatalogueStore, db_with_migrations
+) -> None:
+    """A settings write reads the catalogue FOR SHARE on its own transaction (held_catalogue): a change of the
+    catalogue waits for it, then reads the value it wrote."""
+    await store.save(DEEPSEEK_ON, actor="a")
+    async with db_with_migrations.transaction() as conn:
+        assert (await held_catalogue(conn)).enabled("deepseek")
+        change = asyncio.create_task(store.save("", actor="b"))
+        await _until_waiting(db_with_migrations)
+        assert not change.done(), "the change did not wait for the settings write"
+        await conn.execute(
+            "INSERT INTO settings_documents (scope, yaml_text, data) VALUES "
+            "('deployment', '', '{\"background_models\": {\"watcher\": \"deepseek-flash\"}}'::jsonb) "
+            "ON CONFLICT (scope) DO UPDATE SET data = EXCLUDED.data"
+        )
+    with pytest.raises(CatalogueInvalid) as refused:
+        await asyncio.wait_for(change, 30)
+    assert _locs(refused.value) == [("references", "background_models", "deployment", "watcher")]

@@ -19,6 +19,7 @@ from embry0.services.provider_readiness import (
     readiness_by_provider,
 )
 from tests.fixtures.openai_compatible_server import FakeOpenAIServer
+from tests.fixtures.provider_catalogue import enable_providers
 
 _KEYS = ("OPENAI_API_KEY", "CUSTOM_LLM_API_KEY", "CUSTOM_LLM_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN", "XAI_API_KEY")
 _PROBE_KEY = "sk-probe"
@@ -30,7 +31,7 @@ _REGISTRY_KEY = "sk-registry"
 def _enabled(monkeypatch):
     for key in _KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai,custom")
+    enable_providers(monkeypatch, "openai", "custom")
 
 
 @pytest.fixture
@@ -75,7 +76,7 @@ async def test_a_not_ready_provider_is_never_picked() -> None:
 
 
 async def test_while_off_the_providers_are_not_in_the_readiness_report(monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_COMPATIBLE_PROVIDERS")
+    enable_providers(monkeypatch)
     assert set(await readiness_by_provider(_state())) == {"anthropic", "xai"}
     with pytest.raises(ProviderNotReadyError, match="no configured provider serves"):
         await ensure_model_provider_ready("gpt-6-luna", _state())

@@ -24,6 +24,7 @@ from structlog.testing import capture_logs
 
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
+from tests.fixtures.provider_catalogue import enable_providers
 
 GOOD = {
     "title": "Stop retrying a saved email",
@@ -91,7 +92,7 @@ def _answering(sent: list[dict[str, Any]], usage: dict[str, Any] | None) -> http
 
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai,custom")
+    enable_providers(monkeypatch, "openai", "custom")
 
 
 def _proposal(repo: str = "acme/widgets") -> Proposal:
@@ -175,7 +176,7 @@ async def test_the_operator_s_own_server_bills_nothing_and_is_never_refused(prov
 
 
 async def test_a_model_with_no_price_is_never_called(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
     module = _module()
     resolver = Resolver()
     calls = module.BackgroundCalls(resolver=resolver, spend=Spend(), gate=Gate())

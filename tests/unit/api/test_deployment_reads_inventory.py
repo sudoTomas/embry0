@@ -141,6 +141,14 @@ SHARED: dict[str, dict[str, str]] = {
         )
     },
     "/api/v1/progression": {"body.pack": f"the content pack in force: {_RUNS_ON}"},
+    **{
+        path: {"*": f"the provider catalogue in force, who changed it shown as to a non-admin: {_RUNS_ON}"}
+        for path in (
+            "/api/v1/config/providers/catalog",
+            "/api/v1/config/providers/catalog/revisions",
+            "/api/v1/config/providers/catalog/revisions/{revision_id}",
+        )
+    },
     # #445: a model account bound to the repository, its owner or the global pool is one a job there may run with,
     # which GET /run-with/keys offers the key by label.
     **{

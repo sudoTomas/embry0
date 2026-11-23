@@ -219,12 +219,12 @@ async def _llm_entries(
     # resolver falls back to. A custom key is imported only with its base URL.
     from embry0.agents.providers import enabled_openai_compatible
 
-    for provider in enabled_openai_compatible(env):
+    for provider in enabled_openai_compatible():
         fallback = env_fallback(provider.name, env, config)
         if fallback is None:
             continue
         metadata = env_fallback_metadata(provider.name, env)
-        host = base_url_host(metadata["base_url"]) if "base_url" in metadata else default_host(provider.name, env)
+        host = base_url_host(metadata["base_url"]) if "base_url" in metadata else default_host(provider.name)
         out.append((provider.name, "api-key", "llm_api_key", host, fallback[1], 0, metadata))
     return out
 

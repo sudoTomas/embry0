@@ -33,6 +33,7 @@ it imports only the standard library, pydantic and PyYAML.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -65,6 +66,14 @@ REQUEST_EXTRAS: Final = frozenset(
         "top_p",
     }
 )
+#: The most bytes one ``request_extras`` value takes, as JSON, and the deepest it nests.
+MAX_EXTRA_BYTES: Final = 4096
+MAX_EXTRA_DEPTH: Final = 32
+#: The most parts a problem's location names; a deeper one ends in :data:`LOC_CUT`.
+MAX_LOC_PARTS: Final = 12
+LOC_CUT: Final = "..."
+#: The providers whose live model list embry0 reads, and so whose ``refresh_hours`` means something.
+LIVE_LISTS: Final = frozenset({"openrouter"})
 #: The chat-completions request fields the executor sets, or reads its answer by (and their older equivalents for
 #: tools). None is in :data:`REQUEST_EXTRAS`; the executor also drops any that reach it, and sets its own last.
 EXECUTOR_FIELDS: Final = frozenset(
@@ -160,6 +169,7 @@ Url = Annotated[str, StringConstraints(pattern=r"^(https?://\S{1,500})?$")]
 ProbePath = Annotated[str, StringConstraints(pattern=r"^/\S{0,200}$")]
 Rate = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 Factor = Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)]
+RefreshHours = Annotated[float, Field(ge=0, le=720, allow_inf_nan=False)]
 
 
 class _Model(BaseModel):
@@ -209,6 +219,10 @@ class ProviderEntry(_Model):
     enabled: bool = False
     factors: Factors = Field(default_factory=Factors)
     default_price: Rates | None = Field(default=None, description="the price of a routed model with no entry")
+    refresh_hours: RefreshHours | None = Field(
+        default=None,
+        description="how often, in hours, the provider's live model list is read again (OpenRouter's only); 0 stops it",
+    )
     models: dict[ModelId, ModelEntry] = Field(default_factory=dict, max_length=500)
 
 
@@ -239,6 +253,7 @@ class ProviderOverlay(_Model):
     enabled: bool | None = None
     factors: FactorsOverlay | None = None
     default_price: Rates | None = None
+    refresh_hours: RefreshHours | None = None
     models: dict[ModelId, ModelOverlay | None] | None = Field(default=None, max_length=500)
 
 
@@ -275,7 +290,20 @@ class CatalogueInvalid(ValueError):
 
 
 def _problems(error: ValidationError, prefix: tuple[str | int, ...] = ()) -> list[Problem]:
-    return [Problem((*prefix, *e["loc"]), e["type"], e["msg"]) for e in error.errors(include_input=False)]
+    return [Problem(_cut((*prefix, *e["loc"])), e["type"], e["msg"]) for e in error.errors(include_input=False)]
+
+
+def _cut(loc: tuple[str | int, ...]) -> tuple[str | int, ...]:
+    """``loc``, at most :data:`MAX_LOC_PARTS` parts: a value nested deeper is named by where it starts."""
+    return loc if len(loc) <= MAX_LOC_PARTS else (*loc[: MAX_LOC_PARTS - 1], LOC_CUT)
+
+
+def _depth(value: Any, limit: int) -> int:
+    """How deep ``value`` nests, counting no further than ``limit + 1``."""
+    if limit < 0 or not isinstance(value, dict | list):
+        return 0
+    children = value.values() if isinstance(value, dict) else value
+    return 1 + max((_depth(child, limit - 1) for child in children), default=0)
 
 
 # ---- the catalogue the code reads ----
@@ -405,6 +433,10 @@ def _coherence_problems(document: CatalogueDocument) -> list[Problem]:
             problems.append(Problem(where, "not_shipped", "not a provider embry0 ships"))
         if entry.runtime == "sdk" and not entry.enabled:
             problems.append(Problem((*where, "enabled"), "always_on", "an sdk provider is always on"))
+        if entry.refresh_hours is not None and name not in LIVE_LISTS:
+            problems.append(
+                Problem((*where, "refresh_hours"), "no_live_list", "embry0 reads no live model list of this provider")
+            )
         for model, spec in entry.models.items():
             problems += _model_problems((*where, "models", model), model, spec, entry)
     prefixes = [(prefix, name) for name, entry in document.providers.items() for prefix in entry.model_prefixes]
@@ -437,6 +469,17 @@ def _model_problems(where: tuple[str | int, ...], model: str, spec: ModelEntry, 
     dated = [day for day in days if day is not None]
     if dated != sorted(set(dated)):
         problems.append(Problem((*where, "prices"), "out_of_order", "the from dates must be in order, each day once"))
+    for key, value in sorted(spec.request_extras.items()):
+        if key not in REQUEST_EXTRAS:
+            continue
+        if _depth(value, MAX_EXTRA_DEPTH) > MAX_EXTRA_DEPTH:
+            problems.append(
+                Problem((*where, "request_extras", key), "too_deep", f"nests deeper than {MAX_EXTRA_DEPTH} levels")
+            )
+        elif len(json.dumps(value, separators=(",", ":"))) > MAX_EXTRA_BYTES:
+            problems.append(
+                Problem((*where, "request_extras", key), "too_large", f"larger than {MAX_EXTRA_BYTES} bytes as JSON")
+            )
     for key in sorted(set(spec.request_extras) - REQUEST_EXTRAS):
         problems.append(
             Problem(

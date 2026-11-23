@@ -52,8 +52,13 @@ describes what embry0 does rather than listing changes.
 - **OpenAI-compatible providers.** Agents can run on OpenAI, OpenRouter,
   Gemini, Groq, DeepSeek or a model server of the operator's own (Ollama,
   vLLM, LM Studio) through embry0's own tool loop over chat completions. Each
-  is off until `OPENAI_COMPATIBLE_PROVIDERS` names it
+  is off until the provider catalogue turns it on
   ([docs/providers.md](docs/providers.md#openai-compatible-providers)).
+- **Provider catalogue.** The providers, their models and dated prices are a
+  document embry0 ships, and a deployment's overlay of it, changed at runtime
+  with a dry run, history and undo; a change may not take out a model that
+  something names ([docs/providers.md](docs/providers.md#changing-the-catalogue),
+  [ADR 0031](docs/adr/0031-provider-catalogue.md)).
 - **MCP server** (`embry0-mcp`, and `embry0-mcp-http` for the hosted endpoint).
 - **Claude Code plugin** ([plugins/embry0](plugins/embry0/README.md)), with this
   repository as its marketplace: it stands up a deployment, connects to its MCP
@@ -84,3 +89,9 @@ describes what embry0 does rather than listing changes.
   starts with `EMBRY0_LLM_` is refused, and a stored one is no longer
   injected: the OpenAI-compatible providers' keys and base URL use that
   namespace in the sandbox. Rename such a variable before you upgrade.
+- **Provider settings move into the catalogue.** The first start imports
+  `OPENAI_COMPATIBLE_PROVIDERS` and `OPENROUTER_CATALOG_REFRESH_HOURS` once into
+  the provider catalogue; after that both are ignored, and the catalogue turns a
+  provider on (`PUT /api/v1/config/providers/catalog`, no restart). Remove them
+  from `.env` once the start is verified
+  ([docs/providers.md](docs/providers.md#changing-the-catalogue)).

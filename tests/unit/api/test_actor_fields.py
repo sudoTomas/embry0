@@ -266,6 +266,32 @@ def _standards(app: Any, mp: pytest.MonkeyPatch, actors: tuple[str, ...]) -> Non
     app.state.repo_standard_state_repo = SimpleNamespace(list_for_owner=AsyncMock(return_value=[]))
 
 
+def _catalogue(app: Any, mp: pytest.MonkeyPatch, actors: tuple[str, ...]) -> None:
+    from embry0.agents.catalogue import seed
+
+    rows = [
+        {
+            "id": n,
+            "surface": "provider_catalogue",
+            "before": {"yaml_text": ""},
+            "after": {"yaml_text": f"# v{n}\n"},
+            "actor": a,
+            "source": "person",
+            "reason": "",
+            "created_at": NOW,
+        }
+        for n, a in enumerate(actors, 1)
+    ]
+    stored = SimpleNamespace(yaml_text="# v1\n", data={}, generation=2, updated_by=actors[0], updated_at=NOW)
+    app.state.provider_catalogue = SimpleNamespace(
+        refresh=AsyncMock(return_value=seed()),
+        document=AsyncMock(return_value=stored),
+        refused=[],
+        revisions=AsyncMock(return_value=rows),
+        revision=AsyncMock(return_value=rows[0]),
+    )
+
+
 CASES: list[Case] = [
     Case(
         "/api/v1/merge-approvals",
@@ -374,6 +400,26 @@ CASES: list[Case] = [
         "/api/v1/standards/acme/design/versions",
         _standards,
         lambda body: [v["created_by"] for v in body["versions"]],
+    ),
+    Case(
+        "/api/v1/config/providers/catalog",
+        "/api/v1/config/providers/catalog",
+        _catalogue,
+        lambda b: [b["updated_by"]],
+        actors=(OTHER,),
+    ),
+    Case(
+        "/api/v1/config/providers/catalog/revisions",
+        "/api/v1/config/providers/catalog/revisions",
+        _catalogue,
+        lambda b: [r["actor"] for r in b["revisions"]],
+    ),
+    Case(
+        "/api/v1/config/providers/catalog/revisions/{revision_id}",
+        "/api/v1/config/providers/catalog/revisions/1",
+        _catalogue,
+        lambda b: [b["actor"]],
+        actors=(OTHER,),
     ),
 ]
 

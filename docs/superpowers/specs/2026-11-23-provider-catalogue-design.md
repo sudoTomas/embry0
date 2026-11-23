@@ -49,7 +49,7 @@ The schema is `embry0/agents/catalogue.py`; the seed, `embry0/agents/providers.y
 
 **Prices** are US dollars per million tokens. The price in force at a moment is the newest entry whose `from` day is not after it; an undated entry applies before the first dated one; a model whose prices all start later has none yet.
 
-**What an overlay may set.** Of a shipped provider: `enabled`, `factors` (key by key), `default_price` (`null` takes it out) and `models`. A model the seed has takes each field the overlay gives it, with `prices` and `request_extras` replaced whole. A model made `free` drops its prices, and one given prices is no longer free. A new model must be complete, and `null` takes a model out. Everything else of a provider (runtime, addresses, prefixes, how its ids reach its API, its probe) is embry0's, because routing and the executors are built on it: an overlay that names one is refused. Providers embry0 does not ship are refused until the credential and address work below exists.
+**What an overlay may set.** Of a shipped provider: `enabled`, `factors` (key by key), `default_price` (`null` takes it out), `refresh_hours` (OpenRouter's only: the hours between reads of its live list, 0 to 720, 0 stopping the loop) and `models`. A model the seed has takes each field the overlay gives it, with `prices` and `request_extras` replaced whole. A model made `free` drops its prices, and one given prices is no longer free. A new model must be complete, and `null` takes a model out. Everything else of a provider (runtime, addresses, prefixes, how its ids reach its API, its probe) is embry0's, because routing and the executors are built on it: an overlay that names one is refused. Providers embry0 does not ship are refused until the credential and address work below exists.
 
 **Validation** names every problem it finds, each with where it is and what is wrong, never the value. Of an overlay, these come back together: what it may not set, and then either its own shape's problems or, when its shape is right, every problem of the catalogue it makes. The checks:
 
@@ -65,9 +65,21 @@ The schema is `embry0/agents/catalogue.py`; the seed, `embry0/agents/providers.y
 
 **Kept out of the document.** Where each key is read from is code (`ENVIRONMENT` in the schema module). The custom provider's address comes from its credential or `CUSTOM_LLM_BASE_URL`.
 
+**Bounds on a write** (PR 2, which opens the write path): the stored text is at most 256 KiB; a `request_extras` value is at most 4,096 bytes as JSON and nests at most 32 levels; and a problem's location names at most 12 parts, a deeper one ending in `...`, so a value nested a thousand deep is named by where it starts.
+
+## The stored document (PR 2)
+
+One row, `provider_catalogue` (migration 152): the overlay's YAML as written, comments included, its values, a `generation` and `imported`, the ledger of the one-time environment import. Its changes are `config_revisions` rows with surface `provider_catalogue` (the newest 100 kept), each undoable while it is the newest and the stored text is still what it wrote. `embry0/services/provider_catalogue_store.py` holds it; `embry0/api/v1/provider_catalogue.py` and four MCP tools serve it (`docs/providers.md`, "Changing the catalogue").
+
+**What names a model.** A write is refused, naming each, when it takes out, leaves without a price or turns off a model that the catalogue offers now and that one of these names: a tier or the default model, the fallback order, an agent definition, or a `background_models` value at any layer. A model nobody could run before does not hold a change up. The other way round, a write of any of those checks its model against the stored catalogue with the catalogue's row held `FOR SHARE` until it commits: a settings write reads it on its own transaction (`embry0.settings.write_context`), and a tier, fallback or agent write runs inside `CatalogueStore.held`. A change of the catalogue takes the row `FOR UPDATE` before it reads what names a model, so of the two one waits for the other and is checked against what it wrote.
+
+**The environment, once.** `OPENAI_COMPATIBLE_PROVIDERS` (its names into each provider's `enabled`) and `OPENROUTER_CATALOG_REFRESH_HOURS` (into OpenRouter's `refresh_hours`) are `EnvImport` entries: at the first start of this release each set variable is merged into the overlay under a comment naming it, as one revision with source `bootstrap` and a `provider_catalogue.bootstrapped` audit row; every key goes into the ledger, set or not, so neither variable is read again, and a start that still finds one set logs `provider_catalogue_env_ignored`. A name that is no shipped OpenAI-compatible provider is dropped with a warning. Both entries are removed before 0.1.0, with the variables.
+
 ## Readers
 
-`embry0.agents.providers` keeps its functions and answers every one from the catalogue installed in the process (`catalogue.current()`): the seed until a deployment's own is installed. The orchestrator installs the merged catalogue at startup and after every write. The sandbox reads no table once each invocation carries its provider record (PR 3).
+`embry0.agents.providers` keeps its functions and answers every one from the catalogue installed in the process (`catalogue.current()`): the seed until a deployment's own is installed. The orchestrator imports the environment and installs the stored catalogue at startup, before anything routes a model; a write installs it at once in the process that took it, and every other process reads the stored generation every ten seconds and installs a new one. A stored overlay the running release refuses is never installed: the seed is, with a warning once per generation, and `GET` names why. OpenRouter's live-list loop reads its switch (`enabled`) and its interval (`refresh_hours`) from the installed catalogue each minute. The resolver sends every model routed to a provider other than Anthropic its rates in force with the run (`pricing_usd_per_mtok`, which sandbox images already read), so a sandbox, which carries the shipped catalogue, meters a model the overlay re-priced or added at the overlay's rates; its request extras and the rest of the provider record follow in PR 3.
+
+The modules that still import a shipped constant read only what an overlay cannot change: a provider's name, address, prefixes or probe path (`provider_probe`, `metrics/labels`, the credential schema's list of the family), or run in the sandbox (`agents/executor`, PR 3). The sandbox reads no table once each invocation carries its provider record (PR 3).
 
 ## Plan
 
@@ -79,11 +91,11 @@ Each PR is reviewed and merged before the next.
    - `providers.py` building its constants from the seed and answering from the installed catalogue.
 
    `OPENAI_COMPATIBLE_PROVIDERS` still enables providers, beside the document's `enabled`. A few modules still import the shipped constants (`provider_probe`, the credential schema, `api/v1/config`, `api/app`, `metrics/labels`, `agents/executor`), which the seed answers identically until a catalogue is installed. The sandbox group names pydantic and PyYAML, which it already installed through langchain-core.
-2. **Store and API.**
-   - the document table with its revisions (`GET`/`PUT /config/providers/catalog`, a dry run, `If-Match`, undo), MCP tools, and installing on every write;
-   - the one-time import of `OPENAI_COMPATIBLE_PROVIDERS` and `OPENROUTER_CATALOG_REFRESH_HOURS`;
-   - checking settings writes against the stored catalogue, and refusing to take out a model that a tier, the fallback order, an agent or `background_models` names;
-   - the remaining constant readers moved onto the installed catalogue.
+2. **Store and API** ("The stored document" above).
+   - the document table with its revisions (`GET`/`PUT /config/providers/catalog`, a dry run, `If-Match`, undo), MCP tools, and installing on every write and in every process;
+   - the one-time import of `OPENAI_COMPATIBLE_PROVIDERS` and `OPENROUTER_CATALOG_REFRESH_HOURS`, after which neither variable turns anything on;
+   - checking settings, tier, fallback and agent writes against the stored catalogue, and refusing to take out a model that a tier, the fallback order, an agent or `background_models` names;
+   - the bounds on a write; the credential code, the OpenRouter loop and the messages reading the installed catalogue.
 3. **Sandbox independence.** Each invocation carries its provider record: runtime, upstream id, request extras, the rates in force at its start, cache factors, and the key's variable. The rates are recorded on the trace. This needs a sandbox image rebuild.
 4. **Credentials.** The LLM names leave `credentials_provider_check`; a credential's provider is checked against the catalogue; the frontend reads the list from the API.
 5. **`custom` defaults** with the one-time import of what a deployment relied on; the local-only request fields move to per-model `request_extras`.

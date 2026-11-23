@@ -88,6 +88,9 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "settings.change_undone": _SETTINGS,
     # A repository's layer copied from its organization's names it; the environment's import names none.
     "settings.bootstrapped": _SETTINGS,
+    "provider_catalogue.updated": DEPLOYMENT,
+    "provider_catalogue.change_undone": DEPLOYMENT,
+    "provider_catalogue.bootstrapped": DEPLOYMENT,
     "slop_meter.pruned": _REPO,
     "slop_meter.prune.refused": _REPO,
     "background_enrollment.blocked": _REPO,

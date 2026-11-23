@@ -71,7 +71,9 @@ MIGRATION_LEDGER = "embry0_migrations"
 #: The tables the migrations themselves write rows into: the ledger and their
 #: seeds. Every other table of a freshly migrated database is empty.
 #: tests/unit/api/test_clean_database.py holds this to what the migrations write.
-MIGRATION_SEEDED_TABLES: frozenset[str] = frozenset({MIGRATION_LEDGER, "agent_definitions", "settings_documents"})
+MIGRATION_SEEDED_TABLES: frozenset[str] = frozenset(
+    {MIGRATION_LEDGER, "agent_definitions", "provider_catalogue", "settings_documents"}
+)
 
 
 def postgres_unavailable(exc: BaseException) -> NoReturn:

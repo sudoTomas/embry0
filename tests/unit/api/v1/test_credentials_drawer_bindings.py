@@ -15,6 +15,7 @@ import pytest
 from httpx import AsyncClient
 
 from embry0.safety.redaction import known_secret_values, register_known_secrets
+from tests.fixtures.provider_catalogue import enable_providers
 
 pytestmark = [pytest.mark.requires_postgres]
 
@@ -36,7 +37,7 @@ def _restore_scrub_set() -> Iterator[None]:
 
 @pytest.fixture
 async def client(api_client: AsyncClient, monkeypatch) -> AsyncIterator[AsyncClient]:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai")
+    enable_providers(monkeypatch, "openai")
     db = api_client.app.state.db  # type: ignore[attr-defined]
     await db.execute("TRUNCATE credential_bindings, credential_uses, credentials CASCADE")
     yield api_client

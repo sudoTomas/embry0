@@ -4,7 +4,7 @@
  * lib/__tests__/llmProviderParity.test.ts pins these lists to the backend's.
  *
  * Anthropic and xAI are in every deployment. The OpenAI-compatible family is off
- * until the deployment names a provider in OPENAI_COMPATIBLE_PROVIDERS
+ * until the deployment's provider catalogue turns a provider on
  * (docs/providers.md); until then the backend refuses its credentials.
  */
 export const ALWAYS_ON_LLM_PROVIDERS = ["anthropic", "xai"] as const;
@@ -13,8 +13,8 @@ export const LLM_PROVIDERS = [...ALWAYS_ON_LLM_PROVIDERS, ...OPENAI_COMPATIBLE_P
 
 export type LlmProviderName = (typeof LLM_PROVIDERS)[number];
 
-/** The orchestrator setting that enables an OpenAI-compatible provider. */
-export const ENABLE_SETTING = "OPENAI_COMPATIBLE_PROVIDERS";
+/** Where an OpenAI-compatible provider is turned on: the provider catalogue's write (no restart). */
+export const ENABLE_ROUTE = "PUT /api/v1/config/providers/catalog";
 
 export function isLlmProvider(name: string): name is LlmProviderName {
   return (LLM_PROVIDERS as readonly string[]).includes(name);

@@ -20,6 +20,7 @@ from embry0.safety.error_codes import ErrorCode
 from embry0.sandbox.runner import _invocation_from_config
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 from tests.fixtures.openai_compatible_server import FakeOpenAIServer, completion
+from tests.fixtures.provider_catalogue import enable_providers
 
 OPUS = "openrouter/anthropic/claude-opus-5.5"
 RATES = (4.0, 20.0)
@@ -35,7 +36,7 @@ def _catalog() -> oc.Catalog:
 
 @pytest.fixture(autouse=True)
 def _openrouter(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
     yield
     oc.install(None)
 
@@ -62,7 +63,28 @@ def test_the_resolver_sends_a_catalog_models_rates_with_the_run() -> None:
     invocation = _resolve(OPUS)
     assert (invocation.model, invocation.provider) == (OPUS, "openrouter")
     assert invocation.pricing_usd_per_mtok == RATES
-    assert _resolve("grok-4.7").pricing_usd_per_mtok is None, "the static price table covers it in the sandbox too"
+    assert _resolve("grok-4.7").pricing_usd_per_mtok == (2.0, 6.0), "a routed model's rates go with the run"
+    assert _resolve("claude-sonnet-5").pricing_usd_per_mtok is None, (
+        "Anthropic's CLI reports its own cost, priced or not"
+    )
+
+
+def test_the_resolver_sends_the_deployment_catalogue_s_rates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sandbox carries the shipped catalogue only: a model the deployment re-priced or added runs at its rates."""
+    from tests.fixtures.provider_catalogue import enable_providers
+
+    enable_providers(
+        monkeypatch,
+        "deepseek",
+        deepseek={
+            "models": {
+                "deepseek-flash": {"prices": [{"in": 0.1, "out": 0.2}]},
+                "deepseek-next": {"prices": [{"in": 3.0, "out": 9.0}]},
+            }
+        },
+    )
+    assert _resolve("deepseek-flash").pricing_usd_per_mtok == (0.1, 0.2)
+    assert _resolve("deepseek-next").pricing_usd_per_mtok == (3.0, 9.0), "a model the shipped catalogue lacks"
 
 
 def test_the_sandbox_runner_reads_the_rates_and_ignores_a_bad_value() -> None:
@@ -125,5 +147,5 @@ def test_the_orchestrator_prices_a_run_an_older_sandbox_could_not() -> None:
 
     other = dataclasses.replace(stale, error_message="reached max_turns (3)")
     assert _priced_from_the_catalog(other, invocation, "developer") is other, "any other failure stays"
-    static = _resolve("grok-4.7")
-    assert _priced_from_the_catalog(stale, static, "developer") is stale, "no rates were sent: nothing to price with"
+    anthropic = _resolve("claude-sonnet-5")
+    assert _priced_from_the_catalog(stale, anthropic, "developer") is stale, "no rates were sent: nothing to price with"

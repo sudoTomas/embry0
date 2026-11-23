@@ -95,7 +95,8 @@ class CredentialCreate(BaseModel):
         family = self.provider in {p.name for p in OPENAI_COMPATIBLE}
         if family and self.provider not in enabled:
             raise ValueError(
-                f"provider {self.provider!r} is not enabled in this deployment: add it to OPENAI_COMPATIBLE_PROVIDERS"
+                f"provider {self.provider!r} is not enabled in this deployment: turn it on in the provider catalogue "
+                "(PUT /api/v1/config/providers/catalog)"
             )
         if self.kind == "forge_token" and not forge:
             raise ValueError("forge_token credentials must use provider github or gitlab")

@@ -17,6 +17,7 @@ from embry0.services.run_with import (
     pins_of,
     run_with_of,
 )
+from tests.fixtures.provider_catalogue import enable_providers
 
 CHOSEN = RunWith(model="openrouter/qwen3", credential_id="cred-1", provider="openrouter", credential_label="team key")
 
@@ -63,7 +64,7 @@ def test_a_job_on_a_repository_may_use_its_own_its_owner_s_and_the_global_keys()
 
 def test_a_claude_model_runs_on_anthropic(monkeypatch: pytest.MonkeyPatch):
     assert model_provider("claude-sonnet-5") == "anthropic"
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
     assert model_provider("openrouter/qwen3") == "openrouter"
 
 

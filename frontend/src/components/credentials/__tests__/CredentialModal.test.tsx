@@ -97,7 +97,7 @@ describe("CredentialModal", () => {
       "deepseek",
     ]);
     expect(screen.getByText(/not enabled in this deployment: openrouter, google, groq, deepseek/i)).toHaveTextContent(
-      "OPENAI_COMPATIBLE_PROVIDERS",
+      "PUT /api/v1/config/providers/catalog",
     );
   });
 

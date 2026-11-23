@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from embry0.services.provider_usage import CACHE_SECONDS, ProviderUsage, read_openrouter
+from tests.fixtures.provider_catalogue import enable_providers
 
 KEY_BODY = {
     "data": {
@@ -99,7 +100,7 @@ async def test_the_route_reads_openrouter_only(monkeypatch: pytest.MonkeyPatch) 
 
     from embry0.api.v1 import config as config_api
 
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openrouter")
+    enable_providers(monkeypatch, "openrouter")
     app = FastAPI()
     app.include_router(config_api.router, prefix="/api/v1")
 

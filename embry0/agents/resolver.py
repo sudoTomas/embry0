@@ -469,6 +469,7 @@ def resolve_agent_invocation(
 
     from embry0.agents.providers import (
         chat_only_message,
+        model_rates,
         unpriced_models,
         unpriced_models_message,
     )
@@ -506,8 +507,9 @@ def resolve_agent_invocation(
         local_first_model
         and local_first_model != final_model
         and not _chosen_for_job(agent_type, job_agent_models)
-        and provider_for_model(local_first_model) is not None
-        and provider_for_model(local_first_model) is not provider_for_model(final_model)
+        and (local_provider := provider_for_model(local_first_model)) is not None
+        # By name: two lookups may read two installs of the same catalogue (embry0.agents.catalogue).
+        and local_provider.name != getattr(provider_for_model(final_model), "name", None)
     ):
         local_first_record = {"instead_of": final_model}
         logger.info("agent_model_local_first", agent_type=agent_type, model=local_first_model, instead_of=final_model)
@@ -619,7 +621,9 @@ def resolve_agent_invocation(
         channel_config=None,  # Phase 3
         provider=provider.name if provider else None,
         fallback=fallback_record,
-        pricing_usd_per_mtok=catalog_rates(final_model),
+        # The rates in force here: OpenRouter's live list, then the deployment's catalogue, which a sandbox
+        # carries no copy of (its own is the shipped one). Anthropic's CLI reports its own cost.
+        pricing_usd_per_mtok=model_rates(final_model) if provider is not None else catalog_rates(final_model),
         local_first=local_first_record,
     )
 

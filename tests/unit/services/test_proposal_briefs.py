@@ -24,6 +24,7 @@ from embry0.services.proposal_briefs import (
 from embry0.services.proposals import Proposal
 from embry0.settings.sections.leads import LeadsSettings
 from tests.fixtures.leads import MemorySettings, brief_reader, leads_policy, leads_section
+from tests.fixtures.provider_catalogue import enable_providers
 
 T0 = datetime(2026, 10, 25, 12, tzinfo=UTC)
 GOOD = {
@@ -250,7 +251,7 @@ def _writer(
 
 @pytest.fixture
 def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
 
 
 async def test_the_writer_fills_missing_briefs_a_few_a_tick_cases_first(custom_enabled: None) -> None:

@@ -18,8 +18,8 @@ The OpenAI-compatible family (docs/providers.md): every provider whose API
 speaks OpenAI chat completions carries ``openai_base_url``. xAI is a member:
 its readiness probe is the family's ``GET /models``, while its agents keep
 the runtime above. The other members (``OPENAI_COMPATIBLE``) run on
-``OpenAICompatibleExecutor`` and are off until the deployment names them in
-``OPENAI_COMPATIBLE_PROVIDERS``: while off, no model routes to them and no
+``OpenAICompatibleExecutor`` and are off until the provider catalogue turns
+them on (``enabled``): while off, no model routes to them and no
 catalog surface lists them, so a deployment that sets nothing behaves as
 before.
 
@@ -38,13 +38,11 @@ Caveats (documented on EMB-36):
 
 from __future__ import annotations
 
-import os
-from collections.abc import Iterable, Mapping
-from typing import Final
+from collections.abc import Iterable
 
 import structlog
 
-from embry0.agents.catalogue import ModelProvider, current, seed
+from embry0.agents.catalogue import Catalogue, ModelProvider, current, seed
 from embry0.agents.openrouter_catalog import catalog_model_ids, catalog_rates
 
 logger = structlog.get_logger(__name__)
@@ -84,39 +82,27 @@ OPENAI_COMPATIBLE: tuple[ModelProvider, ...] = _SHIPPED.chat_completions
 
 ALL_PROVIDERS: tuple[ModelProvider, ...] = (*CATALOG_PROVIDERS, *OPENAI_COMPATIBLE)
 
-ENABLE_SETTING: Final = "OPENAI_COMPATIBLE_PROVIDERS"
-"""Orchestrator-env setting: comma-separated names from ``OPENAI_COMPATIBLE``. Empty (the
-default) enables none of them."""
 
-_warned_settings: set[str] = set()
+def enabled_openai_compatible(catalogue: Catalogue | None = None) -> tuple[ModelProvider, ...]:
+    """The OpenAI-compatible providers ``catalogue`` (the installed one by default) turns on, in its order.
 
-
-def enabled_openai_compatible(environ: Mapping[str, str] | None = None) -> tuple[ModelProvider, ...]:
-    """The installed catalogue's OpenAI-compatible providers that are on, in catalog order: those it enables,
-    and those ``OPENAI_COMPATIBLE_PROVIDERS`` names."""
-    catalogue = current()
-    family = catalogue.chat_completions
-    raw = (os.environ if environ is None else environ).get(ENABLE_SETTING, "")
-    names = {part.strip().lower() for part in raw.split(",") if part.strip()}
-    known = {p.name for p in family}
-    unknown = sorted(names - known)
-    if unknown and raw not in _warned_settings:
-        _warned_settings.add(raw)
-        logger.warning(
-            "openai_compatible_providers_unknown", unknown=unknown, known=sorted(known), setting=ENABLE_SETTING
-        )
-    return tuple(p for p in family if p.name in names or catalogue.enabled(p.name))
+    ``OPENAI_COMPATIBLE_PROVIDERS`` no longer turns one on: the first start of the release that stored the
+    catalogue imported it once into the document's ``enabled`` (``embry0.services.provider_catalogue_store``).
+    """
+    cat = catalogue if catalogue is not None else current()
+    return tuple(p for p in cat.chat_completions if cat.enabled(p.name))
 
 
-def routed_providers(environ: Mapping[str, str] | None = None) -> tuple[ModelProvider, ...]:
-    """The non-Anthropic providers a model id can route to in this deployment."""
-    return (*current().overlay_providers, *enabled_openai_compatible(environ))
+def routed_providers(catalogue: Catalogue | None = None) -> tuple[ModelProvider, ...]:
+    """The non-Anthropic providers a model id can route to."""
+    cat = catalogue if catalogue is not None else current()
+    return (*cat.overlay_providers, *enabled_openai_compatible(cat))
 
 
-def catalog_providers(environ: Mapping[str, str] | None = None) -> tuple[ModelProvider, ...]:
-    """Every provider this deployment offers, Anthropic first."""
-    catalogue = current()
-    return (catalogue.anthropic, *catalogue.overlay_providers, *enabled_openai_compatible(environ))
+def catalog_providers(catalogue: Catalogue | None = None) -> tuple[ModelProvider, ...]:
+    """Every provider the deployment offers, Anthropic first."""
+    cat = catalogue if catalogue is not None else current()
+    return (cat.anthropic, *cat.overlay_providers, *enabled_openai_compatible(cat))
 
 
 def provider_named(name: str | None) -> ModelProvider | None:
@@ -125,9 +111,9 @@ def provider_named(name: str | None) -> ModelProvider | None:
     return current().named(name)
 
 
-def provider_for_model(model: str) -> ModelProvider | None:
+def provider_for_model(model: str, catalogue: Catalogue | None = None) -> ModelProvider | None:
     """The non-Anthropic provider serving ``model``, or None for Anthropic."""
-    for provider in routed_providers():
+    for provider in routed_providers(catalogue):
         if any(model.startswith(prefix) for prefix in provider.model_prefixes):
             return provider
     return None
@@ -155,15 +141,15 @@ def provider_models(provider: ModelProvider) -> tuple[str, ...]:
     return provider.models
 
 
-def model_rates(model: str) -> tuple[float, float] | None:
+def model_rates(model: str, catalogue: Catalogue | None = None) -> tuple[float, float] | None:
     """``model``'s (input, output) $/Mtok now: OpenRouter's live price, its own entry in the installed catalogue
     (its price in force today), else its provider's default rates."""
     live = catalog_rates(model)
     if live is not None:
         return live
-    catalogue = current()
-    rates = catalogue.rates(model)
-    return rates if rates is not None else catalogue.default_rates(model)
+    cat = catalogue if catalogue is not None else current()
+    rates = cat.rates(model)
+    return rates if rates is not None else cat.default_rates(model)
 
 
 CACHE_READ_FACTOR = 0.1
@@ -205,12 +191,12 @@ def price_usage(
     return per_mtok / 1_000_000
 
 
-def known_models() -> set[str]:
+def known_models(catalogue: Catalogue | None = None) -> set[str]:
     """Every model id any catalog provider of this deployment declares."""
-    return {m for provider in catalog_providers() for m in provider_models(provider)}
+    return {m for provider in catalog_providers(catalogue) for m in provider_models(provider)}
 
 
-def unpriced_models(models: Iterable[str]) -> list[str]:
+def unpriced_models(models: Iterable[str], catalogue: Catalogue | None = None) -> list[str]:
     """The ids in ``models`` that route to a non-Anthropic provider with no price entry.
 
     Such a provider reports no cost of its own, so its token counts priced from
@@ -223,7 +209,7 @@ def unpriced_models(models: Iterable[str]) -> list[str]:
     for model in models:
         if not model:
             continue
-        if provider_for_model(model) is not None and model_rates(model) is None:
+        if provider_for_model(model, catalogue) is not None and model_rates(model, catalogue) is None:
             found.add(model)
     return sorted(found)
 
@@ -232,30 +218,47 @@ def unpriced_models_message(models: Iterable[str]) -> str:
     """The operator-facing refusal for ``unpriced_models``' result."""
     return (
         f"model(s) have no price entry: {', '.join(models)} — a provider-routed model "
-        "must be priced in the provider catalogue (embry0/agents/providers.yaml) or, for "
+        "must be priced in the provider catalogue (PUT /api/v1/config/providers/catalog) or, for "
         "OpenRouter, in its live model list, or its runs would be metered at $0"
     )
 
 
-def chat_only_models(models: Iterable[str]) -> list[str]:
+def chat_only_models(models: Iterable[str], catalogue: Catalogue | None = None) -> list[str]:
     """The ids in ``models`` their routed provider serves without tool calling."""
     found: set[str] = set()
     for model in models:
-        provider = provider_for_model(model) if model else None
+        provider = provider_for_model(model, catalogue) if model else None
         if provider is not None and model in provider.chat_only_models:
             found.add(model)
     return sorted(found)
 
 
-def is_custom_model(model: str) -> bool:
+def is_custom_model(model: str, catalogue: Catalogue | None = None) -> bool:
     """Whether ``model`` is a ``custom/<id>`` the enabled custom provider serves.
 
     The operator's own server lists no catalogue: any id it serves routes by
     the prefix and is priced at $0. Local models (docs/providers.md) let such
     an id be the watcher's local-first model and a fallback model.
     """
-    provider = provider_for_model(model) if model else None
+    provider = provider_for_model(model, catalogue) if model else None
     return provider is not None and provider.name == CUSTOM.name and len(model) > len(provider.model_prefixes[0])
+
+
+def offered_problem(model: str, catalogue: Catalogue | None = None) -> str | None:
+    """Why ``catalogue`` (the installed one by default) does not offer ``model`` priced, or None when it does.
+
+    Offered: one of its providers' listed models (OpenRouter's live list
+    included), or a ``custom/<model>`` while the custom provider is on; and,
+    when it routes to a provider other than Anthropic, priced, so what it
+    spends is counted. The words never repeat ``model``.
+    """
+    if not model:
+        return "no model"
+    if model not in known_models(catalogue) and not is_custom_model(model, catalogue):
+        return "the catalogue does not offer it"
+    if unpriced_models([model], catalogue):
+        return "the catalogue has no price for it"
+    return None
 
 
 def chat_only_message(provider: ModelProvider, model: str, agent_type: str, tools: Iterable[str]) -> str:

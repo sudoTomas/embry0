@@ -8,22 +8,32 @@ import pytest
 
 from embry0.services.credentials.providers import env_fallback, env_fallback_metadata, llm_providers
 from embry0.services.credentials.resolver import CredentialMissingError
+from tests.fixtures.provider_catalogue import enable_providers
 from tests.unit.services.credentials.test_resolve_llm import _llm, _row
 
-_ON = {"OPENAI_COMPATIBLE_PROVIDERS": "openai,custom"}
+#: The environment each test adds its keys to: the catalogue, not a variable, turns the providers on (_on).
+_ON: dict[str, str] = {}
 
 
-def test_the_provider_table_lists_only_what_the_deployment_enabled() -> None:
-    assert set(llm_providers({})) == {"anthropic", "xai"}, "off by default"
-    table = llm_providers(_ON)
+@pytest.fixture(autouse=True)
+def _on(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_providers(monkeypatch, "openai", "custom")
+
+
+def test_the_provider_table_lists_only_what_the_deployment_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_providers(monkeypatch)
+    assert set(llm_providers()) == {"anthropic", "xai"}, "off by default"
+    enable_providers(monkeypatch, "openai", "custom")
+    table = llm_providers()
     assert set(table) == {"anthropic", "xai", "openai", "custom"}
     assert (table["openai"].host, table["openai"].kinds) == ("api.openai.com", ("llm_api_key",))
     assert table["custom"].host == "", "a custom endpoint has no host of its own"
 
 
-def test_env_fallback_reads_the_providers_key_variable() -> None:
+def test_env_fallback_reads_the_providers_key_variable(monkeypatch: pytest.MonkeyPatch) -> None:
     env = {**_ON, "OPENAI_API_KEY": " sk-env "}
     assert env_fallback("openai", env, SimpleNamespace()) == ("llm_api_key", "sk-env", "OPENAI_API_KEY")
+    enable_providers(monkeypatch)
     with pytest.raises(ValueError, match="openai"):
         env_fallback("openai", {"OPENAI_API_KEY": "sk-env"}, SimpleNamespace())
 
@@ -59,7 +69,8 @@ async def test_no_key_anywhere_is_credential_missing() -> None:
         await _llm(env=_ON).resolve_llm("acme/widgets", "openai")
 
 
-async def test_a_provider_that_is_not_enabled_is_never_resolved() -> None:
+async def test_a_provider_that_is_not_enabled_is_never_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    enable_providers(monkeypatch)
     with pytest.raises(ValueError, match="unknown llm provider 'openai'"):
         await _llm(env={"OPENAI_API_KEY": "sk-env"}).resolve_llm("acme/widgets", "openai")
 

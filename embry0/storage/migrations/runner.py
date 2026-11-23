@@ -4779,6 +4779,38 @@ deliverable under an "Assumptions" heading.$seed$
             CHECK (NOT pinned OR (role = 'llm' AND scope_kind IN ('repo', 'owner')));
         """,
     ),
+    (
+        152,
+        "provider_catalogue: the deployment's overlay of the shipped provider catalogue, with its revisions (ADR 0031)",
+        # One row, the deployment's. yaml_text is the overlay as written,
+        # comments kept; data is its values; the shipped seed
+        # (embry0/agents/providers.yaml) is merged with it field by field. An
+        # empty overlay is the seed. generation counts writes, for If-Match
+        # and for every process to see a write. imported is the one-time
+        # environment import's ledger. Its changes are config_revisions rows
+        # with surface 'provider_catalogue'. The row is inserted here, so a
+        # reader never meets a missing one; the application writes its
+        # content, since SQL cannot validate it.
+        """
+        CREATE TABLE IF NOT EXISTS provider_catalogue (
+            scope       TEXT PRIMARY KEY CHECK (scope = 'deployment'),
+            yaml_text   TEXT NOT NULL DEFAULT '',
+            data        JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(data) = 'object'),
+            generation  BIGINT NOT NULL DEFAULT 1,
+            imported    TEXT[] NOT NULL DEFAULT '{}',
+            updated_by  TEXT NOT NULL DEFAULT '',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        INSERT INTO provider_catalogue (scope) VALUES ('deployment') ON CONFLICT (scope) DO NOTHING;
+        COMMENT ON TABLE provider_catalogue IS
+            'ADR 0031: the deployment overlay of the shipped provider catalogue; data = the validated values of yaml_text.';
+
+        ALTER TABLE config_revisions DROP CONSTRAINT IF EXISTS config_revisions_surface_check;
+        ALTER TABLE config_revisions ADD CONSTRAINT config_revisions_surface_check
+            CHECK (surface IN ('settings', 'provider_catalogue'));
+        """,
+    ),
 ]
 
 

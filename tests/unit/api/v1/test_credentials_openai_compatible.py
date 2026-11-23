@@ -9,6 +9,7 @@ import pytest
 from httpx import AsyncClient
 
 from embry0.safety.redaction import known_secret_values, register_known_secrets
+from tests.fixtures.provider_catalogue import enable_providers
 
 pytestmark = [pytest.mark.requires_postgres]
 
@@ -25,7 +26,7 @@ def _restore_scrub_set() -> Iterator[None]:
 
 @pytest.fixture
 async def client(api_client: AsyncClient, monkeypatch) -> AsyncIterator[AsyncClient]:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "openai,deepseek,custom")
+    enable_providers(monkeypatch, "openai", "deepseek", "custom")
     db = api_client.app.state.db  # type: ignore[attr-defined]
     await db.execute("TRUNCATE credential_bindings, credential_uses, credentials CASCADE")
     yield api_client
@@ -58,7 +59,7 @@ async def test_a_custom_key_carries_its_base_url_and_its_host(client: AsyncClien
 async def test_a_provider_that_is_not_enabled_is_refused(client: AsyncClient) -> None:
     resp = await client.post("/api/v1/credentials", json=_body(provider="groq"))
     assert resp.status_code == 422
-    assert "not enabled" in resp.text and "OPENAI_COMPATIBLE_PROVIDERS" in resp.text
+    assert "not enabled" in resp.text and "provider catalogue" in resp.text
 
 
 @pytest.mark.parametrize(

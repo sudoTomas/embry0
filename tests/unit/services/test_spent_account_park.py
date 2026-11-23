@@ -22,6 +22,7 @@ from embry0.services.account_waits import (
 )
 from embry0.services.credentials.resolver import ResolvedCredential
 from embry0.services.issue_executor import IssueExecutor
+from tests.fixtures.provider_catalogue import enable_providers
 
 UNTIL = datetime.now(UTC) + timedelta(hours=15)
 CONFIG = SimpleNamespace(credential_rate_limit_quarantine_seconds=900, credential_quota_quarantine_seconds=3600)
@@ -153,7 +154,7 @@ async def test_run_with_every_agent_on_another_provider_does_not_wait_for_the_ma
 
 
 async def test_a_local_first_job_starts_while_its_local_model_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENAI_COMPATIBLE_PROVIDERS", "custom")
+    enable_providers(monkeypatch, "custom")
     resolver = _Resolver(SPENT)
     await _precheck(_executor(resolver), {"local_first_model": "custom/qwen"})
 
