@@ -1,4 +1,4 @@
-import type { MapNode, MarkCounts, WorkView } from "@/api/maps";
+import { type MapNode, type MarkCounts, type WorkView, nodeGroup } from "@/api/maps";
 import { PALETTE, PALETTE_HEX } from "@/lib/agentIdentity";
 
 /** Knowledge maps (spec 2026-10-27): what the map canvas computes, kept pure so it is tested without a browser. */
@@ -140,13 +140,13 @@ export function nodeColor(
   n: MapNode,
   by: ColorBy,
   c: Colors,
-  ctx: { kinds: readonly string[]; areas: readonly string[]; marks?: Record<string, MarkCounts>; work?: Record<string, WorkView> },
+  ctx: { kinds: readonly string[]; groups: readonly string[]; marks?: Record<string, MarkCounts>; work?: Record<string, WorkView> },
 ): string {
   switch (by) {
     case "kind":
       return categoryColor(n.kind, ctx.kinds);
     case "area":
-      return categoryColor(n.area, ctx.areas);
+      return categoryColor(nodeGroup(n), ctx.groups);
     case "bloat":
       return !n.bloat ? c.muted : n.bloat.band === "bloat" ? c.danger : n.bloat.band === "look" ? c.warning : c.success;
     case "marks": {

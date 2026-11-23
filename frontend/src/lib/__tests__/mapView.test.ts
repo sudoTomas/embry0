@@ -3,7 +3,7 @@ import type { MapNode, WorkView } from "@/api/maps";
 import { canRemove, cannotSend, categoryColor, fit, hit, nodeColor, partRepo, placed, search, toScreen, toWorld, unsentBloat, workState, zoomAt } from "../mapView";
 
 const node = (id: string, over: Partial<MapNode> = {}): MapNode => ({
-  id, kind: "script", area: null, label: id, sub: null, path: null, line: null, url: null, repo: null,
+  id, kind: "script", group: null, label: id, sub: null, path: null, line: null, url: null, repo: null,
   x: 0, y: 0, r: 5, signals: [], ...over,
 });
 const work = (over: Partial<WorkView>): WorkView => ({
@@ -48,7 +48,7 @@ describe("the map's view (knowledge maps, spec 2026-10-27)", () => {
   });
 
   it("colours by bloat band, by the viewer's own mark, and by work", () => {
-    const ctx = { kinds: [], areas: [], marks: { a: { bloat: 0, keep: 2, unsure: 0, mine: "bloat" as const } }, work: { a: work({ status: "pr_merged" }) } };
+    const ctx = { kinds: [], groups: [], marks: { a: { bloat: 0, keep: 2, unsure: 0, mine: "bloat" as const } }, work: { a: work({ status: "pr_merged" }) } };
     expect(nodeColor(node("a", { bloat: { score: 80, band: "bloat" } }), "bloat", colors, ctx)).toBe("d");
     expect(nodeColor(node("a"), "bloat", colors, ctx)).toBe("m");
     expect(nodeColor(node("a"), "marks", colors, ctx)).toBe("d");

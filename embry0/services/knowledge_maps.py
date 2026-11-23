@@ -77,7 +77,8 @@ class ParsedMap:
     commit: str | None
     source: str
     generated_at: str | None
-    #: What the viewer draws: kinds, areas, nodes, edges (and the header fields again, for one fetch).
+    #: What the viewer draws: kinds, groups, nodes, edges (and the header fields again, for one fetch). ``areas``,
+    #: the groups' old name, is served beside them for one release (#180).
     graph: dict[str, Any]
     #: One record per part id, only for parts the map has.
     details: dict[str, Any]
@@ -152,10 +153,18 @@ def clean_owner(value: Any) -> str | None:
 def _node(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, Mapping) or not isinstance(raw.get("id"), str) or not raw["id"] or len(raw["id"]) > 300:
         return None
+    # #180: a part names its group as ``group``; ``area``, its name before, is read as the same field.
+    if raw.get("group") is not None and raw.get("area") is not None:
+        raise MapError(
+            f"the part {raw['id']!r} gives group and area, one field under two names (area is the old one): give one"
+        )
+    group = _text(raw.get("group") if raw.get("group") is not None else raw.get("area"), 120)
     node: dict[str, Any] = {
         "id": raw["id"],
         "kind": _text(raw.get("kind"), 60) or "part",
-        "area": _text(raw.get("area"), 120),
+        "group": group,
+        # The old name, for a viewer of the release before: served one release more, then dropped.
+        "area": group,
         "label": _text(raw.get("label"), 200) or raw["id"],
         "sub": _text(raw.get("sub"), 200),
         "path": _text(raw.get("path"), 400),
@@ -216,7 +225,13 @@ def parse_map(doc: Any, slug: str) -> ParsedMap:
         for k in doc.get("kinds") or []
         if isinstance(k, Mapping) and k.get("id")
     ]
-    areas = [
+    # #180: the scanner's rings of parts are groups; ``areas``, their name before, is read as the same list.
+    if doc.get("groups") is not None and doc.get("areas") is not None:
+        raise MapError("groups and areas are one list under two names (areas is the old one): give one of them")
+    raw_groups = doc.get("groups") if doc.get("groups") is not None else doc.get("areas")
+    if raw_groups is not None and not isinstance(raw_groups, list):
+        raise MapError("groups is a list")
+    groups = [
         {
             "id": str(a["id"])[:120],
             "label": _text(a.get("label"), 120) or str(a["id"])[:120],
@@ -225,7 +240,7 @@ def parse_map(doc: Any, slug: str) -> ParsedMap:
             "y": _number(a.get("y")),
             "r": _number(a.get("r")),
         }
-        for a in doc.get("areas") or []
+        for a in raw_groups or []
         if isinstance(a, Mapping) and a.get("id")
     ]
     raw_details = doc.get("details") or {}
@@ -249,7 +264,9 @@ def parse_map(doc: Any, slug: str) -> ParsedMap:
         "source": source,
         "generated_at": generated_at,
         "kinds": kinds,
-        "areas": areas,
+        "groups": groups,
+        # The old name, for a viewer of the release before: served one release more, then dropped (#180).
+        "areas": groups,
         "nodes": nodes,
         "edges": edges,
     }
