@@ -403,24 +403,12 @@ class LeadsSettings(SectionModel):
 
     @field_validator("ask_severities", mode="before")
     @classmethod
-    def _ask_severities_shape(cls, value: Any) -> Any:
-        # Checked before the type, so a value of another shape is refused as the key: a type error would put the
-        # operator's own kind into the 422's loc.
-        shaped = isinstance(value, dict) and all(
-            isinstance(kind, str)
-            and isinstance(severities, list | tuple)
-            and all(isinstance(s, str) for s in severities)
-            for kind, severities in value.items()
-        )
-        if not shaped:
+    def _ask_severities(cls, value: Any) -> Any:
+        # Checked whole before the type, so a write learns every problem of the key at once, an entry of the wrong
+        # shape among them (#655), and a type error never puts the operator's own kind into the 422's loc. The
+        # messages name only the catalogue's words, never a value written: what a 422 says is read back.
+        if not isinstance(value, dict):
             raise ValueError("write a mapping of kind to a list of severities, such as crack: [high, critical]")
-        # As the type takes it once this check has read the value: a strict tuple, not the list JSON gives.
-        return {kind: tuple(severities) for kind, severities in value.items()}
-
-    @field_validator("ask_severities")
-    @classmethod
-    def _ask_severities(cls, value: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
-        # The messages name only the catalogue's words, never a value written: what a 422 says is read back.
         kinds = rated()
         problems: list[str] = []
         if any(kind not in kinds for kind in value):
@@ -428,13 +416,22 @@ class LeadsSettings(SectionModel):
         for kind, severities in value.items():
             if kind not in kinds:
                 continue
-            if any(severity not in kinds[kind] for severity in severities):
+            if not isinstance(severities, list | tuple):
+                problems.append(f"{kind} is a list of severities")
+                continue
+            # Each problem of a list on its own, as the readiness labels' are: a severity that is not text is named
+            # as such, and repeats are counted over the text ones only, so no value of the list stops the check.
+            texts = [severity for severity in severities if isinstance(severity, str)]
+            if len(texts) != len(severities):
+                problems.append(f"{kind} lists a severity that is not text")
+            if any(severity not in kinds[kind] for severity in texts):
                 problems.append(f"{kind} lists a severity that is none of {', '.join(kinds[kind])}")
-            elif len(set(severities)) != len(severities):
+            if len(set(texts)) != len(texts):
                 problems.append(f"{kind} names a severity twice")
         if problems:
             raise ValueError("; ".join(problems))
-        return value
+        # As the type takes it once this check has read the value: a strict tuple, not the list JSON gives.
+        return {kind: tuple(severities) for kind, severities in value.items()}
 
     # Each vocabulary key is checked whole before its type, so a write learns every problem of it at once (a type
     # error would stop at the first, and put a role or signal the operator wrote into the 422's loc).
