@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -460,3 +461,110 @@ def test_writing_the_whole_document_again_says_so_in_the_log() -> None:
     assert [e["event"] for e in logs if e["log_level"] == "warning"] == ["settings_text_rewritten"], (
         "the comments were dropped without a warning"
     )
+
+
+# ---- a 422 places a problem no deeper than a section's field ----------------------------------------------------
+
+#: The key an operator wrote under a mapping of a section's field: no problem's place or message may repeat it.
+_WRITTEN_KEY = "zz-written-key"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"leads:\n  ask_severities:\n    {_WRITTEN_KEY}: 2026-01-02\n",
+        f"leads:\n  ask_severities:\n    {_WRITTEN_KEY}: !!set {{a, b}}\n",
+        f"leads:\n  ask_severities:\n    {_WRITTEN_KEY}: !!binary aGVsbG8=\n",
+        f"leads:\n  ask_severities:\n    one: &anchor [high]\n    {_WRITTEN_KEY}: *anchor\n",
+        f"leads:\n  ask_severities:\n    {_WRITTEN_KEY}:\n      <<: {{a: 1}}\n",
+        f"leads:\n  ask_severities:\n    {_WRITTEN_KEY}: [high]\n    {_WRITTEN_KEY}: [low]\n",
+        f'leads:\n  ask_severities:\n    {_WRITTEN_KEY}: ["a\\0b"]\n',
+        f"leads:\n  readiness_weights:\n    {_WRITTEN_KEY}: .inf\n",
+        f"leads:\n  readiness_labels:\n    {_WRITTEN_KEY}: [[2026-01-02]]\n",
+        f"leads:\n  readiness_weights:\n    {_WRITTEN_KEY}: {'9' * 5000}\n",
+        f"slop_meter:\n  weights:\n    {_WRITTEN_KEY}: not-a-number\n",
+    ],
+    ids=[
+        "date",
+        "set",
+        "binary",
+        "alias",
+        "merge key",
+        "key twice",
+        "nul",
+        "infinity",
+        "date in a list",
+        "long number",
+        "type",
+    ],
+)
+def test_no_problem_under_a_mapping_names_the_key_the_operator_wrote(text: str) -> None:
+    """Each problem a value under a mapping of a field can have is placed at the section's field, and neither its
+    place nor its message repeats the key the operator wrote there."""
+    from embry0.settings.sections import CATALOG
+
+    try:
+        check(CATALOG, load_yaml(text), stored={})
+        found: list[dict[str, Any]] = []
+    except DocumentInvalid as exc:
+        found = [p.to_dict() for p in exc.problems]
+    assert found, f"the document is refused: {text!r}"
+    for problem in found:
+        assert len(problem["loc"]) == 2, f"placed at the section's field: {problem}"
+        assert _WRITTEN_KEY not in json.dumps(problem), f"the 422 repeats the key written: {problem}"
+
+
+def test_a_key_written_twice_in_a_json_document_is_told_without_the_key() -> None:
+    body = '{"leads": {"ask_severities": {"' + _WRITTEN_KEY + '": [], "' + _WRITTEN_KEY + '": []}}}'
+    with pytest.raises(DocumentInvalid) as caught:
+        parse_body(body.encode(), "application/json")
+    assert [p.type for p in caught.value.problems] == ["duplicate_key"]
+    assert _WRITTEN_KEY not in str(caught.value), str(caught.value)
+
+
+def test_a_list_position_is_not_written_by_the_operator_and_stays_in_the_place() -> None:
+    from embry0.settings.sections import CATALOG
+
+    with pytest.raises(DocumentInvalid) as caught:
+        check(CATALOG, load_yaml('leads:\n  done_phrases: ["a", "b\\0c"]\n'), stored={})
+    assert [tuple(p.loc) for p in caught.value.problems] == [("leads", "done_phrases", 1)]
+
+
+def _nested(levels: int) -> Any:
+    value: Any = "x"
+    for _ in range(levels):
+        value = [value]
+    return value
+
+
+def test_a_value_nested_past_the_bound_is_refused_before_its_check_reads_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No setting nests more than a few levels. A value nested 100,000 deep is refused at its field, and its check,
+    which would read every level, never runs."""
+    from embry0.settings import document, registry
+    from embry0.settings.sections import CATALOG
+
+    bound = getattr(document, "MAX_VALUE_DEPTH", 32)
+
+    checked: list[object] = []
+    real = registry.validate_values
+    monkeypatch.setattr(registry, "validate_values", lambda *a, **k: checked.append(a) or real(*a, **k))
+    with pytest.raises(DocumentInvalid) as caught:
+        check(CATALOG, {"leads": {"done_phrases": _nested(100_000)}}, stored={})
+    found = [(tuple(p.loc), p.type) for p in caught.value.problems]
+    assert found == [(("leads", "done_phrases"), "too_deep")], (
+        f"a value 100,000 levels deep is refused as such: {found}"
+    )
+    assert checked == [], "the check of a value past the bound never runs"
+    with pytest.raises(DocumentInvalid) as within:
+        check(CATALOG, {"leads": {"done_phrases": _nested(bound - 1)}}, stored={})
+    assert "too_deep" not in [p.type for p in within.value.problems], "a value within the bound is checked as before"
+
+
+def test_problems_placed_at_one_field_are_said_once() -> None:
+    """Two dates under two keys of one mapping are one problem at the field, not two the operator cannot tell
+    apart."""
+    from embry0.settings.sections import CATALOG
+
+    with pytest.raises(DocumentInvalid) as caught:
+        check(CATALOG, load_yaml("leads:\n  ask_severities:\n    a: 2026-01-02\n    b: 2026-01-03\n"), stored={})
+    assert [(tuple(p.loc), p.type) for p in caught.value.problems] == [(("leads", "ask_severities"), "date_value")]

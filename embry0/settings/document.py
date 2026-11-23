@@ -19,6 +19,7 @@ import datetime as _dt
 import difflib
 import json
 import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -64,12 +65,39 @@ class Problem:
         return {"loc": list(self.loc), "type": self.type, "msg": self.msg}
 
 
+#: How deep a problem's place goes: a section and its field. Below a field, a place would name a key of a mapping
+#: the operator wrote, and a 422 repeats nothing written (:func:`placed`).
+_FIELD_DEPTH: Final = 2
+#: How a key written twice is told, naming its lines but not the key, which the operator wrote.
+_TWICE: Final = re.compile(r"on lines? (\d+) and (\d+)")
+
+
+def placed(problem: Problem) -> Problem:
+    """``problem`` as a 422 says it: placed at its section's field when its place goes on into a mapping below the
+    field, whose keys are what the operator wrote (a list's positions are not, and stay), and a key written twice
+    told by its lines alone."""
+    loc = problem.loc
+    if len(loc) > _FIELD_DEPTH and any(isinstance(part, str) for part in loc[_FIELD_DEPTH:]):
+        loc = loc[:_FIELD_DEPTH]
+    msg = problem.msg
+    if problem.type == "duplicate_key":
+        lines = _TWICE.search(msg)
+        msg = (
+            f"A key is written twice, on lines {lines[1]} and {lines[2]}; only the second would be kept. Keep one."
+            if lines
+            else "A key is written twice in one mapping; only the second would be kept. Keep one."
+        )
+    return Problem(loc, problem.type, msg)
+
+
 class DocumentInvalid(ValueError):
-    """The document has problems; ``problems`` lists every one."""
+    """The document has problems; ``problems`` lists every one, each once, as :func:`placed` says it: no place
+    below a section's field names a key the operator wrote, and no message a key written twice."""
 
     def __init__(self, problems: list[Problem]) -> None:
-        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in problems))
-        self.problems = problems
+        said = list(dict.fromkeys(placed(problem) for problem in problems))
+        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in said))
+        self.problems = said
 
 
 class DocumentTooLarge(ValueError):
@@ -213,13 +241,22 @@ def _close(word: str, options: Iterable[str]) -> str:
 KEY_NOT_TEXT: Final = "A key must be text: quote a key YAML would read as another kind of value."
 
 
+#: How many levels a value may nest below its section. No setting nests more than a few (a mapping of lists); a
+#: value nested deeper is refused here, before its check, which would read every level of it.
+MAX_VALUE_DEPTH: Final = 32
+
+
 def _json_problems(value: Any, loc: Loc) -> list[Problem]:
     """Values YAML or JSON can hold and the stored document cannot: dates, binary, sets,
-    non-text keys, infinities, and the NUL character, which Postgres refuses."""
+    non-text keys, infinities, and the NUL character, which Postgres refuses; and a value nested past
+    :data:`MAX_VALUE_DEPTH`, which no setting is."""
     out: list[Problem] = []
     stack: list[tuple[Any, Loc]] = [(value, loc)]
     while stack:
         current, where = stack.pop()
+        if len(where) > MAX_VALUE_DEPTH + 1 and isinstance(current, dict | list):
+            out.append(Problem(where[:_FIELD_DEPTH], "too_deep", "The value is nested too deeply."))
+            continue
         if isinstance(current, dict):
             if any(not isinstance(key, str) for key in current):
                 # Placed at the mapping, once: the key is what the operator wrote, and a 422 repeats nothing written.
