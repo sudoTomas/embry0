@@ -685,7 +685,7 @@ async def auth_setup_node(state: SubTaskState, config: RunnableConfig) -> dict[s
 
     # #234: vibium's restore applies web storage only from its NATIVE
     # single-origin shape — a Playwright-shape file silently restores
-    # cookies-only (verified against the pinned 26.8.21 binary). Convert
+    # cookies-only (verified against 26.8.21 and 26.11.16). Convert
     # in place; the login-command/secret contract stays Playwright-shape,
     # and nothing else reads this file on a vibium run.
     if resolved.browser_backend == "vibium":

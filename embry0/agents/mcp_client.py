@@ -6,8 +6,8 @@ spawned and spoke MCP itself; the direct executor must do the same. This
 client implements exactly the slice of MCP the executor needs against a
 local, per-sandbox, single-client stdio server: spawn + initialize
 handshake, tools/list, tools/call, teardown. It is server-agnostic —
-verified end-to-end against both playwright-mcp and the pinned vibium
-26.8.21 binary (#236). Messages are JSON-RPC 2.0, newline-delimited UTF-8 per the
+verified end-to-end against playwright-mcp and vibium 26.8.21 (#236) and
+26.11.16. Messages are JSON-RPC 2.0, newline-delimited UTF-8 per the
 MCP stdio transport. Hand-rolled on stdlib only — the ``mcp`` python package is
 not a declared dependency of the sandbox images (it is only a transitive pin of
 claude-agent-sdk) and the full client library's lifecycle machinery doesn't fit

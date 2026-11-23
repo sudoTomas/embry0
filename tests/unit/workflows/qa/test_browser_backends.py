@@ -134,6 +134,7 @@ def test_vibium_registry_entry():
             "type": "stdio",
             "command": "vibium",
             "args": ["mcp", "--headless", "--screenshot-dir", "/workspace/.qa/screenshots"],
+            "env": dict(VIBIUM.mcp_env),
         }
     }
     assert dict(VIBIUM.env) == {"VIBIUM_CHROME_ARGS": "--no-sandbox"}
@@ -146,6 +147,10 @@ def test_vibium_excludes_the_dangerous_tools():
     from embry0.workflows.qa.browser_backends import VIBIUM
 
     banned = {
+        "mcp__vibium__vibium_run",  # calls a model with the server's keys
+        "mcp__vibium__vibium_check",
+        "mcp__vibium__vibium_say",  # speech providers
+        "mcp__vibium__vibium_listen",
         "mcp__vibium__browser_set_content",  # rewrites the page under test
         "mcp__vibium__browser_storage_state",  # session-state exfiltration
         "mcp__vibium__browser_get_cookies",
@@ -156,6 +161,55 @@ def test_vibium_excludes_the_dangerous_tools():
         "mcp__vibium__browser_mouse_move",  # bypasses actionability
     }
     assert banned.isdisjoint(VIBIUM.tool_names)
+    from embry0.workflows.qa.browser_backends import VIBIUM_EXCLUDED_TOOLS
+
+    assert banned <= VIBIUM_EXCLUDED_TOOLS, sorted(banned - VIBIUM_EXCLUDED_TOOLS)
+    assert VIBIUM_EXCLUDED_TOOLS.isdisjoint(VIBIUM.tool_names)
+
+
+def test_vibium_server_reads_no_model_or_station_from_the_sandbox():
+    """vibium 26.11 calls a model from browser_find when a provider and key are configured, speech services from
+    its speech tools, fills empty AI and speech variables from ai.env, and uploads recordings to a station it is
+    connected to. The server's own env empties every variable it reads for those, and the cloud-browser keys a
+    repository's env can carry; the sandbox env the agent runs on keeps them. Listed literally, so a name dropped
+    from the env fails here."""
+    from embry0.workflows.qa.browser_backends import VIBIUM
+
+    server_env = VIBIUM.mcp_servers()["vibium"]["env"]
+    blanked = {
+        "VIBIUM_AI_PROVIDER",
+        "VIBIUM_AI_MODEL",
+        "VIBIUM_AI_BASE_URL",
+        "VIBIUM_AI_REASONING_EFFORT",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "XAI_API_KEY",
+        "VIBIUM_SAY_PROVIDER",
+        "VIBIUM_SAY_MODEL",
+        "VIBIUM_SAY_VOICE",
+        "VIBIUM_SAY_COMMAND",
+        "VIBIUM_PIPER_URL",
+        "VIBIUM_LISTEN_PROVIDER",
+        "VIBIUM_LISTEN_MODEL",
+        "VIBIUM_LISTEN_COMMAND",
+        "VIBIUM_SHERPA_URL",
+        "DEEPGRAM_API_KEY",
+        "ELEVENLABS_API_KEY",
+        "VIBIUM_API_KEY",
+        "VIBIUM_CONNECT_URL",
+        "VIBIUM_CONNECT_API_KEY",
+        "VIBIUM_CONNECT_HEADERS",
+        "VIBIUM_CONNECT_CAPS",
+        "BROWSERBASE_API_KEY",
+        "HYPERBROWSER_API_KEY",
+        "KERNEL_API_KEY",
+    }
+    assert {k: server_env.get(k) for k in blanked} == dict.fromkeys(blanked, ""), sorted(blanked - set(server_env))
+    assert server_env["VIBIUM_LOAD_AI_ENV"] == "0", "the server would refill the emptied variables from ai.env"
+    assert set(server_env) == blanked | {"VIBIUM_LOAD_AI_ENV"}, sorted(set(server_env) - blanked)
+    assert not set(server_env) & set(VIBIUM.env), "the sandbox env and the server env name the same variable"
 
 
 def test_with_browser_backend_playwright_is_byte_identical_noop():
@@ -227,7 +281,7 @@ def test_with_browser_backend_appends_prompt_fragment():
 
 def test_vibium_fragment_auth_protocol_navigate_restore_reload():
     """Decision 6 as corrected 2026-08-29: web-storage restore only works
-    on-origin (verified on the pinned 26.8.21 binary), so the mandated
+    on-origin (verified on 26.8.21 and 26.11.16), so the mandated
     order is start -> navigate -> restore($QA_STORAGE_STATE_PATH) ->
     navigate again; manual login stays forbidden on a rejected session."""
     from embry0.workflows.qa.browser_backends import VIBIUM
@@ -339,7 +393,7 @@ def test_vibium_auth_corpus_fixture_parses_and_resolves():
 
 
 def test_storage_state_conversion_basic():
-    """Playwright shape -> vibium 26.8.21 native shape, verified against the
+    """Playwright shape -> vibium's native shape (26.8.21, unchanged in 26.11.16), verified against the
     binary's own export format."""
     from embry0.workflows.qa.browser_backends import to_vibium_storage_state
 
