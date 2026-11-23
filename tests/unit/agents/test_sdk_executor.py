@@ -1166,6 +1166,33 @@ async def test_unpriced_model_turn_usage_has_null_cost(tmp_path, monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_a_subagent_message_reports_its_usage_scoped_with_no_turn_start(tmp_path, monkeypatch) -> None:
+    """The order the job-event fixtures model for a subagent (#632 review): its message's turn_usage is scoped to
+    the Task call, follows the subagent_start and precedes the message's blocks, and no turn_start comes before it."""
+    usage = {"input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    messages = [
+        _assistant_with(
+            [_FakeToolUse("task-1", "Task", {"subagent_type": "Explore", "prompt": "look"})],
+            model="claude-sonnet-5",
+            usage=usage,
+        ),
+        _assistant_with([_FakeBlock("sub says hi")], model="claude-sonnet-5", parent="task-1", usage=usage),
+        _FakeResultMessage("done", 0.009),
+    ]
+    events = await _run(messages, monkeypatch, tmp_path)
+    kinds = ("turn_start", "turn_usage", "tool_call", "subagent_start", "text")
+    order = [(e["type"], e.get("parent_tool_use_id")) for e in events if e["type"] in kinds]
+    assert order == [
+        ("turn_start", None),
+        ("turn_usage", None),
+        ("tool_call", None),
+        ("subagent_start", None),
+        ("turn_usage", "task-1"),
+        ("text", "task-1"),
+    ], order
+
+
+@pytest.mark.asyncio
 async def test_subagent_messages_are_bracketed_and_do_not_count_as_turns(tmp_path, monkeypatch) -> None:
     messages = [
         _assistant_with([_FakeToolUse("task-1", "Task", {"subagent_type": "Explore", "prompt": "look"})]),

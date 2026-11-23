@@ -136,26 +136,65 @@ def test_qa_fixture_tags_the_nested_agent_rows_with_their_app() -> None:
 
 @pytest.mark.parametrize("name", CONTRACT_FIXTURES)
 def test_every_turn_reports_its_usage_where_the_executor_does(name: str) -> None:
-    """#108: the executor writes a turn's turn_usage right after its turn_start, before the turn's blocks, once per
-    message that reports usage (tests/unit/agents/test_sdk_executor.py pins it). The generator wrote it after the
-    blocks and not for every turn, so a reducer that relies on the order passed against the fixtures and met
-    another order on the wire. Each run's usage rows also add up to its cost_update."""
+    """#108: usage rows sit where the executor writes them. The generator wrote them after the turn's blocks and not
+    for every turn, so a reducer that relied on the order passed against the fixtures and met another on the wire.
+
+    What the executor guarantees (tests/unit/agents/test_sdk_executor.py pins each): one turn_usage per assistant
+    message that reports usage. For a top-level message it comes right after that message's turn_start and before
+    its blocks. A subagent's message has no turn_start: its turn_usage, scoped with parent_tool_use_id, comes after
+    the subagent_start and before the subagent's blocks. And one cost_update per run, taken from the SDK's result
+    message.
+
+    What it does not guarantee: that a run's turn_usage rows add up to its cost_update. The two come from different
+    places (each message's own usage, and the result's totals), and whether those totals count a subagent's
+    messages is the SDK's business. The frontend counts a run's usage rows only until its cost_update arrives. The
+    fixtures keep one convention so its tests see a consistent run: a run's top-level usage rows add up to its
+    cost_update, and a subagent's scoped rows are left out of that sum.
+    """
     events = json.loads((FIXTURES / f"{name}.json").read_text())
     for i, event in enumerate(events):
         if event["type"] != "turn_start":
             continue
         after = next((e for e in events[i + 1 :] if e.get("run_id") == event.get("run_id")), None)
-        assert after is not None and after["type"] == "turn_usage", (
+        assert after is not None and after["type"] == "turn_usage" and "parent_tool_use_id" not in after, (
             f"{name}: turn {event['turn_number']} of {event.get('run_id')} is followed by "
             f"{after and after['type']}, not its turn_usage"
         )
+    for i, event in enumerate(events):
+        if event["type"] != "subagent_start":
+            continue
+        scoped = [e for e in events[i + 1 :] if e.get("parent_tool_use_id") == event["tool_id"]]
+        assert scoped and scoped[0]["type"] == "turn_usage", (
+            f"{name}: the first row of subagent {event['tool_id']} is {scoped and scoped[0]['type']}, not the "
+            "turn_usage its message reports"
+        )
     for run in {e["run_id"] for e in events if e["type"] == "cost_update"}:
-        usage = [e for e in events if e["type"] == "turn_usage" and e.get("run_id") == run]
+        usage = [
+            e for e in events if e["type"] == "turn_usage" and e.get("run_id") == run and "parent_tool_use_id" not in e
+        ]
         total = next(e for e in events if e["type"] == "cost_update" and e.get("run_id") == run)
         assert (sum(u["input_tokens"] for u in usage), sum(u["output_tokens"] for u in usage)) == (
             total["tokens_in"],
             total["tokens_out"],
-        ), f"{name}: the turn_usage rows of {run} do not add up to its cost_update"
+        ), f"{name}: the top-level turn_usage rows of {run} do not add up to its cost_update (a fixture convention)"
+
+
+def test_issue_to_pr_fixture_reports_a_subagent_message_s_usage() -> None:
+    """#632 review: the executor writes a subagent message's usage too, scoped, with no turn_start before it."""
+    events = json.loads((FIXTURES / "issue-to-pr.json").read_text())
+    order = [
+        (e["type"], e.get("parent_tool_use_id"))
+        for e in events
+        if e.get("run_id") == "run-fixture-2"
+        and e["type"] in ("turn_start", "turn_usage", "subagent_start", "tool_call")
+    ]
+    assert order[:5] == [
+        ("turn_start", None),
+        ("turn_usage", None),
+        ("tool_call", None),
+        ("subagent_start", None),
+        ("turn_usage", "toolu_fx_task"),
+    ], f"the developer run's subagent reports no scoped usage where the executor writes it: {order}"
 
 
 def test_fixtures_equal_the_script_output() -> None:

@@ -136,6 +136,19 @@ def issue_to_pr() -> list[dict[str, Any]]:
         )
     )
     s.add(ev.subagent_start(tool_id="toolu_fx_task", name="Explore", **r2))
+    # The subagent's message reports its usage too, scoped, with no turn_start: it rides under the parent's turn.
+    s.add(
+        ev.turn_usage(
+            input_tokens=1200,
+            output_tokens=80,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            cost_usd=0.0072,
+            model="claude-opus-5-5",
+            parent_tool_use_id="toolu_fx_task",
+            **r2,
+        )
+    )
     s.add(
         ev.tool_call(
             tool_id="toolu_fx_sub1",
