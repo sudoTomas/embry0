@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import random
 import re
-import time
 import warnings
+from collections.abc import Callable
 
 import pytest
 
 from embry0.workflows.qa._glob_match import GlobPatternError, compile_glob, match_any
+from tests.fixtures.cpu_cost import cost, same
 
 MATCH_CASES = [
     # (pattern, path, expected)
@@ -171,12 +172,32 @@ PATHOLOGICAL = [
     ids=["14 **-and-* pairs, 28 directories", "40 pairs, 200 directories", "12 stars, one name", "12 stars under **"],
 )
 def test_a_glob_is_matched_in_bounded_time(pattern: str, path: str) -> None:
-    glob = compile_glob(pattern)
-    started = time.perf_counter()
-    found = match_any(path, [glob])
-    took = time.perf_counter() - started
-    assert found is False
-    assert took < 0.5, f"matching {pattern[:24]!r}... against a {len(path)}-character path took {took:.2f}s"
+    """Measured against a pass of re over the path, on this thread's CPU clock (tests/fixtures/cpu_cost.py), not
+    with the wall clock, which times the host. Each run compiles the glob afresh, untimed."""
+    assert match_any(path, [compile_glob(pattern)]) is False
+
+    def fresh() -> Callable[[], object]:
+        glob = compile_glob(pattern)
+        return lambda: match_any(path, [glob])
+
+    measured = cost(fresh, [path])
+    assert measured < GLOB_COST, (
+        f"matching {pattern[:24]!r}... against a {len(path)}-character path cost {measured:.0f} passes of re over "
+        f"it, at most {GLOB_COST:.0f}"
+    )
+
+
+#: How many passes of re over the path a match may cost: the cases above measure at most about 600 (40 pairs against
+#: 200 directories, the matcher's states walked in Python); a regex translation that backtracks, as the one the meter
+#: had, 45,000 at 11 pairs against 22 directories, doubling with each pair (:func:`test_the_bound_tells_a_regex_that_backtracks`).
+GLOB_COST = 6000.0
+
+
+def test_the_bound_tells_a_regex_that_backtracks() -> None:
+    regex = re.compile("(?:[^/]+/)*[^/]*/" * 11 + "a\\Z")
+    path = "/".join(["x"] * 22) + "/b"
+    measured = cost(same(lambda: regex.match(path)), [path], runs=1)
+    assert measured > GLOB_COST, f"a regex that backtracks cost {measured:.0f} passes of re, within the bound"
 
 
 @pytest.mark.parametrize("pattern", ["app/[[]id]/**", "a[&&]b", "a[~~]b", "a[||]b", "a[x[]b"])

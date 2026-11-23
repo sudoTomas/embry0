@@ -11,8 +11,10 @@ tick, and every place that turns one of its lines into a signature uses them.
 from __future__ import annotations
 
 import ast
+import gc
 import inspect
 import json
+import math
 import os
 import pathlib
 import subprocess
@@ -189,18 +191,55 @@ def test_a_mask_python_re_backtracks_on_masks_a_long_line_in_linear_time(pattern
     assert isinstance(json.loads(done.stdout), str), done.stdout
 
 
+async def _tick_cpu_seconds(settings: dict[str, Any], lines: list[str]) -> float:
+    """The least, over three ticks of a fresh watcher, of this thread's CPU time for the tick (the event loop runs on
+    it, and nothing else is scheduled), the garbage collector held: the tick's own work, whatever the host's load."""
+    best = math.inf
+    for _ in range(3):
+        svc = _watcher(settings, lines=lines)
+        collecting = gc.isenabled()
+        gc.disable()
+        try:
+            started = time.thread_time()
+            await _tick_clusters(svc)
+            best = min(best, time.thread_time() - started)
+        finally:
+            if collecting:
+                gc.enable()
+    return best
+
+
+#: How many times a tick whose mask Python's re backtracks on may cost a tick whose mask it does not, on the same
+#: lines and the same thread: about 1 when the engine is linear (measured at most 1.1); Python's re, on 20 letters
+#: of each line, about 1,200, doubling with each letter (:func:`test_the_tick_bound_tells_python_s_re_from_the_engine`).
+#: Measured against a tick, not with the wall clock, which times the host (tests/fixtures/cpu_cost.py).
+TICK_COST = 5.0
+_BACKTRACKS = {"signature_masks": [{"pattern": r"(a+)+$", "replacement": "<run>"}]}
+_PLAIN = {"signature_masks": [{"pattern": r"b+$", "replacement": "<run>"}]}
+
+
 @pytest.mark.asyncio
 async def test_a_tick_on_a_stack_whose_mask_python_re_backtracks_on_takes_no_longer() -> None:
     """The stored mask is accepted, as before (the engine has no reason to refuse it), and the
     tick that reads it clusters a window of such lines at once."""
-    mask = {"pattern": r"(a+)+$", "replacement": "<run>"}
     lines = [f"WARN {'a' * 26}! retry {n}" for n in range(3)]
-    svc = _watcher({"signature_masks": [mask]}, lines=lines)
-    started = time.monotonic()
-    clusters = await _tick_clusters(svc)
-    took = time.monotonic() - started
-    assert took < 2.0, f"one tick over {len(lines)} lines took {took:.1f}s with the mask {mask['pattern']!r}"
+    clusters = await _tick_clusters(_watcher(_BACKTRACKS, lines=lines))
     assert len(clusters) == 1, [c.template for c in clusters]
+    measured = await _tick_cpu_seconds(_BACKTRACKS, lines) / await _tick_cpu_seconds(_PLAIN, lines)
+    assert measured < TICK_COST, (
+        f"one tick over {len(lines)} lines with the mask (a+)+$ cost {measured:.1f} ticks with a plain one"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_tick_bound_tells_python_s_re_from_the_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bound can fail: the same ticks with each mask matched by Python's re, on lines of 20 letters each."""
+    import re
+
+    monkeypatch.setattr(log_signatures, "compile_linear", re.compile)
+    lines = [f"WARN {'a' * 20}! retry {n}" for n in range(3)]
+    measured = await _tick_cpu_seconds(_BACKTRACKS, lines) / await _tick_cpu_seconds(_PLAIN, lines)
+    assert measured > TICK_COST, f"with Python's re the tick cost {measured:.1f} plain ones, within the bound"
 
 
 @pytest.mark.asyncio
@@ -250,17 +289,24 @@ _MASK_A_LONG_LINE = """
 import json, sys, resource
 resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
 from embry0.services.log_signatures import compile_masks, normalize_line
+from tests.fixtures.cpu_cost import cost, same
 masks = compile_masks([{"pattern": sys.argv[1], "replacement": "<record>"}] * 50)
-print(json.dumps(normalize_line(sys.argv[2] * int(sys.argv[3]), masks)))
+line = sys.argv[2] * int(sys.argv[3])
+measured = cost(same(lambda: normalize_line(line, masks)), [line], runs=1)
+print(json.dumps({"cost": measured, "template": normalize_line(line, masks)}))
 """
+
+#: How many passes of re over the line fifty masks may cost it, measured in the child on its CPU clock
+#: (tests/fixtures/cpu_cost.py), not the wall clock, which times the host and here the child's start too: they
+#: measure 37 to 69, a pass over the line for each mask; fifty masks Python's re backtracks on, matched by it,
+#: thousands of times that (:func:`test_the_masks_bound_tells_masks_python_s_re_backtracks_on`).
+MASKS_COST = 700.0
 
 
 @pytest.mark.parametrize("pattern", [r"[a-z\u00e9]", "."])
 def test_fifty_masks_matching_every_character_mask_a_long_line_in_bounded_time(pattern: str) -> None:
     """The worst a stack's masks can cost one line: each matching every character, each placeholder matched again by
-    the next. In a child process with 2 GiB, so a line whose masked text grows without bound is stopped and named.
-    Measured: about 0.4 s."""
-    started = time.monotonic()
+    the next. In a child process with 2 GiB, so a line whose masked text grows without bound is stopped and named."""
     try:
         done = subprocess.run(
             [sys.executable, "-c", _MASK_A_LONG_LINE, pattern, "\u00e9a", "100000"],
@@ -272,10 +318,25 @@ def test_fifty_masks_matching_every_character_mask_a_long_line_in_bounded_time(p
         )
     except subprocess.TimeoutExpired:
         pytest.fail(f"50 masks {pattern!r} did not mask one line of 200,000 characters in {_DEADLINE_SECONDS:.0f}s")
-    took = time.monotonic() - started
     assert done.returncode == 0, f"50 masks {pattern!r} on one line of 200,000 characters: {done.stderr[-300:]}"
-    assert took < 10.0, f"50 masks {pattern!r} took {took:.1f}s on one line"
-    assert len(json.loads(done.stdout)) <= log_signatures.TEMPLATE_MAX_CHARS + 1, done.stdout[:200]
+    measured = json.loads(done.stdout)
+    assert measured["cost"] < MASKS_COST, (
+        f"50 masks {pattern!r} cost {measured['cost']:.0f} passes of re over one line, at most {MASKS_COST:.0f}"
+    )
+    assert len(measured["template"]) <= log_signatures.TEMPLATE_MAX_CHARS + 1, measured["template"][:200]
+
+
+def test_the_masks_bound_tells_masks_python_s_re_backtracks_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bound can fail: fifty masks ``(a+)+$`` matched by Python's re, on a line of 20 letters."""
+    import re
+
+    from tests.fixtures.cpu_cost import cost, same
+
+    monkeypatch.setattr(log_signatures, "compile_linear", re.compile)
+    masks = log_signatures.compile_masks([{"pattern": r"(a+)+$", "replacement": "<record>"}] * 50)
+    line = "a" * 20 + "!"
+    measured = cost(same(lambda: normalize_line(line, masks)), [line], runs=1)
+    assert measured > MASKS_COST, f"Python's re cost {measured:.0f} passes of re over the line, within the bound"
 
 
 # ---- every signature of the stack's lines uses the same masks ----------------

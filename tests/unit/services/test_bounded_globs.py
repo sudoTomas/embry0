@@ -15,8 +15,11 @@ from __future__ import annotations
 import random
 import re
 import time
+from collections.abc import Callable
 
 import pytest
+
+from tests.fixtures.cpu_cost import cost, same
 
 #: Every test here runs with the process's memory capped (tests/fixtures/memory_cap.py): a matcher that grows
 #: without bound, as one whose size check stopped checking, fails at once with MemoryError instead of taking the
@@ -147,39 +150,66 @@ def test_an_instruction_file_glob_means_what_it_meant() -> None:
 
 
 # ---- in bounded time ---------------------------------------------------------------------------------------
+#
+# Each match is measured on this thread's CPU clock against a pass of Python's re over the same characters
+# (tests/fixtures/cpu_cost.py), not with the wall clock, which times the host: at load 50 the meter's match took
+# 1.13 s against a bound of 0.5. A pattern is compiled before it is measured, fresh each run, so the match is
+# measured as its first call makes it, with nothing of the text remembered.
 
-BOUND = 0.5
+#: How many passes of re over a path one match may cost: the matches below measure at most 18 (the instruction-file
+#: and meter globs, RE2 called on a short path), main's regex on the meter's case 14,000 at 10 pairs and 45,000 at 11
+#: (it doubles with each pair; at the test's 14, 10.5 s), :func:`test_the_bounds_tell_main_s_regex_from_the_matchers`.
+MATCH_COST = 300.0
+#: How many passes of re over every name a pass of ignore lines over them may cost: a line the automaton walks
+#: without remembering measures at most about 250 (:func:`test_a_pattern_that_makes_many_states_holds_little_memory`,
+#: :func:`test_many_lines_built_to_walk_are_all_dropped_in_bounded_time`); main's regex 45,000 on one path.
+PASS_COST = 3000.0
 
 
-def _timed(match: object, *args: object) -> tuple[object, float]:
-    started = time.perf_counter()
-    found = match(*args)  # type: ignore[operator]
-    return found, time.perf_counter() - started
+def _bounded(
+    prepare: Callable[[], Callable[[], object]], texts: list[str], what: str, limit: float = MATCH_COST
+) -> None:
+    measured = cost(prepare, texts)
+    assert measured < limit, f"{what} cost {measured:.0f} passes of re over the same characters, at most {limit:.0f}"
 
 
 def test_a_meter_settings_glob_is_matched_in_bounded_time() -> None:
     """The review's case: 71 characters the settings check accepts, 10.5 s against a 29-segment path."""
-    from embry0.services.slop_meter.globs import GlobIndex, check_glob, matches
+    from embry0.services.slop_meter.globs import GlobIndex, check_glob, compile_glob, matches
 
     glob = "**/*/" * 14 + "a"
     assert check_glob(glob) == glob, "the settings check takes it"
     path = "/".join(["x"] * 28) + "/b"
-    found, took = _timed(matches, glob, path)
-    assert not found and took < BOUND, (
-        f"{len(glob)}-character settings glob, {path.count('/') + 1} segments: {took:.2f}s"
-    )
-    index = GlobIndex([(glob, 1)])
-    found, took = _timed(index.best, path)
-    assert found is None and took < BOUND, f"the index took {took:.2f}s"
+    assert not matches(glob, path)
+
+    def match() -> Callable[[], object]:
+        compile_glob.cache_clear()
+        compile_glob(glob)
+        return lambda: matches(glob, path)
+
+    def index() -> Callable[[], object]:
+        compile_glob.cache_clear()
+        built = GlobIndex([(glob, 1)])
+        return lambda: built.best(path)
+
+    _bounded(match, [path], f"{len(glob)}-character settings glob, {path.count('/') + 1} segments")
+    assert GlobIndex([(glob, 1)]).best(path) is None
+    _bounded(index, [path], "the index")
 
 
 @pytest.mark.parametrize("pattern", ["**/" * 12 + "a", "*a" * 12 + "b", "**/" + "*a*" * 10 + "b/"])
 def test_an_ignore_pattern_from_a_repository_is_matched_in_bounded_time(pattern: str) -> None:
-    from embry0.services.slop_meter.weights import ignored
+    from embry0.services.slop_meter.weights import _compiled, ignored
 
     path = "/".join(["a" * 20] * 25)
-    found, took = _timed(ignored, path, [pattern])
-    assert found is False and took < BOUND, f"a repository's ignore pattern {pattern[:24]!r}... took {took:.2f}s"
+    assert ignored(path, [pattern]) is False
+
+    def match() -> Callable[[], object]:
+        _compiled.cache_clear()
+        _compiled(pattern)
+        return lambda: ignored(path, [pattern])
+
+    _bounded(match, [path], f"a repository's ignore pattern {pattern[:24]!r}...")
 
 
 def test_an_instruction_file_glob_is_matched_in_bounded_time() -> None:
@@ -187,8 +217,25 @@ def test_an_instruction_file_glob_is_matched_in_bounded_time() -> None:
 
     glob = "**/*/" * 14 + "a"
     path = "/".join(["x"] * 28) + "/b"
-    found, took = _timed(_compile(glob).fullmatch, path)
-    assert not found and took < BOUND, f"an instruction-file glob took {took:.2f}s"
+    assert not _compile(glob).fullmatch(path)
+
+    def fresh() -> Callable[[], object]:
+        _compile.cache_clear()
+        compiled = _compile(glob)
+        return lambda: compiled.fullmatch(path)
+
+    _bounded(fresh, [path], "an instruction-file glob")
+
+
+def test_the_bounds_tell_main_s_regex_from_the_matchers() -> None:
+    """The bounds can fail: main's regex for the meter's glob, at 11 pairs where the test's case has 14 (each pair
+    doubles it), costs past both."""
+    glob = "**/*/" * 11 + "a"
+    path = "/".join(["x"] * 22) + "/b"
+    reference = _main_meter_glob(glob)
+    for limit in (MATCH_COST, PASS_COST):
+        with pytest.raises(AssertionError, match="passes of re over the same characters"):
+            _bounded(same(lambda: reference.match(path)), [path], "main's regex", limit)
 
 
 # ---- memory, by size -----------------------------------------------------------------------------------------
@@ -199,23 +246,27 @@ def test_a_pattern_that_makes_many_states_holds_little_memory() -> None:
     Its sets of states grow without bound, each large; what the matcher remembers is bounded by size."""
     import tracemalloc
 
-    from embry0.services.slop_meter.weights import ignored
+    from embry0.services.slop_meter.weights import _compiled, ignored
 
     pattern = "*a" + "?" * 197 + "*"  # 200 characters, as long as a repository's ignore line may be
     rng = random.Random(1)
     names = ["".join(rng.choice("ab") for _ in range(260)) for _ in range(100)]
     reference = _main_ignore(pattern)
     tracemalloc.start()
-    started = time.perf_counter()
     try:
         answers = [ignored(name, [pattern]) for name in names]
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    took = time.perf_counter() - started
     assert peak < 40e6, f"matching 100 names held {peak / 1e6:.0f} MB"
-    assert took < 30, f"matching 100 names took {took:.1f}s"
     assert answers == [bool(reference.match(name)) for name in names], "the answers are not main's"
+
+    def every_name() -> Callable[[], object]:
+        _compiled.cache_clear()
+        _compiled(pattern)
+        return lambda: [ignored(name, [pattern]) for name in names]
+
+    _bounded(every_name, names, "matching 100 names", PASS_COST)
 
 
 def test_a_repository_s_ignore_patterns_are_capped_in_length_and_number() -> None:
@@ -264,8 +315,14 @@ def test_a_pattern_of_many_optional_parts_goes_to_the_automaton() -> None:
 
     n = 26
     pattern = Pattern(*[opt(lit("a"))] * n, *[lit("a")] * n, star(NOT_SLASH), lit("b"))
-    found, took = _timed(pattern.fullmatch, "a" * (2 * n) + "c")
-    assert not found and took < BOUND, f"one '*' and {n} optional parts took {took:.2f}s"
+    text = "a" * (2 * n) + "c"
+    assert not pattern.fullmatch(text)
+
+    def fresh() -> Callable[[], object]:
+        built = Pattern(*[opt(lit("a"))] * n, *[lit("a")] * n, star(NOT_SLASH), lit("b"))
+        return lambda: built.fullmatch(text)
+
+    _bounded(fresh, [text], f"one '*' and {n} optional parts")
     # Small enough for the check to read, and still too many ways to split a text: each part counts.
     small = Pattern(*[opt(lit("a"))] * 19, *[lit("a")] * 19, star(NOT_SLASH), lit("b"))
     assert not small.uses_regex, "a pattern of 19 optional parts and a '*' is matched by the regex"
@@ -289,8 +346,7 @@ def test_every_pattern_the_regex_takes_is_matched_in_bounded_time() -> None:
             continue
         regex_taken += 1
         for text in ("a" * 3000 + "c", "a/" * 1500 + "c", "ab" * 1500 + "/", "/" * 3000 + "\n"):
-            found, took = _timed(pattern.fullmatch, text)
-            assert took < BOUND, f"{pattern._regex.pattern!r} took {took:.2f}s on {text[:6]!r}..."  # type: ignore[union-attr]
+            _bounded(same(lambda: pattern.fullmatch(text)), [text], f"{pattern._regex.pattern!r} on {text[:6]!r}...")  # type: ignore[union-attr]  # noqa: B023
     assert regex_taken > 100, regex_taken
 
 
@@ -323,9 +379,8 @@ def test_every_pattern_ending_in_a_tail_the_regex_takes_is_matched_in_bounded_ti
             continue
         taken += 1
         for text in texts:
-            found, took = _timed(pattern.fullmatch, text)
-            assert took < BOUND, f"{pattern._regex.pattern!r} took {took:.2f}s on {text[:6]!r}..."  # type: ignore[union-attr]
-            assert found is automaton.fullmatch(text), (pattern._regex.pattern, text[:6])  # type: ignore[union-attr]
+            _bounded(same(lambda: pattern.fullmatch(text)), [text], f"{pattern._regex.pattern!r} on {text[:6]!r}...")  # type: ignore[union-attr]  # noqa: B023
+            assert pattern.fullmatch(text) is automaton.fullmatch(text), (pattern._regex.pattern, text[:6])  # type: ignore[union-attr]
     assert taken > 100, taken
 
 
@@ -567,15 +622,21 @@ def test_many_lines_built_to_walk_are_all_dropped_in_bounded_time() -> None:
     from embry0.services.slop_meter.weights import MAX_IGNORE_PATTERNS, IgnoreLines
 
     built = [f"*{c}" + "?" * 60 + "*" + "?" * k for c in "ab" for k in range(MAX_IGNORE_PATTERNS // 2)]
-    lines = IgnoreLines(built, repo="acme/web")
+    names = _names(4764, 500)
+    made: list[IgnoreLines] = []
+
+    def a_pass() -> Callable[[], object]:
+        made.append(IgnoreLines(built, repo="acme/web"))
+        return lambda: [made[-1].ignored(name) for name in names]
+
     with capture_logs() as logs:
-        started = time.perf_counter()
-        for name in _names(4764, 500):
-            lines.ignored(name)
-        took = time.perf_counter() - started
+        measured = cost(a_pass, names, runs=1)
+    lines = made[0]
     assert sorted(lines.dropped) == list(range(len(built))), f"{len(lines.dropped)} of {len(built)} dropped"
     assert sorted(e["position"] for e in _dropped(logs)) == list(range(1, len(built) + 1)), "one log line each"
-    assert took < 10, f"{len(built)} lines over 500 names took {took:.1f}s"
+    assert measured < PASS_COST, (
+        f"{len(built)} lines over 500 names cost {measured:.0f} passes of re over them, at most {PASS_COST:.0f}"
+    )
 
 
 def test_a_pass_drops_the_same_line_at_the_same_path_whatever_was_remembered_before(

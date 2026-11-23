@@ -14,6 +14,7 @@ from embry0.safety.redaction import (
     tail_bytes,
 )
 from embry0.workflows.verification.scrub import scrub_output
+from tests.fixtures.cpu_cost import cost, same
 
 _GH = "ghp_" + "a1B2" * 9
 _ANT = "sk-ant-oat01-" + "Zx9_" * 12
@@ -106,12 +107,27 @@ def test_redaction_stays_linear_on_a_long_unbroken_word():
     an unbounded scheme class the URL-credential pattern rescanned to the end
     of the text from every position: 16s of blocked event loop. Every
     repetition in that pattern is bounded now; this runs in milliseconds, and
-    the threshold is set well clear of both."""
-    import time
+    the bound is set well clear of both (:data:`REDACTION_COST`)."""
+    text = "A" * 200_000
+    assert redact_secrets(text) == text
+    measured = cost(same(lambda: redact_secrets(text)), [text])
+    assert measured < REDACTION_COST, f"redacting one word of 200,000 characters cost {measured:.0f} passes of re"
 
-    start = time.perf_counter()
-    assert redact_secrets("A" * 200_000) == "A" * 200_000
-    assert time.perf_counter() - start < 5.0
+
+#: How many passes of re over a text redacting and scrubbing it may cost, on this thread's CPU clock
+#: (tests/fixtures/cpu_cost.py), not the wall clock, which times the host: they measure at most about 30 on the texts
+#: here; a pattern rescanning to the end of the text from every position, as the URL-credential one did, about 1,200
+#: on 16,000 characters, growing with the text (:func:`test_the_redaction_bound_tells_a_pattern_that_rescans`).
+REDACTION_COST = 300.0
+
+
+def test_the_redaction_bound_tells_a_pattern_that_rescans() -> None:
+    import re
+
+    pattern = re.compile(r"[A-Za-z0-9+.-]*(?:user|pass)://")
+    text = "A" * 16_000
+    measured = cost(same(lambda: pattern.sub("[REDACTED]", text)), [text], runs=1)
+    assert measured > REDACTION_COST, f"a pattern that rescans cost {measured:.0f} passes of re, within the bound"
 
 
 def test_redact_event_scrubs_strings_recursively_and_leaves_correlation_keys() -> None:
@@ -371,9 +387,5 @@ def test_near_misses_of_these_shapes_are_left_alone(text: str) -> None:
     ],
 )
 def test_the_new_shapes_stay_linear(text: str) -> None:
-    import time
-
-    start = time.perf_counter()
-    redact_secrets(text)
-    scrub_output(text)
-    assert time.perf_counter() - start < 5.0
+    measured = cost(same(lambda: (redact_secrets(text), scrub_output(text))), [text])
+    assert measured < REDACTION_COST, f"redacting and scrubbing cost {measured:.0f} passes of re over the text"

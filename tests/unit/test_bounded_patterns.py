@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import random
 import re
+from collections.abc import Callable
 
 import pytest
 
 from embry0.bounded_patterns import ANY, NOT_SLASH, Memory, Node, Pattern, either, lit, opt, plus, seq, star
+from tests.fixtures.cpu_cost import cost, same
 
 #: Every test here runs with the process's memory capped (tests/fixtures/memory_cap.py): a matcher that grows
 #: without bound, as one whose size check stopped checking, fails at once with MemoryError instead of taking the
@@ -170,14 +172,33 @@ def test_a_rest_every_text_matches_ends_a_try() -> None:
 )
 def test_a_rest_that_some_text_fails_does_not_end_a_try(rest: list[Node], text: str) -> None:
     """A rest that a text can fail sends a backtracking matcher back into the parts before it, and the two '*'
-    there split a text of n characters n² ways: the pattern stays with the automaton, in linear time."""
-    import time
-
+    there split a text of n characters n² ways: the pattern stays with the automaton, in linear time. Measured
+    against a pass of re over the text, on this thread's CPU clock (tests/fixtures/cpu_cost.py), not with the wall
+    clock, which times the host."""
     pattern = Pattern(star(NOT_SLASH), lit("a"), *rest)
     assert not pattern.uses_regex, "a rest some text fails ended the try: Python's regex takes the pattern"
-    started = time.perf_counter()
     assert not pattern.fullmatch(text)
-    assert time.perf_counter() - started < 0.5
+
+    def fresh() -> Callable[[], object]:
+        built = Pattern(star(NOT_SLASH), lit("a"), *rest)
+        return lambda: built.fullmatch(text)
+
+    measured = cost(fresh, [text])
+    assert measured < REST_COST, f"the match cost {measured:.0f} passes of re over the text, at most {REST_COST:.0f}"
+
+
+#: How many passes of re over the text the match above may cost: it measures under 1 (RE2 reads it), Python's regex
+#: on the same pattern about 500 on a text of 8,000 characters, growing with the text
+#: (:func:`test_the_bound_tells_python_s_regex_from_the_pattern`).
+REST_COST = 100.0
+
+
+def test_the_bound_tells_python_s_regex_from_the_pattern() -> None:
+    """The bound can fail: Python's regex, on the first case's pattern, splits a text of 8,000 characters n² ways."""
+    regex = re.compile(r"[^/]*a[^/]*\Z")
+    text = "a" * 8_000 + "/"
+    measured = cost(same(lambda: regex.match(text)), [text], runs=1)
+    assert measured > REST_COST, f"Python's regex cost {measured:.0f} passes of re over the text, within the bound"
 
 
 # ---- RE2, for a pattern that can backtrack and whose DFA is small ---------------------------------------------

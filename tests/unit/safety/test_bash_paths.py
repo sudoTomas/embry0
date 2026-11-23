@@ -745,15 +745,21 @@ def test_hostile_commands_cost_bounded_work(name: str, command: str, limit: str 
         )
 
 
+#: How many passes of re over their text reading every hostile command may cost, on this thread's CPU clock
+#: (tests/fixtures/cpu_cost.py), not the wall clock, which times the host: they measure about 400 together (a reader
+#: in Python against a pass in C), and the work limits keep them there; the bound catches work no limit counts,
+#: which grows with the commands as the counted work does not. ``tests/unit/test_cpu_cost.py`` shows the measure
+#: following the work.
+HOSTILE_COST = 4000.0
+
+
 def test_hostile_commands_take_bounded_time_all_together() -> None:
     """The one clock in these tests, generous: the work limits keep all of them well under it."""
-    import time
+    from tests.fixtures.cpu_cost import cost, same
 
-    started = time.monotonic()
-    for _, command, _ in _HOSTILE:
-        _spent(command)
-    elapsed = time.monotonic() - started
-    assert elapsed < 45.0, f"the hostile commands took {elapsed:.1f}s together"
+    texts = [command[: 64 * 1024] for _, command, _ in _HOSTILE]
+    measured = cost(same(lambda: [_spent(command) for _, command, _ in _HOSTILE]), texts, runs=1)
+    assert measured < HOSTILE_COST, f"the hostile commands cost {measured:.0f} passes of re over them together"
 
 
 @pytest.mark.parametrize(
