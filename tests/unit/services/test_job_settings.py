@@ -24,6 +24,7 @@ from embry0.orchestration.state import JobState
 from embry0.services import done_when as dw
 from embry0.services.issue_executor import IssueExecutor
 from embry0.settings.sections import CATALOG
+from embry0.settings.sections.budget import BUDGET
 from embry0.settings.sections.slop_policy import SLOP_POLICY
 from embry0.settings.store import build_snapshot
 
@@ -277,6 +278,10 @@ def _resumer(builder: StateGraph, store: Any) -> IssueExecutor:
 async def test_without_a_store_or_with_one_that_fails_a_job_runs_on_the_defaults() -> None:
     js = _job_settings()
     defaults = {
+        # #179: the caps a job's agents ask and a person sends it back under; what the constants were.
+        "agent_questions": {"rounds_cap": 10, "brainstorming_floor": 15, "retry_rounds_cap": 5},
+        # #179: the job keeps budget.continue_past_ceiling_max; the section is kept whole.
+        "budget": BUDGET.defaults().model_dump(mode="json"),
         "context_audit": {
             "days": None,
             "open_prs": False,

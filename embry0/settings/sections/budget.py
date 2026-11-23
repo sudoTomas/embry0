@@ -14,6 +14,7 @@ say it::
       fix_job_usd: 2
       context_audit_max_jobs_per_tick: 3
       continue_may_exceed_ceiling: false  # a person's continue stays under the ceiling
+      continue_past_ceiling_max: 5        # continues that may take one job past the ceiling
 
 **No cap.** For the four fleet limits, ``0`` sets no limit, as their
 variables and the dispatch gate always read it; a key left out (or taken out
@@ -150,6 +151,18 @@ class BudgetSettings(SectionModel):
         description=(
             "Whether a person's continue may take a job past max_budget_per_job_usd. false makes the ceiling a "
             "hard limit: a continue adds only what is left under it, and a job already at it cannot be continued."
+        ),
+    )
+    continue_past_ceiling_max: int = Field(
+        default=5,
+        ge=0,
+        description=(
+            "How many times a person's continue may take one job past max_budget_per_job_usd, while "
+            "continue_may_exceed_ceiling is true. Once that many have, the ceiling bounds the job's next continues "
+            "as continue_may_exceed_ceiling false bounds every one: a continue adds at most what is left under it, "
+            "and a job at the ceiling is not offered one. Continues that keep a job under the ceiling count against "
+            "agent_questions.retry_rounds_cap alone. A job reads it when it starts and keeps it. 0: no continue may "
+            "take a job past the ceiling."
         ),
     )
     continue_default_extra_usd: float | None = Field(

@@ -15,6 +15,7 @@ instead of editing the same one.
 from __future__ import annotations
 
 from embry0.settings.registry import Catalog
+from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
 from embry0.settings.sections.asks import ASKS
 from embry0.settings.sections.background import BACKGROUND
 from embry0.settings.sections.background_models import BACKGROUND_MODELS
@@ -30,6 +31,7 @@ from embry0.settings.sections.ui import UI
 
 CATALOG: Catalog = Catalog(
     [
+        AGENT_QUESTIONS,
         ASKS,
         BACKGROUND,
         BACKGROUND_MODELS,

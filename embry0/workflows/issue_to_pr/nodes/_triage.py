@@ -18,10 +18,7 @@ from langgraph.types import Command
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
-from embry0.orchestration.nodes.agent import (
-    DEFAULT_ASK_USER_CAP,
-    agent_attempt,
-)
+from embry0.orchestration.nodes.agent import agent_attempt, ask_rounds_cap
 from embry0.storage.database import StoredValueTooDeep
 from embry0.workflows.issue_to_pr.nodes._common import (
     DECIDE_NOW_MAX_TURNS,
@@ -563,15 +560,18 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
     action = triage_decision_result.get("action", "proceed")
 
     if action == "needs_info":
-        # Cycle guard: prevent infinite triage interrupt loops.
-        # Mirrors the ask_user round cap (env-tunable via ASK_USER_ROUNDS_CAP).
+        # Cycle guard: prevent infinite triage interrupt loops. Counted apart
+        # from the agents' rounds, against the same cap: the job's
+        # agent_questions.rounds_cap, as it read it when it started.
         _triage_rounds = int(state.get("triage_question_rounds", 0) or 0)
-        if _triage_rounds >= DEFAULT_ASK_USER_CAP:
+        _triage_cap, _cap_key = ask_rounds_cap(state)
+        if _triage_rounds >= _triage_cap:
             from embry0.safety.error_codes import ErrorCode
 
             logger.warning(
                 "triage_question_rounds_exceeded",
                 rounds=_triage_rounds,
+                cap=_triage_cap,
                 job_id=state.get("job_id"),
             )
             writer(events.node_completed(node="triage", agent="triage", attempt=attempt, action="failed"))
@@ -581,7 +581,10 @@ async def triage_node(state: dict[str, Any], config: RunnableConfig) -> dict[str
                     "current_stage": "failed",
                     "triage_question_rounds": _triage_rounds,
                     "error_code": ErrorCode.MAX_TRIAGE_QUESTIONS.value,
-                    "errors": ["Triage exceeded 5 interrupt rounds — giving up."],
+                    "errors": [
+                        f"Triage exceeded {_triage_cap} rounds of asking for more information, the most the "
+                        f"settings document's agent_questions.{_cap_key} allows this job — giving up."
+                    ],
                 },
             )
 

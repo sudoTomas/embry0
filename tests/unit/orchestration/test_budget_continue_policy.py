@@ -92,7 +92,16 @@ def test_a_hard_ceiling_bounds_the_cap_and_what_a_continue_adds() -> None:
 def test_a_continue_past_a_hard_ceiling_adds_only_what_is_left_under_it() -> None:
     budget = BudgetSettings(max_budget_per_job_usd=10.0, continue_may_exceed_ceiling=False)
     updates, summary, _ = _run(OVER, {"choice": "continue_retrying", "actor": "alex@example.com"}, budget)
-    assert summary["budget"] == {"spent": 6.4, "cap": 6.0, "continue_adds": 3.6}
+    assert summary["budget"] == {
+        "spent": 6.4,
+        "cap": 6.0,
+        "continue_adds": 3.6,
+        # #651 review: a continue the hard ceiling bounds says the most it may add, and why.
+        "continue_max": 3.6,
+        "continue_max_because": (
+            "this deployment's ceiling of $10.00 per job is a hard limit (budget.continue_may_exceed_ceiling is false)"
+        ),
+    }
     assert "continue_retrying" in summary["options"]
     assert resolve_job_cap(
         {**OVER, "budget_allowance_usd": updates["budget_allowance_usd"]}, ceiling=10.0, may_exceed_ceiling=False

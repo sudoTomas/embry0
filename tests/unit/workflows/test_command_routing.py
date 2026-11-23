@@ -9,8 +9,11 @@ import pytest
 from langgraph.graph import END
 from langgraph.types import Command
 
-from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
+from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
 from embry0.workflows.issue_to_pr.nodes import developer_node, review_node, triage_node
+
+#: The cap a job reads when no layer sets agent_questions.rounds_cap.
+ROUNDS_CAP = AGENT_QUESTIONS.defaults().rounds_cap
 
 
 @pytest.fixture(autouse=True)
@@ -369,7 +372,7 @@ async def test_triage_node_enforces_ask_user_cap() -> None:
         ):
             state = _state(
                 sandbox_container_id="c1",
-                agent_question_rounds=DEFAULT_ASK_USER_CAP,  # cap already reached
+                agent_question_rounds=ROUNDS_CAP,  # cap already reached
                 agent_questions_exhausted=False,
             )
             result = await triage_node(state, config=_triage_config(mock_runner))
@@ -444,7 +447,7 @@ async def test_review_node_enforces_ask_user_cap() -> None:
     with patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=mock_run_agent):
         state = _state(
             agent_outputs=[],
-            agent_question_rounds=DEFAULT_ASK_USER_CAP,  # cap already reached
+            agent_question_rounds=ROUNDS_CAP,  # cap already reached
             agent_questions_exhausted=False,
             pr_url="http://x",
         )

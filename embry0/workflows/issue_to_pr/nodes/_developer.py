@@ -16,11 +16,7 @@ from langgraph.types import Command
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events, sandbox_git
-from embry0.orchestration.nodes.agent import (
-    BRAINSTORMING_ASK_USER_CAP,
-    DEFAULT_ASK_USER_CAP,
-    agent_attempt,
-)
+from embry0.orchestration.nodes.agent import agent_attempt
 from embry0.services.slop import SLOPMASTER
 from embry0.workflows.issue_to_pr.nodes._common import (
     _extract_ask_user_events,
@@ -1309,22 +1305,22 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         from embry0.orchestration.nodes.agent import _enforce_ask_user_cap, with_cap_updates
 
         # Brainstorming sessions can legitimately need many turns of design
-        # back-and-forth. Bump the cap when the developer's effective skills
-        # carry brainstorming, resolved as the run resolved them (the row, the
-        # template node's delta, then triage's narrowing); everything else
-        # stays at the default of 5.
+        # back-and-forth: when the developer's effective skills carry
+        # brainstorming, resolved as the run resolved them (the row, the
+        # template node's delta, then triage's narrowing), the cap is the
+        # higher of the job's agent_questions.rounds_cap and
+        # brainstorming_floor; every other run has rounds_cap.
         skills_for_dev = resolve_agent_config(
             coding_agent,
             dict(developer_definition),
             developer_template_config,
             state.get("pipeline_config") or {},
         ).skills
-        ask_cap = BRAINSTORMING_ASK_USER_CAP if "superpowers:brainstorming" in skills_for_dev else DEFAULT_ASK_USER_CAP
 
         exhausted, cap_updates = _enforce_ask_user_cap(
             state,
             pending_questions,
-            max_rounds=ask_cap,
+            brainstorming="superpowers:brainstorming" in skills_for_dev,
             job_id_for_log=state.get("job_id"),
         )
         # Joined, not laid over: the cap's failure goes beside the run's own error (#434).

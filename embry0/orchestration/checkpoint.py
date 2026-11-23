@@ -8,16 +8,20 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 
 @asynccontextmanager
-async def checkpointer_context(database_url: str) -> AsyncIterator[AsyncPostgresSaver]:
+async def checkpointer_context(database_url: str, *, setup: bool = True) -> AsyncIterator[AsyncPostgresSaver]:
     """Create an AsyncPostgresSaver as an async context manager.
 
     Usage:
         async with checkpointer_context(database_url) as saver:
             graph = workflow.compile(checkpointer=saver)
             result = await graph.ainvoke(state, config={"configurable": {"thread_id": job_id}})
+
+    ``setup`` creates or migrates the saver's tables first, as a run does; a reader that only looks (an API
+    request) passes False, so it never changes the schema.
     """
     async with AsyncPostgresSaver.from_conn_string(database_url) as saver:
-        await saver.setup()
+        if setup:
+            await saver.setup()
         yield saver
 
 

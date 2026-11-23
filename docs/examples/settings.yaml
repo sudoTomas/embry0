@@ -17,6 +17,24 @@ version: 1
 # document on the dashboard too.
 # managed_by: file
 
+# How many rounds of questions a job's agents may ask a person, and how many
+# times a person may send a job back to try again.
+agent_questions:
+  # Rounds of asking a person one job may take, counted across triage, the
+  # developer and the reviewer: each run that stops with a question a person
+  # must answer is one. The job fails with ERR_MAX_AGENT_QUESTIONS at the
+  # first question past it. Triage's own pauses for more information are
+  # counted apart, against the same cap. 0: the first question fails the job.
+  # rounds_cap: 10
+
+  # The cap of a developer run that loads the brainstorming skill, when it is
+  # higher than rounds_cap: a design conversation needs more rounds.
+  # brainstorming_floor: 15
+
+  # How many times a person may answer a job that ran out of retries with
+  # continue retrying; past it, the job stops.
+  # retry_rounds_cap: 5
+
 # When and how often embry0 asks a person about a decision that waits on them.
 asks:
   # Keep one ask per person a decision waits on, for a chat assistant to send
@@ -199,6 +217,16 @@ budget:
   # false makes the ceiling a hard limit: a continue adds only what is left
   # under it, and a job already at it cannot be continued.
   # continue_may_exceed_ceiling: true
+
+  # How many times a person's continue may take one job past
+  # max_budget_per_job_usd, while continue_may_exceed_ceiling is true. Once
+  # that many have, the ceiling bounds the job's next continues as
+  # continue_may_exceed_ceiling false bounds every one: a continue adds at
+  # most what is left under it, and a job at the ceiling is not offered one.
+  # Continues that keep a job under the ceiling count against
+  # agent_questions.retry_rounds_cap alone. A job reads it when it starts and
+  # keeps it. 0: no continue may take a job past the ceiling.
+  # continue_past_ceiling_max: 5
 
   # How much more a continue lets a job spend when the person names no amount,
   # in US dollars; null is one more cap. At most continue_extra_max_usd.

@@ -31,6 +31,11 @@ import pytest
 from langgraph.graph import END
 from langgraph.types import Command
 
+from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
+
+#: The cap a job reads when no layer sets agent_questions.rounds_cap.
+ROUNDS_CAP = AGENT_QUESTIONS.defaults().rounds_cap
+
 
 def _triage_decision_with_qa_failure_action(
     qa_failure_action: dict[str, Any] | None,
@@ -223,14 +228,13 @@ async def test_triage_ask_user_after_qa_failure_respects_question_cap() -> None:
     """RAV-1271: the QA-escalation question rides the job-wide ask_user cap —
     at the cap it routes to max_retries with the standard exhausted shape
     instead of looping the interrupt forever."""
-    from embry0.orchestration.nodes.agent import DEFAULT_ASK_USER_CAP
     from embry0.workflows.issue_to_pr.nodes import triage_node
 
     output = _triage_decision_with_qa_failure_action(
         {"kind": "ask_user", "question": "Which behavior is intended here?"}
     )
     state = _make_qa_failed_state()
-    state["agent_question_rounds"] = DEFAULT_ASK_USER_CAP
+    state["agent_question_rounds"] = ROUNDS_CAP
     runner_mock = _runner_returning(output)
     with (
         patch("embry0.workflows.issue_to_pr.nodes.run_agent_node", new=runner_mock),

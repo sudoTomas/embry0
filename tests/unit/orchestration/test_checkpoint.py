@@ -216,6 +216,40 @@ async def test_a_paused_job_reads_back_from_postgres_in_a_fresh_process(clean_da
     assert not lost, f"state written before the pause did not come back from Postgres: {lost}"
 
 
+async def test_a_paused_jobs_saved_state_is_read_without_its_graph(clean_database_url: str) -> None:
+    """#651 review: the resume API works out what a continue adds from the state the job saved at its pause, as
+    the node it paused in reads it again, without compiling the job's graph."""
+    await _pause(clean_database_url)
+
+    process = _process(clean_database_url)
+    paused_state = getattr(process, "paused_state", None)
+    assert paused_state is not None, "the executor cannot read a paused job's saved state"
+    saved = await paused_state(JOB)
+    snapshot = await _read_back(clean_database_url)
+
+    assert saved == snapshot.values, (
+        f"the saved state must be what the job's graph reads back: {_differences(snapshot.values, saved or {})}"
+    )
+    assert await paused_state("job-never-ran") is None, "a job with no checkpoint has no saved state"
+
+
+async def test_before_any_job_has_run_there_is_no_saved_state_and_no_table_is_made(clean_database_url: str) -> None:
+    """#651 review: the reader an API request uses never sets the saver's tables up; before a job has run there are
+    none, which is no saved state, not an error."""
+    paused_state = getattr(_process(clean_database_url), "paused_state", None)
+    assert paused_state is not None, "the executor cannot read a paused job's saved state"
+    assert await paused_state(JOB) is None, "with no checkpoint tables there is no saved state"
+    conn = await asyncpg.connect(clean_database_url)
+    try:
+        made = await conn.fetchval(
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1)",
+            list(CHECKPOINT_TABLES),
+        )
+    finally:
+        await conn.close()
+    assert made == 0, f"reading a saved state set the saver's tables up: {made} of them now"
+
+
 async def test_a_paused_job_resumes_to_completion_in_a_fresh_process(clean_database_url: str) -> None:
     await _pause(clean_database_url)
 
