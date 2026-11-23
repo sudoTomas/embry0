@@ -739,7 +739,17 @@ def test_a_phrase_may_join_its_parts_as_persian_and_emoji_do_and_holds_no_other_
         ),
         (
             {"crack": [3], "weed": ["high", "high"]},
-            ["crack lists a severity that is none of", "weed names a severity twice"],
+            ["crack lists a severity that is not text", "weed names a severity twice"],
+        ),
+        ({"weed": ["zz-x", "high", "high"]}, ["weed lists a severity that is none of", "weed names a severity twice"]),
+        ({"weed": [3, "zz-x"]}, ["weed lists a severity that is not text", "weed lists a severity that is none of"]),
+        (
+            {"crack": [3, "high", "high"], "alert": [{"zz-k": 1}, ["zz-v"], "critical"]},
+            [
+                "crack lists a severity that is not text",
+                "crack names a severity twice",
+                "alert lists a severity that is not text",
+            ],
         ),
         ({"crack": {"zz-high": 1}, "alert": ["zz-x"]}, ["crack is a list of severities", "alert lists a severity"]),
     ],

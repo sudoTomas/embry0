@@ -418,9 +418,15 @@ class LeadsSettings(SectionModel):
                 continue
             if not isinstance(severities, list | tuple):
                 problems.append(f"{kind} is a list of severities")
-            elif any(severity not in kinds[kind] for severity in severities):
+                continue
+            # Each problem of a list on its own, as the readiness labels' are: a severity that is not text is named
+            # as such, and repeats are counted over the text ones only, so no value of the list stops the check.
+            texts = [severity for severity in severities if isinstance(severity, str)]
+            if len(texts) != len(severities):
+                problems.append(f"{kind} lists a severity that is not text")
+            if any(severity not in kinds[kind] for severity in texts):
                 problems.append(f"{kind} lists a severity that is none of {', '.join(kinds[kind])}")
-            elif len(set(severities)) != len(severities):
+            if len(set(texts)) != len(texts):
                 problems.append(f"{kind} names a severity twice")
         if problems:
             raise ValueError("; ".join(problems))
