@@ -1,0 +1,126 @@
+# The provider catalogue embry0 ships (schema: embry0/agents/catalogue.py, ADR 0031).
+#
+# Every model provider embry0 can route an agent's model to, the models it
+# offers and what they cost. A deployment follows this file until its own
+# catalogue document overrides a field of it; a release that changes a price
+# or adds a model here reaches every deployment that did not override it.
+#
+# Prices are US dollars per million tokens, input and output. Each is catalog
+# metadata, not billing truth: the Claude CLI reports Anthropic runs' own cost,
+# and every other provider is priced from here. A price may carry `from:`, the
+# date it takes effect; an entry without one applies before the first dated one.
+#
+# Addresses an operator gives (a server of their own) and where each key comes
+# from are not part of the catalogue: the custom provider's address comes from
+# its credential or CUSTOM_LLM_BASE_URL, and each provider's key variables are
+# named in the code.
+
+version: 1
+
+providers:
+  # The implicit default: the Claude CLI runs these models with Anthropic's own
+  # credentials, so no other machinery routes to it.
+  anthropic:
+    runtime: sdk
+    base_url: https://api.anthropic.com
+    model_prefixes: [claude-]
+    enabled: true
+    models:
+      # Sonnet 5 sticker pricing ($2/$10 intro runs through 2026-08-31).
+      claude-opus-5: {prices: [{in: 5.0, out: 25.0}]}
+      claude-sonnet-5: {prices: [{in: 3.0, out: 15.0}]}
+      claude-haiku-4-5: {prices: [{in: 1.0, out: 5.0}]}
+
+  # The Claude CLI with xAI's Anthropic-compatible endpoint (EMB-36). A member of
+  # the OpenAI-compatible family for its readiness probe only.
+  xai:
+    runtime: sdk
+    base_url: https://api.x.ai
+    api_root: https://api.x.ai/v1
+    model_prefixes: [grok-]
+    enabled: true
+    # The turn and time budgets are sized for Claude. grok-4.7 makes ~3x the tool
+    # calls of a Claude developer run (median 111 vs 37 over 30 days) and takes ~2x
+    # as long at p90; on Claude-sized budgets 4 of its first 8 developer runs died at
+    # the turn cap.
+    factors: {turns: 2.0, timeout: 2.0}
+    models:
+      # Flat per-token rates. xAI doubles both above 200K prompt tokens and bills
+      # cached input lower; neither is modelled (docs/providers.md).
+      grok-4.5: {prices: [{in: 2.0, out: 6.0}]}
+      grok-4.7: {prices: [{in: 2.0, out: 6.0}]}
+
+  # The OpenAI-compatible providers below run on OpenAICompatibleExecutor and are
+  # off until OPENAI_COMPATIBLE_PROVIDERS names them. Prices are the providers'
+  # published list prices as of 2026-10-18 (docs/providers.md names the pages).
+  openai:
+    runtime: chat_completions
+    base_url: https://api.openai.com/v1
+    api_root: https://api.openai.com/v1
+    model_prefixes: [gpt-]
+    models:
+      # Served on chat completions without tool calling (tools only on its
+      # Responses API).
+      gpt-6.1-sol: {prices: [{in: 2.0, out: 10.0}], chat_only: true}
+      # Tools only with reasoning_effort "none".
+      gpt-6-luna: {prices: [{in: 0.10, out: 0.50}], request_extras: {reasoning_effort: none}}
+
+  openrouter:
+    runtime: chat_completions
+    base_url: https://openrouter.ai/api/v1
+    api_root: https://openrouter.ai/api/v1
+    model_prefixes: [openrouter/]
+    strip_prefix: true
+    # GET /models answers without a key, so it proves nothing about one.
+    probe_path: /key
+    models:
+      # OpenRouter passes the upstream provider's price through; its credit-purchase
+      # fee is not modelled. Its live catalog (embry0/agents/openrouter_catalog.py)
+      # replaces this list and its price once one is loaded; this entry is what a
+      # deployment that never reached OpenRouter's list offers.
+      openrouter/openai/gpt-6.1-sol: {prices: [{in: 2.0, out: 10.0}]}
+
+  google:
+    runtime: chat_completions
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_root: https://generativelanguage.googleapis.com/v1beta/openai
+    model_prefixes: [gemini-]
+    models:
+      # Both are introductory rates: gemini-4-argon becomes $4/$20 on 2026-12-01
+      # and gemini-3.8-flash $1.50/$7.50 on 2027-01-01.
+      gemini-3.8-flash: {prices: [{in: 0.75, out: 3.75}]}
+      gemini-4-argon: {prices: [{in: 2.0, out: 10.0}]}
+
+  groq:
+    runtime: chat_completions
+    base_url: https://api.groq.com/openai/v1
+    api_root: https://api.groq.com/openai/v1
+    model_prefixes: [groq/]
+    strip_prefix: true
+    models:
+      groq/openai/gpt-oss-120b: {prices: [{in: 0.15, out: 0.60}]}
+      groq/openai/gpt-oss-20b: {prices: [{in: 0.075, out: 0.30}]}
+
+  deepseek:
+    runtime: chat_completions
+    base_url: https://api.deepseek.com
+    api_root: https://api.deepseek.com
+    model_prefixes: [deepseek-]
+    models:
+      # The peak-hour rates; off-peak hours bill half, which is not modelled.
+      deepseek-flash: {prices: [{in: 0.30, out: 1.20}]}
+      deepseek-v4-pro: {prices: [{in: 1.32, out: 3.96}]}
+
+  # The operator's own server (Ollama, vLLM, LM Studio): no fixed address, and no
+  # model list of its own; any custom/<model> it serves routes here.
+  custom:
+    runtime: chat_completions
+    model_prefixes: [custom/]
+    strip_prefix: true
+    # A server on the operator's own hardware bills nothing per token, so any model
+    # it serves is recorded at $0 instead of being refused.
+    default_price: {in: 0.0, out: 0.0}
+    # The turn and time budgets are sized for Claude, and a model served on one card
+    # is slower per call than a hosted one. On Claude-sized budgets a 27B model on one
+    # card timed out 6 of 35 log analyses in a day where grok-4.7, at 2x, timed out none.
+    factors: {turns: 2.0, timeout: 2.0}

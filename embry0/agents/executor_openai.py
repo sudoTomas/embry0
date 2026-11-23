@@ -41,6 +41,7 @@ from embry0.agents._tool_loop import (
     price_run,
     run_tool_loop,
 )
+from embry0.agents.catalogue import EXECUTOR_FIELDS
 from embry0.agents.context_fit import (
     DEFAULT_TOKENS_PER_CHAR,
     ContextWindowExceeded,
@@ -158,7 +159,9 @@ class _ChatCompletionsWire:
         self._client = client
         self._provider = provider
         self._model = model
-        self._extras = dict(extras or {})
+        # A model's extra fields never replace the executor's own: the catalogue refuses them, and they are dropped
+        # here too, whatever reaches the wire.
+        self._extras = {key: value for key, value in (extras or {}).items() if key not in EXECUTOR_FIELDS}
         # The model's context window when known; each request is fitted to it.
         self._window = window
         self._tokens_per_char = DEFAULT_TOKENS_PER_CHAR
@@ -206,9 +209,9 @@ class _ChatCompletionsWire:
                 tokens_per_char=self._tokens_per_char,
             )
         body: dict[str, Any] = {
+            **self._extras,
             "model": self._model,
             "messages": [{"role": "system", "content": system}, *messages],
-            **self._extras,
         }
         if tools:
             body["tools"] = tools

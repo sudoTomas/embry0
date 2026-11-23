@@ -104,7 +104,7 @@ proxy = ["aiohttp", "httpx", "structlog"]
 # anthropic, the dev extra; `uv export --only-group sandbox` gives the
 # images their locked versions and hashes, with everything they need. Not a
 # default group either.
-sandbox = ["anthropic", "claude-agent-sdk", "httpx", "langchain-core", "structlog"]
+sandbox = ["anthropic", "claude-agent-sdk", "httpx", "langchain-core", "pydantic", "pyyaml", "structlog"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["embry0"]

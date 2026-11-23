@@ -120,6 +120,10 @@ def _required_imports(tree: ast.AST) -> set[str]:
     return found
 
 
+#: The distributions whose import name is not their name.
+_DISTRIBUTION_OF = {"yaml": "pyyaml"}
+
+
 def _third_party_imports() -> dict[str, set[str]]:
     """Distribution name -> the baked files that import it."""
     imports: dict[str, set[str]] = {}
@@ -127,7 +131,8 @@ def _third_party_imports() -> dict[str, set[str]]:
         for module in _required_imports(ast.parse(path.read_text(encoding="utf-8"))):
             if module in sys.stdlib_module_names or module == "embry0":
                 continue
-            imports.setdefault(_canonical(module), set()).add(str(path.relative_to(ROOT)))
+            distribution = _DISTRIBUTION_OF.get(module, module)
+            imports.setdefault(_canonical(distribution), set()).add(str(path.relative_to(ROOT)))
     return imports
 
 
@@ -165,6 +170,14 @@ def test_the_sandbox_group_installs_every_package_the_baked_code_imports():
     assert not missing, (
         "code the sandbox images carry imports packages the `sandbox` group does not install; "
         f"add them to the group in pyproject.toml: {missing}"
+    )
+    # Named in the group itself, not only installed through another package's dependencies: a package that
+    # stops depending on one the baked code imports must not take it out of the images.
+    named = set(map(_canonical, _sandbox_group()))
+    unnamed = {dist: sorted(where) for dist, where in imports.items() if dist not in named}
+    assert not unnamed, (
+        "code the sandbox images carry imports packages the `sandbox` group installs only through another "
+        f"package's dependencies; name them in the group in pyproject.toml: {unnamed}"
     )
 
 
