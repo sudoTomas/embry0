@@ -105,6 +105,13 @@ proxy = ["aiohttp", "httpx", "structlog"]
 # images their locked versions and hashes, with everything they need. Not a
 # default group either.
 sandbox = ["anthropic", "claude-agent-sdk", "httpx", "langchain-core", "pydantic", "pyyaml", "structlog"]
+# What the dev stages of infra/Dockerfile.sandbox add to the sandbox group
+# (#645): Poetry, which runs a target repository's dev checks, and what it
+# needs. Locked with everything else, so it shares the sandbox group's
+# versions and cannot move one; `uv export --only-group poetry` gives the dev
+# images its locked versions and hashes. Not a default group either, and no
+# embry0 code imports it.
+poetry = ["poetry>=2.5.1,<3"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["embry0"]

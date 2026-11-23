@@ -1,11 +1,11 @@
 """The dev images run a target repository's Poetry checks, the JVM one alongside its Maven checks.
 
-Both install the same Poetry, at or past 2.3.3: Poetry 1.8.4 and the releases it held its dependencies to
-(dulwich < 0.22, virtualenv < 21 and, through virtualenv 20, filelock < 4) carried fixable HIGH advisories that no
-1.x could take (#331).
+Both install the same Poetry: uv.lock's `poetry` group (#645), at or past 2.3.3, the release with the fix for
+Poetry 1.8.4's advisories (#331). How each stage installs it, hash-checked and checked against the lock, is pinned
+in test_sandbox_image_lockfile.py.
 """
 
-import re
+import shlex
 from pathlib import Path
 
 import embry0
@@ -19,20 +19,17 @@ def _stage(name: str) -> str:
     return text.split(f"FROM base AS {name}", 1)[1].split("\nFROM ", 1)[0]
 
 
-def _poetry_pins() -> dict[str, list[str]]:
-    return {name: re.findall(r'"poetry==([0-9][0-9.]*)"', _stage(name)) for name in _DEV_STAGES}
+def _installs_the_poetry_group(name: str) -> bool:
+    argv = shlex.split(_stage(name).replace("\\\n", " "), comments=True)
+    return any(argv[i : i + 2] == ["--only-group", "poetry"] for i in range(len(argv) - 1))
 
 
 def test_jvm_dev_image_installs_poetry() -> None:
-    assert _poetry_pins()["dev-jvm-python"], "the jvm dev image must be able to run Poetry checks"
+    assert _installs_the_poetry_group("dev-jvm-python"), "the jvm dev image must be able to run Poetry checks"
 
 
-def test_both_dev_images_install_the_same_poetry() -> None:
-    pins = _poetry_pins()
-    assert all(len(found) == 1 for found in pins.values()), f"each dev stage pins Poetry once: {pins}"
-    assert len({found[0] for found in pins.values()}) == 1, f"a monorepo's checks would meet two Poetrys: {pins}"
-
-
-def test_the_dev_images_run_a_poetry_past_its_advisories() -> None:
-    for name, (version,) in _poetry_pins().items():
-        assert tuple(int(part) for part in version.split(".")) >= (2, 3, 3), f"{name} installs Poetry {version}"
+def test_both_dev_images_install_the_locked_poetry() -> None:
+    missing = [name for name in _DEV_STAGES if not _installs_the_poetry_group(name)]
+    assert not missing, f"these dev stages do not install uv.lock's `poetry` group: {missing}"
+    for name in _DEV_STAGES:
+        assert '"poetry==' not in _stage(name), f"{name} pins Poetry by hand; it comes from uv.lock"
