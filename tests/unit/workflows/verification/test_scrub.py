@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from embry0.workflows.verification.scrub import REDACTED, scrub_output
+from tests.fixtures.cpu_cost import cost, same
 
 
 @pytest.mark.parametrize(
@@ -128,11 +129,27 @@ def test_a_private_key_block_with_lone_cr_line_ends_keeps_its_lines() -> None:
 def test_a_long_word_is_scrubbed_in_linear_time(text: str) -> None:
     """A name was tried from every character of a word, and ran to the word's end from each: a 40,000-character
     word took about 10 s. It is tried where a word starts now."""
-    import time
-
-    start = time.perf_counter()
     assert scrub_output(text) == text
-    assert time.perf_counter() - start < 5.0
+    measured = cost(same(lambda: scrub_output(text)), [text])
+    assert measured < SCRUB_COST, f"scrubbing cost {measured:.0f} passes of re over the text, at most {SCRUB_COST:.0f}"
+
+
+#: How many passes of re over a text scrubbing it may cost, on this thread's CPU clock (tests/fixtures/cpu_cost.py),
+#: not the wall clock, which times the host: the texts above measure at most about 6; a name tried from every
+#: character of a word, running to the word's end from each, about 1,400 on 16,000 characters, growing with the word
+#: (:func:`test_the_scrub_bound_tells_a_name_tried_from_every_character`).
+SCRUB_COST = 100.0
+
+
+def test_the_scrub_bound_tells_a_name_tried_from_every_character() -> None:
+    import re
+
+    name = re.compile(r"[A-Za-z0-9_]*(?:SECRET|TOKEN)\b")
+    text = "a" * 16_000
+    measured = cost(same(lambda: name.sub("[REDACTED]", text)), [text], runs=1)
+    assert measured > SCRUB_COST, (
+        f"a name tried from every character cost {measured:.0f} passes of re, within the bound"
+    )
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,7 @@ import pytest
 
 from embry0.services import log_signatures
 from embry0.services.log_signatures import TEMPLATE_MAX_CHARS, normalize_line
+from tests.fixtures.cpu_cost import cost, same
 
 #: The built-in rules as they were written before this change, applied with ``re.sub``: the answer every line up
 #: to the cap must still get.
@@ -195,7 +196,7 @@ _SLOW_BEFORE = {
 _LINE_CHARS = 262_144
 
 _NORMALISE_IN_A_CHILD = """
-import json, sys, time
+import json, sys
 from embry0.services.log_signatures import normalize_line
 name, unit, chars = sys.argv[1], sys.argv[2], int(sys.argv[3])
 line = (unit * (chars // len(unit) + 1))[:chars]
@@ -203,13 +204,23 @@ if name == "a run before an @ with no domain":
     line = line[:-1] + "@"
 if name == "one bracket and many numbers":
     line = "[a" + line[2:]
-started = time.perf_counter()
+from tests.fixtures.cpu_cost import cost, same
 template = normalize_line(line)
-print(json.dumps({"seconds": time.perf_counter() - started, "template": template}))
+print(json.dumps({"cost": cost(same(lambda: normalize_line(line)), [line]), "template": template}))
 """
 
-#: How long the child may take, its start included; the line itself must take well under a second.
+#: How long the child may take, its start included: a guard against a line that never ends, not the bound, which is
+#: the line's cost (:data:`RULES_COST`).
 _DEADLINE_SECONDS = 20.0
+#: How many passes of re over a line normalising it may cost, on this thread's CPU clock (tests/fixtures/cpu_cost.py),
+#: not the wall clock, which times the host: the rules measure at most about 5 on a line as long as they read and on
+#: each rewritten rule's lines, and under 1 on a line of 256 KiB, cut to what they read; a rule that backtracks, as
+#: ``[\w.+-]*`` before an ``@`` did, about 900 on 16,384 characters, growing with the line
+#: (:func:`test_the_rules_bound_tells_a_rule_that_backtracks`). That is what the test at the cap
+#: (:func:`test_a_line_as_long_as_the_rules_read_normalises_at_once`) catches. The 256 KiB child's line is cut to the
+#: cap before any rule reads it (its ``@`` falls past it), so the child catches a cap that stopped cutting, not a
+#: rule that backtracks.
+RULES_COST = 50.0
 
 
 @pytest.mark.parametrize("name", sorted(_SLOW_BEFORE))
@@ -230,8 +241,11 @@ def test_a_long_line_of_a_shape_that_was_slow_normalises_in_well_under_a_second(
             f"(stopped after {time.monotonic() - started:.1f}s): every tick of its stack would stall on it"
         )
     assert done.returncode == 0, done.stderr[-500:]
-    took = json.loads(done.stdout)["seconds"]
-    assert took < 1.0, f"{name}: one line of {_LINE_CHARS:,} characters took {took:.2f}s"
+    measured = json.loads(done.stdout)["cost"]
+    assert measured < RULES_COST, (
+        f"{name}: one line of {_LINE_CHARS:,} characters cost {measured:.1f} passes of re over it, "
+        f"at most {RULES_COST:.0f}"
+    )
 
 
 def _shaped(name: str, chars: int) -> str:
@@ -248,10 +262,10 @@ def test_a_line_as_long_as_the_rules_read_normalises_at_once(name: str) -> None:
     """The cap bounds a line's time only as far as each rule is linear in what it reads: at the cap, the rules
     before took from a third of a second to minutes on these."""
     line = _shaped(name, getattr(log_signatures, "RULES_LINE_MAX_CHARS", 16_384))
-    started = time.perf_counter()
-    normalize_line(line)
-    took = time.perf_counter() - started
-    assert took < 0.1, f"{name}: a line of {len(line):,} characters, all the rules read, took {took:.3f}s"
+    measured = cost(same(lambda: normalize_line(line)), [line])
+    assert measured < RULES_COST, (
+        f"{name}: a line of {len(line):,} characters, all the rules read, cost {measured:.1f} passes of re over it"
+    )
 
 
 @pytest.mark.parametrize(
@@ -270,7 +284,14 @@ def test_a_line_as_long_as_the_rules_read_normalises_at_once(name: str) -> None:
 )
 def test_each_rewritten_rule_reads_a_line_of_200000_characters_at_once(rule: str, line: str) -> None:
     apply: Callable[[str], str] = getattr(log_signatures, rule)
-    started = time.perf_counter()
-    apply(line)
-    took = time.perf_counter() - started
-    assert took < 0.5, f"{rule} took {took:.2f}s on a line of {len(line):,} characters"
+    measured = cost(same(lambda: apply(line)), [line])
+    assert measured < RULES_COST, f"{rule} cost {measured:.1f} passes of re over a line of {len(line):,} characters"
+
+
+def test_the_rules_bound_tells_a_rule_that_backtracks() -> None:
+    """The bound can fail: a run of the characters a local part is made of, tried from each of them before an
+    ``@`` that never comes, reads to the line's end from every one."""
+    rule = re.compile(r"[\w.+-]*@\w")
+    line = "a" * 16_384
+    measured = cost(same(lambda: rule.sub("<email>", line)), [line], runs=1)
+    assert measured > RULES_COST, f"a rule that backtracks cost {measured:.0f} passes of re, within the bound"

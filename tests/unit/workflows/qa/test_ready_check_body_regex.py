@@ -131,25 +131,48 @@ async def test_a_stored_body_pattern_it_cannot_search_fails_the_boot_at_once_say
     assert docker.run_cmd.await_count == 0, "the boot command was started for a setup no check of which can pass"
 
 
-_BOOT_IN_A_CHILD = """
-import asyncio, json, sys, time
+_BOOT = """
+import asyncio, json, sys
 from unittest.mock import AsyncMock, MagicMock
+from embry0.services.linear_regex import compile_linear_search
 from embry0.workflows.qa.boot import run_boot_phase
-pattern, body = sys.argv[1], sys.argv[2]
-docker = MagicMock()
-calls = []
-async def answer(*args, **kwargs):
-    calls.append(1)
-    return "boot_command_backgrounded" if len(calls) == 1 else f"STATUS=200\\n---\\n{body}"
-docker.run_cmd = AsyncMock(side_effect=answer)
-docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
-qa_yaml = {"startup": {"command": "x", "ready_checks": [{"http": "http://localhost:3000/", "expect_status": 200, "expect_body_regex": pattern}], "boot_timeout_seconds": 0.5}}
-started = time.perf_counter()
-result = asyncio.run(run_boot_phase(qa_yaml=qa_yaml, container_id="C", docker=docker, sleep_seconds=0.1))
-print(json.dumps({"seconds": time.perf_counter() - started, "outcome": result.outcome}))
-"""
+from tests.fixtures.cpu_cost import cost, same
 
+def boot(pattern, body):
+    docker = MagicMock()
+    calls = []
+    async def answer(*args, **kwargs):
+        calls.append(1)
+        return "boot_command_backgrounded" if len(calls) == 1 else f"STATUS=200\\n---\\n{body}"
+    docker.run_cmd = AsyncMock(side_effect=answer)
+    docker.build_exec_cmd = MagicMock(return_value=["docker", "exec"])
+    check = {"http": "http://localhost:3000/", "expect_status": 200, "expect_body_regex": pattern}
+    qa_yaml = {"startup": {"command": "x", "ready_checks": [check], "boot_timeout_seconds": 0.5}}
+    return asyncio.run(run_boot_phase(qa_yaml=qa_yaml, container_id="C", docker=docker, sleep_seconds=0.1))
+
+def measured(pattern, body):
+    # The least of two boots: the first in a process also compiles the pattern and sets up what any first boot does,
+    # once a process; a boot's own work is its searches.
+    compile_linear_search(pattern)
+    result = []
+    spent = cost(same(lambda: result.append(boot(pattern, body))), [body], runs=2)
+    return {"cost": spent, "outcome": result[-1].outcome}
+"""
+_BOOT_IN_A_CHILD = (
+    _BOOT
+    + """
+print(json.dumps(measured(sys.argv[1], sys.argv[2])))
+"""
+)
+
+#: How long the child may take, its start included: a guard against a search that never ends, not the bound, which
+#: is the boot's cost (:data:`BOOT_COST`).
 _DEADLINE_SECONDS = 20.0
+#: How many passes of re over the body a boot polling out its half-second may cost, on its thread's CPU clock
+#: (tests/fixtures/cpu_cost.py), not the wall clock, which times the host and the boot's sleeps between polls: its
+#: six or seven searches of the 8 KiB body measure about 8; Python's re, searching ``(a+)+$`` in 21 characters,
+#: about 150,000 (:func:`test_the_boot_bound_tells_python_s_re_from_the_engine`).
+BOOT_COST = 100.0
 
 
 @pytest.mark.parametrize("pattern", [r"(a+)+$", r"(a|aa)+$", r"(\w+\s?)+$"])
@@ -174,4 +197,14 @@ def test_a_body_a_backtracking_pattern_almost_matches_is_searched_at_once(patter
         )
     assert done.returncode == 0, done.stderr[-500:]
     got = json.loads(done.stdout.strip().splitlines()[-1])
-    assert got["outcome"] == "timeout" and got["seconds"] < 3.0, got
+    assert got["outcome"] == "timeout" and got["cost"] < BOOT_COST, got
+
+
+def test_the_boot_bound_tells_python_s_re_from_the_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bound can fail: the same boot with its ready check searched by Python's re, on 21 characters."""
+    namespace: dict[str, Any] = {}
+    exec(_BOOT, namespace)  # noqa: S102 - the child's own code, so the demonstration measures what the child does
+    monkeypatch.setattr("embry0.workflows.qa.boot.compile_linear_search", re.compile)
+    namespace["compile_linear_search"] = re.compile
+    got = namespace["measured"](r"(a+)+$", "a" * 20 + "!")
+    assert got["cost"] > BOOT_COST, f"with Python's re the boot cost {got['cost']:.0f} passes of re, within the bound"

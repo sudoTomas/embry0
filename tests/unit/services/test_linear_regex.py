@@ -12,12 +12,9 @@ aside), and what cannot be matched that way is refused, with a reason.
 from __future__ import annotations
 
 import functools
-import gc
 import importlib
-import math
 import random
 import re
-import time
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any
@@ -25,6 +22,7 @@ from typing import Any
 import pytest
 
 from embry0.services.log_signatures import MASKED_TEXT_MAX_CHARS
+from tests.fixtures.cpu_cost import cost, cpu_seconds, same
 
 
 def _engine() -> ModuleType:
@@ -237,10 +235,25 @@ def test_a_pattern_python_re_backtracks_on_takes_linear_time(pattern: str) -> No
     assert compiled.sub("<m>", short) == _python_sub(pattern, short), "on a line re still answers, the same answer"
     for length in (40, 100_000):
         line = "a" * length + "!"
-        started = time.perf_counter()
-        compiled.sub("<m>", line)
-        took = time.perf_counter() - started
-        assert took < 0.5, f"{pattern!r} on a line of {length + 1} characters took {took:.2f}s"
+        measured = cost(same(lambda: compiled.sub("<m>", line)), [line])  # noqa: B023 - measured here, at once
+        assert measured < BACKTRACKING_COST, (
+            f"{pattern!r} on a line of {length + 1} characters cost {measured:.0f} passes of re over it, "
+            f"at most {BACKTRACKING_COST:.0f}"
+        )
+
+
+#: How many passes of re over a line one substitution or search of a pattern Python's re backtracks on may cost,
+#: on this thread's CPU clock (tests/fixtures/cpu_cost.py), not the wall clock, which times the host: the engine
+#: measures at most about 3 (on 41 characters), Python's re 11,000 on ``(a|a)*b`` and 19 characters, doubling with
+#: each (:func:`test_the_backtracking_bound_tells_python_s_re_from_the_engine`).
+BACKTRACKING_COST = 100.0
+
+
+def test_the_backtracking_bound_tells_python_s_re_from_the_engine() -> None:
+    regex = re.compile(r"(a|a)*b")
+    line = "a" * 18 + "!"
+    measured = cost(same(lambda: regex.sub("<m>", line)), [line], runs=1)
+    assert measured > BACKTRACKING_COST, f"Python's re cost {measured:.0f} passes of re, within the bound"
 
 
 # ---- what is refused ------------------------------------------------------------
@@ -366,19 +379,7 @@ def _cpu_seconds(work: Callable[[str], object], line: str, times: int) -> float:
     """The least, over three runs, of this thread's CPU time for ``work(line)`` run ``times`` times, the garbage
     collector held: the work's own cost. The host's other processes take the CPU, not this thread's clock, and a
     collection of the whole process's heap is not the pattern's work."""
-    collecting = gc.isenabled()
-    gc.disable()
-    try:
-        best = math.inf
-        for _ in range(3):
-            started = time.thread_time()
-            for _ in range(times):
-                work(line)
-            best = min(best, time.thread_time() - started)
-        return best
-    finally:
-        if collecting:
-            gc.enable()
+    return min(cpu_seconds(lambda: work(line), times=times) for _ in range(3))
 
 
 def _growth(work: Callable[[str], object], line: str) -> float:
@@ -499,6 +500,7 @@ def test_a_search_pattern_that_can_match_an_empty_string_may_not_hold_a_non_boun
 
 def test_a_search_of_a_text_a_backtracking_pattern_almost_matches_takes_linear_time() -> None:
     compiled = _engine().compile_linear_search(r"(a+)+$")
-    started = time.perf_counter()
-    assert compiled.search("a" * 100_000 + "!") is False
-    assert time.perf_counter() - started < 0.5
+    line = "a" * 100_000 + "!"
+    assert compiled.search(line) is False
+    measured = cost(same(lambda: compiled.search(line)), [line])
+    assert measured < BACKTRACKING_COST, f"the search cost {measured:.0f} passes of re, at most {BACKTRACKING_COST:.0f}"

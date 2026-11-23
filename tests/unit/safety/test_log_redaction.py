@@ -6,7 +6,7 @@ is the one redactor now, and these are its log-text profile's tests.
 
 from __future__ import annotations
 
-import time
+import re
 
 import pytest
 
@@ -19,6 +19,7 @@ from embry0.safety.redaction import (
     redact_secrets,
     register_redacted_fields,
 )
+from tests.fixtures.cpu_cost import cost, same
 from tests.fixtures.redaction_corpus import CORPUS, EMAIL
 
 _JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
@@ -91,14 +92,28 @@ def test_idempotent_and_total() -> None:
 # ---- bounded input: redaction is linear and runs on a bounded window ------
 
 
+#: How many passes of re over a text redacting it may cost, on this thread's CPU clock (tests/fixtures/cpu_cost.py),
+#: not the wall clock, which times the host: the rules measure at most about 25 on the texts below; a rule starting
+#: with an unbounded ``[\w.-]*``, as the secret-key rules did, about 1,700 on 16,000 characters, growing with the
+#: text (:func:`test_the_redaction_bound_tells_a_rule_that_backtracks`).
+REDACTION_COST = 200.0
+
+
 def test_a_long_unbroken_run_does_not_blow_up() -> None:
     """The secret-key rules used to start with an unbounded `[\\w.-]*`, giving
     O(n^2) backtracking on one long token: 32k chars took 44s. Three call sites
     run this synchronously in the event loop on data-controlled text."""
-    started = time.monotonic()
-    out = redact_log_text("a" * 32_000, [])
-    assert time.monotonic() - started < 2.0
-    assert len(out) <= 32_000
+    text = "a" * 32_000
+    assert len(redact_log_text(text, [])) <= 32_000
+    measured = cost(same(lambda: redact_log_text(text, [])), [text])
+    assert measured < REDACTION_COST, f"redacting {len(text):,} characters cost {measured:.0f} passes of re over them"
+
+
+def test_the_redaction_bound_tells_a_rule_that_backtracks() -> None:
+    rule = re.compile(r"[\w.-]*(?:secret|token)=")
+    text = "a" * 16_000
+    measured = cost(same(lambda: rule.sub("[REDACTED]", text)), [text], runs=1)
+    assert measured > REDACTION_COST, f"a rule that backtracks cost {measured:.0f} passes of re, within the bound"
 
 
 def test_redact_bounded_cuts_to_the_limit() -> None:
@@ -246,9 +261,8 @@ def test_diagnostics_do_not_gain_the_pii_rules() -> None:
 )
 def test_matching_stays_linear(hostile: str, fields) -> None:
     fields("phone")
-    started = time.perf_counter()
-    redact_log_text(hostile, [])
-    assert time.perf_counter() - started < 2.0, "a rule backtracks super-linearly on this input"
+    measured = cost(same(lambda: redact_log_text(hostile, [])), [hostile])
+    assert measured < REDACTION_COST, f"a rule backtracks super-linearly on this input: {measured:.0f} passes of re"
 
 
 def test_redaction_module_is_the_only_redactor_left() -> None:

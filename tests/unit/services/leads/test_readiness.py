@@ -15,14 +15,16 @@
 
 from __future__ import annotations
 
-import time
+import re
 import unicodedata
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
 from embry0.services.leads.readiness import Readiness
 from embry0.settings.sections.leads import LeadsSettings
+from tests.fixtures.cpu_cost import least_cpu_seconds, same
 from tests.fixtures.leads import leads_policy
 
 #: Tickets of every kind the default vocabulary reads: (title, body, labels, estimate, priority).
@@ -432,14 +434,34 @@ def test_a_mark_character_in_a_ticket_reads_as_a_space() -> None:
     assert not reading.says_done("un\x00\x00done whenever")
 
 
+#: A hundred phrases of up to 80 characters that each nearly match a description of ``a a a ...``, the last starting
+#: otherwise so they share no prefix (Python's re would otherwise search their common prefix once).
+NEARLY = [f"{'a ' * 38}{chr(0x62 + n % 24)}{n}" for n in range(99)] + ["b" + "a " * 39]
+#: How many times reading a 64 KiB description with :data:`NEARLY` may cost reading it with one ordinary phrase, on
+#: this thread's CPU clock (tests/fixtures/cpu_cost.py), not the wall clock, which times the host: about 1.35, marking
+#: the text costing the same whatever the phrases; Python's re searching an alternation of the same phrases about
+#: 13,000 times its search for one (:func:`test_the_phrase_bound_tells_an_alternation_of_the_phrases`).
+PHRASES_COST = 5.0
+LONG_BODY = "a " * 32_768
+
+
+def _against_one_phrase(many: Callable[[], object], one: Callable[[], object]) -> float:
+    return least_cpu_seconds(same(many)) / least_cpu_seconds(same(one))
+
+
 def test_no_phrase_makes_reading_a_long_ticket_slow() -> None:
-    """A hundred phrases of 80 characters that each nearly match, on a 64 KiB description: a pattern built of
-    them backtracks at every position; a substring search does not. About 10 ms; the bound is generous."""
-    reading = _reading(done_phrases=[f"{'a ' * 38}{chr(0x62 + n % 24)}{n}" for n in range(100)])
-    body = "a " * 32_768
-    started = time.perf_counter()
-    assert not reading.says_done(body)
-    assert time.perf_counter() - started < 2.0, "reading one ticket takes time about linear in its text"
+    """A substring search of the marked text costs about the same whatever the phrases are."""
+    many, one = _reading(done_phrases=NEARLY), _reading(done_phrases=["done when"])
+    assert not many.says_done(LONG_BODY)
+    measured = _against_one_phrase(lambda: many.says_done(LONG_BODY), lambda: one.says_done(LONG_BODY))
+    assert measured < PHRASES_COST, f"a hundred phrases cost {measured:.1f} times one on the same description"
+
+
+def test_the_phrase_bound_tells_an_alternation_of_the_phrases() -> None:
+    """The bound can fail: Python's re searching an alternation of the phrases tries each at every position."""
+    many, one = re.compile("|".join(re.escape(p) for p in NEARLY)), re.compile("done when")
+    measured = _against_one_phrase(lambda: many.search(LONG_BODY), lambda: one.search(LONG_BODY))
+    assert measured > PHRASES_COST, f"an alternation cost {measured:.0f} times one phrase, within the bound"
 
 
 @pytest.mark.parametrize(
