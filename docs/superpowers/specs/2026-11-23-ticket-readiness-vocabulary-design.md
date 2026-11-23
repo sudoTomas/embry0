@@ -42,24 +42,35 @@ Status: decided (2026-11-23); pull request 1 builds it. Refs #168, #159. Line nu
 
 ## 4. Validation
 
-A write names every problem of every key at once in its 422 and never repeats a value. A mapping of another shape is refused before its type is checked, so a 422's place never holds a role or signal the operator wrote (as `ask_severities` does). Each problem names the role it belongs to, which is a catalogue word, or says only what kind of value is wrong:
+A write names every problem of every key at once in its 422 and never repeats a value. Each vocabulary key is checked whole before its type, so a value of the wrong shape inside it (a weight that is not a whole number, a role's labels that are not a list, a phrase that is not text) is one problem among the key's others rather than the only one reported, and a 422's place never holds a role or signal the operator wrote. Each problem names the role or signal it belongs to, which is a catalogue word, or says only what kind of value is wrong:
 
+- a value that is not a mapping (the two mappings) or a list (the two lists);
 - a role or signal outside the catalogue (the message lists the catalogue);
-- a weight that is not a whole number from -100 to 100 (a boolean is not a number);
-- for each role's labels, the phrases and the title words: more than 64 labels a role, 100 phrases or 32 words; a label of more than 64 characters, a phrase of more than 80 or a word of more than 40; an empty one; one that is not one line of plain text (a control, format or separator character, the categories `refuse_unprintable` names); and the same one twice, compared trimmed and case-folded;
+- a weight that is not a whole number (a boolean is not a number), or outside -100 to 100;
+- a role whose labels are not a list;
+- for each role's labels, the phrases and the title words: more than 64 labels a role, 100 phrases or 32 words; one that is not text; a label of more than 64 characters, a phrase of more than 80 or a word of more than 40; an empty one; one that is not one line of plain text (a control, format or separator character, the categories `refuse_unprintable` names); and the same one twice, compared as they are matched (below);
 - an estimate below 0 or above 1000.
 
-Labels are stored as written and compared trimmed and case-folded, as trigger labels are.
+Labels are stored as written. A key the YAML reads as a number (`7: [x]`) is refused by the document's loader before any section sees it; the loader now places that problem at the mapping that holds the key, once, instead of under the key it would otherwise repeat (`embry0/settings/document.py`, for every section).
 
 ## 5. Matching
 
-**Labels** are a set intersection of case-folded names, as before.
+**Folding.** Labels, phrases, title words and the ticket's own text are compared in Unicode's canonical caseless form: decomposed, case-folded, then composed (NFC). So `STRASSE` reads `straße`, and an accent written as one character reads the same as a letter followed by a combining mark, in a label, a phrase or a description.
 
-**Done phrases.** Building a pattern of escaped alternatives, as the brief proposed, keeps ticket text from mattering, but not the phrases: `re` tries every alternative at every position, so a hundred phrases of 80 characters that each nearly match cost about a hundred times eighty steps a character, and RE2 (`embry0/services/linear_regex.py`) refuses such a program as too large once `\W` boundaries are written out for Unicode. So no pattern is built from what an operator writes. The text and each phrase are case-folded and a mark (NUL, which the section refuses in a phrase; a NUL in the text is read as a space first) is put at every word boundary of both with `re`'s own `\b`, a fixed pattern that knows every script. A phrase then occurs at word boundaries exactly where its marked form is a substring of the marked text: a mark the phrase holds next to a word character can only meet a mark of the text, because the text holds a mark between any non-word character and a word character. Where a phrase starts or ends with a non-word character (`- [ ]`), it holds no mark there and reads anywhere, as before. `str.__contains__` takes time about linear in the text whatever the phrase: a hundred adversarial phrases on a 64 KiB description take about 10 ms.
+**Labels** are a set intersection of folded, trimmed names.
 
-**The one change the defaults make.** The pattern before found its words inside longer ones: `undone whenever` said what done looks like, as did `acceptance criterias`. At word boundaries they do not. The defaults keep every form the pattern read as a whole word (`expected behavior`, `expected behaviors`, `expected behaviour`, `expected behaviours`, `expected result`, `expected results`), so a ticket reads differently only where a phrase stood inside a longer word. The golden set holds no such ticket, and a test pins the difference.
+**Word characters.** A word character is a letter or a digit of any script (`str.isalnum`, which is `re`'s `\w` without `_`) or a combining mark (Unicode category M: an accent written as a mark, an Indic vowel sign or virama). `\w` leaves the marks out, so `re`'s `\b` finds a boundary inside a word written with them: `स्वीकृ` would read inside `स्वीकृति`. `_` is punctuation: Markdown emphasis (`__Acceptance criteria__`, `_Done when_`) must not hide a phrase. A script written without spaces (Chinese, Japanese, Thai) has no boundaries between its words, so a whole run of its letters is one word and a phrase in it reads only where a space or punctuation sets it off. The set is read from every code point once per process, when the module is imported (about a tenth of a second).
 
-**Epic titles.** The pattern before, with the alternation of the escaped, case-folded words where it said `epic`, matched on the case-folded title. The run of spaces after a scope moved inside its group, so one run of spaces between the word and the colon is tried once instead of split between two `\s*`. An empty list reads no title as an epic.
+**Done phrases.** Building a pattern of escaped alternatives, as the brief proposed, keeps ticket text from mattering, but not the phrases: `re` tries every alternative at every position, so a hundred phrases of 80 characters that each nearly match cost about a hundred times eighty steps a character, and RE2 (`embry0/services/linear_regex.py`) refuses such a program as too large once `\W` boundaries are written out for Unicode. So no pattern is built from what an operator writes. The folded text and each folded phrase are split on runs of word characters by one fixed pattern and joined again with a mark (NUL, which the section refuses in a phrase; a NUL in the text is read as a space first) between the parts, which puts a mark at each edge of each run and nowhere else. A phrase then occurs at word boundaries exactly where its marked form is a substring of the marked text: a mark the phrase holds next to a word character can only meet a mark of the text, because the text holds a mark between any non-word character and a word character. Where a phrase starts or ends with a non-word character (`- [ ]`), it holds no mark there and reads anywhere, as before. `str.__contains__` takes time about linear in the text whatever the phrase. Marking costs about 10 ms for 64 KiB of prose and 25 ms for 64 KiB of one-letter words, the worst case (the code before read such a description in about 8 ms); a hundred phrases of 80 characters that each nearly match add a few milliseconds.
+
+**What the defaults read differently.** The pattern before found some of its words inside longer ones, and counted `_` as a letter after `should`. A probe scoring 927,420 generated tickets (every default phrase, near-misses, cut-off lengths, labels, estimates, epic titles) with the code on main and with the defaults differs in eight phrases and nothing else: the done signal alone, with every other reason, score part and effort the same.
+
+- No longer done, a phrase inside a longer word: `acceptance criterias`, `nonacceptance criteria`, `undone whenever`, `Expected behaviorally`, `expected resultant`, `steps to reproduced`, `mustshould`.
+- Now done, a phrase set off by underscores: `should_be`, where the old `should\b` saw no boundary before the underscore.
+
+The defaults keep every form the pattern read as a whole word (`expected behavior`, `expected behaviors`, `expected behaviour`, `expected behaviours`, `expected result`, `expected results`). The golden set holds no ticket of the eight, and tests pin both directions.
+
+**Epic titles.** The pattern before, with the alternation of the escaped, folded words where it said `epic`, matched on the folded title. The run of spaces after a scope moved inside its group, so one run of spaces between the word and the colon is tried once instead of split between two `\s*`. An empty list reads no title as an epic.
 
 ## 6. The loop
 
@@ -71,10 +82,10 @@ Labels are stored as written and compared trimmed and case-folded, as trigger la
 
 ## 8. Testing
 
-- **Golden.** A fixed set of 38 tickets (descriptions of every length, paths, errors, every default label role, epic titles in brackets, with a scope and with a dash, estimates, priorities, labels in other cases and with spaces, and a ticket in another language) with the score, reasons, effort and severity the code on main gave each, recorded by running that code over the set. The default section must read each the same.
+- **Golden.** A fixed set of 47 tickets (descriptions on both sides of each length cut-off and one of nothing but spaces, paths, errors, every default label role, epic titles in brackets, with a scope and with a dash, estimates, priorities, labels in other cases and with spaces, done phrases inside Markdown emphasis, and a ticket in another language) with the score, reasons, effort and severity the code on main gave each, recorded by running that code over the set. The default section must read each the same.
 - **An organization's words.** Its own labels, weights, phrases, title words and estimates decide its readings, through the settings documents as the loop reads them; a role it names is replaced whole and the others inherited; a signal it weighs at nothing gives no reason.
 - **The loop.** One organization naming its own ready label is offered its tickets from Linear and from GitHub at a threshold the default words do not reach, another organization is not, and weighing that label at nothing closes both leads on the next intake. This test fails on the tree before this change with its own message.
-- **Phrases.** Word boundaries in Latin, Cyrillic and CJK text, case folding (`STRASSE` reads `straße`), literal regex metacharacters, and a hundred adversarial phrases on a 64 KiB description well inside a second.
+- **Phrases.** Word boundaries in Latin, Cyrillic, Devanagari and CJK text, underscores as punctuation, accents written either way, case folding (`STRASSE` reads `straße`), literal regex metacharacters, and a hundred adversarial phrases on a 64 KiB description well inside a second.
 - **Validation.** Every bound refused naming its key, all problems at once, nothing echoed, through the section and through `PUT /api/v1/config/settings`.
 
 ## 9. Pull requests

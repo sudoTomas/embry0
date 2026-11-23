@@ -11,29 +11,39 @@ role, the points of each signal, the phrases that say what done looks like,
 the words that make a title an epic's and the estimates that read as small or
 large. File paths and error text are code, not language, and stay here.
 
-**Matching.** A label matches a ticket's label trimmed and case-folded, as
-the trigger labels do. A done phrase matches as written, case-folded, at word
-boundaries wherever it starts or ends with a word character (a letter, a
-digit or ``_``, in any script): ``done when`` reads in ``Done when:`` and not
-in ``undone whenever``, and ``- [ ]`` reads anywhere. Matching never builds a
-pattern from what an operator wrote: the text and each phrase are case-folded
-and a mark is put at every word boundary of both (``re``'s own ``\\b``, a
-fixed pattern), so a phrase occurs at word boundaries exactly where its
-marked form is a substring of the marked text. A substring search takes time
-about linear in the text whatever the phrase, so no phrase can make a
-ticket's reading slow (about 10 ms for a hundred long phrases on a
-64 KiB description at worst).
+**Matching.** Labels, phrases, title words and the ticket's own text are
+compared folded (:func:`~embry0.settings.sections.leads.fold`): case-folded
+and in one canonical form, so an accent written as one character or as a
+letter and a combining mark reads the same. A label matches a ticket's label
+trimmed. A done phrase matches as written, as whole words: where it starts
+or ends with a word character, the text beside it must not be one. A word
+character is a letter or a digit of any script, or a combining mark (an
+accent, an Indic vowel sign or virama), which belongs to the letter before
+it; everything else, ``_`` included, is punctuation. So ``done when`` reads
+in ``Done when:`` and in ``_Done when_``, not in ``undone whenever``; ``- [ ]``
+reads anywhere; and a phrase in a script written without spaces (Chinese,
+Japanese, Thai) reads only where a space or punctuation sets it off, since
+the whole run of such letters is one word.
+
+Matching never builds a pattern from what an operator wrote: each run of
+word characters in the folded text and in each phrase is wrapped in a mark
+(:data:`_MARK`, by a fixed pattern), so a phrase occurs at word boundaries
+exactly where its marked form is a substring of the marked text. A substring
+search takes time about linear in the text whatever the phrase, so no phrase
+can make a ticket's reading slow. Marking takes about 10 ms for 64 KiB of
+prose and 25 ms for 64 KiB of one-letter words, the worst case; a hundred
+phrases of 80 characters that each nearly match add a few milliseconds.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from embry0.services.trigger_labels import normalize_labels
-from embry0.settings.sections.leads import LabelRole, LeadsSettings, Signal, vocabulary_key
+from embry0.settings.sections.leads import LabelRole, LeadsSettings, Signal, fold, vocabulary_key
 
 _PATH = re.compile(
     r"(?<![\w/.-])((?:[\w.-]+/)+[\w.-]+\.\w{1,6}|[\w-]+\.(?:py|ts|tsx|js|jsx|java|kt|go|rs|rb|php|cs|sql|ya?ml|json|toml|md))(?![\w/])"
@@ -42,9 +52,28 @@ _ERROR = re.compile(
     r"(Traceback|Exception\b|Error:|\bERROR\b|stack ?trace|\bHTTP [45]\d\d\b|\b[45]\d\d (?:error|response)|panic:|segfault|NullPointer)",
     re.IGNORECASE,
 )
-_BOUNDARY = re.compile(r"\b")
 #: What marks a word boundary: a control character, which no phrase may hold (the section refuses it).
 _MARK: Final = "\x00"
+
+
+def _word_runs() -> re.Pattern[str]:
+    """A run of word characters: letters and digits of every script (``str.isalnum``: ``re``'s ``\\w`` but ``_``)
+    and combining marks (Unicode category M), which ``\\w`` leaves out, so a boundary falls inside a word written
+    with an accent as a mark or in an Indic script. Read from every code point, once per process when this module
+    is imported (about a tenth of a second)."""
+    ranges: list[list[int]] = []
+    for code in range(0x110000):
+        char = chr(code)
+        if char.isalnum() or unicodedata.category(char).startswith("M"):
+            if ranges and ranges[-1][1] == code - 1:
+                ranges[-1][1] = code
+            else:
+                ranges.append([code, code])
+    spans = "".join(f"\\U{lo:08x}-\\U{hi:08x}" for lo, hi in ranges)
+    return re.compile(f"([{spans}]+)")
+
+
+_WORD_RUNS: Final = _word_runs()
 #: The description lengths that read as a description and as a full one; shorter but not blank is a short one.
 DESCRIPTION_CHARS: Final = 80
 FULL_DESCRIPTION_CHARS: Final = 400
@@ -61,8 +90,16 @@ def paths_in(text: str) -> tuple[str, ...]:
 
 
 def _marked(text: str) -> str:
-    """``text`` case-folded, with :data:`_MARK` at every word boundary: a mark it held is read as a space."""
-    return _BOUNDARY.sub(_MARK, text.replace(_MARK, " ").casefold())
+    """``text`` folded, with each run of word characters wrapped in :data:`_MARK`: a mark it held reads as a space."""
+    # Split on the runs, keeping them, the parts alternate between what lies between runs (empty at either end
+    # when the text starts or ends with a run) and the runs: a mark between each two parts is one at each edge of
+    # each run, and nowhere else.
+    return _MARK.join(_WORD_RUNS.split(fold(text.replace(_MARK, " "))))
+
+
+def _label_names(labels: Iterable[str]) -> set[str]:
+    """A ticket's labels as the vocabulary's are compared with them (:func:`vocabulary_key`), blanks left out."""
+    return {vocabulary_key(label) for label in labels if isinstance(label, str) and label.strip()}
 
 
 def _epic_title(words: Iterable[str]) -> re.Pattern[str] | None:
@@ -125,7 +162,7 @@ class Readiness:
         self, title: str, body: str, labels: Iterable[str], estimate: float | None = None
     ) -> tuple[int, list[str]]:
         """A 0 to 100 reading of whether an agent could start on the ticket as written, and why."""
-        names = normalize_labels(labels)
+        names = _label_names(labels)
         text = body or ""
         whole = f"{title}\n{text}"
         found: list[tuple[Signal, str]] = []
@@ -149,7 +186,7 @@ class Readiness:
             found.append(("large", "large"))
         if not_ready := names & self._role("not_ready"):
             found.append(("not_ready", f"labelled {sorted(not_ready)[0]}"))
-        elif self.epic is not None and self.epic.match((title or "").casefold()):
+        elif self.epic is not None and self.epic.match(fold(title or "")):
             found.append(("not_ready", "an epic by its title"))
         if len((title or "").split()) <= SHORT_TITLE_WORDS:
             found.append(("short_title", "a short title"))
@@ -159,7 +196,7 @@ class Readiness:
         return max(0, min(100, score)), [reason for worth, reason in points if reason and worth]
 
     def effort(self, labels: Iterable[str], estimate: float | None, body: str) -> str:
-        names = normalize_labels(labels)
+        names = _label_names(labels)
         if self._large(names, estimate):
             return "large"
         if self._small(names, estimate):
@@ -170,7 +207,7 @@ class Readiness:
         """The tracker's priority when set (1 urgent .. 4 low), else what the labels say."""
         if priority in (1, 2, 3, 4):
             return {1: "critical", 2: "high", 3: "medium", 4: "low"}[priority]
-        names = normalize_labels(labels)
+        names = _label_names(labels)
         if names & self._role("urgent"):
             return "critical"
         if names & self._role("high"):

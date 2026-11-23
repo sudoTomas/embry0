@@ -307,6 +307,23 @@ def test_the_nul_character_is_refused_in_yaml_and_in_json() -> None:
         )
 
 
+def test_a_key_that_is_not_text_is_refused_at_its_mapping_without_repeating_it() -> None:
+    """YAML reads ``7:`` as a number. The 422 names the mapping that holds it, once, never the key: what an
+    operator wrote is not repeated back, in a message or in a place."""
+    for text, place in (
+        ("sample:\n  per_tick: 1\n  7: a\n  8: b\n", ("sample",)),
+        ("7: {}\nsample:\n  per_tick: 1\n", ()),
+    ):
+        try:
+            check(TEST_CATALOG, load_yaml(text), stored={})
+            found: list[dict[str, Any]] = []
+        except DocumentInvalid as exc:
+            found = [p.to_dict() for p in exc.problems if p.type == "key_type"]
+        assert [tuple(p["loc"]) for p in found] == [place], f"one problem, at the mapping: {found}"
+        assert all(part not in ("7", "8", 7, 8) for p in found for part in p["loc"]), found
+        assert all("7" not in p["msg"] and "8" not in p["msg"] for p in found), found
+
+
 def _brittle_outcome(raw: dict[str, Any]) -> list[tuple[tuple[Any, ...], str]] | str:
     try:
         check(Catalog((BRITTLE,)), raw, stored={})

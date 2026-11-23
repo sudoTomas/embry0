@@ -374,10 +374,11 @@ leads:
   # ready (it reads as ready to start), small and large (its size), not_ready
   # (an epic, a question, blocked), urgent and high (they make its lead
   # critical or high when the tracker gives no priority). A label matches
-  # without regard to case or surrounding spaces; at most 64 a role, each at
-  # most 64 characters. Written entry by entry, not whole: a role a document
-  # names replaces that role's labels, and every role it does not name keeps
-  # those below it. An empty list gives that role no label.
+  # without regard to case, surrounding spaces or how an accent is written; at
+  # most 64 a role, each at most 64 characters. Written entry by entry, not
+  # whole: a role a document names replaces that role's labels, and every role
+  # it does not name keeps those below it. An empty list gives that role no
+  # label.
   # readiness_labels:
   #   ready:
   #   - bug
@@ -457,10 +458,13 @@ leads:
   #   short_title: -10
 
   # Phrases that say what done looks like in a ticket's description. Each is
-  # matched as written, in any case, as whole words: where a phrase starts or
-  # ends with a letter or digit, the text beside it must not be one. At most
-  # 100, each at most 80 characters. An empty list reads no ticket as saying
-  # it.
+  # matched as written, in any case and with accents written either way, as
+  # whole words: where a phrase starts or ends with a letter or digit, the
+  # text beside it must not be one (an underscore is punctuation, an accent
+  # belongs to its letter). In a script written without spaces, such as
+  # Chinese, Japanese or Thai, a phrase reads only where a space or
+  # punctuation sets it off. At most 100, each at most 80 characters. An empty
+  # list reads no ticket as saying it.
   # done_phrases:
   # - acceptance criteria
   # - done when

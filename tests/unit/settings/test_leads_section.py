@@ -664,3 +664,51 @@ def test_an_organization_s_lists_of_phrases_and_words_replace_the_inherited_ones
     assert policy.repo("acme/web").done_phrases == ("akzeptanzkriterien",)
     assert policy.repo("acme/web").epic_title_words == ()
     assert "should" in policy.repo("globex/api").done_phrases
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "says"),
+    [
+        ("readiness_labels", ["ready"], "write a mapping of role to a list of labels"),
+        ("readiness_weights", [5], "write a mapping of signal to a whole number of points"),
+        ("done_phrases", "should", "write a list of phrases"),
+        ("epic_title_words", {"epic": 1}, "write a list of words"),
+    ],
+)
+def test_a_vocabulary_key_of_another_shape_says_what_shape_to_write(key: str, value: Any, says: str) -> None:
+    _vocabulary_is_a_key(key)
+    found = _problems({key: value})
+    assert [(loc, says in msg) for loc, msg in found] == [(("leads", key), True)], f"{says}: {found}"
+
+
+def test_a_value_of_the_wrong_shape_hides_none_of_its_key_s_other_problems() -> None:
+    """A weight that is not a whole number, a role's labels that are not a list or a phrase that is not text is one
+    problem among the key's others, all named in one 422."""
+    _vocabulary_is_a_key("readiness_weights")
+    found = dict(
+        (loc[1], msg)
+        for loc, msg in _problems(
+            {
+                "readiness_weights": {"done": 101, "zz-omen": 5, "ready_label": 1.5},
+                "readiness_labels": {"ready": "bug", "zz-omen": ["x"], "small": [1, "zz-x", "ZZ-X"]},
+                "done_phrases": [1, "zz-a", "ZZ-A", ""],
+            }
+        )
+    )
+    expected = {
+        "readiness_weights": [
+            "name only the signals",
+            "done is worth from -100 to 100 points",
+            "ready_label is a whole number of points",
+        ],
+        "readiness_labels": [
+            "name only the roles",
+            "ready is a list of labels",
+            "small lists a label that is not text",
+            "small lists a label twice",
+        ],
+        "done_phrases": ["lists a phrase that is not text", "lists an empty phrase", "lists a phrase twice"],
+    }
+    for key, parts in expected.items():
+        assert key in found and all(part in found[key] for part in parts), f"leads.{key} names {parts}: {found}"
+        assert "zz-" not in found[key].casefold(), f"and repeats nothing written: {found[key]}"

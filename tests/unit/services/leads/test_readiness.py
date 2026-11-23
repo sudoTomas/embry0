@@ -7,13 +7,16 @@
 - **An organization's words.** Its labels, weights, done phrases, epic title
   words and estimate cut-offs decide its tickets' readings.
 - **Phrases.** Matched as written, in any case and language, at word
-  boundaries where a phrase starts or ends with a word character, and never
-  made into a pattern: no phrase makes reading a ticket slow.
+  boundaries where a phrase starts or ends with a word character (a letter,
+  a digit or a combining mark; ``_`` is punctuation), in one canonical
+  Unicode form, and never made into a pattern: no phrase makes reading a
+  ticket slow.
 """
 
 from __future__ import annotations
 
 import time
+import unicodedata
 from typing import Any
 
 import pytest
@@ -24,6 +27,7 @@ from tests.fixtures.leads import leads_policy
 
 #: Tickets of every kind the default vocabulary reads: (title, body, labels, estimate, priority).
 
+FOOTER = "The footer wraps onto a second page when the totals run long. "
 LONG = "The nightly export job writes every invoice of the month into one CSV file. " * 6
 CORPUS = [
     (
@@ -177,6 +181,17 @@ CORPUS = [
         0,
     ),
     ("Löschen der alten Rechnungen", "Die alten Rechnungen werden nicht gelöscht.", ["Fehler"], None, 4),
+    # The description's cut-offs, on both sides, and one of nothing but spaces.
+    ("Tidy the footer of the monthly report", (FOOTER * 5)[:80], [], None, 0),
+    ("Tidy the footer of the yearly report", (FOOTER * 5)[:79], [], None, 0),
+    ("Tidy the totals row of the invoice", (FOOTER * 12)[:400], [], None, 0),
+    ("Tidy the totals row of the receipt", (FOOTER * 12)[:399], [], None, 0),
+    ("Tidy the layout of the import screen", "   \n\t  ", [], None, 0),
+    # Markdown emphasis around a done phrase.
+    ("Checkout total ignores the discount code", "__Acceptance criteria__\n- x", [], None, 0),
+    ("Invoice dates show in the wrong zone", "_Expected behavior_: it works", [], None, 0),
+    ("The settings page loads too slowly", "_Done when_ the page loads", [], None, 0),
+    ("Search results miss archived items", "acceptance criteria_", [], None, 0),
 ]
 
 #: What the code on main before #168 read in each ticket of :data:`CORPUS`: (score, reasons, effort, severity).
@@ -244,6 +259,15 @@ TODAY = [
     (0, ["a full description", "labelled wontfix"], "medium", "medium"),
     (35, ["names files", "labelled bug"], "small", "medium"),
     (5, [], "small", "low"),
+    (20, ["a description"], "medium", "medium"),
+    (5, [], "small", "medium"),
+    (25, ["a full description"], "medium", "medium"),
+    (20, ["a description"], "medium", "medium"),
+    (0, [], "small", "medium"),
+    (20, ["says what done looks like"], "small", "medium"),
+    (20, ["says what done looks like"], "small", "medium"),
+    (20, ["says what done looks like"], "small", "medium"),
+    (20, ["says what done looks like"], "small", "medium"),
 ]
 
 
@@ -283,6 +307,13 @@ def test_an_organization_s_own_labels_decide_its_tickets_readiness() -> None:
     assert unlabelled.score(title, body, ["epic"])[0] == 65, "an empty role gives that role no label"
 
 
+def test_a_label_reads_the_same_whichever_way_its_accents_are_written() -> None:
+    own = _reading(readiness_labels={"ready": ["prêt"]})
+    assert own.score("Fix the export now", "", [unicodedata.normalize("NFD", "PRÊT")])[1] == ["labelled prêt"], (
+        "a ticket's label with its accent as a combining mark is the organization's label"
+    )
+
+
 def test_an_organization_s_weights_and_estimates_decide_its_points() -> None:
     title, body = "Export fails on an empty start date", CORPUS[0][1]
     score, why = _reading(readiness_weights={"done": 0, "paths": 40}).score(title, body, ["bug"])
@@ -320,6 +351,11 @@ def test_an_organization_s_weights_and_estimates_decide_its_points() -> None:
         ("expected behaviorally", False),
         ("criteria acceptance", False),
         ("", False),
+        ("__Acceptance criteria__\n- x", True),
+        ("_Expected behavior_: it works", True),
+        ("_Done when_ the page loads", True),
+        ("acceptance criteria_", True),
+        ("**Steps to reproduce**", True),
     ],
 )
 def test_a_default_done_phrase_reads_at_word_boundaries(text: str, done: bool) -> None:
@@ -327,10 +363,17 @@ def test_a_default_done_phrase_reads_at_word_boundaries(text: str, done: bool) -
 
 
 def test_a_phrase_inside_a_longer_word_no_longer_reads_as_done() -> None:
-    """The one change the defaults make, and why the fixed set has no such ticket: the pattern before #168
+    """The change the defaults make, and why the fixed set has no such ticket: the pattern before #168
     found its words inside longer ones, so "undone whenever" said what done looks like (+15)."""
     score, why = DEFAULT.score("Fix the importer for empty rows", "Undone whenever a row is empty.", [])
     assert (score, why) == (5, []), f"a short description, and no done phrase: {score} {why}"
+
+
+def test_a_phrase_between_underscores_now_reads_as_done() -> None:
+    """The other side of reading ``_`` as punctuation: the pattern before #168 counted ``_`` as a letter after
+    "should", so a phrase joined to other words by underscores was not read, and now it is."""
+    assert DEFAULT.says_done("the check it_should_work fails"), "should, set off by underscores, is a whole word"
+    assert not DEFAULT.says_done("Definition_of_done"), "a phrase's spaces are still spaces"
 
 
 @pytest.mark.parametrize(
@@ -347,12 +390,31 @@ def test_a_phrase_inside_a_longer_word_no_longer_reads_as_done() -> None:
         ("#done", "x#done", True),
         ("#done", "#doneness", False),
         ("done#", "done#x", True),
+        ("café", unicodedata.normalize("NFD", "Le café est prêt"), True),
+        (unicodedata.normalize("NFD", "café"), "Le café est prêt", True),
+        ("cafe", "Le café est prêt", False),
+        ("caf", unicodedata.normalize("NFD", "Le café est prêt"), False),
+        ("café", unicodedata.normalize("NFD", "Les cafés sont prêts"), False),
+        ("स्वीकृति मानदंड", "स्वीकृति मानदंड: काम", True),
+        ("स्वीकृ", "स्वीकृति मानदंड: काम", False),
+        ("受け入れ基準", "受け入れ基準: 動作する", True),
+        ("受け入れ", "受け入れ基準: 動作する", False),
+        ("受け入れ", "受け入れ、基準", True),
+        # One Greek letter written two canonically equivalent ways: alpha with psili, oxia and iota subscript as one
+        # character, and as the letter with psili and subscript followed by the oxia. Case folding turns the
+        # subscript into a letter, so the marks are put in canonical order before it, not after.
+        ("\u1f84", "\u1f80\u0301 \u03b1", True),
     ],
 )
 def test_an_organization_s_phrases_read_in_any_language_and_literally(phrase: str, text: str, done: bool) -> None:
     reading = _reading(done_phrases=[phrase])
     assert reading.says_done(text) is done, f"{phrase!r} in {text!r}: {done}"
     assert not reading.says_done("Done when: the export runs."), "the list replaces the default phrases whole"
+
+
+def test_the_spaces_around_a_phrase_are_not_part_of_it() -> None:
+    reading = _reading(done_phrases=["  done when  "])
+    assert reading.says_done("Done when: the export runs."), "a phrase is read trimmed, as it is checked"
 
 
 def test_a_mark_character_in_a_ticket_reads_as_a_space() -> None:
@@ -388,6 +450,12 @@ def test_an_organization_s_epic_title_words_make_a_title_an_epic_s(title: str, e
     reading = _reading(epic_title_words=["Initiative"])
     why = reading.score(title, "", [])[1]
     assert ("an epic by its title" in why) is epic, f"{title!r}: {why}"
+
+
+def test_an_epic_title_word_reads_whichever_way_its_accents_are_written() -> None:
+    reading = _reading(epic_title_words=["épopée"])
+    title = unicodedata.normalize("NFD", "ÉPOPÉE: rebuild billing")
+    assert "an epic by its title" in reading.score(title, "", [])[1], "a title with its accents as combining marks"
 
 
 def test_no_epic_title_words_read_no_title_as_an_epic() -> None:

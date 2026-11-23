@@ -217,10 +217,13 @@ def _json_problems(value: Any, loc: Loc) -> list[Problem]:
     while stack:
         current, where = stack.pop()
         if isinstance(current, dict):
+            if any(not isinstance(key, str) for key in current):
+                # Placed at the mapping, once: the key is what the operator wrote, and a 422 repeats nothing written.
+                out.append(Problem(where, "key_type", "A key must be text; put a key written as a number in quotes."))
             for key, inner in current.items():
                 if not isinstance(key, str):
-                    out.append(Problem((*where, str(key)), "key_type", "A key must be text."))
-                elif "\x00" in key:
+                    continue
+                if "\x00" in key:
                     out.append(Problem(where, "nul_character", "A key cannot hold the NUL character."))
                 else:
                     stack.append((inner, (*where, key)))
@@ -422,11 +425,13 @@ def check(
                     "dashboard's editor read-only. Leave it out to edit the document on the dashboard.",
                 )
             )
+    if any(not isinstance(key, str) for key in raw):
+        # At the document, once, for the reason above: the name is what the operator wrote.
+        problems.append(Problem((), "key_type", "A section name must be text."))
     for key, value in raw.items():
         if key in DOCUMENT_KEYS:
             continue
         if not isinstance(key, str):
-            problems.append(Problem((str(key),), "key_type", "A section name must be text."))
             continue
         section = catalog.get(key)
         if section is None:

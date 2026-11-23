@@ -63,7 +63,7 @@ asked, so a scout running all day does not fill the chat.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal, Protocol, get_args
 
 from pydantic import Field, field_validator
@@ -342,7 +342,7 @@ class LeadsSettings(SectionModel):
             "The labels that play each role in a backlog ticket's readiness, by role: ready (it reads as ready to "
             "start), small and large (its size), not_ready (an epic, a question, blocked), urgent and high (they "
             "make its lead critical or high when the tracker gives no priority). A label matches without regard "
-            f"to case or surrounding spaces; at most {MAX_LABELS_PER_ROLE} a role, each at most {MAX_LABEL_LENGTH} "
+            f"to case, surrounding spaces or how an accent is written; at most {MAX_LABELS_PER_ROLE} a role, each at most {MAX_LABEL_LENGTH} "
             "characters. Written entry by entry, not whole: a role a document names replaces that role's labels, "
             "and every role it does not name keeps those below it. An empty list gives that role no label."
         ),
@@ -362,9 +362,11 @@ class LeadsSettings(SectionModel):
         default=DEFAULT_DONE_PHRASES,
         description=(
             "Phrases that say what done looks like in a ticket's description. Each is matched as written, in any "
-            "case, as whole words: where a phrase starts or ends with a letter or digit, the text beside it must "
-            f"not be one. At most {MAX_PHRASES}, each at most {MAX_PHRASE_LENGTH} characters. An empty list reads "
-            "no ticket as saying it."
+            "case and with accents written either way, as whole words: where a phrase starts or ends with a letter "
+            "or digit, the text beside it must not be one (an underscore is punctuation, an accent belongs to its "
+            "letter). In a script written without spaces, such as Chinese, Japanese or Thai, a phrase reads only "
+            f"where a space or punctuation sets it off. At most {MAX_PHRASES}, each at most {MAX_PHRASE_LENGTH} "
+            "characters. An empty list reads no ticket as saying it."
         ),
     )
     epic_title_words: tuple[str, ...] = Field(
@@ -434,105 +436,110 @@ class LeadsSettings(SectionModel):
             raise ValueError("; ".join(problems))
         return value
 
+    # Each vocabulary key is checked whole before its type, so a write learns every problem of it at once (a type
+    # error would stop at the first, and put a role or signal the operator wrote into the 422's loc).
+
     @field_validator("readiness_labels", mode="before")
     @classmethod
-    def _readiness_labels_shape(cls, value: Any) -> Any:
-        # Before the type, as for ask_severities: a type error would put the operator's own role into the loc.
-        if not _mapping_of(value, lambda labels: isinstance(labels, list | tuple) and _all_text(labels)):
+    def _readiness_labels(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
             raise ValueError("write a mapping of role to a list of labels, such as ready: [bug, chore]")
-        return {role: tuple(labels) for role, labels in value.items()}
-
-    @field_validator("readiness_labels")
-    @classmethod
-    def _readiness_labels(cls, value: dict[str, tuple[str, ...]]) -> dict[str, tuple[str, ...]]:
         problems = _unknown_names(value, LABEL_ROLES, "role")
         for role, labels in value.items():
-            if role in LABEL_ROLES:
-                problems += [
-                    f"{role} {problem}"
-                    for problem in _text_problems(
-                        labels, what="label", most=MAX_LABELS_PER_ROLE, longest=MAX_LABEL_LENGTH
-                    )
-                ]
+            if role not in LABEL_ROLES:
+                continue
+            if not isinstance(labels, list | tuple):
+                problems.append(f"{role} is a list of labels")
+                continue
+            problems += [
+                f"{role} {problem}"
+                for problem in _text_problems(labels, what="label", most=MAX_LABELS_PER_ROLE, longest=MAX_LABEL_LENGTH)
+            ]
         if problems:
             raise ValueError("; ".join(problems))
-        return value
+        # As the type takes it once this check has read the value: a strict tuple, not the list JSON gives.
+        return {role: tuple(labels) for role, labels in value.items()}
 
     @field_validator("readiness_weights", mode="before")
     @classmethod
-    def _readiness_weights_shape(cls, value: Any) -> Any:
-        if not _mapping_of(value, lambda points: isinstance(points, int) and not isinstance(points, bool)):
+    def _readiness_weights(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
             raise ValueError("write a mapping of signal to a whole number of points, such as done: 20")
-        return value
-
-    @field_validator("readiness_weights")
-    @classmethod
-    def _readiness_weights(cls, value: dict[str, int]) -> dict[str, int]:
         problems = _unknown_names(value, SIGNALS, "signal")
-        problems += [
-            f"{signal} is worth from -{MAX_WEIGHT} to {MAX_WEIGHT} points"
-            for signal, points in value.items()
-            if signal in SIGNALS and abs(points) > MAX_WEIGHT
-        ]
+        for signal, points in value.items():
+            if signal not in SIGNALS:
+                continue
+            if not isinstance(points, int) or isinstance(points, bool):
+                problems.append(f"{signal} is a whole number of points")
+            elif abs(points) > MAX_WEIGHT:
+                problems.append(f"{signal} is worth from -{MAX_WEIGHT} to {MAX_WEIGHT} points")
         if problems:
             raise ValueError("; ".join(problems))
         return value
 
-    @field_validator("done_phrases")
+    @field_validator("done_phrases", mode="before")
     @classmethod
-    def _done_phrases(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        problems = _text_problems(value, what="phrase", most=MAX_PHRASES, longest=MAX_PHRASE_LENGTH)
-        if problems:
-            raise ValueError("; ".join(problems))
-        return value
+    def _done_phrases(cls, value: Any) -> Any:
+        return _text_list(value, what="phrase", most=MAX_PHRASES, longest=MAX_PHRASE_LENGTH)
 
-    @field_validator("epic_title_words")
+    @field_validator("epic_title_words", mode="before")
     @classmethod
-    def _epic_title_words(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        problems = _text_problems(value, what="word", most=MAX_TITLE_WORDS, longest=MAX_TITLE_WORD_LENGTH)
-        if problems:
-            raise ValueError("; ".join(problems))
-        return value
+    def _epic_title_words(cls, value: Any) -> Any:
+        return _text_list(value, what="word", most=MAX_TITLE_WORDS, longest=MAX_TITLE_WORD_LENGTH)
+
+
+def fold(text: str) -> str:
+    """``text`` as a ticket's words are compared with an operator's: case-folded and in one canonical form.
+
+    Unicode's canonical caseless form: decomposed, case-folded, then composed
+    (NFC), so ``é`` written as one character or as ``e`` and a combining
+    accent, and ``STRASSE`` and ``Straße``, read the same.
+    """
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFD", text).casefold())
 
 
 def vocabulary_key(text: str) -> str:
-    """A label, a phrase or a title word as a ticket's are compared with it: trimmed and case-folded."""
-    return text.strip().casefold()
+    """A label, a phrase or a title word as a ticket's are compared with it: trimmed and folded (:func:`fold`)."""
+    return fold(text.strip())
 
 
-def _all_text(items: Any) -> bool:
-    return all(isinstance(item, str) for item in items)
-
-
-def _mapping_of(value: Any, entry: Callable[[Any], bool]) -> bool:
-    """Whether ``value`` is a mapping of text to entries ``entry`` accepts."""
-    return isinstance(value, dict) and all(isinstance(name, str) and entry(item) for name, item in value.items())
-
-
-def _unknown_names(value: Mapping[str, Any], known: Sequence[str], what: str) -> list[str]:
+def _unknown_names(value: Mapping[Any, Any], known: Sequence[str], what: str) -> list[str]:
     """The problem of a mapping naming a ``what`` that is none of ``known``, which never repeats the name."""
     if any(name not in known for name in value):
         return [f"name only the {what}s {', '.join(known)}"]
     return []
 
 
-def _text_problems(items: Sequence[str], *, what: str, most: int, longest: int) -> list[str]:
+def _text_list(value: Any, *, what: str, most: int, longest: int) -> tuple[str, ...]:
+    """A list of phrases or words as its field takes it, or every problem it has in one :class:`ValueError`."""
+    if not isinstance(value, list | tuple):
+        raise ValueError(f"write a list of {what}s")
+    problems = _text_problems(value, what=what, most=most, longest=longest)
+    if problems:
+        raise ValueError("; ".join(problems))
+    return tuple(value)
+
+
+def _text_problems(items: Sequence[Any], *, what: str, most: int, longest: int) -> list[str]:
     """What is wrong with a list of labels, phrases or words, each problem once and none repeating a value."""
     problems: list[str] = []
     if len(items) > most:
         problems.append(f"lists more than {most} {what}s")
-    if any(not vocabulary_key(item) for item in items):
+    if any(not isinstance(item, str) for item in items):
+        problems.append(f"lists a {what} that is not text")
+    texts = [item for item in items if isinstance(item, str)]
+    if any(not vocabulary_key(item) for item in texts):
         problems.append(f"lists an empty {what}")
-    if any(len(item) > longest for item in items):
+    if any(len(item) > longest for item in texts):
         problems.append(f"lists a {what} longer than {longest} characters")
-    if any(unicodedata.category(char) in UNPRINTABLE_CATEGORIES for item in items for char in item):
+    if any(unicodedata.category(char) in UNPRINTABLE_CATEGORIES for item in texts for char in item):
         problems.append(
             f"lists a {what} that is not one line of plain text "
             "(no line break, tab, control, format or separator character)"
         )
-    keys = [vocabulary_key(item) for item in items]
+    keys = [vocabulary_key(item) for item in texts]
     if len(set(keys)) != len(keys):
-        problems.append(f"lists a {what} twice (case and surrounding spaces do not count)")
+        problems.append(f"lists a {what} twice (case, accents written either way and surrounding spaces do not count)")
     return problems
 
 
