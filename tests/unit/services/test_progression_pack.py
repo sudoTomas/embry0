@@ -323,7 +323,9 @@ def test_a_key_written_twice_and_a_merge_key_are_refused_by_the_loader(
     target = tmp_path / "pack.yaml"
     target.write_text(twice)
     assert _main(["--check", str(target)]) == 1, "--check must refuse a key written twice"
-    assert "timezone: 'timezone' is written twice" in capsys.readouterr().err
+    assert capsys.readouterr().err.startswith("A key is written twice, on lines"), (
+        "placed at the document, by its lines"
+    )
 
 
 # ---- metrics and their facts ----

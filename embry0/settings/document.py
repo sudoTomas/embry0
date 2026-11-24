@@ -19,6 +19,7 @@ import datetime as _dt
 import difflib
 import json
 import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -64,12 +65,34 @@ class Problem:
         return {"loc": list(self.loc), "type": self.type, "msg": self.msg}
 
 
+#: How deep a problem's place goes: a section and its field. Below a field, a place would name a key of a mapping
+#: the operator wrote, and a 422 repeats nothing written (:func:`placed`).
+_FIELD_DEPTH: Final = 2
+
+
+def placed(problem: Problem) -> Problem:
+    """``problem`` as a 422 says it: placed at its section's field when its place goes on into a mapping below the
+    field, whose keys are what the operator wrote (a list's positions are not, and stay)."""
+    loc = problem.loc
+    if len(loc) > _FIELD_DEPTH and any(isinstance(part, str) for part in loc[_FIELD_DEPTH:]):
+        loc = loc[:_FIELD_DEPTH]
+    return Problem(loc, problem.type, problem.msg)
+
+
 class DocumentInvalid(ValueError):
-    """The document has problems; ``problems`` lists every one."""
+    """The document has problems; ``problems`` lists every one, each once, as :func:`placed` says it: no place
+    below a section's field names a key the operator wrote, and no message repeats a key, a tag or an alias name
+    the operator wrote (a key written twice is placed at the mapping holding it and told by its lines, a YAML message's
+    quoted text by ``…`` unless it is one character or one of PyYAML's own token names).
+
+    The one exception is a section or a field the catalog does not have: its name is said, with the nearest one
+    the catalog has, so a typo is seen at once. Those two levels hold the catalog's words, and a name written
+    there that is none of them is the operator's mistake, not their content."""
 
     def __init__(self, problems: list[Problem]) -> None:
-        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in problems))
-        self.problems = problems
+        said = list(dict.fromkeys(placed(problem) for problem in problems))
+        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in said))
+        self.problems = said
 
 
 class DocumentTooLarge(ValueError):
@@ -79,11 +102,59 @@ class DocumentTooLarge(ValueError):
 # ---- parsing ----------------------------------------------------------------
 
 
+#: Text PyYAML quotes in a message: a tag, an alias or a token as written, or one character. It quotes with
+#: ``repr``, so in single quotes, or in double quotes when the text holds a single one.
+_QUOTED: Final = re.compile(r"'((?:\\.|[^'\\])*)'" r'|"((?:\\.|[^"\\])*)"')
+#: PyYAML's names for its own tokens, as its parser quotes them ("expected <block end>, but found '<scalar>'"):
+#: fixed by the library, never text the operator wrote, so a message keeps them.
+YAML_TOKEN_IDS: Final = frozenset(
+    {
+        "<stream start>",
+        "<stream end>",
+        "<directive>",
+        "<document start>",
+        "<document end>",
+        "<block sequence start>",
+        "<block mapping start>",
+        "<block end>",
+        "<alias>",
+        "<anchor>",
+        "<tag>",
+        "<scalar>",
+        "[",
+        "]",
+        "{",
+        "}",
+        "?",
+        ":",
+        "-",
+        ",",
+    }
+)
+
+
+def _unquoted(text: str) -> str:
+    """``text`` with each quoted part said as ``'…'``, unless it is one character (``\\t`` counts as one) or one
+    of PyYAML's token names: PyYAML quotes tags and alias names as written, at any length, and a 422 repeats
+    nothing written.
+
+    By design, a tag written as exactly one character, or exactly one of the 20 token names (a verbatim
+    ``!<%3Cscalar%3E>`` reads ``<scalar>``), comes back as itself: it says nothing the operator wrote that the
+    message does not already say. A tag that merely holds one (``<block end>`` and more) is said as ``'…'``."""
+
+    def one(match: re.Match[str]) -> str:
+        inner = match[1] if match[1] is not None else match[2]
+        single = len(inner) == 1 or (len(inner) == 2 and inner[0] == "\\")
+        return match[0] if single or inner in YAML_TOKEN_IDS else "'…'"
+
+    return _QUOTED.sub(one, text)
+
+
 def _yaml_problem(exc: yaml.YAMLError) -> Problem:
     mark = getattr(exc, "problem_mark", None)
     where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
     problem = getattr(exc, "problem", None) or str(exc)
-    return Problem((), "yaml_syntax", f"The YAML cannot be read: {where}{problem}")
+    return Problem((), "yaml_syntax", f"The YAML cannot be read: {where}{_unquoted(problem)}")
 
 
 _TOO_DEEP: Final = Problem((), "too_deep", "The document is nested too deeply.")
@@ -213,13 +284,22 @@ def _close(word: str, options: Iterable[str]) -> str:
 KEY_NOT_TEXT: Final = "A key must be text: quote a key YAML would read as another kind of value."
 
 
+#: How many levels a value may nest below its section. No setting nests more than a few (a mapping of lists); a
+#: value nested deeper is refused here, before its check, which would read every level of it.
+MAX_VALUE_DEPTH: Final = 32
+
+
 def _json_problems(value: Any, loc: Loc) -> list[Problem]:
     """Values YAML or JSON can hold and the stored document cannot: dates, binary, sets,
-    non-text keys, infinities, and the NUL character, which Postgres refuses."""
+    non-text keys, infinities, and the NUL character, which Postgres refuses; and a value nested past
+    :data:`MAX_VALUE_DEPTH`, which no setting is."""
     out: list[Problem] = []
     stack: list[tuple[Any, Loc]] = [(value, loc)]
     while stack:
         current, where = stack.pop()
+        if len(where) > MAX_VALUE_DEPTH + 1 and isinstance(current, dict | list):
+            out.append(Problem(where[:_FIELD_DEPTH], "too_deep", "The value is nested too deeply."))
+            continue
         if isinstance(current, dict):
             if any(not isinstance(key, str) for key in current):
                 # Placed at the mapping, once: the key is what the operator wrote, and a 422 repeats nothing written.
@@ -256,7 +336,8 @@ def _message(section: Section[Any], error: Mapping[str, Any]) -> str:
         key = str(loc[-1])
         if len(loc) == 1:
             return f"'{key}' is not a setting of '{section.name}'.{_close(key, section.fields)}"
-        return f"'{key}' is not a setting here."
+        # Below a field the key is one the operator wrote into a mapping or an object: said by kind only.
+        return "A key here is not a setting."
     msg = str(error.get("msg") or "invalid").removeprefix("Value error, ")
     if isinstance(error.get("input"), bool) and error.get("type") in _WANTS_TEXT:
         msg += ". YAML reads a bare on, off, yes or no as true or false; put the word in quotes"

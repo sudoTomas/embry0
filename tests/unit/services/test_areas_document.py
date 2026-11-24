@@ -125,6 +125,21 @@ def test_what_no_operator_document_may_use_is_refused(text: str) -> None:
         load_yaml(text)
 
 
+@pytest.mark.parametrize(
+    ("text", "loc"),
+    [
+        ("areas:\n  - name: zz-written-key\n    zz-written-key: a\n    zz-written-key: b\n", ["areas", 0]),
+        ("zz-written-key: 1\nzz-written-key: 2\nareas: []\n", []),
+    ],
+)
+def test_a_key_written_twice_is_placed_at_the_mapping_that_holds_it(text: str, loc: list[object]) -> None:
+    with pytest.raises(DocumentInvalid) as raised:
+        load_yaml(text)
+    found = [p.to_dict() for p in raised.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(loc, "duplicate_key")], found
+    assert "zz-written-key" not in json.dumps(found), f"the problem repeats the key written: {found}"
+
+
 def test_a_body_is_yaml_kept_as_written_or_json_with_no_text() -> None:
     text, values = parse_body(b"areas:\n  - name: Web\n", "application/yaml")
     assert text == "areas:\n  - name: Web\n" and values == {"areas": [{"name": "Web"}]}

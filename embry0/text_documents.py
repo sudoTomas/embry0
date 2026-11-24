@@ -11,7 +11,8 @@ refuse the same constructs, with the same words, from this one module:
 - a **key that is not text** (a mapping or a list used as a key);
 - a **key written twice** in one mapping: YAML and JSON both keep only the
   second, silently, so a section written twice in a long document loses
-  the first without a word;
+  the first without a word. It is placed at the mapping that holds it and
+  told by its lines, never by the key, which is what the operator wrote;
 - a **whole number longer than the interpreter converts** to or from text
   (:func:`sys.get_int_max_str_digits`, 4,300 digits by default): reading
   one raised a plain ``ValueError`` past the readers' "invalid" path, and a
@@ -159,12 +160,13 @@ def structure_problems(root: yaml.Node | None, *, what: str = "a document") -> l
                     problems.append(key_problem)
                     continue
                 if name in first:
+                    # At the mapping that holds it: the key is what the operator wrote, and the lines say where.
                     problems.append(
                         StructureProblem(
-                            (*loc, name),
+                            loc,
                             "duplicate_key",
-                            f"'{name}' is written twice, on lines {first[name]} and {_line(key)}; YAML would keep "
-                            "only the second. Keep one.",
+                            f"A key is written twice, on lines {first[name]} and {_line(key)}; YAML would keep only "
+                            "the second. Keep one.",
                         )
                     )
                 else:
@@ -176,10 +178,11 @@ def structure_problems(root: yaml.Node | None, *, what: str = "a document") -> l
 
 
 class DuplicateKey(ValueError):
-    """A JSON object names one key twice; ``key`` is the name."""
+    """A JSON object names one key twice; ``key`` is the name, which the message never repeats: it is what the
+    operator wrote."""
 
     def __init__(self, key: str) -> None:
-        super().__init__(f"'{key}' is written twice in one object; JSON would keep only the second. Keep one.")
+        super().__init__("A key is written twice in one object; JSON would keep only the second. Keep one.")
         self.key = key
 
 
