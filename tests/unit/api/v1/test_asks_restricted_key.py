@@ -137,7 +137,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     async def feed(_request: Any) -> list[Proposal]:
         return list(offers)
 
-    async def pr_stats(_request: Any, _pr_url: str | None) -> None:
+    async def pr_stats(_request: Any, _pr_url: str | None, _repo: str | None) -> None:
         return None
 
     monkeypatch.setattr(proposals_api, "feed", feed)

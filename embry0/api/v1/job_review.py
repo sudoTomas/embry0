@@ -25,7 +25,6 @@ those paths stay as deprecated aliases (:data:`deprecated_router`) until
 from __future__ import annotations
 
 import inspect
-import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -43,8 +42,10 @@ from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.run_with import checked_run_with
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
+from embry0.forge_urls import ForgeHosts, PullRequestUrl, parse_pr_url
 from embry0.services.run_with import RunWith, apply_run_with, models_with, run_with_of
 from embry0.storage.database import read_jsonb_text
+from embry0.storage.repo_renames import same_repository
 from embry0.storage.repositories.jobs import job_repository
 
 router = APIRouter()
@@ -53,8 +54,12 @@ router = APIRouter()
 #: ``/jobs/{job_id}/…`` routes. Removing a route needs a minor release before 1.0 (docs/releasing.md).
 ALIASES_REMOVED_IN = "0.2.0"
 
-#: A GitHub pull request's URL: its repository and number.
-GITHUB_PR = re.compile(r"^https://github\.com/(?P<repo>[^/]+/[^/]+)/pull/(?P<number>\d+)")
+#: The forges each action on a job's pull request works on today. On any other forge, or on a host this deployment
+#: does not reach, the action answers 422 naming the forge, never a silent no-op (#181).
+PR_ACTION_FORGES: dict[str, frozenset[str]] = {
+    "sending work back": frozenset({"github"}),
+    "closing a pull request": frozenset({"github"}),
+}
 
 #: Job statuses of work that has not finished: it cannot be evaluated, run again or dismissed yet.
 _NOT_FINISHED = ("pending", "running", "awaiting_input", "paused")
@@ -109,6 +114,33 @@ async def _job_or_404(request: Request, job_id: str, *, action: str | None = "re
         request, job, HTTPException(status_code=404, detail=f"no job {job_id}"), action=action
     )
     return dict(job)
+
+
+async def _pull_request(request: Request, job: Mapping[str, Any], action: str) -> PullRequestUrl | None:
+    """The job's pull request, for ``action`` (a key of :data:`PR_ACTION_FORGES`); None when the job opened none.
+
+    An action on a job's pull request acts only on the job's own repository. In order, before anything is acted on:
+
+    - 422 "``action`` is not supported for this forge (<forge>)" for an address that names no pull request embry0
+      can read, or one on a host this deployment does not reach (a GitHub Enterprise host);
+    - 409 when it is not the job's repository: another forge than the one the job's repository is registered on, or
+      another path (compared ignoring case, after ``REPO_RENAMES``);
+    - 422 as above when the action does not work on that forge today.
+    """
+    url = str(job.get("pr_url") or "").strip()
+    if not url:
+        return None
+    hosts = ForgeHosts.of(getattr(request.app.state, "config", None))
+    pr = parse_pr_url(url)
+    if pr is None or not hosts.reaches(pr):
+        raise HTTPException(status_code=422, detail=f"{action} is not supported for this forge ({hosts.name(url)})")
+    repo = job_repository(job)
+    forge = await _state(request, "repos_repo").forge_or_none(repo) if repo else None
+    if pr.forge != forge or not same_repository(pr.repo, repo):
+        raise HTTPException(status_code=409, detail="the job's pull request is not in the job's repository")
+    if pr.forge not in PR_ACTION_FORGES[action]:
+        raise HTTPException(status_code=422, detail=f"{action} is not supported for this forge ({hosts.name(url)})")
+    return pr
 
 
 def _refuse_unfinished(job: dict[str, Any], what: str) -> None:
@@ -187,6 +219,8 @@ async def evaluate_job(job_id: str, body: EvaluationBody, request: Request) -> d
 SEND_BACK_REACHES_BEYOND = (
     "the job's pull request is in a repository the key does not cover, so its follow-up would start work there"
 )
+#: Why closing a job's pull request is refused when it is in a repository the key does not cover.
+CLOSE_REACHES_BEYOND = "the job's pull request is in a repository the key does not cover, so closing it would act there"
 
 
 class SendBackBody(BaseModel):
@@ -200,23 +234,23 @@ class SendBackBody(BaseModel):
 async def send_back(job_id: str, body: SendBackBody, request: Request) -> dict[str, Any]:
     """Send the work back with notes: a follow-up job on the job's own pull request branch."""
     job = await _job_or_404(request, job_id)
-    match = GITHUB_PR.match(str(job.get("pr_url") or ""))
-    if match is None:
-        raise HTTPException(status_code=409, detail="the job opened no GitHub pull request to send back")
+    pr = await _pull_request(request, job, "sending work back")
+    if pr is None:
+        raise HTTPException(status_code=409, detail="the job opened no pull request to send back")
     # The follow-up runs in the pull request's repository: a key may not start work in one it does not cover, and is
     # refused naming the job's repository only (the audit row names the other).
     await enforce_reach(
-        request, str(job_repository(job)), [match["repo"]], action="send a job back", reason=SEND_BACK_REACHES_BEYOND
+        request, str(job_repository(job)), [pr.repo], action="send a job back", reason=SEND_BACK_REACHES_BEYOND
     )
-    run_with = await checked_run_with(request, body.run_with, match["repo"])
+    run_with = await checked_run_with(request, body.run_with, pr.repo)
     dispatch = _state(request, "comment_dispatch")
     actor = request_actor(request)
     result = await dispatch.start_followup(
-        match["repo"],
-        int(match["number"]),
+        pr.repo,
+        pr.number,
         request=f"sent back from the dashboard by {actor} with these notes:\n\n{body.notes}",
         dispatched_by=actor,
-        title=f"[send-back] {match['repo']}#{match['number']}",
+        title=f"[send-back] {pr.repo}#{pr.number}",
         kind="send_back",
         asks="the notes",
         pipeline_config=apply_run_with(None, run_with),
@@ -364,18 +398,34 @@ async def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, A
         # and a merge already needs admin (merge approvals).
         await ensure_admin(request)
     closed = False
-    match = GITHUB_PR.match(str(job.get("pr_url") or ""))
-    if body.close_pr and match is not None and job.get("delivery_state") != "merged":
+    # A merged pull request cannot be closed on any forge, and a job that opened none has none to close: both answer
+    # closed_pr false. One on a forge the action does not work on is refused (422) before the rejection is recorded.
+    pr = (
+        await _pull_request(request, job, "closing a pull request")
+        if body.close_pr and job.get("delivery_state") != "merged"
+        else None
+    )
+    if pr is not None:
+        await enforce_reach(
+            request,
+            str(job_repository(job)),
+            [pr.repo],
+            action="close a job's pull request",
+            reason=CLOSE_REACHES_BEYOND,
+        )
         organizations = _state(request, "organizations_repo")
-        org = await organizations.get(match["repo"].split("/", 1)[0])
+        org = await organizations.get(pr.owner)
         if org is None:
+            raise HTTPException(status_code=409, detail=f"no registered organization holds {pr.repo}'s credential")
+        if org.forge != pr.forge:
             raise HTTPException(
-                status_code=409, detail=f"no registered organization holds {match['repo']}'s credential"
+                status_code=409,
+                detail=f"{pr.owner} is registered on {org.forge}, but the job's pull request is on {pr.forge}",
             )
         from embry0.api.v1.organizations import org_forge_client
 
         client = await org_forge_client(request, org)
-        repo, number = match["repo"], int(match["number"])
+        repo, number = pr.repo, pr.number
         if body.note:
             await client.post(f"/repos/{repo}/issues/{number}/comments", repo=repo, json={"body": body.note})
         # Safe to send again (#45): closing a closed pull request leaves it closed.

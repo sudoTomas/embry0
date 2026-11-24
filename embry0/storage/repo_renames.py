@@ -117,6 +117,15 @@ def normalize_repo_slug(slug: str, renames: Mapping[str, str] | None = None) -> 
     return slug
 
 
+def same_repository(a: str | None, b: str | None, renames: Mapping[str, str] | None = None) -> bool:
+    """Whether ``a`` and ``b`` name one repository: equal ignoring case once a known rename is applied to each.
+    False when either is empty."""
+    if not a or not b:
+        return False
+    mapping = _mapping(renames)
+    return normalize_repo_slug(a, mapping).lower() == normalize_repo_slug(b, mapping).lower()
+
+
 def normalize_repo_url[T: (str, None)](url: T, renames: Mapping[str, str] | None = None) -> T:
     """``url`` with a renamed repo's old slug replaced by its current one.
 

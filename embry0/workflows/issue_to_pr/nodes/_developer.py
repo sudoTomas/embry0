@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -16,16 +17,54 @@ from langgraph.types import Command
 # before importing the node modules.
 import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events, sandbox_git
+from embry0.forge_urls import ForgeHosts, parse_pr_url
 from embry0.orchestration.nodes.agent import agent_attempt
 from embry0.services.slop import SLOPMASTER
+from embry0.storage.repo_renames import same_repository
 from embry0.workflows.issue_to_pr.nodes._common import (
     _extract_ask_user_events,
     _format_user_answers_block,
     _is_ask_user_event,
     _kept_event_forwarder,
+    job_repository,
 )
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _JobRepository:
+    """Where the job's repository is: its path (``job_repository``), the forge it is registered on (None when that
+    could not be resolved), and the hosts this deployment reaches each forge on."""
+
+    repo: str
+    forge: str | None
+    hosts: ForgeHosts
+
+
+async def _the_job_repository(state: dict[str, Any], configurable: dict[str, Any]) -> _JobRepository:
+    """The repository the job cloned, on the forge it cloned it from, as the clone resolved it."""
+    from embry0.services.forge_resolver import resolve_forge
+
+    repo = job_repository(state)
+    try:
+        forge: str | None = await resolve_forge(
+            configurable.get("repos_repo"), repo, job_id=str(state.get("job_id") or "")
+        )
+    except Exception:
+        logger.warning("developer_forge_unresolved", job_id=state.get("job_id"), repo=repo, exc_info=True)
+        forge = None
+    return _JobRepository(repo, forge, ForgeHosts.of(configurable.get("embry0_config")))
+
+
+def _of_job_repository(pr_url: Any, where: _JobRepository) -> bool:
+    """Whether ``pr_url`` is a pull or merge request of the job's repository: on the forge it is registered on, on
+    the host this deployment reaches that forge on, and at its path (compared ignoring case, after
+    ``REPO_RENAMES``)."""
+    pr = parse_pr_url(pr_url) if isinstance(pr_url, str) else None
+    return (
+        pr is not None and pr.forge == where.forge and where.hosts.reaches(pr) and same_repository(pr.repo, where.repo)
+    )
 
 
 def _developer_branch_name(state: dict[str, Any]) -> str:
@@ -1246,13 +1285,32 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                         break
             except (ValueError, RecursionError, TypeError):  # see embry0.json_text
                 pass
-            # Fallback: search for GitHub PR URL pattern
+            # Fallback: the first github.com pull request of the job's repository the output names
             if not pr_url:
                 import re
 
-                match = re.search(r"https://github\.com/[^/]+/[^/]+/pull/\d+", output_text)
-                if match:
-                    pr_url = match.group(0)
+                where = await _the_job_repository(state, configurable)
+                pr_url = next(
+                    (
+                        m.group(0)
+                        for m in re.finditer(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", output_text)
+                        if _of_job_repository(m.group(0), where)
+                    ),
+                    None,
+                )
+    # The output is the agent's: a pull request it names is recorded only in the job's own repository, since every
+    # action on a job's pull request acts there (#181).
+    if pr_url:
+        where = await _the_job_repository(state, configurable)
+        if not _of_job_repository(pr_url, where):
+            logger.warning(
+                "developer_pr_outside_job_repository",
+                job_id=state.get("job_id"),
+                reported=str(pr_url)[:200],
+                repo=where.repo,
+                forge=where.forge,
+            )
+            pr_url = None
 
     # #478: a job named away from an earlier job's branch must not report that
     # branch as its own. It exists on origin, so the push check would pass and
@@ -1372,7 +1430,6 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     from embry0.services.job_settings import job_section
     from embry0.settings.sections.salvage import SALVAGE
     from embry0.workflows.issue_to_pr.nodes import _salvage
-    from embry0.workflows.issue_to_pr.nodes._common import job_repository
     from embry0.workflows.issue_to_pr.nodes._verify import _forge_url
 
     # #435: whether a push landed is read from the forge at the URL embry0

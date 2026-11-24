@@ -166,7 +166,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
             "frontier": ["acme/old"],
         }
 
-    async def no_pr_stats(request: Any, pr_url: str | None) -> None:
+    async def no_pr_stats(request: Any, pr_url: str | None, repo: str | None) -> None:
         return None
 
     monkeypatch.setattr(world_api, "_leads", leads)
@@ -425,6 +425,18 @@ async def test_a_dungeon_shows_its_slop_o_meter_reading(app: Any, monkeypatch: p
     }
 
 
+class Repos:
+    """The repository registry: the forge each repository is registered on; GitHub, the default, for any other."""
+
+    def __init__(self, **forges: str) -> None:
+        self.forges = forges
+        self.reads: list[str] = []
+
+    async def forge_or_none(self, repo: str) -> str | None:
+        self.reads.append(repo)
+        return self.forges.get(repo, "github")
+
+
 async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -444,7 +456,7 @@ async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_req
             reads.append(owner)
             started.set()
             await release.wait()
-            return SimpleNamespace(owner=owner)
+            return SimpleNamespace(owner=owner, forge="github")
 
     class Forge:
         async def get(self, path: str, repo: str | None = None) -> Any:
@@ -457,11 +469,12 @@ async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_req
         return Forge()
 
     monkeypatch.setattr(organizations_api, "org_forge_client", forge_client)
-    app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations()))
+    app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos()))
     request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
-    cancelled = asyncio.create_task(world_api._pr_stats(request, "https://github.com/acme/web/pull/1"))
+    cancelled = asyncio.create_task(world_api._pr_stats(request, "https://github.com/acme/web/pull/1", "acme/web"))
     others = [
-        asyncio.create_task(world_api._pr_stats(request, f"https://github.com/acme/web/pull/{n}")) for n in (2, 3)
+        asyncio.create_task(world_api._pr_stats(request, f"https://github.com/acme/web/pull/{n}", "acme/web"))
+        for n in (2, 3)
     ]
     await started.wait()
     await asyncio.sleep(0)
@@ -479,3 +492,79 @@ async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_req
         f"one request read acme's organization, and made its forge client, once for its three pull requests: "
         f"{reads}, {clients}"
     )
+
+
+@pytest.mark.parametrize(
+    ("pr_url", "registered_on"),
+    [
+        ("https://gitlab.com/acme/web/-/merge_requests/7", "gitlab"),
+        ("https://ghe.example.test/acme/web/pull/7", "github"),
+        ("https://github.com/acme/web/pull/7", "gitlab"),
+    ],
+    ids=["gitlab", "github-enterprise", "owner-on-another-forge"],
+)
+async def test_a_pull_request_not_on_github_com_shows_without_its_numbers(
+    monkeypatch: pytest.MonkeyPatch, pr_url: str, registered_on: str
+) -> None:
+    """The scroll's numbers are GitHub's, read with the organization's client (#181): a merge request, a pull request
+    on a host this deployment does not reach, or one whose owner is registered on another forge, makes no client."""
+    from starlette.requests import Request
+
+    from embry0.api.v1 import organizations as organizations_api
+
+    clients: list[str] = []
+
+    class Organizations:
+        async def get(self, owner: str) -> Any:
+            return SimpleNamespace(owner=owner, forge=registered_on)
+
+    async def forge_client(_request: Any, org: Any) -> Any:
+        clients.append(org.owner)
+        raise AssertionError("no forge client is made for this pull request")
+
+    monkeypatch.setattr(organizations_api, "org_forge_client", forge_client)
+    app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos()))
+    request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    assert await world_api._pr_stats(request, pr_url, "acme/web") is None
+    assert clients == []
+
+
+async def test_a_job_s_pull_request_is_read_only_in_the_job_s_own_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pull request address naming another repository than the job's, or the same path on another forge than the
+    one the job's repository is registered on, is not read: no organization, no client."""
+    from starlette.requests import Request
+
+    from embry0.api.v1 import organizations as organizations_api
+
+    reads: list[str] = []
+
+    class Organizations:
+        async def get(self, owner: str) -> Any:
+            reads.append(owner)
+            return SimpleNamespace(owner=owner, forge="github")
+
+    async def forge_client(_request: Any, org: Any) -> Any:
+        raise AssertionError("no forge client is made for another repository's pull request")
+
+    monkeypatch.setattr(organizations_api, "org_forge_client", forge_client)
+    app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos()))
+    request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    assert await world_api._pr_stats(request, "https://github.com/globex/gizmos/pull/5", "acme/web") is None
+    assert await world_api._pr_stats(request, "https://github.com/acme/web/pull/5", None) is None
+    app.state.repos_repo = Repos(**{"acme/web": "gitlab"})
+    assert await world_api._pr_stats(request, "https://github.com/acme/web/pull/5", "acme/web") is None
+    assert reads == []
+
+
+async def test_the_scroll_reads_its_pull_request_in_the_quest_s_repository(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[tuple[str | None, str | None]] = []
+
+    async def pr_stats(_request: Any, pr_url: str | None, repo: str | None) -> None:
+        asked.append((pr_url, repo))
+
+    monkeypatch.setattr(world_api, "_pr_stats", pr_stats)
+    async with await _client(app) as client:
+        assert (await client.get("/api/v1/world/quests/job-1")).status_code == 200
+    assert asked == [("https://github.com/acme/web/pull/7", "acme/web")]

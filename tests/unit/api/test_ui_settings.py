@@ -127,7 +127,7 @@ async def app(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch)
     async def regions(request: Any) -> dict[str, Any]:
         return {"regions": [], "frontier": []}
 
-    async def no_pr_stats(request: Any, pr_url: str | None) -> None:
+    async def no_pr_stats(request: Any, pr_url: str | None, repo: str | None) -> None:
         return None
 
     monkeypatch.setattr(world_api, "_leads", leads)

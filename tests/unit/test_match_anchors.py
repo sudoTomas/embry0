@@ -55,8 +55,6 @@ PARSERS: dict[tuple[str, str], str] = {
     ),
     ("embry0/services/done_when.py", "_BULLET"): "parses one line of an issue body into a bullet's text",
     ("embry0/services/healing/deploys.py", "_MARKER_RE"): "parses a stripped deploy marker line into sha and services",
-    ("embry0/services/healing/forge.py", "_PR_URL"): "parses a stripped pull request URL into owner, repo and number",
-    ("embry0/services/merge_approvals.py", "_PR_URL"): "parses a stripped pull request URL into repo and number",
     ("embry0/services/merge_recommendation.py", "_BOILERPLATE"): (
         "a prefix match: $ ends only one alternative, the others match the start of the text"
     ),

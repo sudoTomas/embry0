@@ -116,8 +116,10 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     async def feed(_request: Any) -> list[Proposal]:
         return offers
 
-    async def pr_stats(_request: Any, pr_url: str | None) -> dict[str, Any] | None:
-        return {"number": 7, "state": "open", "files": 3, "additions": 40, "deletions": 2} if pr_url else None
+    async def pr_stats(_request: Any, pr_url: str | None, repo: str | None) -> dict[str, Any] | None:
+        # Read in the job's own repository only, as _pr_stats reads it.
+        stats = {"number": 7, "state": "open", "files": 3, "additions": 40, "deletions": 2}
+        return stats if pr_url and repo == "acme/web" else None
 
     monkeypatch.setattr(proposals_api, "feed", feed)
     monkeypatch.setattr(world_api, "_pr_stats", pr_stats)
