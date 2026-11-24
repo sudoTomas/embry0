@@ -395,9 +395,11 @@ async def test_the_lifespan_imports_the_variables_and_installs_what_another_proc
     async with lifespan(app):
         assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"], "not imported at the start"
         assert app.state.openrouter_catalog.status()["refresh_hours"] == 12.0
-        # Another process changes the catalogue: this one installs it on its next look.
-        await CatalogueStore(db_with_migrations).save("providers:\n  groq: {enabled: true}\n", actor="other")
+        # Another process changes the catalogue: this one installs it on its next look. This process is put back
+        # on the shipped catalogue first: put back after the write, a look in between installs the write, the reset
+        # undoes it, and the generation no longer moves, so nothing installs it again.
         catalogue.install(None)
+        await CatalogueStore(db_with_migrations).save("providers:\n  groq: {enabled: true}\n", actor="other")
         for _ in range(400):
             if [p.name for p in providers.enabled_openai_compatible()] == ["groq"]:
                 break
