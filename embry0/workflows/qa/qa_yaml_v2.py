@@ -83,7 +83,7 @@ class QAReadyCheck(BaseModel):
             raise ValueError("expect_status list must not be empty")
         for code in codes:
             if not (100 <= code <= 599):
-                raise ValueError(f"expect_status entry {code} out of range 100..599")
+                raise ValueError("expect_status entries must be HTTP status codes, from 100 to 599")
         return v
 
     def status_codes(self) -> list[int]:

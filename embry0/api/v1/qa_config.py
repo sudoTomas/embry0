@@ -36,7 +36,7 @@ from embry0.audit.helpers import emit_audit
 from embry0.services.qa_config_check import check_qa_config
 from embry0.services.shared_build_cache import SharedBuildCacheRefused, keeps_the_shared_cache
 from embry0.storage.repositories.repo_qa_configs import SetupChanged
-from embry0.workflows.qa.qa_yaml_errors import plain_errors
+from embry0.workflows.qa.qa_yaml_errors import answered_errors
 
 router = APIRouter()
 
@@ -89,8 +89,8 @@ async def put_qa_config(full_repo: str, request: Request) -> dict[str, Any]:
     try:
         parse_qa_yaml_v2(text, writing=True)
     except Exception as exc:  # noqa: BLE001
-        detail = "\n".join(plain_errors(exc)) + "\n\nTechnical details:\n" + str(exc)
-        raise HTTPException(status_code=422, detail=detail) from exc
+        # Where and what kind, one sentence each, repeating nothing the text holds (answered_errors).
+        raise HTTPException(status_code=422, detail="\n".join(answered_errors(exc, text))) from exc
     configs_repo = request.app.state.qa_configs_repo
     try:
         row, revision_id = await configs_repo.upsert_recorded(

@@ -26,8 +26,11 @@ retired `apps/<name>/.embry0/app.yaml` tree files).
 > app with no ready check. It answers `{ok, problems, warnings, summary}`.
 > The warnings name what a person should confirm first, such as an address
 > outside the test computer or a missing Docker access grant. A refused
-> `PUT` leads its 422 detail with one plain sentence per error, then
-> `Technical details:` and the schema's own text.
+> `PUT` answers 422 with one plain sentence per error, saying where (the
+> setup's own words, with an app, a package or an `app_local` entry said by
+> its position, such as `app 2`) and what kind of problem it is. It repeats
+> no key, name or value the text holds: a key embry0 does not know is said
+> by the nearest one it does, and a value a check quotes as `'…'`.
 >
 > **Onboarding an existing repo (EMB-50):** `embry0 onboard <owner/repo>`
 > runs the onboarding agent — it analyzes the repo, drafts this document,
