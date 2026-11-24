@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from embry0.storage.database import DatabasePool
@@ -54,8 +55,9 @@ def _row(r: Any) -> UserRow:
 
 
 class UsersRepository:
-    def __init__(self, db: DatabasePool):
+    def __init__(self, db: DatabasePool, *, audit_log_path: str | Path | None = None):
         self._db = db
+        self._audit_log_path = audit_log_path
 
     async def upsert_login(self, *, auth0_sub: str, email: str, name: str, tier: str) -> UserRow:
         """Insert-or-update at login time; returns the fresh row.
@@ -149,15 +151,19 @@ class UsersRepository:
         (:func:`embry0.storage.repositories.people.follow_user_login`). A login another person holds as an
         identity raises a unique violation, as one another user holds does.
         """
-        from embry0.storage.repositories.people import follow_user_login
+        from embry0.storage.repositories.people import Written, append_audit_file, follow_user_login
 
+        written: Written = []
         async with self._db.transaction() as conn:
             old = await conn.fetchval("SELECT github_login FROM users WHERE id = $1 FOR UPDATE", user_id)
             row = await conn.fetchrow(
                 "UPDATE users SET github_login = $2 WHERE id = $1 RETURNING *", user_id, login or None
             )
             if row is not None:
-                await follow_user_login(conn, user_id, old, login or None, actor=actor)
+                await follow_user_login(conn, user_id, old, login or None, actor=actor, into=written)
+                # The person's identities may name another login now (a cleared one falls to their oldest).
+                row = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
+        append_audit_file(written, self._audit_log_path)
         return _row(row) if row else None
 
     async def bump_epoch(self, user_id: str) -> UserRow | None:

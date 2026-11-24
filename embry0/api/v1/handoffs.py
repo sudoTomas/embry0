@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -24,6 +23,7 @@ from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_co
 from embry0.api.session import request_session
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
+from embry0.forge_logins import GITHUB_LOGIN_RE
 from embry0.services.handoffs import notify, view
 
 logger = structlog.get_logger(__name__)
@@ -36,9 +36,6 @@ _SIGNED_IN = ("operator", "admin")
 def _can_be_sent(tier: str, github_login: str | None) -> bool:
     """Someone who signs in, or who is named by a GitHub login: a chat assistant can ask them, signed in or not."""
     return tier in _SIGNED_IN or bool(github_login)
-
-
-_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
 
 def _repo(request: Request, name: str) -> Any:
@@ -85,7 +82,7 @@ def _checked_login(raw: str) -> str | None:
     login = raw.strip().removeprefix("@")
     if not login:
         return None
-    if not _LOGIN.fullmatch(login):
+    if not GITHUB_LOGIN_RE.fullmatch(login):
         raise HTTPException(status_code=422, detail="not a GitHub login")
     return login
 
@@ -94,8 +91,12 @@ async def set_login(request: Request, user_id: str, raw: str) -> dict[str, Any]:
     """Names (or, empty, clears) a person's GitHub login: 422 for a malformed one, 409 for one held by someone else."""
     users = _repo(request, "users_repo")
     login = _checked_login(raw)
+    from embry0.services.people import PersonInvalid
+
     try:
         row = await users.set_github_login(user_id, login, actor=request_actor(request))
+    except PersonInvalid as exc:  # the login the user's person would get (#179): GITHUB_LOGIN_RE checks it first
+        raise HTTPException(status_code=422, detail=f"not a GitHub login: {exc.problem}") from exc
     except Exception as exc:  # the unique index: another person holds that login
         if "uq_users_github_login_lower" in str(exc) or "unique" in str(exc).lower():
             raise HTTPException(status_code=409, detail=f"{login} is already someone else's") from exc

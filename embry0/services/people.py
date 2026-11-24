@@ -20,6 +20,7 @@ import unicodedata
 from collections.abc import Mapping
 from typing import Any, Final, Literal, get_args
 
+from embry0.forge_logins import GITHUB_LOGIN_RE, GITLAB_LOGIN_RE
 from embry0.settings.sections.asks import check_timezone, parse_hours, parse_weekdays
 
 ForgeKind = Literal["github", "gitlab"]
@@ -37,10 +38,6 @@ MAX_IDENTITY: Final = 255
 FIELDS: Final = ("name", "email", "user_id", "timezone", "hours", "weekdays", "disabled")
 OPTIONAL: Final = frozenset({"email", "user_id", "timezone", "hours", "weekdays"})
 
-#: A GitHub login: letters, digits and single hyphens, at most 39 characters, as GitHub allows.
-_GITHUB: Final = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}", re.ASCII)
-#: A GitLab username: letters, digits, underscores, dots and hyphens, starting with a letter, digit or underscore.
-_GITLAB: Final = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}", re.ASCII)
 _EMAIL: Final = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
@@ -92,7 +89,7 @@ def check_identity(kind: Any, value: Any) -> tuple[str, str]:
     text = value.strip()
     if kind in FORGE_KINDS:
         text = text.removeprefix("@")
-        grammar = _GITHUB if kind == "github" else _GITLAB
+        grammar = GITHUB_LOGIN_RE if kind == "github" else GITLAB_LOGIN_RE
         if not grammar.fullmatch(text):
             raise PersonInvalid("value", f"not a {kind} login")
         return kind, text

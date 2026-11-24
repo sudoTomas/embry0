@@ -23,6 +23,7 @@ import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -80,11 +81,30 @@ def _conflict(exc: asyncpg.UniqueViolationError) -> PersonConflict:
 _NO_USER = PersonInvalid("user_id", "no such user")
 
 
-async def _audit(conn: Any, action: AuditAction, *, actor: str, details: dict[str, Any]) -> None:
-    """The write's audit row, on its connection: it commits with the write or not at all."""
+#: The audit events a transaction wrote, to append to the audit file once it commits.
+Written = list[tuple[AuditAction, str, dict[str, Any]]]
+
+
+async def _audit(conn: Any, action: AuditAction, *, actor: str, details: dict[str, Any], into: Written) -> None:
+    """The write's audit row, on its connection: it commits with the write or not at all. The event is kept in
+    ``into`` for the audit file, written once the transaction commits (:func:`append_audit_file`)."""
     await conn.execute(
         "INSERT INTO audit_log (action, actor, details) VALUES ($1, $2, $3)", action, actor or "system", details
     )
+    into.append((action, actor or "system", details))
+
+
+def append_audit_file(written: Written, audit_log_path: str | Path | None) -> None:
+    """The events a committed transaction wrote, appended to the audit file (and logged), as ``emit_audit`` does
+    for every other audited write."""
+    for action, actor, details in written:
+        _append_one(action, actor, details, audit_log_path)
+
+
+def _append_one(action: AuditAction, actor: str, details: dict[str, Any], audit_log_path: str | Path | None) -> None:
+    from embry0.audit.logger import emit_audit_event
+
+    emit_audit_event(action, actor=actor, details=details, audit_log_path=audit_log_path)
 
 
 def _identities(rows: Iterable[Any]) -> dict[str, tuple[Identity, ...]]:
@@ -136,51 +156,70 @@ async def sync_user_login(conn: Any, person_id: str) -> None:
     await conn.execute("UPDATE users SET github_login = $2 WHERE id = $1", user_id, logins[0] if logins else None)
 
 
-async def follow_user_login(conn: Any, user_id: str, old: str | None, new: str | None, *, actor: str) -> None:
-    """A user's GitHub login changed from ``old`` to ``new``, on ``conn`` in the change's transaction: the person
-    linked to the user, if any, gets ``new`` as a ``github`` identity in place of ``old`` (#179, for one release).
-    A user linked to no person is left so: embry0 makes a person only when someone adds one."""
+async def follow_user_login(
+    conn: Any, user_id: str, old: str | None, new: str | None, *, actor: str, into: Written
+) -> None:
+    """A user's GitHub login changed from ``old`` to ``new``, on ``conn`` in the change's transaction (#179, for one
+    release): the person linked to the user, if any, follows.
+
+    - ``new`` the person holds already, as another of their GitHub logins: their identities stay as they are.
+    - Otherwise ``new`` takes the place of ``old`` among them (``old`` goes, ``new`` comes); one another person
+      holds raises the unique violation, as one another user holds does.
+    - Then the user's login is one of the person's again (:func:`sync_user_login`): clearing it names their oldest
+      GitHub identity left, if they have one.
+
+    A user linked to no person is left so: embry0 makes a person only when someone adds one.
+    """
     person_id = await conn.fetchval("SELECT id FROM people WHERE user_id = $1", user_id)
     if not person_id or (old or "").lower() == (new or "").lower():
         return
-    if old:
-        removed = await conn.fetchval(
-            "DELETE FROM person_identities WHERE person_id = $1 AND kind = 'github' AND LOWER(value) = LOWER($2) "
-            "RETURNING value",
-            person_id,
-            old,
-        )
-        if removed:
-            await _audit(
-                conn,
-                "person.identity.removed",
-                actor=actor,
-                details={"person_id": person_id, "kind": "github", "value": removed, "source": "users.github_login"},
-            )
-    if new:
-        _, login = check_identity("github", new)
+    login = check_identity("github", new)[1] if new else None
+    holder = None
+    if login:
         holder = await conn.fetchval(
             "SELECT person_id FROM person_identities WHERE kind = 'github' AND LOWER(value) = LOWER($1)", login
         )
-        if holder == person_id:
-            return  # the person's already: one of their other GitHub logins
-        # Another person's raises the unique violation, as another user's does: the login is someone else's.
-        await conn.execute(
-            "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, 'github', $2)", person_id, login
-        )
-        await _audit(
-            conn,
-            "person.identity.added",
-            actor=actor,
-            details={"person_id": person_id, "kind": "github", "value": login, "source": "users.github_login"},
-        )
+    if holder != person_id:
+        if old:
+            removed = await conn.fetchval(
+                "DELETE FROM person_identities WHERE person_id = $1 AND kind = 'github' AND LOWER(value) = LOWER($2) "
+                "RETURNING value",
+                person_id,
+                old,
+            )
+            if removed:
+                await _audit(
+                    conn,
+                    "person.identity.removed",
+                    actor=actor,
+                    details={
+                        "person_id": person_id,
+                        "kind": "github",
+                        "value": removed,
+                        "source": "users.github_login",
+                    },
+                    into=into,
+                )
+        if login:
+            await conn.execute(
+                "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, 'github', $2)", person_id, login
+            )
+            await _audit(
+                conn,
+                "person.identity.added",
+                actor=actor,
+                details={"person_id": person_id, "kind": "github", "value": login, "source": "users.github_login"},
+                into=into,
+            )
+    await sync_user_login(conn, person_id)
 
 
 class PeopleRepository:
     """Reads and writes ``people`` and ``person_identities``."""
 
-    def __init__(self, db: DatabasePool) -> None:
+    def __init__(self, db: DatabasePool, *, audit_log_path: str | Path | None = None) -> None:
         self._db = db
+        self._audit_log_path = audit_log_path
 
     async def get(self, person_id: str) -> Person | None:
         async with self._db.transaction() as conn:
@@ -202,8 +241,12 @@ class PeopleRepository:
         return found[0] if found else None
 
     async def by_identity(self, kind: str, value: str) -> Person | None:
-        """The person whose identity ``kind`` is ``value``, compared as stored: without regard to case."""
-        kind, value = check_identity(kind, value)
+        """The person whose identity ``kind`` is ``value``, compared as stored: without regard to case. None for a value
+        no identity of the kind can be, such as a login GitHub would not take: nobody holds it."""
+        try:
+            kind, value = check_identity(kind, value)
+        except PersonInvalid:
+            return None
         async with self._db.transaction() as conn:
             found = await _read(
                 conn,
@@ -222,6 +265,7 @@ class PeopleRepository:
             raise PersonInvalid("name", "give a name")
         checked = [check_identity(kind, value) for kind, value in identities]
         person_id = f"per-{uuid.uuid4().hex[:12]}"
+        written: Written = []
         try:
             async with self._db.transaction() as conn:
                 await conn.execute(
@@ -254,12 +298,14 @@ class PeopleRepository:
                         "fields": {key: value for key, value in values.items() if value is not None},
                         "identities": [{"kind": kind, "value": value} for kind, value in checked],
                     },
+                    into=written,
                 )
                 person = await _one(conn, person_id)
         except asyncpg.UniqueViolationError as exc:
             raise _conflict(exc) from None
         except asyncpg.ForeignKeyViolationError:
             raise _NO_USER from None
+        append_audit_file(written, self._audit_log_path)
         assert person is not None
         return person
 
@@ -268,6 +314,7 @@ class PeopleRepository:
         each field's value before and after. None when there is no such person; a write that changes nothing writes
         no audit row."""
         values = check_fields(fields)
+        written: Written = []
         try:
             async with self._db.transaction() as conn:
                 before = await conn.fetchrow(f"SELECT {_COLUMNS} FROM people WHERE id = $1 FOR UPDATE", person_id)
@@ -289,16 +336,20 @@ class PeopleRepository:
                             "person_id": person_id,
                             "changed": {key: [before[key], value] for key, value in changed.items()},
                         },
+                        into=written,
                     )
-                return await _one(conn, person_id)
+                person = await _one(conn, person_id)
         except asyncpg.UniqueViolationError as exc:
             raise _conflict(exc) from None
         except asyncpg.ForeignKeyViolationError:
             raise _NO_USER from None
+        append_audit_file(written, self._audit_log_path)
+        return person
 
     async def delete(self, person_id: str, *, actor: str) -> bool:
         """Delete the person and their identities, audited as ``person.deleted``. False when there is none. A user
         they were linked to keeps their GitHub login."""
+        written: Written = []
         async with self._db.transaction() as conn:
             before = await _one(conn, person_id)
             if before is None:
@@ -314,13 +365,16 @@ class PeopleRepository:
                     "user_id": before.user_id,
                     "identities": [{"kind": i.kind, "value": i.value} for i in before.identities],
                 },
+                into=written,
             )
+        append_audit_file(written, self._audit_log_path)
         return True
 
     async def add_identity(self, person_id: str, kind: str, value: str, *, actor: str) -> Person | None:
         """Give the person an identity, audited as ``person.identity.added``; None when there is no such person.
         :class:`PersonConflict` when another person holds it."""
         kind, value = check_identity(kind, value)
+        written: Written = []
         try:
             async with self._db.transaction() as conn:
                 if await conn.fetchval("SELECT 1 FROM people WHERE id = $1 FOR UPDATE", person_id) is None:
@@ -336,15 +390,22 @@ class PeopleRepository:
                     "person.identity.added",
                     actor=actor,
                     details={"person_id": person_id, "kind": kind, "value": value},
+                    into=written,
                 )
-                return await _one(conn, person_id)
+                person = await _one(conn, person_id)
         except asyncpg.UniqueViolationError as exc:
             raise _conflict(exc) from None
+        append_audit_file(written, self._audit_log_path)
+        return person
 
     async def remove_identity(self, person_id: str, kind: str, value: str, *, actor: str) -> Person | None:
         """Take an identity from the person, audited as ``person.identity.removed``; None when the person has no
-        such identity."""
-        kind, value = check_identity(kind, value)
+        such identity, as for a value no identity of the kind can be."""
+        try:
+            kind, value = check_identity(kind, value)
+        except PersonInvalid:
+            return None
+        written: Written = []
         try:
             async with self._db.transaction() as conn:
                 removed = await conn.fetchval(
@@ -364,7 +425,10 @@ class PeopleRepository:
                     "person.identity.removed",
                     actor=actor,
                     details={"person_id": person_id, "kind": kind, "value": removed},
+                    into=written,
                 )
-                return await _one(conn, person_id)
+                person = await _one(conn, person_id)
         except asyncpg.UniqueViolationError as exc:
             raise _conflict(exc) from None
+        append_audit_file(written, self._audit_log_path)
+        return person

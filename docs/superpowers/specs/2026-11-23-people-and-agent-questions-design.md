@@ -1,7 +1,8 @@
 # People and agent questions in the database (#179)
 
 Status: decided (2026-11-23, section 2). Pull request 1 built the `agent_questions` section (section 6); pull
-request 2 builds the people tables and their repository (section 3); the rest follow (section 7). Refs #159, #161, #175, #179. Line numbers are at `67b9580e`.
+request 2 builds the people tables and their repository (section 3); the rest follow (section 7). Refs #159, #161,
+#175, #179. Line numbers are at `67b9580e`.
 
 ## 1. Why
 
@@ -87,8 +88,22 @@ person_identities
 
 - **Deployment-wide.** People are deployment-wide, as `users` is: a person may own repositories of several
   organizations, and is one person in each.
-- **Values.** A forge login follows its forge's grammar, stored without an `@`; a chat id is one word of plain text.
-  Every check names its field and never repeats the value (`embry0/services/people.py`).
+- **Values.** A forge login follows its forge's grammar (`embry0/forge_logins.py`), stored without an `@`; a chat id
+  is one word of plain text. Every check names its field and never repeats the value (`embry0/services/people.py`).
+  A lookup or removal of a value no identity of its kind can be finds nobody.
+- **One GitHub login rule.** `forge_logins.GITHUB_LOGIN_RE`, GitHub's own (letters, digits and single hyphens, not
+  at either end, at most 39), checks a repository's and an area's owners, a person's `github` identity and, from
+  this pull request, a user's login (`PUT /me/github-login`, `PUT /users/{id}/github-login`), which took a trailing
+  hyphen or two hyphens running before. A login GitHub would not take matches no owner, so nothing it matched is
+  lost; the route answers 422 for it.
+- **The backfill stores only what the repository reads back.**
+  - A name is cleaned of every character the name check refuses (control, format and private-use characters, a
+    line or paragraph separator), trimmed of blanks and cut at 200; an empty one is the email.
+  - A login that is not a GitHub login becomes no identity: it stays on the user, matching what it matched before,
+    is listed in the person's `person.created` row (`left_off`, with why) and counted in a migration warning.
+  - An email or a login that only blanks or case set apart from another user's (the old indexes compare them
+    untrimmed) goes to the user whose stored value is trimmed already, then the enabled one, then the oldest; the
+    others are left off, the logins listed as above.
 - **Hours.** A person's hours are read where the asks loop reads an organization's today. Unset fields fall back
   field by field (D3), and the grammar and validation are the asks section's, so a value moves between the two
   unchanged.
@@ -97,10 +112,14 @@ person_identities
 - **The GitHub login, for one release.** `users.github_login` stays what owners are matched by until section 4
   lands. While a person is linked to a user, the user's login is one of the person's `github` identities: the one it
   names while it still is one, else the oldest, else none. A change of the person's GitHub identities or of their
-  link writes it, and setting a user's login (`PUT /me/github-login`, `PUT /users/{id}/github-login`) moves the
-  linked person's identity, in the same transaction. Unlinking or deleting a person leaves the user's login. The
-  release after section 4 drops the column and this sync.
-- **Audit.** Every write of a person or an identity is audited in its own transaction, who and what changed:
+  link writes it, in the same transaction. Setting a user's login (`PUT /me/github-login`,
+  `PUT /users/{id}/github-login`) moves the linked person's identity: a login the person holds already leaves their
+  identities as they are, any other takes the place of the one the user had, and a cleared login falls to the
+  person's oldest GitHub identity left. Unlinking or deleting a person leaves the user's login, so linking the
+  person to another user is refused while the first still holds it. The release after section 4 drops the column
+  and this sync.
+- **Audit.** Every write of a person or an identity is audited in its own transaction, and appended to the audit
+  file once it commits, as every audited write is; who and what changed:
   `person.created`, `person.updated` (each field before and after), `person.deleted`, `person.identity.added` and
   `person.identity.removed`. A write whose audit row cannot be stored does not happen. The backfill audits each
   person it makes as `embry0:migration`.

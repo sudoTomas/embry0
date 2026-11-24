@@ -61,6 +61,8 @@ async def test_a_person_is_written_read_and_found_by_any_case(db_with_migrations
     assert (await people.by_identity("github", "ada-l")) == ada, "an identity is found whatever its case"
     assert (await people.by_email("ADA@example.COM")) == ada, "an email is found whatever its case"
     assert await people.get(ada.id) == ada and await people.by_identity("gitlab", "ada-l") is None
+    assert await people.by_identity("github", "ada-l-") is None, "a login no person can hold is nobody's, not an error"
+    assert await people.remove_identity(ada.id, "github", "ada--l", actor="t") is None
     assert await _audits(db_with_migrations) == [
         (
             "person.created",
@@ -192,23 +194,88 @@ async def test_setting_a_users_login_moves_their_persons_identity(db_with_migrat
     assert await people.by_identity("github", "cy") is None, "a user linked to no person is not made one"
 
 
-async def test_a_users_login_kept_is_the_one_it_names_and_a_login_of_the_persons_own_is_no_conflict(
+async def test_a_login_the_person_holds_keeps_both_and_a_cleared_one_falls_to_the_oldest(
     db_with_migrations: DatabasePool,
 ) -> None:
+    """#672 review: setting a user's login to another the person holds dropped the first; clearing it left the user
+    no login while the person held another."""
     db = db_with_migrations
     people, users = PeopleRepository(db), UsersRepository(db)
     user = await _user(db, "ada@example.com")
     ada = await people.create(
-        {"name": "Ada", "user_id": user}, identities=[("github", "ada-a"), ("github", "ada-c")], actor="t"
+        {"name": "Ada", "user_id": user}, identities=[("github", "ada-a"), ("github", "ada-b")], actor="t"
     )
     assert await _login(db, user) == "ada-a", "linked with two logins: the oldest"
-    await users.set_github_login(user, "ADA-C", actor="t")
-    moved = await people.get(ada.id)
-    assert moved is not None and [i.value for i in moved.identities] == ["ada-c"], (
-        f"a login the person holds already is theirs, no conflict, and the one it replaced goes: {moved}"
+    answered = await users.set_github_login(user, "ADA-B", actor="t")
+    kept = await people.get(ada.id)
+    assert kept is not None and [i.value for i in kept.identities] == ["ada-a", "ada-b"], (
+        f"a login the person holds already must not cost them the other: {kept}"
     )
-    await people.add_identity(ada.id, "github", "ada-b", actor="t")
-    await people.add_identity(ada.id, "github", "ada-d", actor="t")
-    await users.set_github_login(user, "ada-d", actor="t")
-    await people.add_identity(ada.id, "github", "ada-e", actor="t")
-    assert await _login(db, user) == "ada-d", "the login the user names stays while it is the person's, oldest or not"
+    assert answered is not None and answered.github_login == "ADA-B"
+    await people.add_identity(ada.id, "github", "ada-c", actor="t")
+    assert await _login(db, user) == "ADA-B", "the login the user names stays while it is the person's, oldest or not"
+    cleared = await users.set_github_login(user, None, actor="t")
+    after = await people.get(ada.id)
+    assert after is not None and [i.value for i in after.identities] == ["ada-a", "ada-c"]
+    assert cleared is not None and cleared.github_login == "ada-a" == await _login(db, user), (
+        f"a cleared login falls to the person's oldest left, and the answer says so: {cleared}"
+    )
+
+
+async def test_every_write_is_appended_to_the_audit_file_once_it_commits(
+    db_with_migrations: DatabasePool, tmp_path: Any
+) -> None:
+    """#672 review: the writes were audited in the database and never in the file emit_audit also writes."""
+    import json
+
+    path = tmp_path / "audit.jsonl"
+    db = db_with_migrations
+    try:
+        people, users = PeopleRepository(db, audit_log_path=path), UsersRepository(db, audit_log_path=path)
+    except TypeError:
+        pytest.fail("the people and users repositories write no audit file")
+    user = await _user(db, "ada@example.com")
+    ada = await people.create({"name": "Ada", "user_id": user}, identities=[("github", "ada-a")], actor="alex")
+    with pytest.raises(PersonConflict):
+        await people.create({"name": "Bo"}, identities=[("github", "ADA-A")], actor="alex")
+    await people.update(ada.id, {"name": "Ada L"}, actor="alex")
+    await users.set_github_login(user, "ada-z", actor="alex")
+    await people.delete(ada.id, actor="alex")
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [(e["action"], e["actor"]) for e in lines] == [
+        ("person.created", "alex"),
+        ("person.updated", "alex"),
+        ("person.identity.removed", "alex"),
+        ("person.identity.added", "alex"),
+        ("person.deleted", "alex"),
+    ], f"each committed write, and nothing of a refused one, is in the file: {lines}"
+    assert lines[0]["details"]["person_id"] == ada.id
+
+
+async def test_the_login_routes_refuse_what_github_refuses_and_a_person_error_is_a_422(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#672 review: the routes took ``abc-`` and ``ab--cd``, which the person's identity check refused inside the
+    transaction, a 500 for a linked user; one rule (``forge_logins``) refuses them both everywhere."""
+    from tests.fixtures.repository_writes import MASTER, call, repository_writes_app
+
+    async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
+        linked = await _user(app.state.db, "ada@example.com")
+        alone = await _user(app.state.db, "bo@example.com")
+        await PeopleRepository(app.state.db).create({"name": "Ada", "user_id": linked}, actor="t")
+        answers = {
+            (who, login): (await call(app, "PUT", f"/api/v1/users/{user}/github-login", MASTER, {"login": login}))
+            for who, user in (("linked", linked), ("alone", alone))
+            for login in ("abc-", "ab--cd")
+        }
+        assert {key: r.status_code for key, r in answers.items()} == dict.fromkeys(answers, 422), {
+            key: (r.status_code, r.text[:80]) for key, r in answers.items()
+        }
+        from embry0.services.people import PersonInvalid
+
+        async def refuses(*args: Any, **kwargs: Any) -> Any:
+            raise PersonInvalid("value", "not a github login")
+
+        monkeypatch.setattr(app.state.users_repo, "set_github_login", refuses)
+        refused = await call(app, "PUT", f"/api/v1/users/{linked}/github-login", MASTER, {"login": "ada"})
+        assert refused.status_code == 422, f"a person's refusal is the caller's 422, not a 500: {refused.text}"
