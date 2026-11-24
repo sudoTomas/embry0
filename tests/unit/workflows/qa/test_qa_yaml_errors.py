@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from embry0.workflows.qa.qa_yaml_errors import plain_errors
@@ -79,12 +81,18 @@ def test_an_error_that_is_not_from_the_schema_keeps_its_message():
 # ---- answered_errors: what the API answers a refused write with ------------------------------------------------
 
 
-def _answered(text: str) -> list[str]:
-    from embry0.workflows.qa.qa_yaml_errors import answered_errors
+def _answering() -> Any:
+    from embry0.workflows.qa import qa_yaml_errors
 
+    answer = getattr(qa_yaml_errors, "answered_errors", None)
+    assert answer is not None, "the API answers a refused setup with its own sentences, not the repair prompts'"
+    return answer
+
+
+def _answered(text: str) -> list[str]:
     with pytest.raises(Exception) as caught:
         parse_qa_yaml_v2(text, writing=True)
-    return answered_errors(caught.value, text)
+    return _answering()(caught.value, text)
 
 
 def test_the_repair_sentences_still_name_what_the_setup_holds():
@@ -120,7 +128,9 @@ def test_an_answer_says_an_app_a_package_and_an_app_local_entry_by_position():
 def test_a_check_s_message_keeps_its_own_words_and_says_what_it_quotes_as_an_ellipsis(text: str, said: str):
     from embry0.workflows.qa import qa_yaml_errors
 
-    assert qa_yaml_errors._masked(text) == said  # noqa: SLF001
+    masked = getattr(qa_yaml_errors, "_masked", None)
+    assert masked is not None, "a check's message is answered with what it quotes said as an ellipsis"
+    assert masked(text) == said
 
 
 def test_the_schema_s_own_options_stay_named():
@@ -130,7 +140,5 @@ def test_the_schema_s_own_options_stay_named():
 
 
 def test_text_that_is_not_a_setup_is_answered_without_repeating_it():
-    from embry0.workflows.qa.qa_yaml_errors import answered_errors
-
-    assert answered_errors(ValueError("a 'zz-name' went wrong"), "") == ["a '…' went wrong"]
+    assert _answering()(ValueError("a 'zz-name' went wrong"), "") == ["a '…' went wrong"]
     assert _answered("- zz-item\n") == ["qa.yaml must be a YAML mapping at the top level"]

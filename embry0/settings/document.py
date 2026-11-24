@@ -19,7 +19,6 @@ import datetime as _dt
 import difflib
 import json
 import math
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -42,7 +41,8 @@ from embry0.settings.registry import (
 )
 from embry0.settings.scope import LAYER_NOUNS
 from embry0.text_documents import NO_NEWLINE as NO_NEWLINE  # re-exported: the settings tests and API name it here
-from embry0.text_documents import DuplicateKey, load_json, structure_problems
+from embry0.text_documents import YAML_TOKEN_IDS as YAML_TOKEN_IDS  # re-exported: a test pins it to PyYAML's
+from embry0.text_documents import DuplicateKey, load_json, structure_problems, yaml_problem_text
 from embry0.text_documents import text_diff as shared_text_diff
 
 logger = structlog.get_logger(__name__)
@@ -102,59 +102,8 @@ class DocumentTooLarge(ValueError):
 # ---- parsing ----------------------------------------------------------------
 
 
-#: Text PyYAML quotes in a message: a tag, an alias or a token as written, or one character. It quotes with
-#: ``repr``, so in single quotes, or in double quotes when the text holds a single one.
-_QUOTED: Final = re.compile(r"'((?:\\.|[^'\\])*)'" r'|"((?:\\.|[^"\\])*)"')
-#: PyYAML's names for its own tokens, as its parser quotes them ("expected <block end>, but found '<scalar>'"):
-#: fixed by the library, never text the operator wrote, so a message keeps them.
-YAML_TOKEN_IDS: Final = frozenset(
-    {
-        "<stream start>",
-        "<stream end>",
-        "<directive>",
-        "<document start>",
-        "<document end>",
-        "<block sequence start>",
-        "<block mapping start>",
-        "<block end>",
-        "<alias>",
-        "<anchor>",
-        "<tag>",
-        "<scalar>",
-        "[",
-        "]",
-        "{",
-        "}",
-        "?",
-        ":",
-        "-",
-        ",",
-    }
-)
-
-
-def _unquoted(text: str) -> str:
-    """``text`` with each quoted part said as ``'…'``, unless it is one character (``\\t`` counts as one) or one
-    of PyYAML's token names: PyYAML quotes tags and alias names as written, at any length, and a 422 repeats
-    nothing written.
-
-    By design, a tag written as exactly one character, or exactly one of the 20 token names (a verbatim
-    ``!<%3Cscalar%3E>`` reads ``<scalar>``), comes back as itself: it says nothing the operator wrote that the
-    message does not already say. A tag that merely holds one (``<block end>`` and more) is said as ``'…'``."""
-
-    def one(match: re.Match[str]) -> str:
-        inner = match[1] if match[1] is not None else match[2]
-        single = len(inner) == 1 or (len(inner) == 2 and inner[0] == "\\")
-        return match[0] if single or inner in YAML_TOKEN_IDS else "'…'"
-
-    return _QUOTED.sub(one, text)
-
-
 def _yaml_problem(exc: yaml.YAMLError) -> Problem:
-    mark = getattr(exc, "problem_mark", None)
-    where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
-    problem = getattr(exc, "problem", None) or str(exc)
-    return Problem((), "yaml_syntax", f"The YAML cannot be read: {where}{_unquoted(problem)}")
+    return Problem((), "yaml_syntax", f"The YAML cannot be read: {yaml_problem_text(exc)}")
 
 
 _TOO_DEEP: Final = Problem((), "too_deep", "The document is nested too deeply.")

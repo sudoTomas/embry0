@@ -96,7 +96,7 @@ def _edit(change: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
 
 
 BAD: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
-    ("an unknown key", lambda d: d.update(colour="red"), "colour: Extra inputs are not permitted"),
+    ("an unknown key", lambda d: d.update(colour="red"), "no such key here; the keys here are version, timezone,"),
     ("a wrong type", lambda d: d["curve"].update(max_level="99"), "curve.max_level: Input should be a valid integer"),
     (
         "a value out of range",
@@ -123,7 +123,7 @@ BAD: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
     (
         "an unknown action kind",
         lambda d: d["rates"]["actions"].update(dance=5),
-        "rates.actions.dance: not an action kind; one of:",
+        "rates.actions: a key here is not an action kind; one of:",
     ),
     (
         "an outcome in no skill",
@@ -169,7 +169,7 @@ BAD: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
     (
         "a parameter the metric does not take",
         lambda d: d["achievements"][3]["params"].update(colour=1),
-        "achievements[3].params.colour: Extra inputs are not permitted",
+        "achievements[3].params: no such key here; the keys here are max_usd",
     ),
     (
         "a parameter missing",
@@ -262,15 +262,16 @@ ECHOED = (
     "rocket",
     "legend",
     "size",
+    "colour",
 )
 
 
 @pytest.mark.parametrize(("change", "expected"), [(c, e) for _, c, e in BAD], ids=[name for name, _, _ in BAD])
 def test_a_problem_never_echoes_what_was_written(change: Callable[[dict[str, Any]], None], expected: str) -> None:
-    """#160's rule: a message says what is wrong, never repeats the value (it may be large, or not text)."""
+    """#160's rule: a problem says where and what is wrong, never repeats the value (it may be large, or not text)
+    or a key the author wrote, in its message or its place."""
     for problem in _problems(_edit(change)):
-        message = problem.split(": ", 1)[1]
-        assert not any(value in message for value in ECHOED), f"the message repeats the value: {problem}"
+        assert not any(value in problem for value in ECHOED), f"the problem repeats what was written: {problem}"
 
 
 def test_every_problem_is_reported_at_once() -> None:
@@ -514,3 +515,44 @@ def test_check_prints_the_warnings_of_a_valid_pack(tmp_path: Path, capsys: pytes
     assert "warning: shell:plain trains no skill" in capsys.readouterr().err, (
         "--check prints what a valid pack leaves out"
     )
+
+
+#: What an author wrote as a key, a tag or an alias name: no problem's place or message may repeat it.
+_WRITTEN = "zz-written"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"timezone: !{_WRITTEN} UTC\n",
+        f"timezone: !{_WRITTEN}'x UTC\n",
+        f"timezone: !<tag:{_WRITTEN}> UTC\n",
+        f"%TAG !e! tag:{_WRITTEN}:\n---\ntimezone: !e!x UTC\n",
+        f"timezone: *{_WRITTEN}\n",
+    ],
+    ids=["tag", "tag with a quote", "verbatim tag", "expanded tag", "undefined alias"],
+)
+def test_a_yaml_problem_repeats_no_tag_or_alias_the_author_wrote(text: str) -> None:
+    with pytest.raises(PackInvalid) as refused:
+        load_text(text)
+    said = [str(p) for p in refused.value.problems]
+    assert said and not any(_WRITTEN in s for s in said), f"a problem repeats what was written: {said}"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda d: d.update({_WRITTEN: 1}),
+        lambda d: d["curve"].update({_WRITTEN: 1}),
+        lambda d: d["rates"]["actions"].update({_WRITTEN: 1, f"{_WRITTEN}-2": 2}),
+        lambda d: d["achievements"][3]["params"].update({_WRITTEN: 1}),
+        lambda d: d["rates"]["actions"].update({_WRITTEN: -1}),
+    ],
+    ids=["top", "a section", "an action kind", "a parameter", "a value under a key the author names"],
+)
+def test_a_key_the_pack_does_not_take_is_placed_at_its_mapping_and_not_named(
+    change: Callable[[dict[str, Any]], None],
+) -> None:
+    problems = _problems(_edit(change))
+    assert len(problems) == 1, f"one problem at the mapping, however many keys: {problems}"
+    assert _WRITTEN not in problems[0], f"the problem names the key written: {problems}"

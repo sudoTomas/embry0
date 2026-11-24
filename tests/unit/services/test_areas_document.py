@@ -56,7 +56,9 @@ def test_an_empty_document_names_no_areas(text: str) -> None:
     assert check(load_yaml(text)) == {"areas": []}
 
 
-def test_every_problem_is_named_at_its_key_at_once_and_no_value_is_echoed() -> None:
+def test_every_problem_is_placed_at_once_and_no_value_or_written_key_is_echoed() -> None:
+    """Each problem at its key, but a key the document does not take at the mapping that holds it: the key is
+    what the operator wrote, and the message says the keys there are, with the nearest."""
     text = """
 versoin: 1
 areas:
@@ -74,9 +76,9 @@ areas:
     found = _problems(text)
     locs = [(".".join(map(str, p["loc"])), p["type"]) for p in found]
     assert locs == [
-        ("versoin", "extra_forbidden"),
+        ("", "extra_forbidden"),
         ("areas.0.name", "missing"),
-        ("areas.1.teams", "extra_forbidden"),
+        ("areas.1", "extra_forbidden"),
         ("areas.1.paths.0", "invalid_glob"),
         ("areas.1.paths.1", "invalid_glob"),
         ("areas.1.paths.2", "invalid_glob"),
@@ -91,8 +93,8 @@ areas:
     ], locs
     assert "Did you mean 'version'?" in found[0]["msg"]
     said = json.dumps(found)
-    for value in ("services/billing**", "octo cat", "payments", "c/[x", "Plain string"):
-        assert value not in said, f"a refused value is echoed: {value}"
+    for value in ("services/billing**", "octo cat", "payments", "c/[x", "Plain string", "versoin", "teams"):
+        assert value not in said, f"a refused value or a key written is echoed: {value}"
 
 
 def test_two_areas_cannot_share_a_label() -> None:
@@ -262,3 +264,51 @@ def test_lookalike_spellings_of_a_name_are_one_area() -> None:
             assert [p.type for p in exc.problems] == ["duplicate_slug"], exc.problems
     data = check(load_yaml("areas:\n  - name: Caf\u00e9\n  - name: Cafe\n"))
     assert [a.slug for a in areas_of(data)] == ["caf\u00e9", "cafe"], "an accent still tells two names apart"
+
+
+#: What an operator wrote as a key, a tag or an alias name: no problem's place or message may repeat it.
+_WRITTEN = "zz-written"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"{_WRITTEN}: 1\nareas: []\n",
+        f"areas:\n  - name: web\n    {_WRITTEN}: 1\n",
+        f"areas: !{_WRITTEN} []\n",
+        f"areas: !{_WRITTEN}'x []\n",
+        f"areas: !<tag:{_WRITTEN}> []\n",
+        f"%TAG !e! tag:{_WRITTEN}:\n---\nareas: !e!x []\n",
+        f"areas: *{_WRITTEN}\n",
+        f"areas: [{{name: web}}]\nareas: [{{name: {_WRITTEN}}}]\n",
+    ],
+    ids=[
+        "unknown top key",
+        "unknown area key",
+        "tag",
+        "tag with a quote",
+        "verbatim tag",
+        "expanded tag",
+        "undefined alias",
+        "key written twice",
+    ],
+)
+def test_no_problem_repeats_a_key_a_tag_or_an_alias_the_operator_wrote(text: str) -> None:
+    with pytest.raises(DocumentInvalid) as raised:
+        check(load_yaml(text))
+    found = [p.to_dict() for p in raised.value.problems]
+    assert found, text
+    assert _WRITTEN not in json.dumps(found), f"a problem repeats what was written: {found}"
+
+
+def test_a_yaml_message_keeps_its_line_column_and_pyyaml_s_token_names() -> None:
+    with pytest.raises(DocumentInvalid) as raised:
+        load_yaml("areas:\n  - name: a\n b: 1\n")
+    assert [p.msg for p in raised.value.problems] == [
+        "The YAML cannot be read: line 3, column 2: expected <block end>, but found '<block mapping start>'"
+    ]
+
+
+def test_two_keys_an_area_does_not_take_are_one_problem_at_the_area() -> None:
+    found = _problems("areas:\n  - name: web\n    zz-one: 1\n    zz-two: 2\n")
+    assert [(p["loc"], p["type"]) for p in found] == [(["areas", 0], "extra_forbidden")], found

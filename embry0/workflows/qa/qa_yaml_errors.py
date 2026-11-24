@@ -15,7 +15,6 @@ value the text holds.
 from __future__ import annotations
 
 import difflib
-import re
 import types
 from collections.abc import Sequence
 from typing import Any, Union, get_args, get_origin
@@ -23,6 +22,7 @@ from typing import Any, Union, get_args, get_origin
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from embry0.text_documents import unquoted
 from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
 
 # Where a problem sits when it is not inside one section of the setup.
@@ -108,8 +108,6 @@ def _answer(err: Any, data: Any) -> str:
 
 #: The error types whose message a check of the setup wrote, which may quote what the text holds.
 _CHECKS_SAY = frozenset({"value_error", "assertion_error"})
-#: Quoted text in a check's message: in single quotes, or double quotes when it holds a single one (``repr``).
-_QUOTED = re.compile(r"'((?:\\.|[^'\\])*)'" r'|"((?:\\.|[^"\\])*)"')
 #: Quoted words a check's message uses of the glob grammar itself, not of what was written.
 _GRAMMAR = frozenset({"..", "**"})
 #: How a place says an entry of a mapping whose keys the setup names, by its position.
@@ -118,13 +116,7 @@ _ENTRY = {"apps": "app", "packages": "package", "app_local": "app_local entry"}
 
 def _masked(text: str) -> str:
     """``text`` with each quoted part said as ``'…'``, unless it is one character or a word of the glob grammar."""
-
-    def one(match: re.Match[str]) -> str:
-        inner = match[1] if match[1] is not None else match[2]
-        single = len(inner) == 1 or (len(inner) == 2 and inner[0] == "\\")
-        return match[0] if single or inner in _GRAMMAR else "'…'"
-
-    return _QUOTED.sub(one, text)
+    return unquoted(text, keep=_GRAMMAR)
 
 
 def _answered_location(loc: Sequence[Any], data: Any) -> str:

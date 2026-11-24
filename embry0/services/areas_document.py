@@ -35,7 +35,7 @@ import yaml
 
 from embry0.forge_logins import GITHUB_LOGIN_RE
 from embry0.services.areas import Area, slug_of
-from embry0.text_documents import DuplicateKey, load_json, structure_problems
+from embry0.text_documents import DuplicateKey, load_json, structure_problems, yaml_problem_text
 from embry0.text_documents import text_diff as shared_text_diff
 from embry0.workflows.qa._glob_match import GlobPatternError, compile_glob
 
@@ -70,11 +70,15 @@ class Problem:
 
 
 class DocumentInvalid(ValueError):
-    """The document has problems; ``problems`` lists every one."""
+    """The document has problems; ``problems`` lists every one, each once. No place or message repeats a key, a
+    tag or an alias name the operator wrote: a key the document does not take is placed at the mapping that
+    holds it and said by the keys that mapping takes, a key written twice by its lines, and a YAML message's
+    quoted text by ``…`` (:func:`embry0.text_documents.unquoted`)."""
 
     def __init__(self, problems: list[Problem]) -> None:
-        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in problems))
-        self.problems = problems
+        said = list(dict.fromkeys(problems))
+        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in said))
+        self.problems = said
 
 
 class DocumentTooLarge(ValueError):
@@ -95,10 +99,7 @@ def problem_list(exc: DocumentInvalid | DocumentTooLarge) -> list[dict[str, Any]
 
 
 def _yaml_problem(exc: yaml.YAMLError) -> Problem:
-    mark = getattr(exc, "problem_mark", None)
-    where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
-    problem = getattr(exc, "problem", None) or "it is not YAML"
-    return Problem((), "yaml_syntax", f"The YAML cannot be read: {where}{problem}")
+    return Problem((), "yaml_syntax", f"The YAML cannot be read: {yaml_problem_text(exc)}")
 
 
 _TOO_DEEP: Final = Problem((), "too_deep", "The document is nested too deeply.")
@@ -176,11 +177,12 @@ def _near(word: str, options: Iterable[str]) -> str:
 
 
 def _unknown(loc: Loc, key: Any, options: Sequence[str], what: str) -> Problem:
+    """A key of the mapping at ``loc`` that it does not take: placed there and said by the keys it takes, with
+    the nearest one, never by the key, which is what the operator wrote."""
     if not isinstance(key, str):
         return Problem(loc, "extra_forbidden", f"A key of {what} must be text.")
-    return Problem(
-        (*loc, key), "extra_forbidden", f"'{key}' is not a key of {what}: {', '.join(options)}.{_near(key, options)}"
-    )
+    takes = f"{what[0].upper()}{what[1:]} takes no such key; its keys are {', '.join(options)}."
+    return Problem(loc, "extra_forbidden", takes + _near(key, options))
 
 
 def glob_problem(pattern: str) -> str | None:

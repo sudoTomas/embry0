@@ -242,7 +242,8 @@ async def test_a_stored_pack_this_release_refuses_falls_back_to_the_default(
         await store.active()
     assert pack_hash(effective.pack) == shipped_default().hash, "a refused stored pack must never be served"
     assert effective.fallback, "the refusal must say why"
-    assert any(p.loc == ("retired_section",) for p in effective.fallback), effective.fallback
+    assert any(p.loc == () and p.type == "extra_forbidden" for p in effective.fallback), effective.fallback
+    assert "retired_section" not in str(effective.fallback), "a key the pack does not take is placed, not named"
     warned = [entry for entry in logs if entry["event"] == "progression_pack_stored_invalid"]
     assert len(warned) == 1, "the fallback is logged once per version, not on every read"
 

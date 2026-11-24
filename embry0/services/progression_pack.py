@@ -29,13 +29,14 @@ import hashlib
 import json
 import math
 import sys
+import types
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cache
 from importlib import resources
 from pathlib import Path
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Protocol, Union, get_args, get_origin
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -43,7 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 from embry0.services import progression_templates as templates
 from embry0.services import progression_vocabulary as vocab
-from embry0.text_documents import structure_problems
+from embry0.text_documents import structure_problems, yaml_problem_text
 
 #: The schema version this release reads and writes.
 SCHEMA_VERSION = 1
@@ -286,15 +287,58 @@ class Problem:
 
 
 class PackInvalid(ValueError):
-    """The document is not a valid pack; ``problems`` says why, every one of them."""
+    """The document is not a valid pack; ``problems`` says why, every one of them, each once. No place or message
+    repeats a key, a tag or an alias name the author wrote: a key the pack does not take is placed at the mapping
+    that holds it and said by the keys there, a key of a mapping whose keys the author names (``rates.actions``)
+    by that mapping, a key written twice by its lines, and a YAML message's quoted text by ``…``."""
 
     def __init__(self, problems: list[Problem]) -> None:
-        self.problems = problems
-        super().__init__("; ".join(str(p) for p in problems[:5]))
+        self.problems = list(dict.fromkeys(problems))
+        super().__init__("; ".join(str(p) for p in self.problems[:5]))
 
 
-def _from_pydantic(error: ValidationError, prefix: tuple[str | int, ...] = ()) -> list[Problem]:
-    return [Problem((*prefix, *e["loc"]), e["type"], e["msg"]) for e in error.errors(include_input=False)]
+def _placed(model: type[BaseModel], loc: tuple[str | int, ...]) -> tuple[tuple[str | int, ...], list[str] | None]:
+    """``loc`` within ``model``, cut where it leaves the model's own words: at a mapping whose keys the author names,
+    or at a key the model at that place does not take, whose keys are returned too (None when not cut there)."""
+    current: Any = model
+    for i, part in enumerate(loc):
+        current = _model_of(current)
+        if isinstance(current, type) and issubclass(current, BaseModel):
+            field = current.model_fields.get(str(part))
+            if field is None:
+                return loc[:i], list(current.model_fields)
+            current = field.annotation
+        elif get_origin(current) in (list, tuple) and isinstance(part, int):
+            args = [a for a in get_args(current) if a is not Ellipsis]
+            current = args[0] if args else Any
+        else:
+            # A mapping whose keys the author names (``rates.actions``, a parameter's values), or a value: cut here.
+            return loc[:i], None
+    return loc, None
+
+
+def _model_of(annotation: Any) -> Any:
+    """``X | None`` as ``X``; anything else unchanged."""
+    if get_origin(annotation) in (Union, types.UnionType):
+        members = [a for a in get_args(annotation) if a is not type(None)]
+        if len(members) == 1:
+            return members[0]
+    return annotation
+
+
+def _from_pydantic(error: ValidationError, model: type[BaseModel], prefix: tuple[str | int, ...] = ()) -> list[Problem]:
+    """Each of ``error``'s problems, placed in the model's own words (:func:`_placed`). pydantic's messages say what
+    the model takes, never the input."""
+    out: list[Problem] = []
+    for e in error.errors(include_input=False):
+        loc, takes = _placed(model, tuple(e["loc"]))
+        if e["type"] == "extra_forbidden" and takes is not None:
+            out.append(
+                Problem((*prefix, *loc), "extra_forbidden", f"no such key here; the keys here are {', '.join(takes)}")
+            )
+        else:
+            out.append(Problem((*prefix, *loc), e["type"], e["msg"]))
+    return out
 
 
 # ---- loading ----
@@ -325,10 +369,7 @@ def _too_deep(data: Any) -> bool:
 
 
 def _yaml_problem(exc: yaml.YAMLError) -> Problem:
-    mark = getattr(exc, "problem_mark", None)
-    where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
-    problem = getattr(exc, "problem", None) or str(exc)
-    return Problem((), "yaml_syntax", f"{where}{problem}")
+    return Problem((), "yaml_syntax", yaml_problem_text(exc))
 
 
 def load_text(text: str) -> Any:
@@ -377,7 +418,7 @@ def parse(data: Any) -> Pack:
     try:
         pack = Pack.model_validate(data)
     except ValidationError as exc:
-        raise PackInvalid(_from_pydantic(exc)) from None
+        raise PackInvalid(_from_pydantic(exc, Pack)) from None
     problems = cross_check(pack)
     if problems:
         raise PackInvalid(problems)
@@ -405,7 +446,7 @@ def _check_params(model: type[vocab.Params], params: dict[str, Any], loc: tuple[
     try:
         model.model_validate(params)
     except ValidationError as exc:
-        return _from_pydantic(exc, loc)
+        return _from_pydantic(exc, model, loc)
     return []
 
 
@@ -466,15 +507,17 @@ def cross_check(pack: Pack) -> list[Problem]:
         problems += _duplicates(getattr(pack, section), section)
     problems += _duplicates(pack.diaries.tiers, "diaries.tiers")
 
-    def known(value: str, names: Any, what: str, loc: tuple[str | int, ...]) -> bool:
+    def known(value: str, names: Any, what: str, loc: tuple[str | int, ...], *, key: bool = False) -> bool:
+        """Whether ``value`` is one of ``names``; a problem at ``loc`` when not. A ``key`` of the mapping at ``loc``
+        is placed at the mapping and not named: the author wrote it."""
         if value in names:
             return True
         listed = ", ".join(sorted(names))
-        problems.append(Problem(loc, "unknown", f"not {what}; one of: {listed}"))
+        problems.append(Problem(loc, "unknown", f"{'a key here is ' if key else ''}not {what}; one of: {listed}"))
         return False
 
     for kind in pack.rates.actions:
-        known(kind, vocab.ACTION_KINDS, "an action kind", ("rates", "actions", kind))
+        known(kind, vocab.ACTION_KINDS, "an action kind", ("rates", "actions"), key=True)
     for i, tier in enumerate(pack.tiers):
         known(tier.gear, vocab.GEAR_STEPS, "a gear step the dashboard draws", ("tiers", i, "gear"))
     for i, rare in enumerate(pack.rares):

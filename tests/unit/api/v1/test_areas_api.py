@@ -92,7 +92,7 @@ async def test_every_problem_is_one_422_naming_each_key(app: Any) -> None:
     assert [(".".join(map(str, d["loc"])), d["type"]) for d in detail] == [
         ("areas.0.paths.0", "invalid_glob"),
         ("areas.0.owners.0", "invalid_login"),
-        ("areas.2.x", "extra_forbidden"),
+        ("areas.2", "extra_forbidden"),
         ("areas.2.name", "missing"),
     ]
     assert "no way" not in json.dumps(detail) and "/web" not in json.dumps(detail)

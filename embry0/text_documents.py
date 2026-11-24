@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 import sys
 from collections import deque
 from collections.abc import Iterable
@@ -45,6 +46,63 @@ Loc = tuple[str | int, ...]
 
 _MERGE_TAG: Final = "tag:yaml.org,2002:merge"
 _INT_TAG: Final = "tag:yaml.org,2002:int"
+
+
+# ---- what a message may quote ------------------------------------------------------------------------------
+
+#: Text a message quotes: PyYAML a tag, an alias or a token as written, a check what it refuses. Both quote with
+#: ``repr``, so in single quotes, or in double quotes when the text holds a single one.
+_QUOTED: Final = re.compile(r"'((?:\\.|[^'\\])*)'" r'|"((?:\\.|[^"\\])*)"')
+#: PyYAML's names for its own tokens, as its parser quotes them ("expected <block end>, but found '<scalar>'"):
+#: fixed by the library, never text the operator wrote, so a message keeps them.
+YAML_TOKEN_IDS: Final = frozenset(
+    {
+        "<stream start>",
+        "<stream end>",
+        "<directive>",
+        "<document start>",
+        "<document end>",
+        "<block sequence start>",
+        "<block mapping start>",
+        "<block end>",
+        "<alias>",
+        "<anchor>",
+        "<tag>",
+        "<scalar>",
+        "[",
+        "]",
+        "{",
+        "}",
+        "?",
+        ":",
+        "-",
+        ",",
+    }
+)
+
+
+def unquoted(text: str, *, keep: frozenset[str] = YAML_TOKEN_IDS) -> str:
+    """``text`` with each quoted part said as ``'…'``, unless it is one character (``\\t`` counts as one) or one
+    of ``keep``, whole (PyYAML's token names, by default): PyYAML quotes tags and alias names as written, at any
+    length, a check what it refuses, and an answer to a write repeats nothing written.
+
+    By design, a tag written as exactly one character, or exactly one of the 20 token names (a verbatim
+    ``!<%3Cscalar%3E>`` reads ``<scalar>``), comes back as itself: it says nothing the operator wrote that the
+    message does not already say. A tag that merely holds one (``<block end>`` and more) is said as ``'…'``."""
+
+    def one(match: re.Match[str]) -> str:
+        inner = match[1] if match[1] is not None else match[2]
+        single = len(inner) == 1 or (len(inner) == 2 and inner[0] == "\\")
+        return match[0] if single or inner in keep else "'…'"
+
+    return _QUOTED.sub(one, text)
+
+
+def yaml_problem_text(exc: yaml.YAMLError) -> str:
+    """Where a YAML error is and what it is, PyYAML's quoted text said as ``'…'``: ``line L, column C: …``."""
+    mark = getattr(exc, "problem_mark", None)
+    where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
+    return where + unquoted(getattr(exc, "problem", None) or str(exc))
 
 
 @dataclass(frozen=True)
