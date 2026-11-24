@@ -24,6 +24,7 @@ from typing import Any
 import httpx
 import structlog
 
+from embry0.execution.pull_requests import PullRequest
 from embry0.orchestration import dispatch_actors
 from embry0.services.healing.recorder import record_case_event
 from embry0.trackers.author_association import check_comment_author, parse_author_roles
@@ -31,14 +32,6 @@ from embry0.trackers.author_association import check_comment_author, parse_autho
 logger = structlog.get_logger(__name__)
 
 _DEDUP_MAX = 512
-
-
-def _from_fork(pr: dict[str, Any], repo: str) -> bool:
-    """Whether the pull request's head branch is another repository's: any head repository other than the base, a
-    deleted one (``head.repo`` null) included, as the reviewer reads it (``pr_review.triggers.pr_from_github``)."""
-    head_repo = str(((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
-    base_repo = str(((pr.get("base") or {}).get("repo") or {}).get("full_name") or "") or repo
-    return not head_repo or head_repo.lower() != base_repo.lower()
 
 
 class CommentDispatchService:
@@ -92,19 +85,27 @@ class CommentDispatchService:
             return False, "duplicate_delivery"
         return True, "ok"
 
-    # ---- github lookups ---------------------------------------------------
+    # ---- forge lookups ----------------------------------------------------
 
-    async def _fetch_pr(self, repo: str, number: int) -> dict[str, Any]:
-        from embry0.execution.github_client import GitHubClient
+    async def _fetch_pr(self, repo: str, number: int, forge: str = "github") -> PullRequest | None:
+        """The pull request on ``forge``, read with the repository's credential as the forge's client resolves it:
+        GitHub's, or the deployment's GitLab (#181)."""
+        from embry0.execution.pull_requests import pull_requests_for
 
-        client = GitHubClient(
-            default_token=getattr(self._config, "github_token", "") or "",
-            http_client=self._http,
-            credential_resolver=self._credential_resolver,
-        )
-        resp = await client.get(f"/repos/{repo}/pulls/{number}", repo=repo)
-        resp.raise_for_status()
-        return dict(resp.json())
+        client: Any
+        if forge == "gitlab":
+            from embry0.execution.gitlab_client import make_gitlab_client
+
+            client = make_gitlab_client(self._config, self._credential_resolver, http_client=self._http)
+        else:
+            from embry0.execution.github_client import GitHubClient
+
+            client = GitHubClient(
+                default_token=getattr(self._config, "github_token", "") or "",
+                http_client=self._http,
+                credential_resolver=self._credential_resolver,
+            )
+        return await pull_requests_for(forge, client).read(repo, number)
 
     async def _first_with_session(self, job_ids: list[str]) -> str | None:
         for job_id in job_ids:
@@ -170,8 +171,11 @@ class CommentDispatchService:
         kind: str,
         asks: str = "the comment",
         pipeline_config: dict[str, Any] | None = None,
+        forge: str = "github",
     ) -> dict[str, Any]:
         """Start a pr-followup job on an open pull request's own branch, adopting the session of the job that opened it.
+
+        ``forge`` is the pull request's: ``github``, or ``gitlab`` for a merge request on the deployment's GitLab.
 
         ``request`` completes "PR follow-up for <repo>#<n> (<url>), ..." with who
         asked and what: a tagged comment, or notes the player sent the work
@@ -180,18 +184,20 @@ class CommentDispatchService:
         each caller has its own gate.
         """
         try:
-            pr = await self._fetch_pr(repo, pr_number)
+            pr = await self._fetch_pr(repo, pr_number, forge)
         except Exception as exc:
             logger.warning("comment_dispatch_pr_fetch_failed", repo=repo, pr=pr_number, error=str(exc))
             return {"dispatched": False, "reason": "pr_fetch_failed"}
-        if pr.get("state") != "open":
+        if pr is None:
+            return {"dispatched": False, "reason": "pr_fetch_failed"}
+        if pr.state != "open":
             return {"dispatched": False, "reason": "pr_not_open"}
-        if _from_fork(pr, repo):
+        if pr.from_fork:
             # Its branch is another repository's: a follow-up here would work, and push, on this repository's branch
             # of the same name.
             return {"dispatched": False, "reason": "pr_from_fork"}
-        head_ref = ((pr.get("head") or {}).get("ref")) or ""
-        pr_url = pr.get("html_url") or ""
+        head_ref = pr.head_ref
+        pr_url = pr.url
         if not head_ref:
             return {"dispatched": False, "reason": "missing_head_ref"}
 

@@ -221,7 +221,17 @@ export interface QuestScroll {
   error_code: string | null;
   error_message: string | null;
   pr_url: string | null;
-  pr: { number: number; state: string; files: number | null; additions: number | null; deletions: number | null; commits: number | null } | null;
+  /** The forge's read of the pull request; `ref` is its number as the forge writes it (`#7`, a merge request's `!7`). */
+  pr: {
+    number: number;
+    forge?: string;
+    ref?: string;
+    state: string;
+    files: number | null;
+    additions: number | null;
+    deletions: number | null;
+    commits: number | null;
+  } | null;
   merge_approval: { id: string; status: string; pr_url: string } | null;
   verification: { verdict: string | null; summary: string | null } | null;
   party: { agent_type: string; runs: number; cost_usd: number; seconds: number; failed: number }[];

@@ -122,7 +122,11 @@ SAFE_TO_REPEAT = {
     ("embry0/services/verification_publish.py", "/labels"): "adding a label the pull request has adds nothing",
     ("embry0/services/leads/reviews.py", "/graphql"): "a GraphQL query, sent as a POST: a read",
     ("embry0/services/github_sync.py", "/issues/"): "a PATCH that sets the issue's fields",
-    ("embry0/api/v1/job_review.py", "/pulls/"): "a PATCH that closes the pull request",
+    ("embry0/execution/pull_requests.py", "/pulls/"): "a PATCH that closes the pull request",
+    (
+        "embry0/execution/pull_requests.py",
+        "self._path(repo, number)",
+    ): "a PUT whose state_event closes the merge request",
     ("embry0/notifications/qa_comment.py", "/issues/comments/"): "a PATCH that sets the comment's body",
 }
 

@@ -65,8 +65,15 @@ class _Forge:
 
 
 def _forge(monkeypatch: pytest.MonkeyPatch) -> _Forge:
+    from embry0.execution.pull_requests import GitHubPullRequests
+
     forge = _Forge()
+
+    async def pull_requests(_request: Any, _org: Any) -> GitHubPullRequests:
+        return GitHubPullRequests(forge)
+
     monkeypatch.setattr(organizations_api, "org_forge_client", forge.client)
+    monkeypatch.setattr(organizations_api, "org_pull_requests", pull_requests)
     return forge
 
 

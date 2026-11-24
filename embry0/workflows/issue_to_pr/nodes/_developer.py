@@ -1285,7 +1285,8 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                         break
             except (ValueError, RecursionError, TypeError):  # see embry0.json_text
                 pass
-            # Fallback: the first github.com pull request of the job's repository the output names
+            # Fallback: the first pull request of the job's repository the output names: a github.com pull
+            # request, or a merge request on a GitLab
             if not pr_url:
                 import re
 
@@ -1293,7 +1294,11 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 pr_url = next(
                     (
                         m.group(0)
-                        for m in re.finditer(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", output_text)
+                        for m in re.finditer(
+                            r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+"
+                            r"|https?://[^/\s]+/(?:[^/\s]+/)+-/merge_requests/\d+",
+                            output_text,
+                        )
                         if _of_job_repository(m.group(0), where)
                     ),
                     None,

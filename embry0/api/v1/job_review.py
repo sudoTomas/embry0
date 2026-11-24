@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +49,8 @@ from embry0.storage.database import read_jsonb_text
 from embry0.storage.repo_renames import same_repository
 from embry0.storage.repositories.jobs import job_repository
 
+logger = structlog.get_logger(__name__)
+
 router = APIRouter()
 
 #: The release that removes the ``/world/quests/{job_id}/…`` aliases: the one after the release that added the
@@ -57,8 +60,8 @@ ALIASES_REMOVED_IN = "0.2.0"
 #: The forges each action on a job's pull request works on today. On any other forge, or on a host this deployment
 #: does not reach, the action answers 422 naming the forge, never a silent no-op (#181).
 PR_ACTION_FORGES: dict[str, frozenset[str]] = {
-    "sending work back": frozenset({"github"}),
-    "closing a pull request": frozenset({"github"}),
+    "sending work back": frozenset({"github", "gitlab"}),
+    "closing a pull request": frozenset({"github", "gitlab"}),
 }
 
 #: Job statuses of work that has not finished: it cannot be evaluated, run again or dismissed yet.
@@ -254,6 +257,7 @@ async def send_back(job_id: str, body: SendBackBody, request: Request) -> dict[s
         kind="send_back",
         asks="the notes",
         pipeline_config=apply_run_with(None, run_with),
+        forge=pr.forge,
     )
     if not result.get("dispatched"):
         raise HTTPException(
@@ -422,19 +426,23 @@ async def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, A
                 status_code=409,
                 detail=f"{pr.owner} is registered on {org.forge}, but the job's pull request is on {pr.forge}",
             )
-        from embry0.api.v1.organizations import org_forge_client
+        from embry0.api.v1.organizations import org_pull_requests
 
-        client = await org_forge_client(request, org)
-        repo, number = pr.repo, pr.number
+        pull_requests = await org_pull_requests(request, org)
         if body.note:
-            await client.post(f"/repos/{repo}/issues/{number}/comments", repo=repo, json={"body": body.note})
+            commented = await pull_requests.comment(pr.repo, pr.number, body.note)
+            if not commented.ok:
+                logger.warning(
+                    "job_review_close_comment_refused",
+                    job_id=job_id,
+                    pr_url=job.get("pr_url"),
+                    status=commented.status_code,
+                )
         # Safe to send again (#45): closing a closed pull request leaves it closed.
-        resp = await client.patch(
-            f"/repos/{repo}/pulls/{number}", repo=repo, json={"state": "closed"}, retry_transient=True
-        )
-        if resp.status_code >= 300:
+        answer = await pull_requests.close(pr.repo, pr.number)
+        if not answer.ok:
             raise HTTPException(
-                status_code=502, detail=f"the forge did not close the pull request ({resp.status_code})"
+                status_code=502, detail=f"the forge did not close the pull request ({answer.status_code})"
             )
         closed = True
     evaluation = await _audit(request, "job.review.rejected", job_id, verdict="rejected", rating="bad", note=body.note)

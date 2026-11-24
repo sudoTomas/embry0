@@ -698,13 +698,10 @@ class _Heads:
 class _PullRequests:
     """The forge's pull requests as the comment dispatch reads them: each open on its branch."""
 
-    async def __call__(self, repo: str, number: int) -> dict[str, Any]:
-        return {
-            "state": "open",
-            "head": {"ref": f"fix-{number}", "repo": {"full_name": repo}},
-            "base": {"ref": "main", "repo": {"full_name": repo}},
-            "html_url": f"https://github.com/{repo}/pull/{number}",
-        }
+    async def __call__(self, repo: str, number: int, forge: str = "github") -> Any:
+        from embry0.execution.pull_requests import PullRequest
+
+        return PullRequest(number, "open", f"fix-{number}", f"https://github.com/{repo}/pull/{number}", False)
 
 
 async def _dispatch(app: FastAPI, _db: DatabasePool) -> None:

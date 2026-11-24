@@ -39,6 +39,7 @@ from embry0.api.v1.credentials import key_owns_credential
 from embry0.api.v1.run_with import checked_run_with
 from embry0.api.v1.settings import set_section_keys
 from embry0.audit.helpers import emit_audit
+from embry0.execution.pull_requests import PullRequests
 from embry0.services import org_discovery, org_maintain, org_webhooks
 from embry0.services import organizations as org_service
 from embry0.services.context_audit import InvalidRun, SettingsUnreadable, UnknownRepository, UnsupportedForge
@@ -842,12 +843,23 @@ def webhook_origin(request: Request) -> str | None:
     return origins[0] if origins else None
 
 
+def github_only(org: Organization, what: str) -> None:
+    """Refuse ``what`` with 422 for an organization that is not on GitHub: the forge client these routes and loops
+    read with speaks GitHub's REST API, and a GitLab organization's credential sent to GitHub, or GitHub's paths
+    sent to GitLab, would fail far from here (#181). The actions on a job's pull request read through
+    :func:`org_pull_requests`, which speaks both."""
+    if org.forge != "github":
+        raise HTTPException(status_code=422, detail=f"{what} is not supported for this forge ({org.forge})")
+
+
 def make_forge_client(request: Request, org: Organization, token: str, *, forge_time: Any = None) -> Any:
-    """The client the webhook routes and the context audit call the forge
-    with. A module function so tests swap in a fake. With ``forge_time``
-    (:class:`embry0.services.organizations.ForgeTime`), its waits are
-    measured against that deadline (#582)."""
+    """The GitHub client the webhook routes, the context audit and the proposals' reads call the forge with; 422
+    for an organization on another forge (:func:`github_only`). A module function so tests swap in a fake. With
+    ``forge_time`` (:class:`embry0.services.organizations.ForgeTime`), its waits are measured against that deadline
+    (#582)."""
     from embry0.execution.github_client import GitHubClient
+
+    github_only(org, "reading an organization's repositories")
 
     timed = {"sleep": forge_time.sleep, "before_wait": forge_time.before_wait} if forge_time is not None else {}
     return GitHubClient(default_token=token, max_attempts=2, owner_env_tokens=False, token_owner=org.owner, **timed)
@@ -1013,10 +1025,41 @@ async def org_token(request: Request, org: Organization) -> str:
 
 
 async def org_forge_client(request: Request, org: Organization) -> Any:
-    """The client that reads the owner's repositories with the organization's
+    """The GitHub client that reads the owner's repositories with the organization's
     credential, the one discovery reads them with. Raises HTTPException as
-    the routes answer when the credential cannot be resolved."""
+    the routes answer when the credential cannot be resolved, and 422 for an
+    organization on another forge (:func:`github_only`)."""
+    github_only(org, "reading an organization's repositories")
     token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
+    return make_forge_client(request, org, token)
+
+
+async def org_pull_requests(request: Request, org: Organization) -> PullRequests:
+    """The organization's pull requests on its own forge (GitHub's or GitLab's), read and written with its
+    credential: what the actions on a job's pull request and the guild's reads of it use (#181). Raises
+    HTTPException as the routes answer when the credential cannot be resolved."""
+    from embry0.execution.pull_requests import pull_requests_for
+
+    token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
+    return pull_requests_for(org.forge, make_pull_request_client(request, org, token))
+
+
+def make_pull_request_client(request: Request, org: Organization, token: str) -> Any:
+    """The client of ``org``'s forge with ``token``: the deployment's GitLab (``GITLAB_URL`` and its CA bundle) for
+    a GitLab organization, GitHub's otherwise. A module function so tests swap in a fake."""
+    if org.forge == "gitlab":
+        from embry0.execution.gitlab_client import GitLabClient
+        from embry0.execution.tls import load_ca_pem
+
+        config = getattr(request.app.state, "config", None)
+        return GitLabClient(
+            default_token=token,
+            gitlab_url=str(getattr(config, "gitlab_url", "") or ""),
+            ca_pem=load_ca_pem(str(getattr(config, "gitlab_ca_bundle", "") or "")),
+            max_attempts=2,
+            owner_env_tokens=False,
+            token_owner=org.owner,
+        )
     return make_forge_client(request, org, token)
 
 

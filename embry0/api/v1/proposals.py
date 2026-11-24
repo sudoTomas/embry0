@@ -83,7 +83,8 @@ def _state(request: Request, name: str) -> Any:
 
 
 def _repo_reader(request: Request) -> Any:
-    """Reads a file of a repository's default branch with its organization's credential; None when it cannot."""
+    """Reads a file of a repository's default branch with its organization's credential; None when it cannot,
+    which includes an organization on a forge the reader does not read (GitHub's only, #181)."""
     from embry0.services.forge_files import read_contents
 
     organizations = getattr(request.app.state, "organizations_repo", None)
@@ -95,7 +96,7 @@ def _repo_reader(request: Request) -> Any:
         owner = repo.split("/", 1)[0]
         if owner not in clients:
             org = await organizations.get(owner) if organizations is not None else None
-            clients[owner] = await org_forge_client(request, org) if org is not None else None
+            clients[owner] = await org_forge_client(request, org) if org is not None and org.forge == "github" else None
         client = clients[owner]
         return await read_contents(client.get, repo, path) if client is not None else None
 
@@ -278,7 +279,7 @@ async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | N
     schedule's audits of it do.
     """
     from embry0.api.budget import unattended_cap
-    from embry0.api.v1.organizations import org_forge_client
+    from embry0.api.v1.organizations import github_only, org_forge_client
     from embry0.services.context_audit import RepoContext, read_head, start_context_audit_job
     from embry0.settings.sections.context_audit import CONTEXT_AUDIT, file_rules
 
@@ -286,6 +287,7 @@ async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | N
     org = await _state(request, "organizations_repo").get(proposal.repo.split("/", 1)[0])
     if org is None:
         raise HTTPException(status_code=409, detail=f"no registered organization holds {proposal.repo}'s credential")
+    github_only(org, "fixing a finding")
     head = await read_head(await org_forge_client(request, org), proposal.repo)
     if head is None:
         raise HTTPException(status_code=409, detail=f"{proposal.repo} has no commit to fix")

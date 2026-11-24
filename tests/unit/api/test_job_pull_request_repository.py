@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from embry0.execution.pull_requests import pull_requests_for
 from embry0.storage.database import DatabasePool
 from tests.fixtures.repository_writes import COVERED, UNCOVERED, call, repository_writes_app
 
@@ -45,10 +46,14 @@ async def test_a_job_s_pull_request_in_another_repository_is_not_acted_on(
             writes.append(("PATCH", path))
             return SimpleNamespace(status_code=200)
 
-    async def org_forge_client(_request: Any, org: Any) -> Forge:
-        return Forge()
+        async def put(self, path: str, *, repo: str, json: dict[str, Any], **_: Any) -> Any:
+            writes.append(("PUT", path))
+            return SimpleNamespace(status_code=200)
 
-    monkeypatch.setattr(organizations_api, "org_forge_client", org_forge_client)
+    async def org_pull_requests(_request: Any, org: Any) -> Any:
+        return pull_requests_for(org.forge, Forge())
+
+    monkeypatch.setattr(organizations_api, "org_pull_requests", org_pull_requests)
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, keys, values):
         job_id = values[COVERED]["job_id"]
         await db_with_migrations.execute(

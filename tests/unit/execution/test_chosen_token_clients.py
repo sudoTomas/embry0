@@ -109,6 +109,7 @@ CHOSEN_TOKEN_SITES = {
     ("api/v1/org_actions.py", "_forge_client"),
     ("api/v1/organizations.py", "run_discovery"),
     ("api/v1/organizations.py", "make_forge_client"),
+    ("api/v1/organizations.py", "make_pull_request_client"),
     ("services/organizations.py", "probe_github"),
     ("services/organizations.py", "probe_gitlab"),
 }
@@ -118,6 +119,7 @@ OWNER_SITES = {
     ("api/v1/org_actions.py", "_forge_client"),
     ("api/v1/organizations.py", "run_discovery"),
     ("api/v1/organizations.py", "make_forge_client"),
+    ("api/v1/organizations.py", "make_pull_request_client"),
     ("services/organizations.py", "probe_github"),
     ("services/organizations.py", "probe_gitlab"),
 }

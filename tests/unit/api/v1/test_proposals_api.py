@@ -69,8 +69,13 @@ class FakeForge:
 
 
 class FakeOrgs:
+    """acme, registered on ``forge``."""
+
+    def __init__(self, forge: str = "github") -> None:
+        self.forge = forge
+
     async def get(self, owner: str) -> Any:
-        return SimpleNamespace(owner=owner) if owner == "acme" else None
+        return SimpleNamespace(owner=owner, forge=self.forge) if owner == "acme" else None
 
 
 @pytest.fixture
@@ -109,6 +114,39 @@ async def test_the_feed_lists_every_kind_newest_first_with_its_owners(app: FastA
     )
     finding = body["proposals"][2]
     assert finding["id"].startswith("finding:") and finding["path"] == "AGENTS.md" and finding["line"] == 3
+
+
+async def test_a_gitlab_organization_s_files_are_not_read_with_the_github_reader(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The proposals' file reader speaks GitHub's REST paths (#181): it reads no CODEOWNERS of an organization on
+    GitLab, as of an owner nobody registered, and the feed still answers."""
+    made: list[str] = []
+
+    async def forge_client(request: Any, org: Any) -> FakeForge:
+        made.append(org.owner)
+        return FakeForge()
+
+    monkeypatch.setattr("embry0.api.v1.organizations.org_forge_client", forge_client)
+    app.state.organizations_repo = FakeOrgs(forge="gitlab")
+    async with await _client(app) as client:
+        resp = await client.get("/api/v1/proposals")
+    assert resp.status_code == 200, resp.text
+    owners = {p["repo"]: p["owners"] for p in resp.json()["proposals"]}
+    assert (owners["acme/docs"], made) == ([], [])
+
+
+async def test_a_gitlab_organization_s_finding_is_not_fixed_with_the_github_reader(app: FastAPI) -> None:
+    async with await _client(app) as client:
+        finding_id = next(
+            p["id"] for p in (await client.get("/api/v1/proposals")).json()["proposals"] if p["kind"] == "finding"
+        )
+        app.state.organizations_repo = FakeOrgs(forge="gitlab")
+        refused = await client.post(f"/api/v1/proposals/{finding_id}/accept", json={"by": "docs-owner"})
+    assert (refused.status_code, refused.json()["detail"]) == (
+        422,
+        "fixing a finding is not supported for this forge (gitlab)",
+    )
 
 
 async def test_the_feed_filters_by_owner_and_kind(app: FastAPI) -> None:
