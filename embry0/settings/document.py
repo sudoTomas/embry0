@@ -136,7 +136,11 @@ YAML_TOKEN_IDS: Final = frozenset(
 def _unquoted(text: str) -> str:
     """``text`` with each quoted part said as ``'…'``, unless it is one character (``\\t`` counts as one) or one
     of PyYAML's token names: PyYAML quotes tags and alias names as written, at any length, and a 422 repeats
-    nothing written."""
+    nothing written.
+
+    By design, a tag written as exactly one character, or exactly one of the 20 token names (a verbatim
+    ``!<%3Cscalar%3E>`` reads ``<scalar>``), comes back as itself: it says nothing the operator wrote that the
+    message does not already say. A tag that merely holds one (``<block end>`` and more) is said as ``'…'``."""
 
     def one(match: re.Match[str]) -> str:
         inner = match[1] if match[1] is not None else match[2]
