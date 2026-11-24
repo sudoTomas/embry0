@@ -123,3 +123,18 @@ def test_a_clock_that_never_moves_is_refused_for_the_reference(monkeypatch: pyte
     monkeypatch.setattr(cpu_cost, "_now", lambda: 0.0)
     with pytest.raises(ClockTooCoarse, match="passes of the reference read 0 s"):
         reference_seconds(["abc"])
+
+
+@pytest.mark.parametrize("per_pass", [4e-3, 1e-5], ids=["one-repetition", "many-repetitions"])
+def test_the_reference_reads_exactly_what_one_pass_costs(monkeypatch: pytest.MonkeyPatch, per_pass: float) -> None:
+    """#671 review: the growth check allows a third to three times one pass, so a reference read at twice its cost (a
+    pass counted twice, or half its repetitions) passed every test. On a clock that charges each pass a fixed time,
+    the reference reads exactly that time, however many repetitions a reading takes, and one pass of work costs one."""
+    from tests.fixtures import cpu_cost
+
+    def charged(work: Callable[[], object], *, times: int = 1) -> float:
+        return per_pass * times
+
+    monkeypatch.setattr(cpu_cost, "cpu_seconds", charged)
+    assert reference_seconds(["abc"]) == pytest.approx(per_pass, rel=1e-12), "the reference misreads one pass"
+    assert cost(same(lambda: None), ["abc"]) == pytest.approx(1.0, rel=1e-12), "a pass of work does not cost one pass"
