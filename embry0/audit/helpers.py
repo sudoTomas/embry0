@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from embry0.audit.actions import AuditAction
@@ -16,7 +17,7 @@ async def emit_audit(
     *,
     actor: str = "system",
     details: dict[str, Any] | None = None,
-    audit_log_path: Any = None,
+    audit_log_path: str | Path | None = None,
     issue_id: str | None = None,
 ) -> None:
     """Emit an audit event to both file and database."""
