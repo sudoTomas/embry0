@@ -57,3 +57,24 @@ def test_the_build_fails_if_the_agent_can_read_it_or_not_run_the_sdk_on_it(name:
     ]
 
     assert checks, f"{name} has no build-time check, as the agent user, that it runs the SDK on an unreadable copy"
+
+
+def test_ci_checks_the_sealed_start_as_the_orchestrator_execs_it_in_a_sandbox() -> None:
+    """The kernel checks the interpreter is unreadable with the credentials of the process that execs it, so the
+    runner starts closed only when ``docker exec`` holds no DAC capability, as in every sandbox. CI's check must
+    exec the interpreter directly, in a container run with the sandbox's flags, and expect it open with Docker's
+    default capabilities, or a capability change passes CI unseen."""
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    steps = [step for job in workflow["jobs"].values() for step in job.get("steps", [])]
+    (smoke,) = [step for step in steps if step.get("name") == "The agent runner's interpreter starts it sealed"]
+    script = smoke["run"]
+
+    sandbox_run = next((line for line in script.splitlines() if "--cap-drop" in line), "")
+    assert "--cap-drop=ALL" in sandbox_run and "--security-opt=no-new-privileges" in sandbox_run, (
+        f"the sealed start is not checked in a container run with the sandbox's flags: {sandbox_run!r}"
+    )
+    assert f"docker exec runner-sandbox-flags {_INTERPRETER} -c" in script, "the interpreter is not exec'd directly"
+    assert f"docker exec runner-default-caps {_INTERPRETER} -c" in script, "no default-capabilities counter-case"
+    assert 'test "$sealed" != 1 && test "$default_caps" = 1' in script, "the check does not expect both outcomes"

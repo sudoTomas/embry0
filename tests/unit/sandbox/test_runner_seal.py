@@ -102,30 +102,39 @@ def test_what_the_sealed_runner_starts_is_its_own_again() -> None:
     assert out == "1", f"a program the sealed runner starts is not dumpable: {out!r}"
 
 
-def _main(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config: dict[str, Any]) -> list[Any]:
-    """Run the runner's main() on ``config`` with a stub agent run; its stdout lines and the agent run's kwargs."""
+def _main(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    config: dict[str, Any],
+    result: dict[str, Any] | None = None,
+) -> list[Any]:
+    """Run the runner's main() on ``config`` with a stub agent run returning ``result``: its stdout lines, the agent
+    run's kwargs and its stderr."""
     seen: list[dict[str, Any]] = []
+    returned = result or {"agent_type": "developer", "is_error": False, "output": "done"}
 
     async def _run_agent(**kwargs: Any) -> dict[str, Any]:
         seen.append(kwargs)
         runner._emit({"type": "agent_started", "model": "custom/m", "max_turns": 5})
-        return {"agent_type": "developer", "is_error": False, "output": "done"}
+        return returned
 
     monkeypatch.setattr(runner, "run_agent", _run_agent)
     monkeypatch.setattr(sys, "argv", ["runner", "--config-stdin", "--result-nonce"])
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(config)))
     with pytest.raises(SystemExit) as exited:
         runner.main()
-    assert exited.value.code == 0, f"the runner refused its command line or failed: exit {exited.value.code}"
-    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    return [lines, seen]
+    expected = 1 if returned.get("is_error") else 0
+    assert exited.value.code == expected, f"the runner refused its command line or failed: exit {exited.value.code}"
+    captured = capsys.readouterr()
+    lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
+    return [lines, seen, captured.err]
 
 
 def test_the_runner_writes_the_mark_on_its_final_result_and_nowhere_else(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     nonce = "zz-the-run-s-mark-0123456789abcdef"
-    lines, seen = _main(monkeypatch, capsys, {"agent_type": "developer", "prompt": "fix it", "result_nonce": nonce})
+    lines, seen, _ = _main(monkeypatch, capsys, {"agent_type": "developer", "prompt": "fix it", "result_nonce": nonce})
 
     assert lines[-1]["type"] == "final_result" and lines[-1].get("nonce") == nonce, (
         f"the final result does not carry the run's mark: {lines[-1]}"
@@ -139,6 +148,28 @@ def test_the_runner_reports_whether_it_started_open(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], open_at_start: bool
 ) -> None:
     monkeypatch.setattr(runner, "OPEN_AT_START", open_at_start, raising=False)
-    lines, _ = _main(monkeypatch, capsys, {"agent_type": "developer", "prompt": "fix it", "result_nonce": "zz"})
+    lines, _, _ = _main(monkeypatch, capsys, {"agent_type": "developer", "prompt": "fix it", "result_nonce": "zz"})
 
     assert lines[-1].get("open_at_start") is open_at_start, f"its result does not say so: {lines[-1]}"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param({"agent_type": "developer", "is_error": False, "output": "done"}, id="done"),
+        pytest.param(
+            {"agent_type": "developer", "is_error": True, "error_message": "boom", "error_code": "ERR_AGENT_CRASH"},
+            id="failed",
+        ),
+    ],
+)
+def test_the_mark_never_reaches_the_runner_s_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], result: dict[str, Any]
+) -> None:
+    """stderr is a channel the orchestrator keeps a tail of and logs; the mark is for the final result only."""
+    nonce = "zz-the-run-s-mark-0123456789abcdef"
+    lines, _, err = _main(monkeypatch, capsys, {"agent_type": "developer", "result_nonce": nonce}, result)
+
+    assert lines[-1].get("nonce") == nonce, f"the run's result does not carry the mark: {lines[-1]}"
+    assert result.get("is_error") is not True or err.strip(), "a failed run writes its diagnostic on stderr"
+    assert nonce not in err, f"the mark is on the runner's stderr: {err!r}"
