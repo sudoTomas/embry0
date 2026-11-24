@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
+from embry0.config_retired import MOVED_TO_DOCUMENTS
 from embry0.services.asks import ask_settings, next_working_time
 from embry0.settings.document import DocumentInvalid, check, load_yaml, read_sections
-from embry0.settings.env import env_name
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
 
@@ -162,7 +162,7 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "hand-out's lease stay global"
     )
     assert section.repo_keys == frozenset()
-    assert {key: env_name(imported.attr) for key, imported in section.imports().items()} == {
+    variables = {
         "enabled": "ASKS_ENABLED",
         "hours": "ASK_HOURS",
         "weekdays": "ASK_WEEKDAYS",
@@ -171,4 +171,7 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "expire_days": "ASK_EXPIRE_DAYS",
         "max_open_per_person": "ASK_MAX_OPEN_PER_PERSON",
         "tick_seconds": "ASK_TICK_SECONDS",
-    }, "every ASK* variable is imported once into its key"
+    }
+    assert {key: MOVED_TO_DOCUMENTS.get(name) for key, name in variables.items()} == {
+        key: f"the settings document's asks.{key}" for key in variables
+    }, "every ASK* variable no longer read names the key that holds what it set"

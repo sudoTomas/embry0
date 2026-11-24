@@ -203,14 +203,4 @@ ASKS = Section(
     # loop ticks, stay the deployment's.
     org_keys=frozenset({"hours", "weekdays", "timezone", "remind_hours", "expire_days", "max_open_per_person"}),
     repo_keys=frozenset(),
-    env={
-        "enabled": "asks_enabled",
-        "hours": "ask_hours",
-        "weekdays": "ask_weekdays",
-        "timezone": "ask_timezone",
-        "remind_hours": "ask_remind_hours",
-        "expire_days": "ask_expire_days",
-        "max_open_per_person": "ask_max_open_per_person",
-        "tick_seconds": "ask_tick_seconds",
-    },
 )

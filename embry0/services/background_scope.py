@@ -17,13 +17,6 @@ the next tick with no restart, and one tick never mixes two versions:
 A feature can narrow the result to the repositories its own rule allows
 (``among``): the leads finders read only where someone answers for the
 repository.
-
-**Settled.** A release that turned a feature's enrollment explicit imported,
-once, the repositories that feature read before
-(:mod:`embry0.services.background_enrollment`). Until that import has run,
-the feature reads its defaults and may read fewer repositories than it
-should; ``settled`` says when what it does not read is truly out, which is
-what a feature that removes what it kept must wait for.
 """
 
 from __future__ import annotations
@@ -31,19 +24,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Final, Protocol
+from typing import Any, Protocol
 
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.background import BACKGROUND, FEATURES, BackgroundSettings, Feature
-
-#: The features whose repositories a release imported once, when their enrollment became explicit. A feature
-#: not listed here imported nothing, so what it reads is final from the start.
-IMPORTED: Final[tuple[Feature, ...]] = ("scout", "slop_meter")
-
-
-def ledger_key(feature: Feature) -> str:
-    """The import ledger entry (``settings_documents.bootstrapped_keys``) saying ``feature``'s import ran."""
-    return f"{BACKGROUND.name}.{feature}"
 
 
 def _feature(feature: str) -> Feature:
@@ -55,16 +39,12 @@ def _feature(feature: str) -> Feature:
 class _Snapshot(Protocol):
     def scoped(self, section: Any) -> Any: ...
 
-    def imported(self, path: str, scope: Any = None) -> bool: ...
-
 
 @dataclass(frozen=True)
 class Enrollment:
     """The ``background`` section of one snapshot of the settings documents."""
 
     section: PerRepository[BackgroundSettings]
-    #: The features whose import has run, or that import nothing.
-    settled_features: frozenset[str]
 
     def enrolled(self, feature: str, repo: str) -> bool:
         """Whether ``repo`` is enrolled in ``feature``, through its organization's layer and its own."""
@@ -74,10 +54,6 @@ class Enrollment:
     def prune_after(self) -> timedelta:
         """How long the meter waits, after a repository leaves its scope, before it removes what it kept of it."""
         return timedelta(days=self.section.deployment().prune_after_days)
-
-    def settled(self, feature: str) -> bool:
-        """Whether what ``feature`` does not read is out of its scope for good, not only until the import runs."""
-        return _feature(feature) in self.settled_features
 
     def scope(self, feature: str, registered: Iterable[str], *, among: Iterable[str] | None = None) -> list[str]:
         """The repositories ``feature`` reads: those of ``registered`` (registered and active) that are enrolled
@@ -97,10 +73,7 @@ class Enrollment:
 
 def enrollment(snapshot: _Snapshot) -> Enrollment:
     """The enrollment ``snapshot`` holds: what one tick reads, from the snapshot the tick took."""
-    settled = frozenset(
-        feature for feature in FEATURES if feature not in IMPORTED or snapshot.imported(ledger_key(feature))
-    )
-    return Enrollment(section=snapshot.scoped(BACKGROUND), settled_features=settled)
+    return Enrollment(section=snapshot.scoped(BACKGROUND))
 
 
 class _Registry(Protocol):
@@ -183,11 +156,9 @@ def registry_reader(registry: _Registry) -> Callable[[], Awaitable[Registered]]:
 
 
 __all__ = [
-    "IMPORTED",
     "Enrollment",
     "Registered",
     "enrollment",
-    "ledger_key",
     "registered_reader",
     "registry_reader",
     "spellings",

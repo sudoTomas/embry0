@@ -354,7 +354,7 @@ async def test_a_settings_write_is_checked_against_the_stored_catalogue(
 # ---- the production lifespan ----
 
 
-async def test_the_lifespan_imports_the_variables_and_installs_what_another_process_writes(
+async def test_the_lifespan_installs_the_stored_catalogue_and_what_another_process_writes(
     db_with_migrations: DatabasePool,
     stub_container_runtime: Any,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
@@ -371,6 +371,10 @@ async def test_the_lifespan_imports_the_variables_and_installs_what_another_proc
     from embry0.services.provider_catalogue_store import CatalogueStore
 
     monkeypatch.setattr(provider_catalogue_store, "REFRESH_SECONDS", 0.05)
+    await CatalogueStore(db_with_migrations).save(
+        "providers:\n  deepseek: {enabled: true}\n  openrouter: {refresh_hours: 12}\n", actor="ops@example.com"
+    )
+    catalogue.install(None)
     with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(  # type: ignore[call-arg]
             _env_file=None,
@@ -385,15 +389,11 @@ async def test_the_lifespan_imports_the_variables_and_installs_what_another_proc
             xai_proxy_enabled=False,
             auth_proxy_enabled=False,
             context_proxy_enabled=False,
-            leads_enabled=False,
-            slop_meter_interval_seconds=0,
             slop_meter_data_path=str(tmp_path / "slop-meter"),
-            openai_compatible_providers="deepseek",
-            openrouter_catalog_refresh_hours="12",
         )
     app = create_app(config)
     async with lifespan(app):
-        assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"], "not imported at the start"
+        assert [p.name for p in providers.enabled_openai_compatible()] == ["deepseek"], "not installed at the start"
         assert app.state.openrouter_catalog.status()["refresh_hours"] == 12.0
         # Another process changes the catalogue: this one installs it on its next look. This process is put back
         # on the shipped catalogue first: put back after the write, a look in between installs the write, the reset
@@ -405,8 +405,6 @@ async def test_the_lifespan_imports_the_variables_and_installs_what_another_proc
                 break
             await asyncio.sleep(0.025)
         assert [p.name for p in providers.enabled_openai_compatible()] == ["groq"], "the write was never picked up"
-    ledger = await db_with_migrations.fetchval("SELECT imported FROM provider_catalogue")
-    assert sorted(ledger) == ["openrouter.refresh_hours", "providers.enabled"]
 
 
 @pytest.mark.parametrize("as_text", [True, False], ids=["text", "Path"])

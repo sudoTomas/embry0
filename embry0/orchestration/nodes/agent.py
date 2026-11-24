@@ -283,13 +283,12 @@ async def load_budget_settings(config: Any) -> BudgetSettings:
     Read through the application's budget policy the graph config carries
     (``budget_policy``, :class:`embry0.services.budget_policy.BudgetPolicy`),
     one snapshot per call, so a cap changed while the job runs holds from its
-    next check, and a key not imported yet reads as the release before read
-    it. Without one: a settings store the config carries (tests), else a
-    policy over ``db``. With none of them, the variables the release before
-    fell back to (``embry0_config``), never no cap. A read that fails raises
-    (#551): the job's budget is what the operator set, not those variables.
+    next check. Without one: a settings store the config carries (tests), else
+    a policy over ``db``. With none of them, the section's defaults. A read
+    that fails raises (#551): the job's budget is what the operator set, not
+    a default in its place.
     """
-    from embry0.services.budget_policy import BudgetPolicy, env_budget
+    from embry0.services.budget_policy import BudgetPolicy
     from embry0.settings.sections.budget import BUDGET
 
     configurable = _graph_configurable(config)
@@ -307,7 +306,7 @@ async def load_budget_settings(config: Any) -> BudgetSettings:
 
         settings = await BudgetPolicy(SettingsStore(configurable["db"]), app_config, retry_seconds=None).settings()
         return settings
-    return env_budget(app_config)
+    return BUDGET.defaults()
 
 
 async def load_budget_policy(config: Any) -> tuple[float, str]:

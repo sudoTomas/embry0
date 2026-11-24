@@ -19,7 +19,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import embry0
-from embry0.audit.actions import AUDIT_ACTION_LABELS, AUDIT_ACTIONS, RETIRED_AUDIT_ACTIONS, AuditAction
+from embry0.audit.actions import (
+    AUDIT_ACTION_LABELS,
+    AUDIT_ACTIONS,
+    NO_LONGER_WRITTEN,
+    RETIRED_AUDIT_ACTIONS,
+    AuditAction,
+)
 
 _SRC = pathlib.Path(embry0.__file__).parent
 #: The dashboard's icons per action; its words come from GET /audit/actions.
@@ -118,8 +124,12 @@ def test_every_written_action_is_registered_and_every_registered_one_is_written(
     assert problems == [], problems
     unregistered = sorted({f"{where} {action}" for where, action in written if action not in AUDIT_ACTIONS})
     assert unregistered == [], f"audit actions written but not in embry0/audit/actions.py: {unregistered}"
-    unwritten = sorted(AUDIT_ACTIONS - {action for _where, action in written})
+    actions = {action for _where, action in written}
+    unwritten = sorted(AUDIT_ACTIONS - actions - NO_LONGER_WRITTEN)
     assert unwritten == [], f"registered audit actions nothing writes: {unwritten}"
+    assert NO_LONGER_WRITTEN <= AUDIT_ACTIONS, "an action kept for its old rows is no longer registered"
+    again = sorted(NO_LONGER_WRITTEN & actions)
+    assert again == [], f"written again, so no longer only kept for its old rows: {again}"
 
 
 def test_the_registry_is_one_list_with_a_label_for_each_name() -> None:

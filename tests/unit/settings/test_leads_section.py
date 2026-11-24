@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
+from embry0.config_retired import MOVED_TO_DOCUMENTS
 from embry0.services import lead_kinds
 from embry0.settings.document import DocumentInvalid, check, load_yaml, read_sections
-from embry0.settings.env import env_name
 from embry0.settings.sections import CATALOG
 from tests.fixtures.leads import leads_section
 
@@ -342,56 +342,6 @@ def test_a_stored_value_the_code_refuses_reads_as_its_default_and_never_reaches_
     assert sorted(r.key for r in sections.refused) == ["ask_min", "finders"]
 
 
-def _convert(key: str) -> Any:
-    imported = leads_section().imports().get(key)
-    convert = imported.convert if imported is not None else None
-    assert convert is not None, f"leads.{key} is imported through a conversion"
-    return convert
-
-
-@pytest.mark.parametrize(
-    ("variable", "stored"),
-    [
-        ("ticket,ci,alert,flaky,review", ["ticket", "ci", "alert", "flaky", "review"]),
-        ("review, CI", ["ci", "review"]),
-        ("ci,nonsense", ["ci"]),
-        ("ci,crack,weed", ["ci"]),
-        ("nonsense", []),
-        ("", []),
-    ],
-)
-def test_the_finders_variable_is_imported_as_what_the_loop_ran(variable: str, stored: list[str]) -> None:
-    """Before the section names were read without case or spaces, a name that is no finder was ignored
-    (crack and weed did nothing), and a list naming none ran no finder."""
-    assert _convert("finders")(variable) == stored, f"LEADS_FINDERS={variable!r} ran {stored}, so that is imported"
-
-
-@pytest.mark.parametrize(
-    ("variable", "dropped"),
-    [("ci,nonsense", ["nonsense"]), ("CI, Bogus ,crack", ["bogus", "crack"]), ("ticket,ci", []), ("", [])],
-)
-def test_the_import_names_each_finder_name_it_drops(variable: str, dropped: list[str]) -> None:
-    imported = leads_section().imports().get("finders")
-    names = getattr(imported, "dropped", None)
-    assert names is not None, "LEADS_FINDERS's import says which names it drops, so a warning can name them"
-    assert list(names(variable)) == dropped, f"LEADS_FINDERS={variable!r} drops {dropped}"
-
-
-@pytest.mark.parametrize(
-    ("key", "variable", "stored"),
-    [
-        ("interval_hours", 0.1, 0.25),
-        ("interval_hours", 6.0, 6.0),
-        ("backlog_interval_hours", 0.5, 1.0),
-        ("backlog_interval_hours", 12.0, 12.0),
-    ],
-)
-def test_an_interval_below_the_loop_s_floor_is_imported_as_the_floor_it_ran_at(
-    key: str, variable: float, stored: float
-) -> None:
-    assert _convert(key)(variable) == stored, f"{key}={variable} ran every {stored} hours, so that is imported"
-
-
 def test_what_an_organization_may_override_and_where_each_key_came_from() -> None:
     section = leads_section()
     assert section.org_keys == {
@@ -420,7 +370,7 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "the mappings a layer writes entry by entry: kinds, label roles and signals"
     )
     assert section.repo_keys == frozenset(), "which repositories leads read is the repository scope rule's (#165)"
-    assert {key: env_name(imported.attr) for key, imported in section.imports().items()} == {
+    variables = {
         "enabled": "LEADS_ENABLED",
         "finders": "LEADS_FINDERS",
         "interval_hours": "LEADS_INTERVAL_HOURS",
@@ -430,12 +380,10 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "flaky_commits": "LEADS_FLAKY_COMMITS",
         "offer_min": "LEADS_TICKET_MIN_SCORE",
         "ask_min": "PROPOSALS_TICKET_MIN_READINESS",
-    }, "every LEADS_* variable, and the readiness floor of chat, is imported once"
-    relied = section.imports()["enabled"].relied_on
-    assert relied is not None, (
-        "leads.enabled says how to tell a deployment that relied on LEADS_ENABLED's default, so it keeps leads on"
-    )
-    assert getattr(relied, "value", None) is True, "what such a deployment keeps is declared: enabled: true"
+    }
+    assert {key: MOVED_TO_DOCUMENTS.get(name) for key, name in variables.items()} == {
+        key: f"the settings document's leads.{key}" for key in variables
+    }, "every LEADS_* variable, and the readiness floor of chat, no longer read names the key that holds it"
 
 
 def test_the_finders_are_the_lead_kinds_a_finder_stores_and_the_ones_the_loop_runs() -> None:
@@ -479,10 +427,6 @@ def test_the_deployment_writes_ask_severities_entry_by_entry_over_the_default() 
 def test_the_effective_view_gives_each_kind_of_a_merged_key_its_source() -> None:
     """``GET /config/settings/effective`` marks a key merged entry by entry and says, per kind, which document
     its entry comes from: the default, the deployment's document or an organization's layer."""
-    import os
-    from unittest.mock import patch
-
-    from embry0.config import Embry0Config
     from embry0.settings.effective import effective_view
     from embry0.settings.scope import DEPLOYMENT
     from embry0.settings.store import build_snapshot
@@ -493,27 +437,25 @@ def test_the_effective_view_gives_each_kind_of_a_merged_key_its_source() -> None
         {"scope": "organization:acme", "data": {"leads": {"ask_severities": {"weed": []}}}, "generation": 1},
     ]
     snapshot = build_snapshot(CATALOG, [{**row, "updated_at": None} for row in rows], token=(), log=False)
-    with patch.dict(os.environ, {}, clear=True):
-        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
 
     def key_of(view: dict[str, Any]) -> dict[str, Any]:
         leads = next(s for s in view["sections"] if s["name"] == "leads")
         return next(k for k in leads["keys"] if k["key"] == "ask_severities")
 
-    deployment = key_of(effective_view(CATALOG, snapshot, [], config))
+    deployment = key_of(effective_view(CATALOG, snapshot, []))
     assert deployment.get("merged_by_entry") is True, f"the key is marked merged entry by entry: {deployment}"
     assert [(e["entry"], e["value"], e["source"]) for e in deployment["entries"]] == [
         ("crack", ["high", "critical"], "default"),
         ("weed", ["high", "critical"], "default"),
         ("alert", ["critical"], "document"),
     ], deployment["entries"]
-    acme = key_of(effective_view(CATALOG, snapshot, {}, config, owner="acme"))
+    acme = key_of(effective_view(CATALOG, snapshot, {}, owner="acme"))
     assert [(e["entry"], e["source"]) for e in acme["entries"]] == [
         ("crack", "default"),
         ("weed", "organization"),
         ("alert", "document"),
     ], acme["entries"]
-    finders = next(k for s in effective_view(CATALOG, snapshot, [], config)["sections"] for k in s["keys"])
+    finders = next(k for s in effective_view(CATALOG, snapshot, [])["sections"] for k in s["keys"])
     assert "entries" not in finders, "only a merged key carries entries"
 
 

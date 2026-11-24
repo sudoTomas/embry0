@@ -36,7 +36,6 @@ def _scope() -> Any:
 def _enrollment(
     deployment: Mapping[str, Any] | None = None,
     layers: Mapping[str, Mapping[str, Any]] | None = None,
-    imported: tuple[str, ...] = ("background.scout", "background.slop_meter"),
 ) -> Any:
     rows: list[dict[str, Any]] = [
         {
@@ -44,7 +43,6 @@ def _enrollment(
             "data": {"background": dict(deployment)} if deployment is not None else {},
             "generation": 1,
             "updated_at": None,
-            "bootstrapped_keys": list(imported),
         }
     ]
     for scope, values in (layers or {}).items():
@@ -128,12 +126,7 @@ def test_only_registered_repositories_are_read_each_once_as_the_registry_spells_
     )
 
 
-def test_what_a_feature_does_not_read_is_settled_only_once_its_import_has_run() -> None:
-    assert _enrollment(imported=()).settled("slop_meter") is False, (
-        "before the import enrolled what the meter read, what it does not read may still be its own"
-    )
-    assert _enrollment(imported=("background.slop_meter",)).settled("slop_meter") is True
-    assert _enrollment(imported=()).settled("leads") is True, "leads import nothing, so they are settled at once"
+def test_a_name_that_is_no_background_feature_is_refused() -> None:
     with pytest.raises(ValueError, match="not a background feature"):
         _enrollment().scope("watcher", REGISTERED)
 

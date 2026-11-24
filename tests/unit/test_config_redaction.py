@@ -190,7 +190,7 @@ def test_repr_and_str_mask_every_secret(secret_env):
 
 def test_repr_still_shows_non_secret_values_with_their_types(secret_env):
     rendered = repr(_config())
-    assert "max_budget_usd=10.0" in rendered
+    assert "watcher_job_budget_usd=2.0" in rendered
     assert "watcher_enabled=False" in rendered
 
 

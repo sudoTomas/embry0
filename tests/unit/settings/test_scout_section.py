@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
+from embry0.config_retired import MOVED_TO_DOCUMENTS
 from embry0.settings.document import DocumentInvalid, check, load_yaml, read_sections
-from embry0.settings.env import env_name
 from embry0.settings.sections import CATALOG
 
 
@@ -132,25 +132,6 @@ def test_a_stored_value_the_code_refuses_reads_as_its_default_and_never_reaches_
     assert sorted(r.key for r in sections.refused) == ["job_budget_usd", "templates"]
 
 
-@pytest.mark.parametrize(
-    ("variable", "stored"),
-    [
-        ("garden", ["garden"]),
-        ("kintsugi-trace, garden", ["garden", "kintsugi-trace"]),
-        ("garden,bogus", ["garden"]),
-        ("bogus", ["garden", "kintsugi-trace"]),
-        ("", ["garden", "kintsugi-trace"]),
-    ],
-)
-def test_the_templates_variable_is_imported_as_what_the_scout_ran(variable: str, stored: list[str]) -> None:
-    """Before the section an unknown name was ignored, the known ones ran in the scout's order, and none ran both."""
-    section = CATALOG.get("scout")
-    imported = section.imports().get("templates") if section is not None else None
-    convert = imported.convert if imported is not None else None
-    assert convert is not None, "SCOUT_TEMPLATES is imported into scout.templates through a conversion"
-    assert convert(variable) == stored, f"SCOUT_TEMPLATES={variable!r} ran {stored}, so that is what is imported"
-
-
 def test_what_an_organization_may_override_and_where_each_key_came_from() -> None:
     section = CATALOG.get("scout")
     assert section is not None and section.org_keys == {"templates", "revisit_hours", "max_leads_per_job"}, (
@@ -158,9 +139,12 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "the shared local server's load (in flight, per day) and each job's hard cap stay the deployment's"
     )
     assert section.repo_keys == frozenset()
-    assert {key: env_name(imported.attr) for key, imported in section.imports().items()} == {
+    variables = {
         "templates": "SCOUT_TEMPLATES",
         "max_in_flight": "SCOUT_MAX_IN_FLIGHT",
         "revisit_hours": "SCOUT_REVISIT_HOURS",
         "max_leads_per_job": "SCOUT_MAX_LEADS_PER_JOB",
-    }, "the four SCOUT_* policy variables are imported once; SCOUT_MODEL and the repository lists stay variables"
+    }
+    assert {key: MOVED_TO_DOCUMENTS.get(name) for key, name in variables.items()} == {
+        key: f"the settings document's scout.{key}" for key in variables
+    }, "the four SCOUT_* policy variables no longer read name the key that holds what each set"

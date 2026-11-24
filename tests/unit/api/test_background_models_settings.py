@@ -2,8 +2,6 @@
 
 - A bad model is a 422 naming its key, never repeating it, and nothing is stored.
 - A change reaches each feature's next read, and changing one feature's model changes no other's.
-- The first boot imports the variables and the provider settings' watcher model once, keeping every
-  feature on the model it ran on; a second boot imports nothing.
 - A hosted model's spend is recorded, counted against the daily cap and shown by /stats; past the cap
   the next call is refused before anything is sent, and the loop goes on.
 - The real lifespan builds every feature on readers of the section and on the one metered call path.
@@ -17,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,7 +30,6 @@ from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
 from embry0.services.proposal_briefs import brief_settings
 from embry0.services.proposals import Proposal
-from embry0.settings.bootstrap import import_env_once
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
 from embry0.settings.store import SettingsStore
@@ -46,7 +43,6 @@ pytestmark = pytest.mark.requires_postgres
 
 URL = "/api/v1/config/settings"
 ADMIN = "emb_" + "a" * 43
-DAY = date(2026, 10, 30)
 T0 = datetime(2026, 10, 30, 12, tzinfo=UTC)
 FEATURES = ("watcher", "context_audit", "scout", "proposal_brief", "job_brief", "slop_judge")
 BRIEF = {
@@ -189,63 +185,6 @@ def _org(owner: str) -> Any:
     return Scope.organization(owner)
 
 
-def _config(**env: str) -> Embry0Config:
-    with patch.dict(os.environ, env, clear=True):
-        return Embry0Config(_env_file=None)  # type: ignore[call-arg]
-
-
-async def test_the_first_boot_imports_what_each_feature_ran_on_once(
-    db_with_migrations: DatabasePool, providers: None
-) -> None:
-    module = _module()
-    db = db_with_migrations
-    await db.execute(
-        "INSERT INTO provider_config (id, watcher_local_model) VALUES ('default', 'custom/watcher') "
-        "ON CONFLICT (id) DO UPDATE SET watcher_local_model = EXCLUDED.watcher_local_model"
-    )
-    config = _config(PROPOSAL_BRIEF_MODEL="custom/briefs", CONTEXT_AUDIT_LOCAL_MODEL="custom/audit")
-    store = SettingsStore(db)
-
-    await import_env_once(store, config, today=DAY)
-    imported = await module.import_provider_settings_once(store, config, today=DAY)
-    assert imported == {
-        "default": "custom/watcher",
-        "scout": False,
-        "job_brief": "custom/briefs",
-        "slop_judge": "custom/briefs",
-    }, (
-        "the watcher's model becomes the default; the job briefs and the judge keep the proposal briefs' model they "
-        f"fell back on; the scout, with no variable of its own, stays on none: {imported}"
-    )
-    stored = (await store.document())["data"]["background_models"]
-    assert stored == {
-        "context_audit": "custom/audit",
-        "proposal_brief": "custom/briefs",
-        "default": "custom/watcher",
-        "scout": False,
-        "job_brief": "custom/briefs",
-        "slop_judge": "custom/briefs",
-    }, f"the variables first, then the provider settings: {stored}"
-    lookups = {feature: (await module.background_model(store, feature)())(None) for feature in FEATURES}
-    assert lookups == {
-        "watcher": "custom/watcher",
-        "context_audit": "custom/audit",
-        "scout": "",
-        "proposal_brief": "custom/briefs",
-        "job_brief": "custom/briefs",
-        "slop_judge": "custom/briefs",
-    }, "every feature runs on the model it ran on before the upgrade"
-    newest = (await store.revisions())[0]
-    assert (newest["source"], newest["actor"]) == ("upgrade", "embry0:bootstrap"), newest
-
-    await store.set_keys("background_models", {"default": "custom/chosen"}, actor="alex@example.com")
-    await db.execute("UPDATE provider_config SET watcher_local_model = 'custom/later' WHERE id = 'default'")
-    again = SettingsStore(db)
-    assert (await import_env_once(again, config, today=DAY)).imported == {}
-    assert await module.import_provider_settings_once(again, config, today=DAY) == {}, "the ledger keeps it to once"
-    assert (await again.document())["data"]["background_models"]["default"] == "custom/chosen", "a person's value stays"
-
-
 async def test_a_hosted_model_s_spend_is_counted_against_the_caps_and_refused_past_them(
     app: Any, client: AsyncClient, db_with_migrations: DatabasePool
 ) -> None:
@@ -344,9 +283,9 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
     from embry0.storage.repositories.background_spend import BackgroundSpendRepository
 
     monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
-    await db_with_migrations.execute(
-        "INSERT INTO provider_config (id, watcher_local_model) VALUES ('default', 'custom/watcher') "
-        "ON CONFLICT (id) DO UPDATE SET watcher_local_model = EXCLUDED.watcher_local_model"
+    # What the document holds when the process starts: each feature reads it from the first snapshot.
+    await SettingsStore(db_with_migrations).set_keys(
+        "background_models", {"default": "custom/watcher", "scout": "custom/scout"}, actor="alex@example.com"
     )
     config = Embry0Config(
         _env_file=None,
@@ -361,7 +300,6 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
         xai_proxy_enabled=False,
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
-        scout_model="custom/scout",
         # No longer read (#168): the proposal briefs keep their fixed cadence, and startup warns.
         proposal_briefs_per_tick="4",
         proposal_brief_interval_seconds="61",
@@ -412,7 +350,7 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
                 "slop_judge": "custom/watcher",
                 "scout": "custom/scout",
                 "watcher": "custom/watcher",
-            }, "the boot imported SCOUT_MODEL and the provider settings' watcher model into what each feature reads"
+            }, "every feature reads the stored section from the boot on: the default, and the scout's own model"
             await state.settings.set_keys(
                 "background_models", {"default": "custom/next", "job_brief": False}, actor="alex@example.com"
             )
@@ -462,65 +400,6 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
         "JOB_BRIEFS_PER_TICK",
         "JOB_BRIEF_INTERVAL_SECONDS",
     ], f"the boot says each brief cadence variable still set is no longer read: {retired}"
-
-
-# What each feature ran on before the section, as origin/main's app.py read it: the watcher on W, the
-# context audit on C or none, the scout on S or off, the proposal briefs on P or W, the job briefs on J or the
-# proposal briefs' model, the judge on the job briefs'. The reviewer's upgrade probe, as a test (#287).
-def _main_chain(w: str, env: dict[str, str]) -> dict[str, str]:
-    proposal = env.get("PROPOSAL_BRIEF_MODEL", "").strip() or w
-    job = env.get("JOB_BRIEF_MODEL", "").strip() or proposal
-    return {
-        "watcher": w,
-        "context_audit": env.get("CONTEXT_AUDIT_LOCAL_MODEL", "").strip(),
-        "scout": env.get("SCOUT_MODEL", "").strip(),
-        "proposal_brief": proposal,
-        "job_brief": job,
-        "slop_judge": job,
-    }
-
-
-@pytest.mark.parametrize(
-    ("w", "env"),
-    [
-        ("", {}),
-        ("custom/w", {}),
-        ("", {"CONTEXT_AUDIT_LOCAL_MODEL": "custom/c"}),
-        ("", {"SCOUT_MODEL": "custom/s"}),
-        ("", {"PROPOSAL_BRIEF_MODEL": "custom/p"}),
-        ("custom/w", {"JOB_BRIEF_MODEL": "custom/j"}),
-        ("custom/w", {"CONTEXT_AUDIT_LOCAL_MODEL": "custom/c", "SCOUT_MODEL": "custom/s"}),
-        ("", {"PROPOSAL_BRIEF_MODEL": "custom/p", "JOB_BRIEF_MODEL": "custom/j"}),
-    ],
-    ids=["nothing-set", "only-w", "c-alone", "s-alone", "p-alone", "w-and-j", "w-c-and-s", "p-and-j"],
-)
-async def test_an_upgrade_keeps_every_model_and_a_default_written_later_starts_no_scout(
-    db_with_migrations: DatabasePool, providers: None, w: str, env: dict[str, str]
-) -> None:
-    module = _module()
-    db = db_with_migrations
-    if w:
-        await db.execute(
-            "INSERT INTO provider_config (id, watcher_local_model) VALUES ('default', $1) "
-            "ON CONFLICT (id) DO UPDATE SET watcher_local_model = EXCLUDED.watcher_local_model",
-            w,
-        )
-    config = _config(**env)
-    store = SettingsStore(db)
-    await import_env_once(store, config, today=DAY)
-    await module.import_provider_settings_once(store, config, today=DAY)
-
-    async def read() -> dict[str, str]:
-        return {feature: (await module.background_model(store, feature)())(None) for feature in FEATURES}
-
-    before = _main_chain(w, env)
-    assert await read() == before, "the upgrade changes no feature's model"
-    await store.set_keys("background_models", {"default": "custom/later"}, actor="alex@example.com")
-    after = await read()
-    assert (after["scout"], after["context_audit"]) == (before["scout"], before["context_audit"]), (
-        "a default written later, as the Providers page writes it, never starts the scout or moves the context "
-        f"audits: {after}"
-    )
 
 
 async def test_the_spend_reads_of_stats_are_bounded_by_the_month_through_an_index(
@@ -601,90 +480,3 @@ async def test_the_lifetime_total_counts_every_background_call_through_an_index_
     assert "Index Only Scan using idx_background_spend_at" in plan, (
         f"the lifetime sum reads the index alone, which carries cost_usd: {plan}"
     )
-
-
-_FAILED_FIRST_BOOTS = pytest.mark.parametrize(
-    ("w", "env"),
-    [
-        ("", {"SCOUT_MODEL": "custom/s"}),
-        ("", {"CONTEXT_AUDIT_LOCAL_MODEL": "custom/c"}),
-        ("custom/w", {"CONTEXT_AUDIT_LOCAL_MODEL": "custom/c"}),
-        ("custom/w", {"PROPOSAL_BRIEF_MODEL": "custom/p"}),
-        ("custom/w", {"JOB_BRIEF_MODEL": "gpt-6-luna"}),
-        (
-            "custom/w",
-            {
-                "SCOUT_MODEL": "custom/s",
-                "CONTEXT_AUDIT_LOCAL_MODEL": "custom/c",
-                "PROPOSAL_BRIEF_MODEL": "custom/p",
-                "JOB_BRIEF_MODEL": "custom/j",
-            },
-        ),
-    ],
-    ids=["s-alone", "c-alone", "c-and-w", "p-and-w", "hosted-j-and-w", "everything"],
-)
-
-
-@_FAILED_FIRST_BOOTS
-async def test_a_first_boot_whose_environment_import_failed_loses_no_variable(
-    db_with_migrations: DatabasePool, providers: None, w: str, env: dict[str, str]
-) -> None:
-    """The reviewer's boot sequence: the first boot's environment import fails (the lifespan logs it and goes
-    on), so only the provider settings' import runs; the next boot runs both. Every feature must then run on
-    the model it ran on before (#287)."""
-    module = _module()
-    db = db_with_migrations
-    if w:
-        await db.execute(
-            "INSERT INTO provider_config (id, watcher_local_model) VALUES ('default', $1) "
-            "ON CONFLICT (id) DO UPDATE SET watcher_local_model = EXCLUDED.watcher_local_model",
-            w,
-        )
-    config = _config(**env)
-    await module.import_provider_settings_once(SettingsStore(db), config, today=DAY)
-    store = SettingsStore(db)
-    await import_env_once(store, config, today=DAY)
-    await module.import_provider_settings_once(store, config, today=DAY)
-    after = {feature: (await module.background_model(store, feature)())(None) for feature in FEATURES}
-    assert after == _main_chain(w, env), f"the variables survive a failed first import: {after}"
-
-
-@_FAILED_FIRST_BOOTS
-async def test_a_first_boot_whose_environment_import_failed_runs_each_feature_on_its_variable_meanwhile(
-    db_with_migrations: DatabasePool, providers: None, w: str, env: dict[str, str]
-) -> None:
-    """Between a failed environment import and the next one (the next boot, or the budget policy's retry a
-    few seconds on), only the provider settings' import has run. Every feature must already run on the model it
-    ran on before: a scheduled context audit never prefers watcher_local_model over CONTEXT_AUDIT_LOCAL_MODEL,
-    nor a brief the default over its own variable's model, even for that while (#287)."""
-    module = _module()
-    db = db_with_migrations
-    if w:
-        await db.execute(
-            "INSERT INTO provider_config (id, watcher_local_model) VALUES ('default', $1) "
-            "ON CONFLICT (id) DO UPDATE SET watcher_local_model = EXCLUDED.watcher_local_model",
-            w,
-        )
-    store = SettingsStore(db)
-    await module.import_provider_settings_once(store, _config(**env), today=DAY)
-    meanwhile = {feature: (await module.background_model(store, feature)())(None) for feature in FEATURES}
-    assert meanwhile == _main_chain(w, env), (
-        f"until the environment import runs again, a feature runs on the default in its variable's place: {meanwhile}"
-    )
-
-
-async def test_a_hosted_context_audit_model_is_refused_on_upgrade_and_said_so(
-    db_with_migrations: DatabasePool, providers: None
-) -> None:
-    """The context audit prefers only a model of the operator's own server: a hosted CONTEXT_AUDIT_LOCAL_MODEL is
-    refused, the audits run on their agents' own models, and a warning names the variable, never its value."""
-    module = _module()
-    config = _config(CONTEXT_AUDIT_LOCAL_MODEL="gpt-6-luna")
-    store = SettingsStore(db_with_migrations)
-    with capture_logs() as logs:
-        await import_env_once(store, config, today=DAY)
-        await module.import_provider_settings_once(store, config, today=DAY)
-    assert (await module.background_model(store, "context_audit")())(None) == "", "no preference: their own models"
-    named = [e for e in logs if e["event"] == "background_models_variable_refused"]
-    assert [(e["log_level"], e["variable"]) for e in named] == [("warning", "CONTEXT_AUDIT_LOCAL_MODEL")], logs
-    assert "gpt-6-luna" not in str(logs), "the value is never logged"

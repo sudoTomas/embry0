@@ -630,13 +630,12 @@ async def test_a_mirror_the_guard_refuses_is_left_for_a_person_and_its_rows_go_a
     assert audit.rows[1][0] == "slop_meter.pruned" and audit.rows[1][1]["mirror"] == "refused"
 
 
-# ---- the loop: the next tick, once enrollment is settled ----
+# ---- the loop: the next tick ----
 
 
 def _snapshot(
     layers: Mapping[str, Mapping[str, Any]],
     *,
-    imported: bool,
     grace_days: int = 7,
     meter: Mapping[str, Any] | None = None,
 ) -> Any:
@@ -649,7 +648,6 @@ def _snapshot(
             "data": deployment,
             "generation": 1,
             "updated_at": None,
-            "bootstrapped_keys": ["background.slop_meter"] if imported else [],
         }
     ]
     rows += [
@@ -723,31 +721,26 @@ def _meter(
     )
 
 
-async def test_an_opted_out_repository_is_removed_only_once_settled_and_its_week_has_passed() -> None:
+async def test_an_opted_out_repository_is_removed_only_once_its_week_has_passed() -> None:
     out = {"repository:acme/widgets": {"slop_meter": False}}
-    documents = Documents(_snapshot(out, imported=False))
+    documents = Documents(_snapshot(out))
     store, mirror, exits, clock = Kept(["acme/widgets"]), Mirror(), Exits(), [NOW]
     loop = _meter(documents, store, mirror, ["acme/widgets", "other/kit"], exits=exits, clock=clock)
     await loop.tick()
-    assert exits.rows == {} and store.forgotten == [], (
-        "until the release's import has enrolled what the meter read before, a repository it does not read may "
-        "still be its own: nothing is recorded or removed"
-    )
-    documents.current = _snapshot({**out, "repository:other/kit": {"slop_meter": True}}, imported=True)
-    await loop.tick()
     assert exits.rows == {("slop_meter", "acme/widgets"): NOW} and store.forgotten == [], (
-        "once settled, the next tick records that it left, and removes nothing yet"
+        "the next tick records that it left, and removes nothing yet"
     )
+    documents.current = _snapshot({**out, "repository:other/kit": {"slop_meter": True}})
     clock[0] = NOW + timedelta(days=7)
     await loop.tick()
     assert store.forgotten == ["acme/widgets"] == mirror.removed, (
         "background.prune_after_days later, the mirror and the rows of the repository opted out go"
     )
-    assert documents.taken == 3, f"one snapshot a tick: {documents.taken} in three ticks"
+    assert documents.taken == 2, f"one snapshot a tick: {documents.taken} in two ticks"
 
 
 async def test_an_inactive_repository_is_not_read_and_keeps_what_was_read() -> None:
-    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}, imported=True))
+    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}))
     store, mirror, exits, clock = Kept(["acme/widgets", "acme/gadgets"]), Mirror(), Exits(), [NOW]
     loop = _meter(documents, store, mirror, ["acme/gadgets"], ["acme/widgets"], exits=exits, clock=clock)
     await loop.tick()
@@ -759,7 +752,7 @@ async def test_an_inactive_repository_is_not_read_and_keeps_what_was_read() -> N
 
 
 async def test_an_unregistered_repository_is_removed_after_its_week() -> None:
-    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}, imported=True))
+    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}))
     store, mirror, exits, clock = Kept(["acme/widgets", "acme/gadgets"]), Mirror(), Exits(), [NOW]
     loop = _meter(documents, store, mirror, ["acme/gadgets"], exits=exits, clock=clock)
     await loop.tick()
@@ -773,8 +766,8 @@ async def test_an_unregistered_repository_is_removed_after_its_week() -> None:
 
 
 async def test_a_registry_read_that_comes_back_empty_removes_nothing() -> None:
-    """The review's probe: the registry briefly lists nothing, on a settled deployment with three held."""
-    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}, imported=True))
+    """The review's probe: the registry briefly lists nothing, with three held."""
+    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}))
     store, mirror, exits, clock = Kept(["acme/a", "acme/b", "acme/c"]), Mirror(), Exits(), [NOW]
     loop = _meter(documents, store, mirror, [], exits=exits, clock=clock)
     for days in (0, 8, 30):
@@ -789,7 +782,6 @@ async def test_with_the_meter_off_it_still_removes_what_left_its_scope_at_its_fi
     documents = Documents(
         _snapshot(
             {"repository:acme/widgets": {"slop_meter": False}, "organization:other": {"slop_meter": True}},
-            imported=True,
             meter={"enabled": False},
         )
     )
@@ -806,7 +798,7 @@ async def test_with_the_meter_off_it_still_removes_what_left_its_scope_at_its_fi
 
 
 async def test_rows_kept_under_another_spelling_move_onto_the_registry_s_before_anything_else() -> None:
-    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}, imported=True))
+    documents = Documents(_snapshot({"organization:acme": {"slop_meter": True}}))
     store, mirror, exits = Kept(["Acme/Widgets"]), Mirror(), Exits()
     loop = _meter(documents, store, mirror, ["acme/widgets"], exits=exits)
     await loop.tick()
@@ -818,7 +810,7 @@ async def test_rows_kept_under_another_spelling_move_onto_the_registry_s_before_
 
 async def test_the_meter_turned_off_everywhere_removes_what_it_kept_after_its_week() -> None:
     """The review's probe: one repository, opted out, nothing else enrolled. Refused for ever by the old floor."""
-    documents = Documents(_snapshot({"repository:acme/only": {"slop_meter": False}}, imported=True))
+    documents = Documents(_snapshot({"repository:acme/only": {"slop_meter": False}}))
     store, mirror, exits, clock = Kept(["acme/only"]), Mirror(), Exits(), [NOW]
     loop = _meter(documents, store, mirror, ["acme/only"], exits=exits, clock=clock)
     await loop.tick()

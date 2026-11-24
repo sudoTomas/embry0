@@ -5,7 +5,6 @@
     embry0 settings apply settings.yaml      # the diff, a confirmation, then store it (source "file")
     embry0 settings export [-o FILE]         # the stored document as written, comments included
     embry0 settings export --default         # every section, every key at its default, as comments
-    embry0 settings import-env [-o FILE]     # a document holding the policy variables this environment sets
     embry0 settings set asks remind_hours=12 # change keys of one section; the rest stays as stored
     embry0 settings revisions [ID]           # the document's changes, newest first; or one, with its diff
     embry0 settings undo ID                  # put back what the newest change replaced
@@ -36,9 +35,9 @@ someone changed in between is refused (409) rather than overwritten; a file
 that is the stored text already sends nothing more, so it records no
 revision. A key that is set now and that the file leaves out goes back to
 its default: ``apply`` names each one, and with ``--yes`` it unsets them
-only with ``--allow-unset`` too, since a key the startup import wrote into
+only with ``--allow-unset`` too, since a key an import at startup wrote into
 the stored document (and not into the file) would be lost without a word.
-``export --default`` and ``import-env`` run offline too.
+``export --default`` runs offline too.
 
 ``set SECTION KEY=VALUE...`` changes some keys of one section and leaves the
 rest of the stored document as it is, comments included
@@ -58,8 +57,8 @@ instead of the deployment's document: a document of the same shape holding
 only what that organization or repository sets. ``check`` then also refuses
 a key the layer may not set; whether its values combine with what the layer
 inherits needs the stored documents, so ``diff`` says. ``undo`` takes the
-change's number, which names its layer. ``import-env`` and ``export
---default`` are the deployment's only.
+change's number, which names its layer. ``export --default`` is the
+deployment's only.
 
 Exit codes, for scripts, the same as ``embry0 progression-pack``'s
 (:mod:`embry0.cli.exit_codes`):
@@ -86,7 +85,6 @@ import json
 import re
 import sys
 from collections.abc import Iterable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import quote
@@ -559,65 +557,6 @@ def _export(args: argparse.Namespace, client: httpx.Client) -> int:
     return OK
 
 
-def _import_env(args: argparse.Namespace) -> int:
-    from pydantic import ValidationError
-
-    if _layer(args):
-        _err("import-env writes the deployment's document: the environment is the deployment's, not a layer's")
-        return USAGE
-
-    from embry0.config import Embry0Config
-    from embry0.config_redaction import mask_url_credentials, validation_error_lines
-    from embry0.settings.bootstrap import env_values
-    from embry0.settings.document import dump_yaml, with_section
-    from embry0.settings.registry import SCHEMA_VERSION, VERSION_KEY
-    from embry0.settings.sections import CATALOG
-
-    try:
-        config = Embry0Config()
-    except ValidationError as exc:
-        # Each variable by name and why, never its value: it may be any secret the environment holds.
-        _err("the environment does not load:")
-        for line in validation_error_lines(Embry0Config, exc):
-            _err(f"  {line}")
-        return REFUSED
-    except Exception as exc:  # noqa: BLE001 - as `embry0 config` reports it
-        _err(f"the environment does not load: {mask_url_credentials(str(exc))}")
-        return REFUSED
-    found = env_values(CATALOG, config)
-    day = datetime.now(UTC).date().isoformat()
-    text = (
-        "# Written by `embry0 settings import-env` from the policy variables of the environment it ran in.\n"
-        "# Every key it does not write takes its default.\n"
-        f"{VERSION_KEY}: {SCHEMA_VERSION}\n"
-    )
-    data: dict[str, Any] = {}
-    for name, values in found.values.items():
-        comment = f"Imported from the environment on {day}: {', '.join(found.variables(CATALOG, name))}."
-        text = with_section(text, data, name, values, comment)
-        data[name] = values
-    _write(text, args.output)
-    for item in found.refused:
-        _err(f"{item.variable} ({item.section}.{item.key}) is refused, so it is left out: {item.reason}")
-    for item in found.held:
-        _err(
-            f"{item.variable} ({item.section}.{item.key}) is refused together with the section's other values, "
-            f"so it is left out: {item.reason}"
-        )
-    for part in found.dropped:
-        _err(f"{part.variable} ({part.section}.{part.key}) names what the key does not know: {', '.join(part.parts)}")
-    for kept in found.kept:
-        line = dump_yaml({kept.key: kept.value}).strip()
-        _err(
-            f"{kept.variable} is not set. Where {kept.evidence}, the first start of the release that added "
-            f"{kept.section}.{kept.key} keeps `{line}` there; this file leaves it out, so applying it puts the "
-            f"key back to its default. To keep it in the file, add `{line}` under `{kept.section}:`."
-        )
-    if not found.values and not (found.refused or found.held):
-        _err("no policy variable is set to anything but its default: the document sets nothing")
-    return REFUSED if found.refused or found.held else OK
-
-
 def _revisions(args: argparse.Namespace, client: httpx.Client) -> int:
     if args.id is not None:
         return _revision(args.id, client)
@@ -690,7 +629,7 @@ def _undo(args: argparse.Namespace, client: httpx.Client) -> int:
 
 
 #: Verbs that need no orchestrator.
-OFFLINE: Final = frozenset({"check", "import-env"})
+OFFLINE: Final = frozenset({"check"})
 
 
 def offline(args: argparse.Namespace) -> bool:
@@ -709,8 +648,6 @@ def run(
     try:
         if args.action == "check":
             return _check(args)
-        if args.action == "import-env":
-            return _import_env(args)
         if args.action == "export" and args.default:
             if _layer(args):
                 _err("export --default writes the deployment's defaults; a layer holds only what it sets")
@@ -791,17 +728,13 @@ def add_parser(subparsers: Any) -> None:
         "--default", action="store_true", help="every section with every key at its default instead (offline)"
     )
     export.add_argument("-o", "--output", default=None, help="write to this file instead of stdout")
-    import_env = verbs.add_parser(
-        "import-env", help="Write a document from the policy variables this environment sets (offline)"
-    )
-    import_env.add_argument("-o", "--output", default=None, help="write to this file instead of stdout")
     revisions = verbs.add_parser("revisions", help="List the document's changes, newest first, or show one")
     revisions.add_argument("id", nargs="?", type=int, default=None, help="show this change with its diff")
     revisions.add_argument("--limit", type=_limit, default=20, help="how many to list, 1 to 100 (default 20)")
     undo = verbs.add_parser("undo", help="Put back what the newest change replaced (recorded as a restore)")
     undo.add_argument("id", type=int, help="the newest change's number, from `embry0 settings revisions`")
     undo.add_argument("--yes", action="store_true", help="undo without asking (needed without a terminal)")
-    for verb in (check, diff, apply, set_, export, import_env, revisions):
+    for verb in (check, diff, apply, set_, export, revisions):
         layer = verb.add_mutually_exclusive_group()
         layer.add_argument("--org", default=None, metavar="OWNER", help="an organization's layer, by its forge owner")
         layer.add_argument(

@@ -137,11 +137,11 @@ export type SettingsKeysResult = SettingsSaveResult & SettingsKeysExtras;
  */
 export type SettingSource = "default" | "document" | "bootstrap" | "not_imported" | "organization" | "repository";
 
-/** Where a key the import has not imported yet is read from meanwhile. */
+/** Where an organization's setting its layer has not imported yet is read from meanwhile. */
 export interface NotImportedFrom {
-  /** `row`: a record kept in the database before the document; `variable`; `default`; `organization`: its own settings. */
-  read_from: "row" | "variable" | "default" | "organization";
-  /** It, named for a person: the table, the variable, or the organization's settings. */
+  /** `organization`: its own settings. */
+  read_from: "organization";
+  /** It, named for a person: the organization's settings. */
   label: string;
 }
 
@@ -178,10 +178,6 @@ export interface EffectiveSetting {
    */
   set_by: string | null;
   set_at: string | null;
-  /** The environment variable the key was imported from, if any. */
-  env: string | null;
-  /** That variable is still in the process environment, where it is now ignored. */
-  env_still_set: boolean;
   overridable: SettingOverrideLayer[];
   /** Why the deployment's stored value is read as its default instead; null when it is not. */
   refused: string | null;

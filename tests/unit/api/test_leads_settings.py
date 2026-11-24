@@ -5,9 +5,7 @@
 - The readiness thresholds come from the section: ``ask_min`` holds a ticket out of chat in the
   proposals feed and marks it on its decision card, per repository.
 - A bad value is a 422 naming its key, never repeating it, and nothing is stored.
-- The first boot imports a non-default ``LEADS_*`` value once; a second boot does not.
-- Leads are off by default now. A deployment whose finders had stored leads, with ``LEADS_ENABLED``
-  unset, keeps them on: the first boot writes ``enabled: true``, once. A new one stays off.
+- Leads are off by default, and no boot writes the document: a registered repository turns nothing on.
 - The real lifespan builds the leads loop and the brief writer with readers of the document.
 
 The section is taken from the application's catalog by name, and each test
@@ -18,31 +16,24 @@ has no leads section.
 from __future__ import annotations
 
 import asyncio
-import importlib
-import importlib.util
-import inspect
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, date, datetime, timedelta
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from structlog.testing import capture_logs
 
 from embry0.api.app import create_app, lifespan
 from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
-from embry0.services.leads import Lead
 from embry0.services.leads.loop import LeadsLoop
-from embry0.settings.bootstrap import import_env_once, log_ignored_env
 from embry0.settings.document import load_yaml
 from embry0.settings.scope import Scope
 from embry0.settings.store import SettingsStore, scoped_reader
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
-from embry0.storage.repositories.jobs import JobsRepository
 from embry0.storage.repositories.leads import LeadsRepository
 from embry0.storage.repositories.repos import ReposRepository
 from tests.fixtures.areas import no_areas_for
@@ -55,7 +46,6 @@ pytestmark = pytest.mark.requires_postgres
 
 URL = "/api/v1/config/settings"
 ADMIN = "emb_" + "a" * 43
-DAY = date(2026, 10, 30)
 NOW = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
 HEAD = "e" * 40
 
@@ -274,305 +264,6 @@ async def test_each_bad_readiness_word_is_a_422_naming_every_problem_and_nothing
     assert (stored["yaml_text"], stored["data"]) == ("", {}), "a refused document stores nothing"
 
 
-def _config(**env: str) -> Embry0Config:
-    with patch.dict(os.environ, env, clear=True):
-        return Embry0Config(_env_file=None)  # type: ignore[call-arg]
-
-
-def _lead(kind: str, key: str) -> Lead:
-    return Lead(
-        kind=kind,
-        repo="acme/web",
-        source_key=key,
-        title="A lead",
-        summary="A lead.",
-        details="",
-        action="Fix it",
-    )
-
-
-async def test_the_first_boot_imports_non_default_leads_values_once_and_a_second_does_not(
-    db_with_migrations: DatabasePool,
-) -> None:
-    section = leads_section()
-    store = SettingsStore(db_with_migrations)
-    config = _config(
-        LEADS_ENABLED="true",
-        LEADS_FINDERS="ci, nonsense",
-        LEADS_INTERVAL_HOURS="0.1",
-        LEADS_BACKLOG_INTERVAL_HOURS="24",
-        LEADS_MAX_NEW_PER_REPO_PER_DAY="5000",
-        LEADS_TICKET_MIN_SCORE="50",
-        PROPOSALS_TICKET_MIN_READINESS="70",
-    )
-
-    with capture_logs() as logs:
-        first = await import_env_once(store, config, today=DAY)
-    assert first.imported.get("leads") == {
-        "enabled": True,
-        "finders": ["ci"],
-        "interval_hours": 0.25,
-        "offer_min": 50,
-        "ask_min": 70,
-    }, (
-        "the values that differ from the defaults are imported as the loop read them: an unknown finder dropped, "
-        f"an interval below a quarter hour ran every quarter hour; 24 is the default: {first.imported}"
-    )
-    refused = [(e["variable"], e["key"]) for e in logs if e["event"] == "settings_bootstrap_value_refused"]
-    assert refused == [("LEADS_MAX_NEW_PER_REPO_PER_DAY", "leads.max_new_per_repo_per_day")], (
-        "a value past the section's bound is reported by name and not imported"
-    )
-    dropped = [
-        (e["variable"], e["dropped"], e["log_level"]) for e in logs if e["event"] == "settings_env_value_dropped"
-    ]
-    assert dropped == [("LEADS_FINDERS", ["nonsense"], "warning")], (
-        f"a name in LEADS_FINDERS that is no finder is named in a warning, not dropped silently: {dropped}"
-    )
-    imported = (await store.snapshot()).get(section)
-    assert (imported.offer_min, imported.ask_min, imported.max_new_per_repo_per_day) == (50, 70, 5)
-
-    text = "leads:\n  enabled: false\n"
-    await store.save(text, load_yaml(text), actor="alex@example.com")
-    again_store = SettingsStore(db_with_migrations)
-    with capture_logs() as logs:
-        again = await import_env_once(again_store, config, today=DAY)
-        await log_ignored_env(again_store, config)
-    assert (again.imported, again.revision_id) == ({}, None), "the second boot imports nothing"
-    assert (await again_store.document())["data"] == {"leads": {"enabled": False}}, "the person's value stays"
-    ignored = {e["variable"] for e in logs if e["event"] == "settings_env_ignored"}
-    assert {"LEADS_ENABLED", "LEADS_FINDERS", "PROPOSALS_TICKET_MIN_READINESS"} <= ignored, (
-        f"each policy variable still set is logged as ignored: {ignored}"
-    )
-
-
-async def test_a_new_deployment_keeps_leads_off_even_once_it_is_used_later(
-    db_with_migrations: DatabasePool,
-) -> None:
-    """A database just migrated holds no repository, job or lead: what a new deployment's first start sees."""
-    section = leads_section()
-    store = SettingsStore(db_with_migrations)
-
-    first = await import_env_once(store, _config(), today=DAY)
-    assert first.imported == {}, f"a new deployment with LEADS_ENABLED unset keeps nothing: {first.imported}"
-    assert (await store.snapshot()).get(section).enabled is False, "a new deployment's leads are off"
-    assert "leads.enabled" in (await store.document())["bootstrapped_keys"], "the key is marked: asked once"
-
-    await ReposRepository(db_with_migrations).register("acme/web")
-    await LeadsRepository(db_with_migrations).upsert([_lead("ci", "check:build")], now=NOW)
-    again = await import_env_once(SettingsStore(db_with_migrations), _config(), today=DAY)
-    assert again.imported == {}, "a repository and a lead added after the first boot turn nothing on"
-    assert (await store.snapshot()).get(section).enabled is False
-
-
-async def _a_repository(db: DatabasePool) -> None:
-    await ReposRepository(db).register("acme/web")
-
-
-async def _a_job(db: DatabasePool) -> None:
-    await JobsRepository(db).create(repo="acme/web", task="Fix the export")
-
-
-async def _a_gone_finder_lead(db: DatabasePool) -> None:
-    leads = LeadsRepository(db)
-    await leads.upsert([_lead("review", "pr:7")], now=NOW - timedelta(days=30))
-    await leads.mark_gone("acme/web", "review", set(), now=NOW - timedelta(days=20))
-
-
-@pytest.mark.parametrize(
-    "record",
-    [_a_repository, _a_job, _a_gone_finder_lead],
-    ids=["a registered repository, no lead", "a job, no repository", "a finder's lead, gone, no repository"],
-)
-async def test_a_deployment_that_existed_before_keeps_leads_on_once(
-    db_with_migrations: DatabasePool, record: Callable[[DatabasePool], Awaitable[None]]
-) -> None:
-    """Before the section leads ran on every deployment that left LEADS_ENABLED unset, stored or not."""
-    section = leads_section()
-    await record(db_with_migrations)
-    store = SettingsStore(db_with_migrations)
-
-    with capture_logs() as logs:
-        first = await import_env_once(store, _config(), today=DAY)
-    assert first.imported == {"leads": {"enabled": True}}, (
-        f"the deployment existed before and LEADS_ENABLED is unset: it keeps leads on: {first.imported}"
-    )
-    assert getattr(first, "kept", None) == ("leads.enabled",)
-    assert (await store.document())["yaml_text"] == (
-        "# Kept on 2026-10-30: LEADS_ENABLED is not set, and the deployment existed before leads became opt-in "
-        "(it held a registered repository, a job or a lead a finder stored before this release first started).\n"
-        "leads:\n  enabled: true\n"
-    )
-    assert [e["key"] for e in logs if e["event"] == "settings_default_kept"] == ["leads.enabled"]
-    assert (await store.snapshot()).get(section).enabled is True, "leads stay on"
-
-    text = "leads:\n  enabled: false\n"
-    await store.save(text, load_yaml(text), actor="alex@example.com")
-    again = await import_env_once(SettingsStore(db_with_migrations), _config(), today=DAY)
-    assert (again.imported, getattr(again, "kept", None)) == ({}, ()), "the second boot does not turn them on again"
-    assert (await store.snapshot()).get(section).enabled is False, "the person's false stays"
-
-
-@pytest.mark.parametrize(("kind", "key"), [("crack", "ledger:1"), ("weed", "map:1")])
-async def test_only_a_finder_s_lead_counts_among_the_leads(
-    db_with_migrations: DatabasePool, kind: str, key: str
-) -> None:
-    """The evidence is a repository, a job or a lead of a finder's kind; a scout's or a map's lead alone is not."""
-    section = leads_section()
-    await LeadsRepository(db_with_migrations).upsert([_lead(kind, key)], now=NOW)
-    store = SettingsStore(db_with_migrations)
-    result = await import_env_once(store, _config(), today=DAY)
-    assert result.imported == {}, f"a {kind} lead alone is not counted: {result.imported}"
-    assert (await store.snapshot()).get(section).enabled is False
-
-
-async def test_leads_enabled_false_wins_over_the_evidence(db_with_migrations: DatabasePool) -> None:
-    section = leads_section()
-    await ReposRepository(db_with_migrations).register("acme/web")
-    await LeadsRepository(db_with_migrations).upsert([_lead("ci", "check:build")], now=NOW)
-    store = SettingsStore(db_with_migrations)
-    result = await import_env_once(store, _config(LEADS_ENABLED="false"), today=DAY)
-    assert result.imported == {}, "LEADS_ENABLED=false is set: the normal import, and false is the default now"
-    assert (await store.snapshot()).get(section).enabled is False, "the operator's off stays off"
-
-
-async def _import_at(store: SettingsStore, config: Embry0Config, started: Any, **kwargs: Any) -> Any:
-    """``import_env_once`` for a process that started at ``started`` (the database's clock)."""
-    assert "started" in inspect.signature(import_env_once).parameters, (
-        "the import is told when this process started, so it counts only what came before the release"
-    )
-    return await import_env_once(store, config, started=started, **kwargs)
-
-
-def _fail_first_check(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Make the first evidence check raise, as a database error at the start would; later ones answer."""
-    found = importlib.util.find_spec("embry0.storage.repositories.deployment_history")
-    assert found is not None, "the evidence that a deployment existed before is read in the storage layer"
-    history = importlib.import_module("embry0.storage.repositories.deployment_history").DeploymentHistory
-    real = history.existed_before
-    calls: list[int] = []
-
-    async def first_fails(self: Any, *, lead_kinds: Any = ()) -> bool:
-        calls.append(1)
-        if len(calls) == 1:
-            raise ConnectionError("the database dropped the connection")
-        return await real(self, lead_kinds=lead_kinds)
-
-    monkeypatch.setattr(history, "existed_before", first_fails)
-    return calls
-
-
-def _settle() -> Any:
-    from embry0.settings import bootstrap
-
-    settle = getattr(bootstrap, "settle_unchecked", None)
-    assert settle is not None, "a key whose check failed is asked again in the same run"
-    return settle
-
-
-async def _no_wait(seconds: float) -> None:
-    return None
-
-
-async def test_an_operator_s_value_written_while_a_check_waits_for_its_retry_stands(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The deployment existed before, so the retry's check would keep leads on, but the operator turned
-    them off while it waited: their false stands, and the key is settled."""
-    section = leads_section()
-    await ReposRepository(db_with_migrations).register("acme/web")
-    _fail_first_check(monkeypatch)
-    store = SettingsStore(db_with_migrations)
-    first = await import_env_once(store, _config(), today=DAY)
-    assert getattr(first, "unchecked", ()), "the start's check failed"
-    text = "leads:\n  enabled: false\n"
-    await store.save(text, load_yaml(text), actor="alex@example.com")
-
-    settled = await _settle()(store, _config(), first, sleep=_no_wait)
-
-    assert (settled.unchecked, settled.imported) == ((), {}), f"the retry imports nothing over it: {settled}"
-    assert (await store.snapshot()).get(section).enabled is False, "the operator's false stands"
-    assert "leads.enabled" in (await store.document())["bootstrapped_keys"], "and the key is marked"
-
-
-async def test_a_repository_registered_while_a_new_deployment_s_check_waits_is_no_evidence(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A new deployment: its first check fails, then acme/web is registered, then the retry runs."""
-    section = leads_section()
-    started = await db_with_migrations.fetchval("SELECT now()")
-    _fail_first_check(monkeypatch)
-    store = SettingsStore(db_with_migrations)
-    first = await _import_at(store, _config(), started, today=DAY)
-    assert getattr(first, "unchecked", ()), "the start's check failed"
-    await ReposRepository(db_with_migrations).register("acme/web")
-
-    settle = _settle()
-    assert "started" in inspect.signature(settle).parameters, "the retry asks about the same start as the import"
-    settled = await settle(store, _config(), first, started=started, sleep=_no_wait)
-
-    assert (settled.unchecked, settled.imported) == ((), {}), (
-        f"a repository registered after this start is not the deployment's past: {settled.imported}"
-    )
-    assert (await store.snapshot()).get(section).enabled is False, "a new deployment's leads stay off"
-
-
-async def test_a_repository_registered_between_two_starts_after_a_failed_import_is_no_evidence(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A new deployment's first import fails outright; a repository is registered; the next start imports."""
-    section = leads_section()
-    first_boot = await db_with_migrations.fetchval("SELECT now()")
-
-    async def broken(*args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("the first import fails after it began")
-
-    with monkeypatch.context() as patched:
-        patched.setattr("embry0.settings.bootstrap._relied_on", broken)
-        with pytest.raises(RuntimeError):
-            await _import_at(SettingsStore(db_with_migrations), _config(), first_boot, today=DAY)
-    await ReposRepository(db_with_migrations).register("acme/web")
-
-    second_boot = await db_with_migrations.fetchval("SELECT now()")
-    store = SettingsStore(db_with_migrations)
-    again = await _import_at(store, _config(), second_boot, today=DAY)
-
-    assert again.imported == {}, (
-        f"the first start was recorded before its import failed, so the repository is not evidence: {again.imported}"
-    )
-    assert (await store.snapshot()).get(section).enabled is False, "a new deployment's leads stay off"
-
-
-async def test_a_retry_after_an_import_that_failed_before_recording_its_start_counts_from_the_process_start(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The start's import fails before it can record when the release first asked; a repository is registered;
-    the retry in the same run is given the process's start, so the repository still does not count."""
-    from embry0.settings import bootstrap
-
-    section = leads_section()
-    started = await db_with_migrations.fetchval("SELECT now()")
-    real = getattr(bootstrap, "_first_asked", None)
-    assert real is not None, "the import records when the release first asked about a relied-on key"
-    calls: list[int] = []
-
-    async def fail_once(*args: Any, **kwargs: Any) -> Any:
-        calls.append(1)
-        if len(calls) == 1:
-            raise ConnectionError("the database dropped the connection")
-        return await real(*args, **kwargs)
-
-    monkeypatch.setattr(bootstrap, "_first_asked", fail_once)
-    store = SettingsStore(db_with_migrations)
-    with pytest.raises(ConnectionError):
-        await _import_at(store, _config(), started, today=DAY)
-    await ReposRepository(db_with_migrations).register("acme/web")
-
-    settled = await _settle()(store, _config(), None, started=started, sleep=_no_wait)
-
-    assert (settled.unchecked, settled.imported) == ((), {}), f"nothing is kept: {settled.imported}"
-    assert (await store.snapshot()).get(section).enabled is False, "a new deployment's leads stay off"
-
-
 def _lifespan_config(db: DatabasePool, **extra: Any) -> Embry0Config:
     return Embry0Config(
         _env_file=None,
@@ -592,24 +283,24 @@ def _lifespan_config(db: DatabasePool, **extra: Any) -> Embry0Config:
 
 
 @pytest.mark.usefixtures("stub_container_runtime")
-async def test_the_lifespan_keeps_leads_on_and_builds_its_readers_of_the_document(
+async def test_the_lifespan_builds_the_leads_readers_of_the_document(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The lifespan's own import, catalog and readers: a deployment that existed before keeps leads on."""
+    """The lifespan's own catalog and readers. A registered repository turns nothing on: the boot writes nothing."""
     monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
-    leads_section()
+    section = leads_section()
     await ReposRepository(db_with_migrations).register("acme/web")
-    config = _lifespan_config(db_with_migrations, leads_review_stale_days=9)
+    config = _lifespan_config(db_with_migrations)
     first = create_app(config)
     async with lifespan(first):
         loop = first.state.leads_loop
         assert loop is not None and callable(loop.settings), (
             "the leads loop is built with a reader of the settings document, not a value read once at startup"
         )
-        policy = (await loop.settings()).deployment()
-        assert (policy.enabled, policy.review_stale_days) == (True, 9), (
-            "the boot kept leads on (a repository was registered) and imported LEADS_REVIEW_STALE_DAYS"
+        assert (await loop.settings()).deployment() == section.defaults(), (
+            "nothing stored: the running loop's reader reads the section's defaults, leads off"
         )
+        assert await first.state.settings.revisions() == [], "the boot writes no revision"
         text = "leads:\n  enabled: true\n  ask_min: 85\n"
         await first.state.settings.save(text, load_yaml(text), actor="alex@example.com")
         assert (await loop.settings()).deployment().ask_min == 85, "a write reaches the running loop's reader"
@@ -622,34 +313,7 @@ async def test_the_lifespan_keeps_leads_on_and_builds_its_readers_of_the_documen
     second = create_app(config)
     async with lifespan(second):
         assert (await second.state.leads_loop.settings()).deployment().ask_min == 85, "a second boot keeps it"
-        assert len(await second.state.settings.revisions()) == kept, "and imports nothing again"
-
-
-@pytest.mark.usefixtures("stub_container_runtime")
-async def test_the_lifespan_asks_a_failed_check_again_in_the_same_run(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The evidence check fails at the start's import: leads read off until the lifespan's retry answers."""
-    monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
-    monkeypatch.setattr("embry0.settings.bootstrap.SETTLE_DELAYS", (0.05,))
-    leads_section()
-    await ReposRepository(db_with_migrations).register("acme/web")
-    calls = _fail_first_check(monkeypatch)
-    app = create_app(_lifespan_config(db_with_migrations))
-    with capture_logs() as logs:
-        async with lifespan(app):
-            reader = app.state.leads_loop.settings
-            for _ in range(200):
-                if (await reader()).deployment().enabled:
-                    break
-                await asyncio.sleep(0.05)
-            enabled = (await reader()).deployment().enabled
-    failed = [e["log_level"] for e in logs if e["event"] == "settings_bootstrap_check_failed"]
-    assert failed == ["error"], f"the start's failed check is an error: {failed}"
-    assert enabled is True, (
-        "the lifespan asks the failed check again in the same run, so leads are on without waiting for a restart"
-    )
-    assert len(calls) == 2, f"asked twice: at the start's import and once more: {calls}"
+        assert len(await second.state.settings.revisions()) == kept, "and writes no revision"
 
 
 async def test_a_held_flag_follows_each_repository_s_ask_min_on_every_path_that_shows_it(
@@ -730,126 +394,6 @@ class TwoOrgLeads:
 class TwoOrgProposals(FakeRepo):
     async def owners(self) -> dict[str, list[str]]:
         return {"acme/api": ["octo"], "globex/api": ["pat"]}
-
-
-async def _until(condition: Callable[[], Awaitable[bool]], seconds: float = 10.0) -> None:
-    for _ in range(int(seconds / 0.05)):
-        if await condition():
-            return
-        await asyncio.sleep(0.05)
-
-
-@pytest.mark.usefixtures("stub_container_runtime")
-async def test_the_lifespan_retry_counts_only_what_a_new_deployment_held_before_it_started(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The reviewer's probe, through the real lifespan: a new deployment's check fails at the start, acme/web
-    is registered, and only then does the retry ask. Leads stay off."""
-    monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
-    monkeypatch.setattr("embry0.settings.bootstrap.SETTLE_DELAYS", (0.01,))
-    leads_section()
-    history = importlib.import_module("embry0.storage.repositories.deployment_history").DeploymentHistory
-    real = history.existed_before
-    registered = asyncio.Event()
-    calls: list[int] = []
-
-    async def fail_then_wait(self: Any, *, lead_kinds: Any = ()) -> bool:
-        calls.append(1)
-        if len(calls) == 1:
-            raise ConnectionError("the database dropped the connection")
-        await registered.wait()
-        return await real(self, lead_kinds=lead_kinds)
-
-    monkeypatch.setattr(history, "existed_before", fail_then_wait)
-    app = create_app(_lifespan_config(db_with_migrations))
-    async with lifespan(app):
-        await ReposRepository(db_with_migrations).register("acme/web")
-        registered.set()
-
-        async def settled() -> bool:
-            return "leads.enabled" in (await app.state.settings.document())["bootstrapped_keys"]
-
-        await _until(settled)
-        enabled = (await app.state.leads_loop.settings()).deployment().enabled
-        marked = await settled()
-    assert len(calls) == 2 and marked, f"the retry asked once more and settled the key: {calls}, {marked}"
-    assert enabled is False, "acme/web came after this start, so it is not the new deployment's past: leads stay off"
-
-
-@pytest.mark.usefixtures("stub_container_runtime")
-async def test_the_lifespan_tries_a_failed_import_again_in_the_same_run(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The start's import fails outright; the retry imports, counting only what was there at the start."""
-    from embry0.settings import bootstrap
-
-    monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
-    monkeypatch.setattr("embry0.settings.bootstrap.SETTLE_DELAYS", (0.01,))
-    section = leads_section()
-    await ReposRepository(db_with_migrations).register("acme/web")
-    real = bootstrap._relied_on  # noqa: SLF001
-    calls: list[int] = []
-
-    async def fail_once(*args: Any, **kwargs: Any) -> Any:
-        calls.append(1)
-        if len(calls) == 1:
-            raise RuntimeError("the start's import fails")
-        return await real(*args, **kwargs)
-
-    monkeypatch.setattr(bootstrap, "_relied_on", fail_once)
-    app = create_app(_lifespan_config(db_with_migrations))
-    with capture_logs() as logs:
-        async with lifespan(app):
-
-            async def on() -> bool:
-                return bool((await app.state.leads_loop.settings()).deployment().enabled)
-
-            await _until(on)
-            enabled = (await app.state.settings.snapshot()).get(section).enabled
-    assert [e["event"] for e in logs if e["event"] == "settings_bootstrap_failed"] == ["settings_bootstrap_failed"]
-    assert enabled is True, "the failed import is tried again in this run, and acme/web predates the start: on"
-
-
-@pytest.mark.usefixtures("stub_container_runtime")
-async def test_the_lifespan_s_retry_counts_from_the_process_start_when_the_first_import_recorded_nothing(
-    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The start's import fails before it can record when the release first asked; acme/web is registered;
-    then a retry records it. Every retry in the process, whoever runs it, counts from the process start."""
-    from embry0.settings import bootstrap
-
-    monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
-    monkeypatch.setattr("embry0.settings.bootstrap.SETTLE_DELAYS", (0.01,))
-    section = leads_section()
-    real = getattr(bootstrap, "_first_asked", None)
-    assert real is not None, "the import records when the release first asked about a relied-on key"
-    registered = asyncio.Event()
-    calls: list[int] = []
-
-    async def fail_then_wait(*args: Any, **kwargs: Any) -> Any:
-        calls.append(1)
-        if len(calls) == 1:
-            raise ConnectionError("the database dropped the connection")
-        await registered.wait()
-        return await real(*args, **kwargs)
-
-    monkeypatch.setattr(bootstrap, "_first_asked", fail_then_wait)
-    app = create_app(_lifespan_config(db_with_migrations))
-    async with lifespan(app):
-        await ReposRepository(db_with_migrations).register("acme/web")
-        registered.set()
-
-        async def settled() -> bool:
-            return "leads.enabled" in (await app.state.settings.document())["bootstrapped_keys"]
-
-        await _until(settled)
-        marked = await settled()
-        enabled = (await app.state.settings.snapshot()).get(section).enabled
-    assert marked, f"a retry settled the key: {calls}"
-    assert enabled is False, (
-        "acme/web came after this process started, so it is not the new deployment's past, though the start "
-        "was only recorded after it"
-    )
 
 
 @pytest.mark.usefixtures("stub_container_runtime")

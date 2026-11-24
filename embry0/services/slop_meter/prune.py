@@ -9,8 +9,7 @@ it carries the meter's marker (:data:`embry0.services.slop_meter.mirror.MARKER`,
 written at the clone): one without it is logged and audited once and never
 removed, since it may not be the meter's.
 
-Nothing is removed at once. Each tick, once the meter's enrollment is
-settled (:meth:`embry0.services.background_scope.Enrollment.settled`):
+Nothing is removed at once. Each tick:
 
 1. **The floor.** When the registry read lists no repository at all while
    the meter keeps something, the tick removes nothing and records nothing,

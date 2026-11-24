@@ -112,7 +112,7 @@ Any other glob (`*/*`, `*x*`) is checked against every path, so a write may hold
   - The same holds, at once and with no retry, for a pull request listing page the forge refuses (an answer a retry cannot change; one it can is a failed call, above), and for the pages past the cap of `SLOP_METER_EVENT_PAGES` pages' worth of pull requests found (#483).
   - It waits for the next run at the interval: only a history still being read brings the meter back sooner (`SLOP_METER_CATCHUP_SECONDS`), so a repository waiting for forge budget never holds the meter, and every repository with it, on the catch-up cadence.
 
-**Before this section.** `SLOP_METER_INTERVAL_SECONDS` (`0` turned the reading off), `SLOP_METER_API_CALLS_PER_TICK` and `SLOP_METER_RATE_RESERVE` are imported once, at the first start of the release that added the section, as `interval_hours` (or `enabled: false`), `api_calls_per_tick` and `rate_reserve`, and ignored after that. Each organization's `slop_meter_bots` was copied into its layer as `bots` ([api.md](api.md#organizations)). Everything else was a constant in the meter's code, and its default is that constant.
+**Before this section.** `SLOP_METER_INTERVAL_SECONDS` (`0` turned the reading off), `SLOP_METER_API_CALLS_PER_TICK` and `SLOP_METER_RATE_RESERVE` set what `interval_hours` (or `enabled: false`), `api_calls_per_tick` and `rate_reserve` set now; they are no longer read. Each organization's `slop_meter_bots` was copied into its layer as `bots` ([api.md](api.md#organizations)). Everything else was a constant in the meter's code, and its default is that constant.
 
 ## How a change rescores
 
@@ -127,11 +127,11 @@ Four keys are not what a score is computed from, and change no version: `enabled
 
 ## Which repositories
 
-The meter reads the registered, active repositories enrolled in it: `background.slop_meter` of the settings document, `false` until an operator sets it in an organization's layer (every repository of it), a repository's layer, or the deployment's document ([which repositories](configuration.md#which-repositories-background-features-read)). A job run on a repository enrolls nothing. A deployment that ran the meter before keeps the repositories it read then (those the world map showed: a job in the 90 days before the upgrade, owners or a watched stack, plus `SLOP_METER_REPOS` and minus `SLOP_METER_EXCLUDE`), each written into its repository's layer at the first start of that release.
+The meter reads the registered, active repositories enrolled in it: `background.slop_meter` of the settings document, `false` until an operator sets it in an organization's layer (every repository of it), a repository's layer, or the deployment's document ([which repositories](configuration.md#which-repositories-background-features-read)). A job run on a repository enrolls nothing.
 
 A repository that leaves the meter's scope, opted out or unregistered, loses its mirror and everything the meter kept of it `background.prune_after_days` (a week) later, unless it comes back first; one made inactive is not read and keeps what was read ([what it keeps](#what-it-keeps)).
 
-The loop is on by default and reads what is enrolled. `slop_meter.enabled: false` turns the reading off; turned on again, the meter reads within five minutes. Until the first start's import has imported `SLOP_METER_INTERVAL_SECONDS`, `SLOP_METER_API_CALLS_PER_TICK` and `SLOP_METER_RATE_RESERVE` (a start whose import failed: it is tried again while the orchestrator runs), the meter reads them as the release before did, so a meter that was off stays off (`slop_meter_settings_not_imported`).
+The loop is on by default and reads what is enrolled. `slop_meter.enabled: false` turns the reading off; turned on again, the meter reads within five minutes.
 
 ## What it reads, and how much
 

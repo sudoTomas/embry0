@@ -208,23 +208,6 @@ def test_an_organization_may_set_every_key_and_a_repository_none() -> None:
     assert section.repo_keys == frozenset()
 
 
-def test_the_variables_are_imported_into_their_feature_s_key_and_an_empty_one_is_the_default() -> None:
-    """An empty SCOUT_MODEL is the scout's default, false, as the scout ran with none."""
-    from embry0.settings.env import env_name
-
-    imports = _section().imports()
-    assert {key: env_name(imported.attr) for key, imported in imports.items()} == {
-        "context_audit": "CONTEXT_AUDIT_LOCAL_MODEL",
-        "scout": "SCOUT_MODEL",
-        "proposal_brief": "PROPOSAL_BRIEF_MODEL",
-        "job_brief": "JOB_BRIEF_MODEL",
-    }
-    convert = imports["scout"].convert
-    assert convert is not None and convert(" custom/qwen ") == "custom/qwen" and convert("") is False
-    other = imports["proposal_brief"].convert
-    assert other is not None and other("") is None
-
-
 def test_a_stored_model_its_provider_no_longer_offers_never_blocks_a_change_to_another_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

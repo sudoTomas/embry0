@@ -7,11 +7,9 @@ answers with: 0 done, 1 refused, 2 usage, 3 conflict, 4 unavailable.
 
 from __future__ import annotations
 
-import os
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import httpx
 import pytest
@@ -21,7 +19,6 @@ from embry0.cli.settings import problem_line, run
 from embry0.settings.document import DocumentInvalid, check, load_yaml
 from embry0.settings.example import render
 from embry0.settings.sections import CATALOG
-from tests.fixtures.settings_sections import TEST_CATALOG
 
 GOOD = "# office hours\nasks:\n  enabled: true\n  hours: '08-17'\n"
 #: An unknown section, a wrong type, a value out of range and a zone nobody knows, at once.
@@ -328,7 +325,7 @@ def test_apply_of_a_refused_document_stops_at_the_dry_run(tmp_path: Path) -> Non
     assert len(api.seen) == 2, "nothing is written after a refused dry run"
 
 
-# ---- export and import-env ----
+# ---- export ----
 
 
 def test_export_writes_the_stored_text(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -350,85 +347,6 @@ def test_export_default_is_the_example_and_needs_no_orchestrator(capsys: pytest.
 
     assert run(_args("export", default=True), transport=httpx.MockTransport(down)) == OK
     assert capsys.readouterr().out == render(CATALOG)
-
-
-def test_import_env_writes_the_variables_set_and_leaves_out_a_refused_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.chdir(tmp_path)  # no ./.env is read
-    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)
-    env = {"ASKS_ENABLED": "true", "SCOUT_REPOS": "acme/widgets, acme/gears", "ASK_TIMEZONE": "Mars/Base"}
-    with patch.dict(os.environ, env, clear=True):
-        code = run(_args("import-env"))
-    captured = capsys.readouterr()
-    assert code == REFUSED, "a refused variable must fail a script, though the rest is written"
-    document = load_yaml(captured.out)
-    assert document == {"version": 1, "sample": {"enabled": True, "labels": ["acme/widgets", "acme/gears"]}}
-    assert "ASKS_ENABLED, SCOUT_REPOS" in captured.out, "the text names the variables it read"
-    assert "ASK_TIMEZONE (sample.zone) is refused" in captured.err
-    assert "Mars/Base" not in captured.err, "a refused value is never echoed"
-    check(TEST_CATALOG, document, stored={})
-
-
-def test_import_env_of_an_environment_at_its_defaults_sets_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)
-    with patch.dict(os.environ, {"ASKS_ENABLED": "false"}, clear=True):
-        assert run(_args("import-env", output=str(tmp_path / "env.yaml"))) == OK
-    assert load_yaml((tmp_path / "env.yaml").read_text(encoding="utf-8")) == {"version": 1}
-    assert "sets nothing" in capsys.readouterr().err
-
-
-def test_import_env_says_what_a_running_deployment_keeps_and_how_to_keep_it_in_the_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """LEADS_ENABLED unset: the file cannot say whether leads stay on, so stderr says when they do."""
-    monkeypatch.chdir(tmp_path)
-    with patch.dict(os.environ, {}, clear=True):
-        assert run(_args("import-env")) == OK
-    captured = capsys.readouterr()
-    assert "leads" not in load_yaml(captured.out), "the environment sets nothing, so the file leaves leads out"
-    note = next((line for line in captured.err.splitlines() if line.startswith("LEADS_ENABLED is not set.")), "")
-    assert "keeps `enabled: true`" in note and "the deployment existed before leads became opt-in" in note, (
-        f"stderr says the running deployment would keep leads on, and when: {captured.err!r}"
-    )
-    assert "add `enabled: true` under `leads:`" in note, f"and how to keep it in the file: {note!r}"
-
-    with patch.dict(os.environ, {"LEADS_ENABLED": "false", "LEADS_FINDERS": "ci, nonsense"}, clear=True):
-        assert run(_args("import-env")) == OK
-    captured = capsys.readouterr()
-    assert "LEADS_ENABLED is not set" not in captured.err, "a variable that is set is imported as usual: no note"
-    assert "LEADS_FINDERS (leads.finders) names what the key does not know: nonsense" in captured.err, captured.err
-    assert load_yaml(captured.out)["leads"] == {"finders": ["ci"]}
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["http://oauth2:tok-000000000007@gitlab.example.com", "http://tok-000000000007@gitlab.example.com"],
-    ids=["password", "bare-user"],
-)
-def test_import_env_never_prints_a_token_a_refused_url_carries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], value: str
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    with patch.dict(os.environ, {"GITLAB_URL": value}, clear=True):
-        assert run(_args("import-env")) == REFUSED
-    captured = capsys.readouterr()
-    assert "\n  GITLAB_URL must be an https:// URL" in captured.err, captured.err
-    assert "tok-000000000007" not in captured.err + captured.out, "the token in the refused URL was printed"
-
-
-def test_import_env_of_an_environment_that_does_not_load_names_the_variable_not_its_value(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    with patch.dict(os.environ, {"ASK_REMIND_HOURS": "s3cret-ish"}, clear=True):
-        assert run(_args("import-env")) == REFUSED
-    captured = capsys.readouterr()
-    assert "ASK_REMIND_HOURS: Input should be a valid number" in captured.err
-    assert "s3cret-ish" not in captured.err + captured.out, "a value the environment holds is never echoed"
 
 
 # ---- history and undo ----
@@ -553,3 +471,8 @@ def test_the_subcommand_is_wired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     with pytest.raises(SystemExit) as usage:
         cli.main()
     assert usage.value.code == USAGE
+    # The one-time import read the environment; nothing reads it now, so its verb is gone (#168).
+    monkeypatch.setattr("sys.argv", ["embry0", "settings", "import-env"])
+    with pytest.raises(SystemExit) as gone:
+        cli.main()
+    assert gone.value.code == USAGE, "import-env is no verb of `embry0 settings`"

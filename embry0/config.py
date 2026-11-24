@@ -378,11 +378,8 @@ class Embry0Config(BaseSettings):
     trigger_labels: str = "embry0"
 
     # Rate limiting — defaults sized for trusted self-hosted operation
-    # (RAV-605); tighten via env for anything internet-facing.
-    # The per-person dispatch limit is the settings document's
-    # budget.rate_limit_per_author_per_hour now, like the budget below: this
-    # is only its import source (embry0/settings/sections/budget.py).
-    rate_limit_per_author_per_hour: int = 5
+    # (RAV-605); tighten via env for anything internet-facing. The per-person
+    # dispatch limit is the settings document's budget.rate_limit_per_author_per_hour.
     api_rate_limit_per_minute: int = 300
     # IP-keyed throttle for the unauthenticated webhook endpoints (RAV-1070).
     # Sized for GitHub's burstiest legitimate delivery patterns; the HMAC
@@ -410,19 +407,6 @@ class Embry0Config(BaseSettings):
     # by default: the save succeeds and the job fails when it runs, as
     # before. See embry0/services/provider_readiness.py, docs/providers.md.
     agent_model_provider_check: bool = False
-
-    # Budget: the settings document's `budget` section now
-    # (embry0/settings/sections/budget.py). These four and
-    # RATE_LIMIT_PER_AUTHOR_PER_HOUR are only its import source: read once, at
-    # the first start of the release that added the section, and only when no
-    # budget_config row was ever saved (a saved row won over them, and is
-    # imported instead); ignored after that, but for a key the import has not
-    # imported yet (embry0.services.budget_policy reads it as the release
-    # before did). An operator keeps them while a rollback may read them.
-    max_budget_usd: float = 10.0
-    daily_budget_cap_usd: float = 100.0
-    monthly_budget_cap_usd: float = 500.0
-    budget_overrun_mode: str = "soft"  # "soft" | "hard"
 
     # Sandbox defaults
     sandbox_image: str = "embry0-sandbox:latest"
@@ -653,13 +637,6 @@ class Embry0Config(BaseSettings):
     local_llm_max_request_bytes: Annotated[int, NOT_SECRET] = 8 * 1024 * 1024
     local_llm_context_tokens: Annotated[int, NOT_SECRET] = 0
     local_llm_slot_wait_seconds: Annotated[int, NOT_SECRET] = 900
-    # Read once, at the first start of the release that stored the provider
-    # catalogue (ADR 0031), into its document: which OpenAI-compatible
-    # providers are on, and how often OpenRouter's live model list is read
-    # again. Ignored after that; the catalogue decides
-    # (embry0/services/provider_catalogue_store.py).
-    openai_compatible_providers: Annotated[str, NOT_SECRET] = ""
-    openrouter_catalog_refresh_hours: Annotated[str, NOT_SECRET] = ""
     # The largest model request the xai- and auth-proxy forward. Every agent
     # turn resends the whole conversation, and a 300k-token prompt is more
     # than a megabyte of JSON. Over it, the run ends as ERR_CONTEXT_WINDOW_EXCEEDED.
@@ -760,105 +737,16 @@ class Embry0Config(BaseSettings):
     # a container uses or a live job's repo needs.
     qa_image_retention_days: int | None = Field(default=None, gt=0, le=3650)
 
-    # Context audit on a schedule (ADR 0020), off until the settings
-    # document's context_audit.days is set for a repository. Its caps are the settings document's
-    # `budget` section now (context_audit_job_usd, area_map_job_usd and
-    # fix_job_usd, all three imported from CONTEXT_AUDIT_JOB_BUDGET_USD, and
-    # context_audit_max_jobs_per_tick), an organization's layer over the
-    # deployment's. These two are only their import source: read once, at the
-    # first start of the release that added the section, and ignored after
-    # that; removed in the next release. 0 or an invalid cap is not imported,
-    # so it reads as the default, never as unlimited.
-    context_audit_job_budget_usd: float = 2.0
-    context_audit_max_jobs_per_tick: int = Field(default=3, ge=0)
-    # The model scheduled audits prefer is the settings document's
-    # background_models.context_audit now (#164). CONTEXT_AUDIT_LOCAL_MODEL is
-    # only its import source: read once, at the first start of the release
-    # that added the section, and ignored after that. It is removed in the
-    # next release; nothing else reads it.
-    context_audit_local_model: str = ""
-
-    # Leads (spec 2026-10-25): the policy is the settings document's `leads`
-    # section now (embry0/settings/sections/leads.py), with
-    # PROPOSALS_TICKET_MIN_READINESS below as its `ask_min`. These variables
-    # are only its import source: read once, at the first start of the
-    # release that added the section, and ignored after that. They are
-    # removed in the next release; nothing else reads them. LEADS_ENABLED's
-    # default stays true, what it meant before; the section's is false, and a
-    # deployment that existed before, with LEADS_ENABLED unset, keeps
-    # `enabled: true` (EnvImport.relied_on, which declares that value itself).
-    leads_enabled: bool = True
-    leads_finders: str = "ticket,ci,alert,flaky,review"
-    leads_interval_hours: float = Field(default=6.0, gt=0)
-    leads_backlog_interval_hours: float = Field(default=24.0, gt=0)
-    leads_max_new_per_repo_per_day: int = Field(default=5, ge=0)
-    leads_ticket_min_score: int = Field(default=40, ge=0, le=100)
-    leads_review_stale_days: int = Field(default=3, ge=0)
-    leads_flaky_commits: int = Field(default=10, ge=1, le=50)
-
-    # Scout (docs/leads.md, "The scout"): read-only scouting jobs (garden, kintsugi-trace)
-    # rotating through the repositories enrolled in background.scout of the
-    # settings document (#165) and each area of one that declares areas. The
-    # model its jobs are pinned to is the settings document's
-    # background_models.scout now (#164): SCOUT_MODEL is only its import
-    # source, read once at the first start of the release that added the
-    # section and ignored after that, and removed in the next release.
-    # SCOUT_REPOS and SCOUT_EXCLUDE (comma-separated) are likewise only the
-    # import source of the repository layers' background.scout, read once at
-    # the first start of the release that added the background section
-    # (embry0.services.background_enrollment), and removed in the next release.
-    scout_model: Annotated[str, NOT_SECRET] = ""
-    scout_repos: Annotated[str, NOT_SECRET] = ""
-    scout_exclude: Annotated[str, NOT_SECRET] = ""
-    # The scout's policy is the settings document's `scout` section now
-    # (embry0/settings/sections/scout.py). These four are only its import
-    # source: read once, at the first start of the release that added the
-    # section, and ignored after that. They are removed in the next release;
-    # nothing else reads them.
-    scout_templates: Annotated[str, NOT_SECRET] = "garden,kintsugi-trace"
-    scout_max_in_flight: int = Field(default=2, ge=0)
-    scout_revisit_hours: float = Field(default=24.0, gt=0)
-    scout_max_leads_per_job: int = Field(default=5, ge=1)
+    # The context audit, leads, the scout, asks, the briefs and the
+    # Slop-O-Meter's policy are the settings document's sections now
+    # (embry0/settings/sections/); the variables that set them before are no
+    # longer read (embry0/config_retired.py says where each moved).
     # SCOUT_TICK_SECONDS is no longer read: the scout ticks every 300 seconds
     # (embry0.services.scout.TICK_SECONDS). Kept one release only so startup
     # can warn while it is still set (settings_env_retired), as text, so no
     # value of it can stop a start.
     scout_tick_seconds: Annotated[str, NOT_SECRET] = ""
 
-    # Agent questions: the settings document's `agent_questions` section now
-    # (embry0/settings/sections/agent_questions.py). These two are only its
-    # import source: read once, at the first start of the release that added
-    # the section, and ignored after that. Text, so no value of either can
-    # stop a start: one the section refuses (not a whole number at or above 0)
-    # is not imported, and its key keeps its default.
-    ask_user_rounds_cap: Annotated[str, NOT_SECRET] = ""
-    user_retry_rounds_cap: Annotated[str, NOT_SECRET] = ""
-
-    # Asks (spec 2026-10-27, decisions): the policy is the settings document's
-    # `asks` section now (embry0/settings/sections/asks.py, spec 2026-10-28).
-    # These variables are only its import source: read once, at the first
-    # start of the release that added the section, and ignored after that.
-    # They are removed in the next release; nothing else reads them.
-    asks_enabled: bool = False
-    ask_hours: Annotated[str, NOT_SECRET] = "09-18"
-    ask_weekdays: Annotated[str, NOT_SECRET] = "mon-fri"
-    ask_timezone: Annotated[str, NOT_SECRET] = "UTC"
-    ask_remind_hours: float = Field(default=24.0, gt=0)
-    ask_expire_days: float = Field(default=7.0, gt=0)
-    ask_tick_seconds: float = Field(default=120.0, ge=30)
-    ask_max_open_per_person: int = Field(default=3, ge=1)
-
-    # Owner proposals in plain words (spec 2026-10-25, proposal briefs). The
-    # model each brief is written on is the settings document's
-    # background_models.proposal_brief now (#164). PROPOSALS_TICKET_MIN_READINESS,
-    # the readiness at which a backlog ticket is asked in chat, is only the
-    # import source of the `leads` section's `ask_min` (see the leads block above).
-    proposals_ticket_min_readiness: int = Field(default=60, ge=0, le=100)
-    # PROPOSAL_BRIEF_MODEL and JOB_BRIEF_MODEL are only the import source of
-    # background_models.proposal_brief and .job_brief (#164): read once, at the
-    # first start of the release that added the section, and ignored after
-    # that. They are removed in the next release; nothing else reads them.
-    proposal_brief_model: Annotated[str, NOT_SECRET] = ""
     # PROPOSAL_BRIEF_INTERVAL_SECONDS and PROPOSAL_BRIEFS_PER_TICK are no longer
     # read: the proposal brief writer writes at most 3 briefs every 60 seconds
     # (embry0.services.proposal_briefs.PER_TICK, INTERVAL_SECONDS; #168). Kept one
@@ -866,9 +754,6 @@ class Embry0Config(BaseSettings):
     # (settings_env_retired), as text, so no value of them can stop a start.
     proposal_brief_interval_seconds: Annotated[str, NOT_SECRET] = ""
     proposal_briefs_per_tick: Annotated[str, NOT_SECRET] = ""
-    # Jobs in plain words (spec 2026-10-26, job briefs), on
-    # background_models.job_brief.
-    job_brief_model: Annotated[str, NOT_SECRET] = ""
     # JOB_BRIEF_INTERVAL_SECONDS and JOB_BRIEFS_PER_TICK are no longer read: the
     # job brief writer writes at most 3 briefs every 60 seconds
     # (embry0.services.job_briefs.PER_TICK, INTERVAL_SECONDS; #665). Kept one
@@ -876,25 +761,9 @@ class Embry0Config(BaseSettings):
     # (settings_env_retired), as text, so no value of them can stop a start.
     job_brief_interval_seconds: Annotated[str, NOT_SECRET] = ""
     job_briefs_per_tick: Annotated[str, NOT_SECRET] = ""
-    # The Slop-O-Meter (spec 2026-10-26, slop-o-meter): it reads the
-    # repositories enrolled in background.slop_meter of the settings document
-    # (#165). SLOP_METER_REPOS and SLOP_METER_EXCLUDE (comma-separated) are
-    # only the import source of the repository layers' background.slop_meter,
-    # read once at the first start of the release that added the section, and
-    # removed in the next release.
-    slop_meter_repos: Annotated[str, NOT_SECRET] = ""
-    slop_meter_exclude: Annotated[str, NOT_SECRET] = ""
-    # How often it reads, whether it reads at all and its forge budget are the
-    # settings document's `slop_meter` section now (#169): interval_hours and
-    # enabled (SLOP_METER_INTERVAL_SECONDS=0 was off), api_calls_per_tick and
-    # rate_reserve, an organization's layer over the deployment's. These
-    # three are only its import source: read once, at the first start of the
-    # release that added the section, and ignored after that; removed in the
-    # next release.
-    slop_meter_api_calls_per_tick: int = Field(default=200, ge=0)
-    slop_meter_rate_reserve: int = Field(default=2_000, ge=0)
-    slop_meter_interval_seconds: float = Field(default=86_400.0, ge=0)
-    # The process's own limits, which stay variables: each repository's bare
+    # The Slop-O-Meter (spec 2026-10-26, slop-o-meter) reads the repositories
+    # enrolled in background.slop_meter of the settings document (#165), at the
+    # pace of its `slop_meter` section (#169). The process's own limits, which stay variables: each repository's bare
     # mirror lives under the data path (a container path), removed with its
     # rows background.prune_after_days after it leaves the scope
     # (docs/ops/background-data.md); every git call has a timeout; while a

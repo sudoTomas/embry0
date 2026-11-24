@@ -101,13 +101,12 @@ def test_the_brief_writer_orders_held_tickets_by_the_section() -> None:
 
 
 def test_no_code_reads_a_variable_the_leads_section_governs() -> None:
-    """The config keeps these one release only as the import's source; the section's ``env`` names them."""
+    """The config no longer has these fields: nothing, the config included, names one."""
     root = pathlib.Path(embry0.__file__).parent
     pattern = re.compile(r"\b(?:" + "|".join(MOVED) + r")\b")
     readers = {
         str(path.relative_to(root)): sorted(set(pattern.findall(path.read_text(encoding="utf-8"))))
         for path in sorted(root.rglob("*.py"))
-        if path.name != "config.py" and path.relative_to(root).as_posix() != "settings/sections/leads.py"
     }
     found = {path: names for path, names in readers.items() if names}
     assert found == {}, f"these read a variable the settings document governs now: {found}"
@@ -118,24 +117,3 @@ def test_the_check_for_a_reader_of_a_governed_variable_can_fail() -> None:
     assert pattern.findall("min_readiness=config.proposals_ticket_min_readiness") == ["proposals_ticket_min_readiness"]
     assert pattern.findall("if config.leads_enabled:") == ["leads_enabled"]
     assert pattern.findall("leads_enabled_at = 1; my_leads_finders2") == [], "a longer name is not a read"
-
-
-def test_the_settings_retry_reads_the_same_sources_and_start_as_the_import() -> None:
-    """The lifespan's retry imports what the start's import would: the budget's saved row before its variables
-    (``earlier``), and only records older than the process start (the store's ``started``)."""
-    retries = [
-        node
-        for node in ast.walk(_tree())
-        if isinstance(node, ast.Call) and ast.unparse(node.func) == "settle_unchecked"
-    ]
-    assert len(retries) == 1, "the lifespan starts one retry of the settings import"
-    passed = {kw.arg: ast.unparse(kw.value) for kw in retries[0].keywords if kw.arg}
-    assert passed.get("earlier") == "EARLIER_SOURCES", f"the retry reads the same earlier sources: {passed}"
-    stores = [
-        {kw.arg: ast.unparse(kw.value) for kw in node.keywords if kw.arg}
-        for node in ast.walk(_tree())
-        if isinstance(node, ast.Call) and ast.unparse(node.func) == "SettingsStore"
-    ]
-    assert {"started": "settings_started"} in stores, (
-        f"the lifespan's store carries when the process began, for every import in it: {stores}"
-    )

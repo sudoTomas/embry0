@@ -44,10 +44,9 @@ def test_the_meter_lists_registered_repositories_and_reads_its_enrollment_every_
         "the meter's candidates are the registered repositories, active or not (it reads the active ones and "
         f"keeps what it read of the inactive), never the world map's regions: got repos={passed.get('repos')!r}"
     )
-    assert passed.get("read") == "meter_reader(app.state.settings, config)", (
+    assert passed.get("read") == "meter_reader(app.state.settings)", (
         "the meter reads background.slop_meter, its judge's model and the slop_meter section from one snapshot a "
-        "tick, and the old variables of a key the import has not imported (#169): "
-        f"got read={passed.get('read')!r}"
+        f"tick, and nothing else (#169): got read={passed.get('read')!r}"
     )
     assert "models" not in passed, "no second reader of the settings documents: a tick could mix two versions"
 
@@ -99,40 +98,3 @@ def test_no_feature_reads_the_world_map_or_the_retired_lists_for_its_repositorie
         )
     ]
     assert read == [], f"which repositories a background feature reads is the scope rule's alone: {read}"
-
-
-def test_the_enrollment_is_imported_once_at_startup_before_any_loop_reads_it() -> None:
-    lifespan = next(n for n in ast.walk(_tree()) if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan")
-    awaited = [
-        ast.unparse(node.value)
-        for node in ast.walk(lifespan)
-        if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
-    ]
-    started = [call for call in awaited if call.startswith("import_enrollment_once(")]
-    assert started == [
-        "import_enrollment_once(app.state.settings, config, reported=enrollment_reported, "
-        "metrics=getattr(app.state, 'loop_metrics', None))"
-    ], f"the first start of the release enrolls what the scout and the meter read before (#165): {started}"
-    order = [call.split("(")[0] for call in awaited]
-    assert (
-        order.index("import_provider_settings_once")
-        < order.index("import_enrollment_once")
-        < order.index("app.state.settings.snapshot")
-    ), "after the other imports, and before the first snapshot every loop starts from"
-    source = ast.unparse(lifespan)
-    assert "log_ignored_lists(first_snapshot, config)" in source, (
-        "every start says when a list variable is set and no longer read"
-    )
-    retried = [
-        node
-        for node in ast.walk(lifespan)
-        if isinstance(node, ast.If)
-        and ast.unparse(node.test) == "enrollment_import is None or enrollment_import.failed"
-    ]
-    assert retried and (
-        "settle_enrollment(app.state.settings, config, enrollment_import, reported=enrollment_reported, "
-        "metrics=getattr(app.state, 'loop_metrics', None))"
-    ) in ast.unparse(retried[0]), (
-        "an enrollment import that failed is tried again in the same run, with the store's start, sharing the "
-        "names already reported (each logged at error level and audited once) and the blocked gauge"
-    )

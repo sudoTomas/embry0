@@ -132,8 +132,6 @@ beforeEach(() => {
           source: "default" as const,
           set_by: null,
           set_at: null,
-          env: null,
-          env_still_set: false,
           overridable: [],
           refused: null,
           description: "",

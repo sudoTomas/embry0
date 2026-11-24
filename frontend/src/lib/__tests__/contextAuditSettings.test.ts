@@ -22,8 +22,6 @@ function setting(value: unknown, source: EffectiveSetting["source"]): EffectiveS
     source,
     set_by: null,
     set_at: null,
-    env: null,
-    env_still_set: false,
     overridable: ["organization", "repository"],
     refused: null,
     description: null,

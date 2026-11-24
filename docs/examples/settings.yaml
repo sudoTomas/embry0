@@ -103,18 +103,14 @@ background:
 
   # The scout starts read-only scouting jobs on this repository and its areas,
   # on the model background_models.scout names. Off until an operator enrolls
-  # a repository, an organization or the deployment. Upgrading keeps what it
-  # read before, and SCOUT_REPOS and SCOUT_EXCLUDE, in each repository's
-  # layer, once.
+  # a repository, an organization or the deployment.
   # scout: false
 
   # The Slop-O-Meter keeps a bare mirror of this repository and reads its
-  # history and forge events to score it. Off until enrolled; upgrading keeps
-  # what it read before, and SLOP_METER_REPOS and SLOP_METER_EXCLUDE, in each
-  # repository's layer, once. An inactive repository is not read but keeps
-  # what was read. One that leaves (false, or unregistered) has its mirror,
-  # its rows and its contributors' names and emails removed prune_after_days
-  # later, unless it comes back first.
+  # history and forge events to score it. Off until enrolled. An inactive
+  # repository is not read but keeps what was read. One that leaves (false, or
+  # unregistered) has its mirror, its rows and its contributors' names and
+  # emails removed prune_after_days later, unless it comes back first.
   # slop_meter: false
 
   # Days the Slop-O-Meter waits after a repository leaves its scope before it
@@ -608,16 +604,14 @@ slop_meter:
   # The meter reads the repositories enrolled in background.slop_meter and
   # scores them. false stops the reading and the scoring everywhere; what was
   # kept of a repository that left the scope is still removed after
-  # background.prune_after_days. Was SLOP_METER_INTERVAL_SECONDS=0. The
-  # deployment's alone.
+  # background.prune_after_days. The deployment's alone.
   # enabled: true
 
   # Hours between two runs over every enrolled repository: fetch, read the
   # next part of its history and events, and rescore it once caught up. While
   # a history is still being read the meter comes back sooner
   # (SLOP_METER_CATCHUP_SECONDS). A change applies within five minutes. At
-  # least a quarter hour. Was SLOP_METER_INTERVAL_SECONDS. The deployment's
-  # alone.
+  # least a quarter hour. The deployment's alone.
   # interval_hours: 24.0
 
   # Forge API calls one run may make with one credential, shared round-robin

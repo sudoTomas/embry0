@@ -1,19 +1,30 @@
-"""The environment variables sections import from: their names, and which are still set.
+"""The environment variables embry0 no longer reads, and which of them are still set.
 
-A section's ``env`` names ``Embry0Config`` attributes. This module turns
-them into variable names (the attribute in capitals, or its alias) and
-answers which of them the running config was given, from the process
-environment or ``.env``: pydantic-settings marks a field set even when the
-value equals its default.
+Two kinds, each said at startup (``settings_env_retired``) and by ``embry0
+config`` while it is set, for one release, so an operator can remove it:
+
+- a variable a one-time import read once, at the first start of the release
+  that moved what it set into a document (:data:`embry0.config_retired.MOVED_TO_DOCUMENTS`).
+  The config no longer has a field for it, so whether it is set is read from
+  the process environment and ``.env``, as the config reads them;
+- a variable whose setting became a constant (:func:`_retired`). The config
+  keeps a field for it one release, so it is set when the config was given
+  it.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+import structlog
+
 from embry0.config import Embry0Config
-from embry0.settings.registry import Catalog
+from embry0.config_retired import MOVED_TO_DOCUMENTS
+
+logger = structlog.get_logger(__name__)
 
 
 def env_name(attr: str) -> str:
@@ -28,37 +39,34 @@ def is_set(config: Any, attr: str) -> bool:
     return attr in (getattr(config, "model_fields_set", None) or set())
 
 
-@dataclass(frozen=True)
-class GovernedVariable:
-    """A variable that is set while the settings document governs what it used to."""
+def given_names(environ: Mapping[str, str] | None = None, env_file: str | Path | None = ".env") -> set[str]:
+    """The variable names this process was given, in capitals: its environment and ``env_file``, the two places
+    the config reads (names are read without regard to case, as the config reads them)."""
+    names = {name.upper() for name in (os.environ if environ is None else environ)}
+    if env_file is not None and Path(env_file).is_file():
+        from dotenv import dotenv_values
 
-    name: str
-    section: str
-    key: str
-    attr: str
-
-    @property
-    def path(self) -> str:
-        return f"{self.section}.{self.key}"
+        names |= {name.upper() for name in dotenv_values(env_file)}
+    return names
 
 
-def governed_variables(catalog: Catalog, config: Any) -> list[GovernedVariable]:
-    """Every variable a section imports from that ``config`` was given, in catalog order."""
-    out: list[GovernedVariable] = []
-    for section in catalog:
-        for key, imported in section.imports().items():
-            if is_set(config, imported.attr):
-                out.append(GovernedVariable(env_name(imported.attr), section.name, key, imported.attr))
-    return out
+def moved_variables_set(environ: Mapping[str, str] | None = None, env_file: str | Path | None = ".env") -> list[str]:
+    """The variables of :data:`MOVED_TO_DOCUMENTS` this process was given, in the registry's order."""
+    given = given_names(environ, env_file)
+    return [name for name in MOVED_TO_DOCUMENTS if name in given]
 
 
-def governed_lines(catalog: Catalog, config: Any) -> list[str]:
-    """What ``embry0 config`` says about each variable the settings document governs."""
-    return [
-        f"{v.name} is governed by the settings document ({v.path}); it is read once, at the first "
-        "start of the release that added the section, and ignored after that"
-        for v in governed_variables(catalog, config)
-    ]
+def _moved_line(name: str) -> str:
+    return f"{name} is no longer read: {MOVED_TO_DOCUMENTS[name]} holds what it set; remove it"
+
+
+def warn_moved_variables(environ: Mapping[str, str] | None = None, env_file: str | Path | None = ".env") -> list[str]:
+    """Warn once, at startup, for each variable of :data:`MOVED_TO_DOCUMENTS` still set; never its value. The
+    variables warned about."""
+    names = moved_variables_set(environ, env_file)
+    for name in names:
+        logger.warning("settings_env_retired", variable=name, hint=_moved_line(name))
+    return names
 
 
 def _retired() -> dict[str, str]:
@@ -76,11 +84,14 @@ def _retired() -> dict[str, str]:
     }
 
 
-def retired_lines(config: Any) -> list[str]:
+def retired_lines(
+    config: Any, environ: Mapping[str, str] | None = None, env_file: str | Path | None = ".env"
+) -> list[str]:
     """What ``embry0 config`` says about each variable that is set and no longer read at all: it lists every
     setting with its value, and a retired one would otherwise look like one that runs."""
-    return [
+    constants = [
         f"{env_name(attr)} is no longer read: {what}; remove it"
         for attr, what in _retired().items()
         if is_set(config, attr)
     ]
+    return [*constants, *(_moved_line(name) for name in moved_variables_set(environ, env_file))]

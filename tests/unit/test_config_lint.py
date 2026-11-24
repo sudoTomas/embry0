@@ -32,21 +32,17 @@ _REPRESENTATIVE_ENV: dict[str, str] = dict.fromkeys(
         "GEMINI_API_KEY",
         "GROQ_API_KEY",
         "OPENAI_API_KEY",
-        "OPENAI_COMPATIBLE_PROVIDERS",
         "OPENROUTER_API_KEY",
         "API_RATE_LIMIT_PER_MINUTE",
-        "ASK_USER_ROUNDS_CAP",
         "AUDIT_LOG_PATH",
         "AUDIT_RETENTION_DAYS",
         "AUTH_DEV_MODE",
         "AUTH_PROXY_ENABLED",
-        "BUDGET_OVERRUN_MODE",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "CLOUDFLARED_TUNNEL_TOKEN",
         "CONTEXT_PROXY_CONTAINER_ALLOWLIST",
         "CONTEXT_PROXY_ENABLED",
         "CONTEXT_PROXY_QUERY_QUOTA",
-        "DAILY_BUDGET_CAP_USD",
         "DASHBOARD_PUBLIC_URL",
         "DATABASE_URL",
         "DEFAULT_FORGE",
@@ -59,14 +55,12 @@ _REPRESENTATIVE_ENV: dict[str, str] = dict.fromkeys(
         "GITHUB_TOKEN",
         "GITHUB_WEBHOOK_SECRET",
         "IMAGE_REGISTRY",
-        "MAX_BUDGET_USD",
         "MAX_WEBHOOK_BODY_BYTES",
         "MINIO_ROOT_PASSWORD",
         "MINIO_ROOT_USER",
         "MODEL_HEAVY",
         "MODEL_LIGHT",
         "MODEL_MEDIUM",
-        "MONTHLY_BUDGET_CAP_USD",
         "ORCHESTRATOR_CPUS",
         "ORCHESTRATOR_MEMORY",
         "PAUSED_JOB_TTL_HOURS",
@@ -77,7 +71,6 @@ _REPRESENTATIVE_ENV: dict[str, str] = dict.fromkeys(
         "PROVIDER_MODE",
         "PROXY_ADMIN_TOKEN",
         "QA_ARTIFACT_RETENTION_DAYS",
-        "RATE_LIMIT_PER_AUTHOR_PER_HOUR",
         "SANDBOX_IMAGE",
         "SLACK_WEBHOOK_URL",
         "TELEGRAM_BOT_TOKEN",
@@ -86,9 +79,18 @@ _REPRESENTATIVE_ENV: dict[str, str] = dict.fromkeys(
         "TRIGGER_LABELS",
         "TUNNEL_TOKEN",
         "TZ",
-        "USER_RETRY_ROUNDS_CAP",
         "VITE_API_KEY",
         "WEBHOOK_DEV_MODE",
+        # an older deployment's .env: variables no longer read, which startup names on its own
+        # (settings_env_retired), never as unknown
+        "ASK_USER_ROUNDS_CAP",
+        "BUDGET_OVERRUN_MODE",
+        "DAILY_BUDGET_CAP_USD",
+        "MAX_BUDGET_USD",
+        "MONTHLY_BUDGET_CAP_USD",
+        "OPENAI_COMPATIBLE_PROVIDERS",
+        "RATE_LIMIT_PER_AUTHOR_PER_HOUR",
+        "USER_RETRY_ROUNDS_CAP",
         # infra/docker-compose.yml, orchestrator service
         "DOCKER_CERT_PATH",
         "DOCKER_HOST",
@@ -189,7 +191,7 @@ def test_anthropic_and_max_prefixes_report_only_near_misses():
         == {}
     )
     assert _names({"ANTHROPIC_API_KE": "x"}) == {"ANTHROPIC_API_KE": "ANTHROPIC_API_KEY"}
-    assert _names({"MAX_BUDGET_USDD": "5"}) == {"MAX_BUDGET_USDD": "MAX_BUDGET_USD"}
+    assert _names({"MAX_WEBHOOK_BODY_BYTE": "5"}) == {"MAX_WEBHOOK_BODY_BYTE": "MAX_WEBHOOK_BODY_BYTES"}
 
 
 def test_removed_sandbox_limit_settings_are_reported():
@@ -206,13 +208,17 @@ def test_removed_sandbox_limit_settings_are_reported():
 
 def test_every_providers_key_variable_is_quiet():
     """The resolver reads each provider's key and address variables, not a config field; a config field owning their
-    prefix (OPENAI_COMPATIBLE_PROVIDERS, OPENROUTER_CATALOG_REFRESH_HOURS) must not make them unknown."""
+    prefix (XAI_PROXY_ENABLED owns XAI_API_KEY's) must not make them unknown."""
     from embry0.agents.catalogue import ENVIRONMENT
 
     every = {name: "x" for env in ENVIRONMENT.values() for name in (env.api_key, env.base_url) if name}
     assert {"OPENAI_API_KEY", "OPENROUTER_API_KEY", "CUSTOM_LLM_BASE_URL"} <= set(every), "the table moved"
     assert find_unknown_env_vars(every, DECLARED) == []
-    assert _names({"OPENAI_API_KY": "x"}) == {"OPENAI_API_KY": None}, "a misspelt one under an owned prefix still warns"
+    assert _names({"XAI_API_KY": "x"}) == {"XAI_API_KY": "XAI_API_KEY"}, "a misspelt one under an owned prefix warns"
+    assert _names({"OPENAI_API_KY": "x"}) == {"OPENAI_API_KY": "OPENAI_API_KEY"}, (
+        "a misspelt provider variable warns, though no config field owns its prefix any more"
+    )
+    assert _names({"OPENAI_ORGANIZATION": "x"}) == {}, "another tool's variable under a provider's prefix is quiet"
 
 
 def test_findings_are_sorted_by_name():

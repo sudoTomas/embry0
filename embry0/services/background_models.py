@@ -31,11 +31,6 @@ model directly over chat completions. Each goes through
 
 The watcher, the context audit and the scout run on their model inside jobs,
 which are metered and capped as every job is.
-
-**The import.** :func:`import_provider_settings_once` carries what the
-provider settings' ``watcher_local_model`` and the retired fallback chain
-ran, once, into the section, so an upgrade changes no feature's model, and
-a default written later never starts the scout or moves the context audits.
 """
 
 from __future__ import annotations
@@ -45,8 +40,8 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
-from typing import Any, Final, Protocol
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
 import httpx
 import structlog
@@ -56,7 +51,6 @@ from embry0.settings.sections.background_models import (
     BACKGROUND_MODELS,
     FEATURES,
     BackgroundModels,
-    env_model,
     model_of,
 )
 
@@ -75,8 +69,6 @@ MAX_TOKENS = 2**31 - 1
 MAX_UNRECORDED = 1000
 #: How often a failing insert of held spend is logged at error level; in between, at info.
 RECORD_FAILED_LOG_SECONDS = 60.0
-#: The ledger entry (``settings_documents.bootstrapped_keys``) of :func:`import_provider_settings_once`.
-LEDGER: Final = f"{BACKGROUND_MODELS.name}.default"
 
 
 def _feature(feature: str) -> str:
@@ -469,178 +461,6 @@ def _drop_overflow(rows: list[dict[str, Any]], keep: int) -> list[dict[str, Any]
     return dropped
 
 
-# ---- the one-time import of what ran before the section ----
-
-
-#: The features that ran on their own variable only, never on the watcher's model.
-OWN_ONLY: Final = ("scout", "context_audit")
-
-
-def variable_model(config: Any, key: str) -> str | None:
-    """The model ``key``'s own variable names, read as the environment import reads it: None when the
-    variable is unset, empty, or holds a value the section refuses."""
-    from embry0.settings.registry import SectionRefused
-
-    imported = BACKGROUND_MODELS.imports()[key]
-    raw = getattr(config, imported.attr, "")
-    value = imported.convert(raw) if imported.convert is not None else raw
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        BACKGROUND_MODELS.validate({key: value})
-    except SectionRefused:
-        return None
-    return value
-
-
-def own_models(config: Any) -> dict[str, str | None]:
-    """The model each of :data:`OWN_ONLY` gets from its own variable (:func:`variable_model`): None when
-    the variable is unset, empty, or holds a value the section refuses (a hosted model for the context
-    audit, which prefers only a model of the operator's own server)."""
-    return {key: variable_model(config, key) for key in OWN_ONLY}
-
-
-def refused_own_variables(config: Any) -> list[str]:
-    """The variables of :data:`OWN_ONLY` set to a value the section refuses, by name: never their values."""
-    from embry0.settings.env import env_name, is_set
-
-    imports = BACKGROUND_MODELS.imports()
-    own = own_models(config)
-    return [
-        env_name(imports[key].attr)
-        for key in OWN_ONLY
-        if own[key] is None and is_set(config, imports[key].attr) and env_model(getattr(config, imports[key].attr, ""))
-    ]
-
-
-def legacy_values(watcher_local_model: str, config: Any, stored: Mapping[str, Any]) -> dict[str, Any]:
-    """Every key the section needs to run each feature on what it ran before, decided from the configuration.
-
-    Before the section, the watcher ran on ``watcher_local_model``, the
-    proposal briefs on ``PROPOSAL_BRIEF_MODEL`` or else it, the job briefs on
-    ``JOB_BRIEF_MODEL`` or else the proposal briefs' model, and the
-    Slop-O-Meter's judge on the job briefs' model; the scout and the context
-    audit ran on their own variables only. With ``watcher_local_model`` as
-    the default, that is:
-
-    - each key a variable feeds holds that variable's model, as the
-      environment import reads it (:func:`variable_model`);
-    - the job briefs and the judge name the variable they fell back on;
-    - the scout and the context audit are ``false`` whenever their own
-      variable gives them no model (:func:`own_models`), whatever
-      ``watcher_local_model`` holds: so a default written later, on the
-      Providers page or anywhere, never starts the scout or moves the
-      context audits.
-
-    Every decision is read from the configuration, never from what is
-    stored, so a first boot whose environment import failed loses nothing
-    and has no window: from this import on, until the environment import
-    runs again, each feature already runs on its own variable's model, and
-    never on the default in its place. A key already stored is left as it
-    is, in the section's order.
-    """
-    proposal = env_model(getattr(config, "proposal_brief_model", ""))
-    job = env_model(getattr(config, "job_brief_model", ""))
-    out: dict[str, Any] = {}
-    for key in BACKGROUND_MODELS.imports():
-        model = variable_model(config, key)
-        if model is not None:
-            out[key] = model
-        elif key in OWN_ONLY:
-            out[key] = False
-    default = env_model(watcher_local_model)
-    if default:
-        out["default"] = default
-    if not job and proposal:
-        out["job_brief"] = proposal
-    if job or proposal:
-        out["slop_judge"] = job or proposal
-    return {key: out[key] for key in BACKGROUND_MODELS.fields if key in out and key not in stored}
-
-
-async def import_provider_settings_once(store: Any, config: Any, *, today: date | None = None) -> dict[str, Any]:
-    """Carry ``provider_config.watcher_local_model`` and the retired chain into the section, once.
-
-    Runs at startup, after the environment import: its ledger entry
-    (:data:`LEDGER`) keeps it from running again, whatever the provider
-    settings hold later. Recorded as a revision with source ``upgrade``
-    (it came from the release's own upgrade, not from a variable) and a
-    ``settings.bootstrapped`` audit row. A value the section refuses is
-    skipped with a warning. What it imported, by key.
-    """
-    from embry0.audit.helpers import emit_audit
-    from embry0.settings.bootstrap import BOOTSTRAP_ACTOR
-    from embry0.settings.document import mapping, with_section
-    from embry0.settings.registry import MANAGED_BY_FILE, MANAGED_BY_KEY, SectionRefused
-
-    section = BACKGROUND_MODELS
-    if section.name not in store.catalog:
-        # A store built with a catalog of its own (tests) has no such section to write.
-        return {}
-    day = (today or datetime.now(UTC).date()).isoformat()
-    async with store.edit(
-        actor=BOOTSTRAP_ACTOR, source="upgrade", reason="imported from the provider settings (#164)"
-    ) as draft:
-        if LEDGER in draft.bootstrapped:
-            return {}
-        row = await draft.conn.fetchrow("SELECT watcher_local_model FROM provider_config WHERE id = 'default'")
-        watcher = str((row["watcher_local_model"] if row is not None else "") or "")
-        stored = mapping(draft.data.get(section.name))
-        values: dict[str, Any] = {}
-        for key, value in legacy_values(watcher, config, stored).items():
-            try:
-                section.validate({key: value})
-            except SectionRefused as exc:
-                logger.warning(
-                    "settings_bootstrap_value_refused",
-                    key=f"{section.name}.{key}",
-                    reason="; ".join(str(e.get("msg") or "") for e in exc.errors),
-                    hint="not imported, and not read again: set it in the settings document",
-                )
-                continue
-            values[key] = value
-        for variable in refused_own_variables(config):
-            logger.warning(
-                "background_models_variable_refused",
-                variable=variable,
-                hint=(
-                    "its value is refused (CONTEXT_AUDIT_LOCAL_MODEL takes only a custom/<model> of your own "
-                    "server), so this feature runs on no model of its own: scheduled context audits on their "
-                    "agents' own models. Name a model in background_models to change it"
-                ),
-            )
-        if values:
-            comment = (
-                f"Imported on {day}: the provider settings' watcher_local_model as the default, "
-                "and what each feature ran on before the fallback chain was retired."
-            )
-            text = with_section(draft.yaml_text, draft.data, section.name, values, comment)
-            draft.replace(text, {**draft.data, section.name: {**stored, **values}}, draft.schema_version)
-        draft.mark_bootstrapped([LEDGER])
-        in_file = draft.data.get(MANAGED_BY_KEY) == MANAGED_BY_FILE
-    if not values:
-        return {}
-    logger.info("settings_env_imported", section=section.name, keys=sorted(values), revision_id=draft.revision_id)
-    if in_file:
-        logger.warning(
-            "settings_env_imported_into_file_document",
-            keys=[f"{section.name}.{key}" for key in values],
-            revision_id=draft.revision_id,
-            hint=(
-                "the settings document is kept in a file (managed_by: file): copy these keys into it, as the "
-                "revision shows them, or the next `embry0 settings apply` of the file puts them back to their defaults"
-            ),
-        )
-    await emit_audit(
-        store.db,
-        "settings.bootstrapped",
-        actor=BOOTSTRAP_ACTOR,
-        details={"sections": {section.name: sorted(values)}, "revision_id": draft.revision_id},
-        audit_log_path=getattr(config, "audit_log_path", None),
-    )
-    return values
-
-
 __all__ = [
     "BACKGROUND_MODELS",
     "FEATURES",
@@ -652,8 +472,6 @@ __all__ = [
     "ModelLookup",
     "ask_json",
     "background_model",
-    "import_provider_settings_once",
-    "legacy_values",
     "model_lookup",
     "resolve_endpoint",
 ]

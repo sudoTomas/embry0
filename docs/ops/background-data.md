@@ -27,7 +27,7 @@ Three features read repositories on their own schedule, with nobody asking for a
 
 **When it goes.** A repository leaves the meter's scope when its `background.slop_meter` resolves to false (opted out in its own layer, its organization's, or the deployment's document) or when it is unregistered. Making it inactive only stops the reading: what was read is kept, however long it stays inactive. A mirror directory with no row (its rows were lost) leaves the scope the same way when no enrolled repository has its name, but only if it carries the meter's marker: every mirror the meter clones gets `embry0.slopMeter = true` in its own git config, and a mirror cloned before this release gets it at its next fetch. The marker counts only in a bare mirror's own `config`, a regular file read without following a link; a directory holding a `.git` entry is a working checkout, never the meter's, whatever its config says, and so is any directory inside one: the listing does not look inside a checkout, at any depth. A directory with no row and no marker may not be the meter's (a mirror from before the marker whose rows are gone, or anything under a wrong `SLOP_METER_DATA_PATH`): it is logged at error level (`slop_meter_orphan_unmarked`) and audited once, and never deleted. A directory whose name is not all lowercase, at any level, is never the meter's either (it makes only lowercase paths): it is logged once (`slop_meter_mirror_not_lowercase`) and left alone. The listing walks the real directories under the root, never through a link, never into a mirror, a checkout (a `.git` entry) or a bare repository (a `HEAD`), and never more than 21 levels down, so it holds at most 21 directory handles open however deep the tree, a bind mount that loops included. A walk through more than 10,000 directories that are not mirrors logs `slop_meter_mirror_walk_large` at warning level: the meter's own layout has a few per organization, so that many usually means `SLOP_METER_DATA_PATH` is not a directory of the meter's own.
 
-Nothing goes at once. Once the release's import has run (*Upgrading* below):
+Nothing goes at once:
 
 1. The first tick that finds a repository out of scope records when (`background_scope_exits`) and logs `slop_meter_prune_pending` with the time it will be removed: `background.prune_after_days` later, a week unless the deployment's document says otherwise (1 to 365).
 2. If it comes back in scope before then (enrolled again, registered again, a `REPO_RENAMES` entry put right), its record is deleted and it keeps everything (`slop_meter_prune_cancelled`). Leaving again starts a new wait.
@@ -42,37 +42,6 @@ A history rewritten upstream is read again from the start, which replaces its co
 git is started in the directory the meter opened, by its handle: its working directory is `/proc/self/fd/<n>` (so the orchestrator needs `/proc`, which every Linux container has; without it git is not started and the sync fails), and it names the mirror relative to that directory, `git -C .` in the mirror for a fetch, the marker and every read, and the mirror's own name in the directory above it for a clone. So a directory swapped for a link after the meter opened it, however soon before git starts, is never followed: git works in the directory that was checked, wherever it has been moved since. What git resolves for itself once it is running is git's; the meter opens the way again after each clone and fetch, and a link found then stops the sync before the marker is written. What a failed clone leaves, the directories made for it included, is removed the way a prune removes a mirror.
 
 The deletion opens each directory on the way to `<owner>/<name>.git` or `<group>/<sub>/.../<name>.git` relative to the one above it and never through a symbolic link, starting from the real path of `SLOP_METER_DATA_PATH`, so it can delete only a directory that really sits there and never anything a link points at. Then each directory above the mirror that it left empty goes, deepest first, by its name in the directory above: only a real, empty directory, never a link, never the root, and never one that still holds another mirror, a sibling subgroup's included. When there is no mirror to delete (a clone that failed, or git that could not start, leaves only the directories made for it), the empty ones go the same way. A link inside a mirror is removed, not followed. A name with `.` or `..` as a segment is no repository, nor one with a subgroup ending in `.git`, which would sit inside another repository's mirror (no forge allows such a group), and a name too long for any directory is no mirror. When a directory on the way or the mirror is a link, or not a directory, nothing on disk is deleted: `slop_meter_mirror_prune_refused` is logged at error level and audited (`slop_meter.prune.refused`, with the path, never the contents) for a person to look at, and the rows go anyway, so the personal data in them does not wait on the disk. A deletion that fails for another reason (`slop_meter_mirror_prune_failed`, a permission or a busy file) keeps the rows and the record, and the next tick tries again.
-
-**Upgrading.** The first start of the release that added `background` enrolls, in each repository's own layer, what the meter read before ([how](../configuration.md#which-repositories-background-features-read)). Until that import has run, the meter removes nothing: a repository it does not read yet may still be one it should. An import that fails is tried again in the same run, a minute later and then less and less often (`settle_enrollment`), with the moment that start's process began. A registered name no settings layer can be stored under (an owner starting with a dot) holds the import until it is renamed or unregistered. It is logged at error level once a process (`background_enrollment_name_unaddressable`), then at debug level on each retry, and audited once (`background_enrollment.blocked`); the gauge `embry0_background_enrollment_blocked` is 1 meanwhile, and the alert `Embry0BackgroundEnrollmentBlocked` fires after 30 minutes of it ([metrics](metrics.md#settings-imports)).
-
-The import also enrolls in the meter every inactive registered repository it keeps rows for: it stays unread while inactive, and keeps what was read. From then on, every repository the meter keeps anything for that the import did not enroll is pending removal, and goes `prune_after_days` after the meter's first tick. That is a repository that had already dropped out of the old set (no job in the 90 days before the upgrade, no owners, no watched stack), one `SLOP_METER_EXCLUDE` names, one `SLOP_METER_REPOS` names that is not registered (logged at error level at the import, `background_enrollment_name_skipped`: the meter read it before, and no longer does; one that is inactive is logged too, and keeps its rows), and one unregistered. Run this right before the upgrade to list them, with your `SLOP_METER_REPOS` and `SLOP_METER_EXCLUDE` in the two arrays, each name lowercased:
-
-<!-- prune-preview:start -->
-```sql
-WITH lists AS (
-    SELECT ARRAY[]::text[] AS include,  -- SLOP_METER_REPOS
-           ARRAY[]::text[] AS exclude   -- SLOP_METER_EXCLUDE
-),
-shown AS (
-    SELECT lower(repo) AS repo FROM jobs
-     WHERE repo IS NOT NULL AND created_at > now() - interval '90 days'
-    UNION SELECT lower(repo) FROM repo_preferences
-     WHERE CASE WHEN jsonb_typeof(owners) = 'array' THEN jsonb_array_length(owners) ELSE 0 END > 0
-    UNION SELECT lower(repo) FROM watcher_stacks WHERE enabled
-),
-kept AS (
-    SELECT lower(r.repo) AS repo FROM repos r, lists l
-     WHERE (r.active AND (lower(r.repo) IN (SELECT repo FROM shown) OR lower(r.repo) = ANY (l.include))
-            OR NOT r.active AND lower(r.repo) IN (SELECT lower(repo) FROM slop_meter_repos))
-       AND NOT lower(r.repo) = ANY (l.exclude)
-)
-SELECT lower(m.repo) AS repo FROM slop_meter_repos m
- WHERE lower(m.repo) NOT IN (SELECT repo FROM kept)
- GROUP BY 1 ORDER BY 1;
-```
-<!-- prune-preview:end -->
-
-It lists rows only: a mirror directory under `SLOP_METER_DATA_PATH` with no row is pending too when it carries the marker, which no mirror cloned before this release does, so on the day of the upgrade none is. To keep one of them, add it to `SLOP_METER_REPOS` before the upgrade (registered and active), or enroll it within the week after: `PATCH /api/v1/config/settings/background?repo=<owner/name>` with `{"slop_meter": true}`.
 
 ## The scout
 

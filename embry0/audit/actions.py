@@ -5,7 +5,9 @@ label the dashboard shows for it. The writers (``emit_audit`` and its
 siblings) take an ``AuditAction``, so mypy refuses a name that is not listed,
 and ``GET /audit/actions`` serves the list the Audit page filters by.
 ``tests/unit/audit/test_action_registry.py`` checks both directions: every
-name written is listed, and every listed name is written somewhere.
+name written is listed, and every listed name is written somewhere, but for
+:data:`NO_LONGER_WRITTEN`: actions whose only writer is gone, kept so the rows
+already written still read with their label and match a filter.
 
 A name is the string stored in the row, so a row's name never changes. When
 an action is renamed, its old name moves to :data:`RETIRED_AUDIT_ACTIONS`
@@ -298,6 +300,12 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))
+
+#: Registered actions nothing writes any more: the one-time imports that wrote them are gone (#168). Kept so the
+#: rows already written still read with their label and match a filter; never written again.
+NO_LONGER_WRITTEN: Final[frozenset[str]] = frozenset(
+    {"background_enrollment.blocked", "provider_catalogue.bootstrapped"}
+)
 
 #: Names that older rows carry and nothing writes any more, each with the name that replaced it.
 #: Reviewing a job was the world's (the game layer's) until it moved under /jobs/{job_id}; the fleet

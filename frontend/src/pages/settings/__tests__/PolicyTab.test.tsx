@@ -83,8 +83,6 @@ const EFFECTIVE: EffectiveSettings = {
           source: "document",
           set_by: "alex@example.com",
           set_at: WHEN,
-          env: "SAMPLE_PER_TICK",
-          env_still_set: true,
           overridable: ["organization"],
           refused: null,
           description: "How many each tick handles.",
@@ -96,8 +94,6 @@ const EFFECTIVE: EffectiveSettings = {
           source: "default",
           set_by: null,
           set_at: null,
-          env: null,
-          env_still_set: false,
           overridable: [],
           refused: "Input should be a valid boolean",
           description: "Turn the sample on.",
@@ -122,7 +118,7 @@ const REVISIONS: SettingsRevision[] = [
   },
   {
     id: 8,
-    what: "Imported from the environment: sample.per_tick",
+    what: "Imported at an upgrade: sample.per_tick",
     actor: "embry0",
     source: "bootstrap",
     reason: "",
@@ -413,31 +409,28 @@ describe("PolicyTab", () => {
     expect(perTick).toHaveTextContent("Set in the document");
     expect(perTick).toHaveTextContent("How many each tick handles.");
     expect(perTick).toHaveTextContent("Default 10 · set by alex@example.com on");
-    expect(perTick).toHaveTextContent("replaces SAMPLE_PER_TICK · an organization can override it");
-    expect(within(perTick).getByTestId("effective-env-still-set")).toHaveTextContent(
-      "SAMPLE_PER_TICK is still set in the environment.",
-    );
+    expect(perTick).toHaveTextContent("Default 10 · set by alex@example.com on");
+    expect(perTick).toHaveTextContent("an organization can override it");
+    expect(perTick).not.toHaveTextContent(/replaces|still set in the environment/);
     expect(within(enabled).getByTestId("effective-value")).toHaveTextContent("false");
     expect(enabled).toHaveTextContent("Default");
     expect(within(enabled).getByTestId("effective-refused")).toHaveTextContent(
       "The stored value is refused, so the default is read: Input should be a valid boolean",
     );
-    expect(within(enabled).queryByTestId("effective-env-still-set")).not.toBeInTheDocument();
     expect(screen.getByTestId("effective-unknown")).toHaveTextContent(
       "Stored but not read by this release: section later and key sample.extra.",
     );
   });
 
-  it("names a value imported from the environment by its variable", async () => {
+  it("says a value an upgrade imported was imported, naming no variable", async () => {
     const [first, second] = EFFECTIVE.sections[0].keys;
     api.fetchEffectiveSettings.mockResolvedValue({
       ...EFFECTIVE,
-      sections: [{ ...EFFECTIVE.sections[0], keys: [{ ...first, source: "bootstrap", env_still_set: false }, second] }],
+      sections: [{ ...EFFECTIVE.sections[0], keys: [{ ...first, source: "bootstrap" }, second] }],
     });
     renderTab();
     const [perTick] = await screen.findAllByTestId("effective-key");
-    expect(perTick).toHaveTextContent("Imported from SAMPLE_PER_TICK");
-    expect(perTick).not.toHaveTextContent("replaces SAMPLE_PER_TICK");
+    expect(perTick).toHaveTextContent("Imported at an upgrade");
   });
 
   it("shows a key the import has not imported yet with the value enforced and where it is read from", async () => {
@@ -454,7 +447,7 @@ describe("PolicyTab", () => {
               source: "not_imported",
               set_by: null,
               set_at: null,
-              not_imported: { read_from: "row", label: "the sample table" },
+              not_imported: { read_from: "organization", label: "acme's own settings" },
             },
             second,
           ],
@@ -464,7 +457,7 @@ describe("PolicyTab", () => {
     renderTab();
     const [perTick] = await screen.findAllByTestId("effective-key");
     expect(within(perTick).getByTestId("effective-value")).toHaveTextContent("2");
-    expect(perTick).toHaveTextContent("Not imported yet: read from the sample table");
+    expect(perTick).toHaveTextContent("Not imported yet: read from acme's own settings");
   });
 
   it("offers Undo only on the newest change and says why on the others", async () => {
@@ -477,7 +470,7 @@ describe("PolicyTab", () => {
     expect(newest).toHaveTextContent("Reason: fewer at a time");
     expect(within(older).queryByRole("button", { name: "Undo this change" })).not.toBeInTheDocument();
     expect(within(older).getByText(WHY_NOT)).toBeInTheDocument();
-    expect(within(older).getByTestId("settings-revision-meta")).toHaveTextContent("embry0 · Imported from the environment ·");
+    expect(within(older).getByTestId("settings-revision-meta")).toHaveTextContent("embry0 · Imported at an upgrade ·");
     expect(screen.getAllByRole("button", { name: "Undo this change" })).toHaveLength(1);
   });
 
@@ -493,7 +486,7 @@ describe("PolicyTab", () => {
     renderTab();
     const [nulled, absent] = await screen.findAllByTestId("settings-revision");
     expect(within(nulled).getByTestId("settings-revision-meta")).toHaveTextContent(/^Someone else · Dashboard or API ·/);
-    expect(within(absent).getByTestId("settings-revision-meta")).toHaveTextContent(/^Someone else · Imported from the environment ·/);
+    expect(within(absent).getByTestId("settings-revision-meta")).toHaveTextContent(/^Someone else · Imported at an upgrade ·/);
     for (const row of [nulled, absent]) {
       expect(row).not.toHaveTextContent(/null|undefined/);
     }

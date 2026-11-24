@@ -403,13 +403,12 @@ class ScoutLoop:
         ``max_leads_per_job`` each; how many leads were stored.
 
         A job of a repository no longer in the scout's scope (``scope``, else read now) is marked read
-        with no leads, once that scope is settled: the operator took the repository out.
+        with no leads: the operator took the repository out.
         """
         if read is None:
             read = await self.settings()
         if scope is None:
             scope = await self.scope(read)
-        dropping = read.enrollment.settled(SCOPE)
         in_scope = {repo.lower() for repo in scope}
         stored = 0
         now = self.clock()
@@ -428,7 +427,7 @@ class ScoutLoop:
                     job.get("result_summary"),
                     read.section.repo(str(run["repo"])).max_leads_per_job,
                 )
-            if found and dropping and str(run["repo"]).lower() not in in_scope:
+            if found and str(run["repo"]).lower() not in in_scope:
                 logger.info(
                     "scout_harvest_dropped",
                     job_id=run["job_id"],

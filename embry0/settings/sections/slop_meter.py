@@ -45,10 +45,10 @@ it. Whether the meter runs and how often are the deployment's alone.
 
 **Before this section** the reading pace was ``SLOP_METER_INTERVAL_SECONDS``
 (``0`` turned the reading off), ``SLOP_METER_API_CALLS_PER_TICK`` and
-``SLOP_METER_RATE_RESERVE``: the first start of this release imports them
-once (``env`` below). An owner's own bots were ``slop_meter_bots`` on its
-organization row (#184); the same start copies each into the organization's
-layer as ``bots`` (:data:`embry0.services.organizations.MOVED_SETTINGS`).
+``SLOP_METER_RATE_RESERVE``, which are no longer read (:mod:`embry0.settings.env`).
+An owner's own bots were ``slop_meter_bots`` on its organization row (#184); the
+first start of the release that added the section copies each into the
+organization's layer as ``bots`` (:data:`embry0.services.organizations.MOVED_SETTINGS`).
 Everything else was a constant in the meter's code.
 """
 
@@ -74,7 +74,7 @@ from embry0.services.slop_meter.globs import (
     check_mark,
     slow,
 )
-from embry0.settings.registry import STORED, EnvImport, Section, SectionModel, refuse_unprintable
+from embry0.settings.registry import STORED, Section, SectionModel, refuse_unprintable
 
 # ---- the defaults: the published algorithm's values, as the meter read them before this section ----
 
@@ -140,20 +140,6 @@ DirName = Annotated[str, StringConstraints(max_length=MAX_DIR_LENGTH)]
 Mark = Annotated[str, StringConstraints(max_length=MAX_MARK_LENGTH)]
 Identity = Annotated[str, StringConstraints(max_length=MAX_IDENTITY_LENGTH)]
 LevelName = Annotated[str, StringConstraints(max_length=MAX_LEVEL_NAME_LENGTH)]
-
-
-def enabled_from_env(value: Any) -> bool:
-    """``SLOP_METER_INTERVAL_SECONDS`` as the loop read it: ``0`` (or less) turned the reading off."""
-    return float(value) > 0
-
-
-def interval_from_env(value: Any) -> float:
-    """``SLOP_METER_INTERVAL_SECONDS`` in hours, at least a quarter hour; ``0``, which turned the reading off and
-    is ``enabled: false`` now, reads as the default, so nothing is imported for it."""
-    seconds = float(value)
-    if seconds <= 0:
-        return DEFAULT_INTERVAL_HOURS
-    return max(MIN_INTERVAL_HOURS, seconds / 3600)
 
 
 def _checked(values: tuple[str, ...], check: Any, what: str) -> tuple[str, ...]:
@@ -247,7 +233,7 @@ class SlopMeterSettings(SectionModel):
         description=(
             "The meter reads the repositories enrolled in background.slop_meter and scores them. false stops the "
             "reading and the scoring everywhere; what was kept of a repository that left the scope is still "
-            "removed after background.prune_after_days. Was SLOP_METER_INTERVAL_SECONDS=0. The deployment's alone."
+            "removed after background.prune_after_days. The deployment's alone."
         ),
     )
     interval_hours: float = Field(
@@ -258,7 +244,7 @@ class SlopMeterSettings(SectionModel):
             "Hours between two runs over every enrolled repository: fetch, read the next part of its history and "
             "events, and rescore it once caught up. While a history is still being read the meter comes back "
             "sooner (SLOP_METER_CATCHUP_SECONDS). A change applies within five minutes. At least a quarter hour. "
-            "Was SLOP_METER_INTERVAL_SECONDS. The deployment's alone."
+            "The deployment's alone."
         ),
     )
     api_calls_per_tick: int = Field(
@@ -618,7 +604,6 @@ def config_version(settings: SlopMeterSettings) -> str:
 _ORG_KEYS: Final = frozenset(SlopMeterSettings.model_fields) - {"enabled", "interval_hours"}
 #: What counts as code in one repository's layout.
 _REPO_KEYS: Final = frozenset({"weights", "excluded_dirs", "test_dirs", "test_files", "test_marks"})
-_INTERVAL_VARIABLE: Final = "slop_meter_interval_seconds"
 
 SLOP_METER = Section(
     name="slop_meter",
@@ -637,10 +622,4 @@ SLOP_METER = Section(
     merged_keys=frozenset({"weights"}),
     # A bot or an agent the deployment knows is one in every organization: each layer adds to the lists.
     added_keys=frozenset({"bots", "ai_agents"}),
-    env={
-        "enabled": EnvImport(_INTERVAL_VARIABLE, enabled_from_env),
-        "interval_hours": EnvImport(_INTERVAL_VARIABLE, interval_from_env),
-        "api_calls_per_tick": "slop_meter_api_calls_per_tick",
-        "rate_reserve": "slop_meter_rate_reserve",
-    },
 )

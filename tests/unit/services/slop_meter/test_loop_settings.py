@@ -60,7 +60,7 @@ def _reader(section: Section, model: str = "") -> Any:
     async def read() -> MeterRead:
         return MeterRead(
             models=lambda repo: model,
-            enrollment=Enrollment(fakes._EveryRepository(), frozenset()),
+            enrollment=Enrollment(fakes._EveryRepository()),
             meter=section,
         )
 
@@ -473,39 +473,3 @@ async def test_the_judge_hears_the_repository_s_guidance_and_the_weighing_runs_o
         "building the history, finding the outliers to judge and scoring each go through every commit or path, "
         f"so each runs in a thread: {threaded}"
     )
-
-
-async def test_until_the_import_succeeds_the_meter_reads_the_variables_it_read_before() -> None:
-    """A first start whose environment import failed leaves ``slop_meter.*`` out of the ledger: a deployment that
-    had the meter off (``SLOP_METER_INTERVAL_SECONDS=0``) keeps it off, as the budget's readers keep their caps."""
-    import os
-    from unittest.mock import patch
-
-    from embry0.config import Embry0Config
-    from embry0.settings.store import build_snapshot
-
-    _settings({})
-    with patch.dict(
-        os.environ, {"SLOP_METER_INTERVAL_SECONDS": "0", "SLOP_METER_API_CALLS_PER_TICK": "50"}, clear=True
-    ):
-        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-
-    class Store:
-        def __init__(self, data: dict[str, Any], ledger: list[str]) -> None:
-            self.rows = [
-                {"scope": "deployment", "data": data, "generation": 1, "updated_at": None, "bootstrapped_keys": ledger},
-                {"scope": "organization:acme", "data": {"slop_meter": {"api_calls_per_tick": 7}}, "generation": 1},
-            ]
-
-        async def snapshot(self) -> Any:
-            return build_snapshot(CATALOG, self.rows, token=(), log=False)
-
-    pending = await loop_mod.meter_reader(Store({}, []), config)()
-    assert pending.meter.deployment().enabled is False, "not imported yet: the variable's 0 still turns it off"
-    assert pending.meter.repo("globex/web").api_calls_per_tick == 50, "and its budget is still the variable's"
-    assert pending.meter.repo(REPO).api_calls_per_tick == 7, "where an organization's layer sets one, it wins"
-    ledger = [f"slop_meter.{key}" for key in ("enabled", "interval_hours", "api_calls_per_tick", "rate_reserve")]
-    imported = await loop_mod.meter_reader(Store({}, ledger), config)()
-    assert imported.meter.deployment().enabled is True, "once imported, the document is read: here, nothing written"
-    written = await loop_mod.meter_reader(Store({"slop_meter": {"enabled": True}}, []), config)()
-    assert written.meter.deployment().enabled is True, "a key written into the document since wins"

@@ -34,7 +34,7 @@ where the key takes only a local model. Whether the deployment's provider
 catalogue offers it, and whether it can serve its feature, is checked when a
 write sets it: through the validation context the settings store passes
 (:data:`CATALOGUE`), never when a stored value is read back or left as it
-was, at the environment import or offline, so a catalogue that moves
+was, or offline, so a catalogue that moves
 (OpenRouter's live list arrives after startup; a provider is turned off)
 never turns a stored choice into ``null`` nor blocks a change to another key.
 """
@@ -47,7 +47,7 @@ from typing import Annotated, Any, Final, Literal
 
 from pydantic import Field, ValidationInfo, field_validator
 
-from embry0.settings.registry import STORED, EnvImport, Section, SectionModel
+from embry0.settings.registry import STORED, Section, SectionModel
 
 #: The validation context key under which a write passes the catalogue check:
 #: ``(model, needs) -> problem or None`` (``embry0.settings.write_context``).
@@ -89,17 +89,6 @@ LocalModelId = Annotated[str, Field(max_length=MAX_LENGTH, pattern=r"^custom/\S+
 
 #: ``(model, needs) -> problem``: the catalogue check a write passes in the validation context.
 Checker = Callable[[str, frozenset[Need]], str | None]
-
-
-def env_model(value: Any) -> str | None:
-    """A ``*_MODEL`` variable as the section stores it: its model id, or None (the default) when empty."""
-    text = str(value or "").strip()
-    return text or None
-
-
-def env_scout_model(value: Any) -> str | Literal[False]:
-    """``SCOUT_MODEL`` as the section stores it: its model id, or ``false`` when empty, as the scout ran."""
-    return env_model(value) or False
 
 
 class BackgroundModels(SectionModel):
@@ -218,10 +207,4 @@ BACKGROUND_MODELS = Section(
     # otherwise move the deployment's shared spend.
     org_keys=frozenset({"default", *FEATURES}),
     repo_keys=frozenset(),
-    env={
-        "context_audit": EnvImport("context_audit_local_model", env_model),
-        "scout": EnvImport("scout_model", env_scout_model),
-        "proposal_brief": EnvImport("proposal_brief_model", env_model),
-        "job_brief": EnvImport("job_brief_model", env_model),
-    },
 )

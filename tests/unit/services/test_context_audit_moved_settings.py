@@ -377,7 +377,7 @@ def test_the_effective_view_shows_what_an_organization_not_imported_yet_reads_fr
         ("context_audit", "open_prs"): True,
     }, f"the effective view would show a default the schedule does not enforce: {pending}"
     effective = effective_view(
-        CATALOG, _snapshot({}, {}), [], None, owner="acme", not_imported=view.not_imported("acme", row)
+        CATALOG, _snapshot({}, {}), [], owner="acme", not_imported=view.not_imported("acme", row)
     )
     keys = {k["key"]: k for s in effective["sections"] if s["name"] == "context_audit" for k in s["keys"]}
     assert (keys["days"]["value"], keys["days"]["source"]) == (7, "not_imported")

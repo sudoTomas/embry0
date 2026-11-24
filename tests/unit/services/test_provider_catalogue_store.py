@@ -1,5 +1,5 @@
 """The stored provider catalogue (#173, ADR 0031) against a real Postgres: writes, refusals, history and undo, what
-names a model, installing in every process, and the one-time import of the environment."""
+names a model, installing in every process, and a release that moved the seed."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from embry0.services.provider_catalogue_store import (
     NotUndoable,
     RevisionNotFound,
     held_catalogue,
-    log_ignored_env,
 )
 from embry0.storage.database import DatabasePool
 
@@ -52,7 +51,7 @@ async def _revisions(db: DatabasePool) -> list[tuple[str, str, str]]:
 
 async def test_nothing_stored_is_the_shipped_catalogue(store: CatalogueStore) -> None:
     stored = await store.document()
-    assert (stored.yaml_text, stored.data, stored.imported) == ("", {}, []), "migration 152 stores an empty overlay"
+    assert (stored.yaml_text, stored.data) == ("", {}), "migration 152 stores an empty overlay"
     installed = await store.refresh()
     assert installed.document == catalogue.seed().document
     assert providers.enabled_openai_compatible() == (), "the shipped catalogue turns no OpenAI-compatible one on"
@@ -254,6 +253,27 @@ async def _until_waiting(db: DatabasePool) -> None:
             return
         await asyncio.sleep(0.05)
     raise AssertionError("the change never waited on a lock")
+
+
+async def test_a_change_waits_for_a_settings_write_naming_a_model_and_sees_it(
+    store: CatalogueStore, db_with_migrations
+) -> None:
+    """A settings write reads the catalogue FOR SHARE on its own transaction (held_catalogue): a change of the
+    catalogue waits for it, then reads the value it wrote."""
+    await store.save(DEEPSEEK_ON, actor="a")
+    async with db_with_migrations.transaction() as conn:
+        assert (await held_catalogue(conn)).enabled("deepseek")
+        change = asyncio.create_task(store.save("", actor="b"))
+        await _until_waiting(db_with_migrations)
+        assert not change.done(), "the change did not wait for the settings write"
+        await conn.execute(
+            "INSERT INTO settings_documents (scope, yaml_text, data) VALUES "
+            "('deployment', '', '{\"background_models\": {\"watcher\": \"deepseek-flash\"}}'::jsonb) "
+            "ON CONFLICT (scope) DO UPDATE SET data = EXCLUDED.data"
+        )
+    with pytest.raises(CatalogueInvalid) as refused:
+        await asyncio.wait_for(change, 30)
+    assert _locs(refused.value) == [("references", "background_models", "deployment", "watcher")]
 
 
 # ---- history and undo ----
@@ -501,115 +521,6 @@ async def test_a_dated_price_is_stored_and_read_back_by_another_process(
     )
     undone = await reader.undo(saved.revision_id, actor="b")
     assert undone.changed and providers.enabled_openai_compatible() == ()
-
-
-# ---- the environment, once ----
-
-
-def _config(**values: str) -> Any:
-    from embry0.config import Embry0Config
-
-    return Embry0Config(**values)
-
-
-async def test_the_variables_are_imported_once(store: CatalogueStore, db_with_migrations) -> None:
-    config = _config(openai_compatible_providers=" DeepSeek,openia ,groq", openrouter_catalog_refresh_hours="6")
-    with capture_logs() as logs:
-        imported = await store.import_env(config)
-    assert imported == ["providers.enabled", "openrouter.refresh_hours"]
-    stored = await store.document()
-    assert stored.data == {
-        "providers": {"deepseek": {"enabled": True}, "groq": {"enabled": True}, "openrouter": {"refresh_hours": 6.0}}
-    }
-    assert stored.yaml_text.startswith("# Imported once from OPENAI_COMPATIBLE_PROVIDERS, ")
-    assert sorted(stored.imported) == ["openrouter.refresh_hours", "providers.enabled"]
-    assert [p.name for p in providers.enabled_openai_compatible()] == ["groq", "deepseek"]
-    assert any(e["event"] == "provider_catalogue_env_value_dropped" and e["dropped"] == ["openia"] for e in logs)
-    assert [r[0] for r in await _revisions(db_with_migrations)] == ["bootstrap"]
-    audits = await db_with_migrations.fetch(
-        "SELECT details FROM audit_log WHERE action = 'provider_catalogue.bootstrapped'"
-    )
-    assert len(audits) == 1
-    details = audits[0]["details"]
-    details = json.loads(details) if isinstance(details, str) else details
-    assert details["variables"] == ["OPENAI_COMPATIBLE_PROVIDERS", "OPENROUTER_CATALOG_REFRESH_HOURS"]
-
-    assert await store.import_env(_config(openai_compatible_providers="openai")) == [], "imported twice"
-    assert "openai" not in stored.data["providers"]
-    assert [p.name for p in providers.enabled_openai_compatible()] == ["groq", "deepseek"]
-
-
-async def test_an_unset_variable_is_marked_and_never_read_later(store: CatalogueStore, db_with_migrations) -> None:
-    assert await store.import_env(_config()) == []
-    stored = await store.document()
-    assert sorted(stored.imported) == ["openrouter.refresh_hours", "providers.enabled"]
-    assert (stored.yaml_text, await _revisions(db_with_migrations)) == ("", [])
-    assert await store.import_env(_config(openai_compatible_providers="deepseek")) == []
-    assert providers.enabled_openai_compatible() == ()
-
-
-async def test_a_value_the_catalogue_already_holds_writes_nothing(store: CatalogueStore) -> None:
-    assert await store.import_env(_config(openrouter_catalog_refresh_hours="24")) == []
-    assert (await store.document()).yaml_text == ""
-
-
-async def test_a_value_the_catalogue_cannot_take_is_skipped(store: CatalogueStore) -> None:
-    with capture_logs() as logs:
-        assert await store.import_env(_config(openrouter_catalog_refresh_hours="soon")) == []
-    assert any(e["event"] == "provider_catalogue_env_refused" for e in logs)
-    assert "openrouter.refresh_hours" in (await store.document()).imported
-
-
-async def test_an_imported_variable_still_set_is_named_at_every_start(store: CatalogueStore) -> None:
-    config = _config(openai_compatible_providers="deepseek")
-    await store.import_env(config)
-    with capture_logs() as logs:
-        await log_ignored_env(store, config)
-        await log_ignored_env(store, _config())
-    named = [e["variable"] for e in logs if e["event"] == "provider_catalogue_env_ignored"]
-    assert named == ["OPENAI_COMPATIBLE_PROVIDERS"]
-
-
-async def test_the_import_keeps_what_the_overlay_already_holds(store: CatalogueStore) -> None:
-    await store.save(DEEPSEEK_CHEAP, actor="a")
-    await store.import_env(_config(openai_compatible_providers="groq"))
-    data = (await store.document()).data
-    assert data["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"] == [{"in": 0.1, "out": 0.2}]
-    assert data["providers"]["groq"] == {"enabled": True}
-
-
-async def test_a_change_waits_for_a_settings_write_naming_a_model_and_sees_it(
-    store: CatalogueStore, db_with_migrations
-) -> None:
-    """A settings write reads the catalogue FOR SHARE on its own transaction (held_catalogue): a change of the
-    catalogue waits for it, then reads the value it wrote."""
-    await store.save(DEEPSEEK_ON, actor="a")
-    async with db_with_migrations.transaction() as conn:
-        assert (await held_catalogue(conn)).enabled("deepseek")
-        change = asyncio.create_task(store.save("", actor="b"))
-        await _until_waiting(db_with_migrations)
-        assert not change.done(), "the change did not wait for the settings write"
-        await conn.execute(
-            "INSERT INTO settings_documents (scope, yaml_text, data) VALUES "
-            "('deployment', '', '{\"background_models\": {\"watcher\": \"deepseek-flash\"}}'::jsonb) "
-            "ON CONFLICT (scope) DO UPDATE SET data = EXCLUDED.data"
-        )
-    with pytest.raises(CatalogueInvalid) as refused:
-        await asyncio.wait_for(change, 30)
-    assert _locs(refused.value) == [("references", "background_models", "deployment", "watcher")]
-
-
-async def test_the_import_keeps_a_dated_price_already_stored(store: CatalogueStore) -> None:
-    text = (
-        DEEPSEEK_ON
-        + "    models:\n      deepseek-flash: {prices: [{in: 1.0, out: 2.0}, {from: 2027-01-01, in: 9.0, out: 9.0}]}\n"
-    )
-    await store.save(text, actor="a")
-    assert await store.import_env(_config(openai_compatible_providers="groq")) == ["providers.enabled"]
-    stored = await store.document()
-    assert stored.data["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"][1]["from"] == "2027-01-01"
-    assert stored.data["providers"]["groq"] == {"enabled": True}
-    assert store.refused == [], "the import wrote what the next read refuses"
 
 
 async def test_a_price_the_release_refuses_leaves_the_model_unpriced_in_force(
