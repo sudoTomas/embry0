@@ -66,6 +66,7 @@ class ErrorCode(StrEnum):
 
     # #304 — sandbox runner config transport
     SANDBOX_IMAGE_STALE = "ERR_SANDBOX_IMAGE_STALE"  # the sandbox image's runner predates --config-stdin AND the agent config is too large for the argv fallback — rebuild the named image (prebaked QA / profile images are not covered by the standard deploy recipe)
+    SANDBOX_RESULT_REFUSED = "ERR_SANDBOX_RESULT_REFUSED"  # the run's result was not taken: its runner's output held more than one final result, or one without this run's mark (the per-run nonce the orchestrator hands the runner on stdin), so the run is failed rather than trusting either
     SANDBOX_EXEC_STALLED = "ERR_SANDBOX_EXEC_STALLED"  # docker exec never read the agent config from stdin within the hand-off window (wedged exec / daemon); the runner was killed before any agent work
     # #305 — the duplicate-PR check fails closed
     PR_LISTING_FAILED = "ERR_PR_LISTING_FAILED"  # the forge could not list the repo's open pull requests before the job started, so the duplicate-PR check could not run; the job stops instead of risking a second PR for the same ticket
@@ -216,6 +217,8 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.TRIAGE_QA_ACTION_INVALID: _C.AGENT,
     ErrorCode.SANDBOX_IMAGE_STALE: _C.INFRA,
     ErrorCode.SANDBOX_EXEC_STALLED: _C.INFRA,
+    # The run's output held a second result, or one without its mark: the run's own output is unusable.
+    ErrorCode.SANDBOX_RESULT_REFUSED: _C.AGENT,
     ErrorCode.SANDBOX_AGENT_START_FAILED: _C.INFRA,
     ErrorCode.PR_LISTING_FAILED: _C.INFRA,
     ErrorCode.DISPATCH_FAILED: _C.INFRA,

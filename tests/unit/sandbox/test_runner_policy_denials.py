@@ -17,6 +17,7 @@ import pytest
 
 from embry0.execution.agent_runner import AgentOutput, AgentRunner
 from embry0.sandbox.runner import run_agent
+from tests.fixtures.sandbox_runner import as_the_runner
 
 DENIALS = {"Read denied by rule Read(//etc/**)": 2, "Bash denied by rule Bash(curl:*)": 1}
 
@@ -64,7 +65,7 @@ async def test_policy_denials_cross_the_sandbox_boundary() -> None:
     line = (json.dumps({"type": "final_result", **result}, default=str) + "\n").encode()
 
     docker = AsyncMock()
-    docker.stream_exec = AsyncMock(return_value=_Proc(line))
+    docker.stream_exec = AsyncMock(side_effect=lambda **kw: as_the_runner(_Proc(line), kw.get("stdin_data")))
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec", "c", "true"])
     runner = AgentRunner(sandbox_manager=AsyncMock(), docker=docker)
 

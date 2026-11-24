@@ -3,25 +3,60 @@
 Called by the orchestrator via `docker exec`. Parses the --config JSON into
 an AgentInvocation and delegates to SdkAgentExecutor (Phase 1). Emits embry0
 events to stdout as JSON-per-line.
+
+No other process of the sandbox's user may open this one (spec 2026-11-23,
+an agent run's own result): its stdout is the one channel its events and its
+result reach the orchestrator by, and the code a job runs is of that user.
+The orchestrator starts it on an interpreter that user may run but not read
+(``/usr/local/bin/embry0-runner-python``, infra/Dockerfile.sandbox), which the
+kernel starts closed from its first instruction; :func:`seal` closes it
+again first thing, for an interpreter that is not.
 """
 
 from __future__ import annotations
 
-import argparse
-import asyncio
-import dataclasses
-import json
-import sys
-from datetime import UTC, datetime
-from typing import Any, cast
+import ctypes
 
-import structlog
-from langchain_core.runnables import RunnableConfig
+#: prctl's options that read and set whether other processes of the user may open this one (``man 2 prctl``).
+_PR_GET_DUMPABLE = 3
+_PR_SET_DUMPABLE = 4
 
-from embry0.agents.executor_factory import select_executor
-from embry0.agents.invocation import AgentInvocation
-from embry0.safety.policy import default_policy_for_agent, parse_tool_list, tools_for_run
-from embry0.safety.redaction import redact_event, redact_secrets, secret_env_values
+
+def seal() -> bool:
+    """Make this process one no other process of its user may open: its ``/proc/<pid>/fd``, ``mem`` and
+    ``environ`` become root's, and nothing can attach to it or take a core of it. What it starts is unaffected:
+    an exec opens a process again, and the CLI and its tools talk to the runner over pipes of their own.
+
+    True when the process was open until now, so something of the user could have opened it already: the kernel
+    started it open (its interpreter is readable by the user, or ``fs.suid_dumpable`` is 1), or it could not be
+    closed at all. False when it started closed."""
+    try:
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
+        was_open = int(prctl(_PR_GET_DUMPABLE, 0, 0, 0, 0)) == 1
+        closed = int(prctl(_PR_SET_DUMPABLE, 0, 0, 0, 0)) == 0
+    except (OSError, AttributeError):
+        return True
+    return was_open or not closed
+
+
+#: Whether the runner was open when it started (:func:`seal`); reported on its final_result. None when imported.
+OPEN_AT_START: bool | None = seal() if __name__ == "__main__" else None
+
+import argparse  # noqa: E402 - after the runner is sealed
+import asyncio  # noqa: E402
+import dataclasses  # noqa: E402
+import json  # noqa: E402
+import sys  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
+from typing import Any, cast  # noqa: E402
+
+import structlog  # noqa: E402
+from langchain_core.runnables import RunnableConfig  # noqa: E402
+
+from embry0.agents.executor_factory import select_executor  # noqa: E402
+from embry0.agents.invocation import AgentInvocation  # noqa: E402
+from embry0.safety.policy import default_policy_for_agent, parse_tool_list, tools_for_run  # noqa: E402
+from embry0.safety.redaction import redact_event, redact_secrets, secret_env_values  # noqa: E402
 
 logger = structlog.get_logger(__name__)
 
@@ -166,6 +201,10 @@ async def run_agent(
     }
 
 
+#: The key of the config the orchestrator puts its per-run result nonce under (``--result-nonce``).
+RESULT_NONCE_KEY = "result_nonce"
+
+
 def _read_config(argv: list[str] | None = None) -> tuple[dict[str, Any], str | None, str | None]:
     """Parse the runner CLI into ``(config, session_blob_path, session_id)``.
 
@@ -188,6 +227,11 @@ def _read_config(argv: list[str] | None = None) -> tuple[dict[str, Any], str | N
         "--session-id",
         default=None,
         help="claude-max session id; the CLI's session file must already be in place.",
+    )
+    parser.add_argument(
+        "--result-nonce",
+        action="store_true",
+        help=f"The config carries {RESULT_NONCE_KEY}: write it on the final_result, which the orchestrator takes by it",
     )
     args = parser.parse_args(argv)
 
@@ -223,6 +267,9 @@ def error_diagnostic(result: dict[str, Any]) -> str:
 
 def main() -> None:
     config, session_blob, session_id = _read_config()
+    # Kept apart, never in the invocation: it is the orchestrator's mark of this run's own result, and goes out
+    # only on the final_result line, last.
+    nonce = config.pop(RESULT_NONCE_KEY, None)
     kwargs = _build_run_kwargs(
         config,
         session_blob_path=session_blob,
@@ -235,7 +282,12 @@ def main() -> None:
         sys.stderr.write(diagnostic + "\n")
         sys.stderr.flush()
 
-    sys.stdout.write(json.dumps({"type": "final_result", **result}, default=str) + "\n")
+    marked: dict[str, Any] = {"type": "final_result", **result}
+    if isinstance(OPEN_AT_START, bool):
+        marked["open_at_start"] = OPEN_AT_START
+    if isinstance(nonce, str):
+        marked["nonce"] = nonce
+    sys.stdout.write(json.dumps(marked, default=str) + "\n")
     sys.stdout.flush()
     sys.exit(1 if result.get("is_error") else 0)
 

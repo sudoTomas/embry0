@@ -165,6 +165,29 @@ jobs:
             vibium --version
           '
 
+      - name: The agent runner's interpreter starts it sealed
+        # The kernel starts a program its user may run but not read as a
+        # process no other process of that user can open (prctl
+        # PR_GET_DUMPABLE is then not 1). It checks the program is unreadable
+        # with the credentials of the process that execs it, so this holds
+        # only when `docker exec` starts the runner without CAP_DAC_OVERRIDE
+        # or CAP_DAC_READ_SEARCH: in a container run as every sandbox is
+        # (--cap-drop=ALL, no-new-privileges). The orchestrator execs the
+        # interpreter directly, and so does this check. With Docker's default
+        # capabilities, and on the image's own python, it starts open: the
+        # counter-cases, so this check can fail.
+        run: |
+          dumpable='import ctypes; print(ctypes.CDLL(None).prctl(3, 0, 0, 0, 0))'
+          docker run -d --rm --network none --cap-drop=ALL --security-opt=no-new-privileges \
+            --name runner-sandbox-flags embry0-sandbox-qa:latest sleep 300
+          docker run -d --rm --network none --name runner-default-caps embry0-sandbox-qa:latest sleep 300
+          sealed=$(docker exec runner-sandbox-flags /usr/local/bin/embry0-runner-python -c "$dumpable")
+          default_caps=$(docker exec runner-default-caps /usr/local/bin/embry0-runner-python -c "$dumpable")
+          plain=$(docker exec runner-sandbox-flags python -c "$dumpable")
+          docker rm -f runner-sandbox-flags runner-default-caps
+          echo "runner interpreter: $sealed with the sandbox's flags, $default_caps with default capabilities; python: $plain"
+          test "$sealed" != 1 && test "$default_caps" = 1 && test "$plain" = 1
+
       - name: Browser MCP tool lists match the QA allowlists (#81)
         # Each browser backend's allowlist, with its excluded tools, is what
         # its server serves (@playwright/mcp, vibium). Ask the image's own

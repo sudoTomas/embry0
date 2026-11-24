@@ -79,6 +79,16 @@ async def test_cost_update_increments_the_job_total_once() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("amount", [-5.0, 0, float("nan"), float("inf"), float("-inf"), True, "0.25", None, [1]])
+async def test_a_cost_update_adds_only_what_a_run_can_spend(amount: object) -> None:
+    """An agent run writes cost_update, so nothing in one lowers or poisons the job's total: only a finite amount
+    above zero is added."""
+    jobs = _jobs()
+    await broadcast_job_event(jobs, None, None, "job-1", {"type": "cost_update", "cost_usd": amount})
+    assert jobs.increment_cost.await_args_list == [], f"a cost_update of {amount!r} moved the job's total"
+
+
+@pytest.mark.asyncio
 async def test_emit_job_finished_reads_the_row_and_publishes_the_terminal_event() -> None:
     row = {
         "job_id": "job-1",

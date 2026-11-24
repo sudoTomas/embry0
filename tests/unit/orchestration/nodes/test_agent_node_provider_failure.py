@@ -19,6 +19,7 @@ from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 from embry0.execution.agent_runner import AgentRunner
 from embry0.orchestration.nodes.agent import run_agent_node
 from embry0.sandbox.runner import run_agent
+from tests.fixtures.sandbox_runner import as_the_runner
 
 QUOTA = "ERR_PROVIDER_QUOTA_EXHAUSTED"
 # Verbatim from production event logs (2026-10-02 05:15 UTC).
@@ -85,7 +86,7 @@ class _Proc:
 
 def _agent_runner(line: bytes) -> AgentRunner:
     docker = AsyncMock()
-    docker.stream_exec = AsyncMock(return_value=_Proc(line))
+    docker.stream_exec = AsyncMock(side_effect=lambda **kw: as_the_runner(_Proc(line), kw.get("stdin_data")))
     docker.build_exec_cmd = MagicMock(return_value=["docker", "exec", "c", "true"])
     return AgentRunner(sandbox_manager=AsyncMock(), docker=docker)
 

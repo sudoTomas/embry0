@@ -20,6 +20,7 @@ the job transition that called them.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -97,9 +98,12 @@ async def broadcast_job_event(
 
     # cost_update carries the run's delta; it is the only event that moves
     # jobs.total_cost_usd (spec 3.3: turn_usage is an estimate, never added).
-    if event.get("type") == "cost_update" and event.get("cost_usd"):
+    # An agent run writes it, so only a delta a run can spend is added: a
+    # finite number above zero. Nothing a run does lowers what it has cost.
+    delta = _spent(event.get("cost_usd")) if event.get("type") == "cost_update" else None
+    if delta is not None:
         try:
-            await jobs.increment_cost(job_id, event["cost_usd"])
+            await jobs.increment_cost(job_id, delta)
         except Exception:
             logger.warning("cost_update_failed", job_id=job_id, exc_info=True)
 
@@ -108,6 +112,14 @@ async def broadcast_job_event(
     if event.get("type") == "job_finished":
         _LAST_SEQ.pop(job_id, None)  # the job is over: keep the map bounded by live jobs
     return event
+
+
+def _spent(value: Any) -> float | None:
+    """``value`` as a cost a run spent: a finite number above zero, else None (nothing to add)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    amount = float(value)
+    return amount if math.isfinite(amount) and amount > 0 else None
 
 
 async def emit_job_finished(jobs: JobEventStore, bus: EventPublisher | None, metrics: Any, job_id: str) -> None:

@@ -7,20 +7,22 @@ forwarding to LangGraph, and AgentOutput construction.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
+import secrets
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import structlog
 
 from embry0.agents.claude_cli_session import canonical_session_path_for
 from embry0.agents.session import MAX_RESUME_BLOB_BYTES
 from embry0.execution.docker_client import DockerClient, ExecStdinTimeoutError
-from embry0.execution.events import parse_event
+from embry0.execution.events import AGENT_RUN_TYPES, ORCHESTRATOR_STAMPED, parse_event
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
 from embry0.safety.redaction import redact_secrets, redacted_log_field, redacted_stderr_tail, secret_env_values
 
@@ -50,8 +52,55 @@ SANDBOX_PROJECT_CWD = "/workspace"
 # - the agent's user site-packages (~/.local/lib/python3.12/site-packages),
 #   whose .pth files and usercustomize.py Python runs at start-up, and which a
 #   `pip install --user` writes. -s leaves it off.
-RUNNER_COMMAND: tuple[str, ...] = ("python", "-P", "-s", "-m", "embry0.sandbox.runner")
+# Its interpreter is a copy of the image's python that the agent user may run
+# but not read (infra/Dockerfile.sandbox). The kernel starts a program its user
+# cannot read as a process no other process of that user can open, from its
+# first instruction: none of them can write on the runner's stdout, read its
+# stdin or its memory (spec 2026-11-23, an agent run's own result).
+RUNNER_INTERPRETER: Final = "/usr/local/bin/embry0-runner-python"
+RUNNER_COMMAND: tuple[str, ...] = (RUNNER_INTERPRETER, "-P", "-s", "-m", "embry0.sandbox.runner")
+#: The same runner on the image's own python: for an image built before it had the runner's interpreter.
+_PLAIN_RUNNER_COMMAND: tuple[str, ...] = ("python", *RUNNER_COMMAND[1:])
+#: What ``docker exec`` exits with when the program it is to start does not exist in the container.
+_EXEC_NOT_FOUND = 127
 SANDBOX_HOME = Path("/home/agent")
+#: The longest event type a dropped line's log names, cut there: the type is what a sandbox wrote.
+_DROPPED_TYPE_CHARS = 64
+#: How many distinct dropped types one run's log names; the rest are counted together under ``<other>``.
+_DROPPED_TYPES_NAMED = 16
+
+
+def agent_run_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """``event`` as a job's events take it from an agent run's stdout, or None when it is not one an agent run
+    writes.
+
+    The runner's stdout carries whatever its process and the code the job runs as the same user write to it, so
+    a line naming a type of the orchestrator's own (``interrupt``, ``node_completed``, a QA or review result)
+    is no agent run's event: only :data:`~embry0.execution.events.AGENT_RUN_TYPES` are taken. The fields only
+    the orchestrator stamps (``job_id``, ``event_seq``, ``prev_seq``) are taken off, so a line cannot pass for
+    another job's event or another place in this one's.
+    """
+    if event.get("type") not in AGENT_RUN_TYPES:
+        return None
+    return {key: value for key, value in event.items() if key not in ORCHESTRATOR_STAMPED}
+
+
+def _refused_result(final_result: dict[str, Any] | None, results: int, nonce: str | None) -> str | None:
+    """Why a run's result is not its runner's own, or None to take it: more than one final result (whichever
+    is the runner's, the other is not), or, when the run was marked, one that does not carry its nonce."""
+    if results > 1:
+        return f"its output held {results} final results, where its runner writes one"
+    if nonce is not None and final_result is not None:
+        carried = final_result.get("nonce")
+        if not isinstance(carried, str) or not hmac.compare_digest(carried.encode(), nonce.encode()):
+            return "its final result does not carry this run's mark"
+    return None
+
+
+def _dropped_type(event: dict[str, Any]) -> str:
+    """A dropped line's type as its log names it: text cut short, or the kind of value it was."""
+    kind = event.get("type")
+    return kind[:_DROPPED_TYPE_CHARS] if isinstance(kind, str) else f"<{type(kind).__name__}>"
 
 
 @dataclass
@@ -162,6 +211,11 @@ def _is_start_crash(exit_code: int | None, stdout_lines: int, stderr: str) -> bo
 _ARGV_FALLBACK_MAX_BYTES = 100 * 1024
 # What argparse prints when a runner that predates --config-stdin is handed it.
 _STALE_RUNNER_STDERR_MARKER = "arguments are required: --config"
+#: What argparse says of an image's runner that predates ``--result-nonce``: the flag is not one it knows.
+_UNMARKED_RUNNER_STDERR_MARKERS = ("unrecognized arguments", "--result-nonce")
+#: The config key and flag the run's result nonce rides (embry0.sandbox.runner.RESULT_NONCE_KEY).
+_RESULT_NONCE_KEY = "result_nonce"
+_RESULT_NONCE_FLAG = "--result-nonce"
 
 
 @dataclass
@@ -178,6 +232,20 @@ class _RunnerExit:
         code 2, not one stdout line (the runner emits events on stdout from
         its first action), and the missing---config usage text on stderr."""
         return self.exit_code == 2 and self.stdout_lines == 0 and _STALE_RUNNER_STDERR_MARKER in self.stderr
+
+    def is_missing_runner_interpreter(self) -> bool:
+        """True only for an image without the runner's interpreter: ``docker exec`` could not start it (127),
+        naming it, and nothing ran, so the image is one built before it."""
+        return self.exit_code == _EXEC_NOT_FOUND and self.stdout_lines == 0 and RUNNER_INTERPRETER in self.stderr
+
+    def is_unmarked_runner_usage_error(self) -> bool:
+        """True only for argparse refusing ``--result-nonce`` BEFORE any agent work: an image's runner that takes
+        its config on stdin but predates the run's result mark."""
+        return (
+            self.exit_code == 2
+            and self.stdout_lines == 0
+            and all(marker in self.stderr for marker in _UNMARKED_RUNNER_STDERR_MARKERS)
+        )
 
 
 class AgentRunner:
@@ -227,9 +295,41 @@ class AgentRunner:
             # list too long" after the developer had already pushed. It also
             # keeps prompts out of the host's process table.
             runner = list(RUNNER_COMMAND)
+            # The run's mark: the runner writes it back on its result, and only a result carrying it is this run's
+            # (spec 2026-11-23). On stdin with the config, never on argv or in the environment, which other
+            # processes of the sandbox's user can read.
+            nonce = secrets.token_urlsafe(32)
+            marked = json.dumps({**config, _RESULT_NONCE_KEY: nonce}).encode()
             output, exit_facts = await self._exec_runner(
-                container, [*runner, "--config-stdin", *extra_args], config_json.encode(), config, on_event
+                container,
+                [*runner, "--config-stdin", _RESULT_NONCE_FLAG, *extra_args],
+                marked,
+                config,
+                on_event,
+                nonce=nonce,
             )
+            if exit_facts.is_missing_runner_interpreter():
+                # An image built before the runner's interpreter (a prebaked QA or profile image the deploy recipe
+                # does not rebuild): nothing started, so one retry on the image's own python cannot run the agent
+                # twice. That runner starts open, until it seals itself, for this release only.
+                await self._warn_stale_image(container, config, "interpreter_missing", RUNNER_INTERPRETER)
+                runner = list(_PLAIN_RUNNER_COMMAND)
+                output, exit_facts = await self._exec_runner(
+                    container,
+                    [*runner, "--config-stdin", _RESULT_NONCE_FLAG, *extra_args],
+                    marked,
+                    config,
+                    on_event,
+                    nonce=nonce,
+                )
+            if exit_facts.is_unmarked_runner_usage_error():
+                # The image's runner predates the mark. argparse refused the flag before the runner imported
+                # anything, so one retry without it cannot run the agent twice. Its result is taken unmarked, for
+                # this release only.
+                await self._warn_stale_image(container, config, "result_unmarked", _RESULT_NONCE_FLAG)
+                output, exit_facts = await self._exec_runner(
+                    container, [*runner, "--config-stdin", *extra_args], config_json.encode(), config, on_event
+                )
             if not exit_facts.is_stale_runner_usage_error():
                 return output
 
@@ -279,6 +379,8 @@ class AgentRunner:
         stdin_data: bytes | None,
         config: dict[str, Any],
         on_event: Callable[[dict[str, Any]], None] | None,
+        *,
+        nonce: str | None = None,
     ) -> tuple[AgentOutput, _RunnerExit]:
         """One `docker exec` of the sandbox runner: stream events, return the
         result plus how the process ended (``_RunnerExit`` stays at its
@@ -349,8 +451,10 @@ class AgentRunner:
 
         async def _read_and_wait() -> AgentOutput:
             final_result: dict[str, Any] | None = None
+            results = 0
             event_callback = on_event or (lambda _: None)
             line_count = 0
+            dropped: dict[str, int] = {}
             buffered = 0
 
             async def _drain_stderr() -> None:
@@ -381,10 +485,27 @@ class AgentRunner:
                     if event is None:
                         continue
                     if event.get("type") == "final_result":
+                        # Counted: a run whose output holds more than one is refused below, whichever is the runner's.
+                        results += 1
                         final_result = event
-                    else:
-                        event_callback(event)
+                        continue
+                    forwarded = agent_run_event(event)
+                    if forwarded is None:
+                        kind = _dropped_type(event)
+                        if kind not in dropped and len(dropped) >= _DROPPED_TYPES_NAMED:
+                            kind = "<other>"
+                        dropped[kind] = dropped.get(kind, 0) + 1
+                        continue
+                    event_callback(forwarded)
 
+            if dropped:
+                # The types and how many of each, never a line: what the sandbox wrote is not logged as written.
+                logger.warning(
+                    "agent_runner_events_dropped",
+                    container=container,
+                    dropped=sum(dropped.values()),
+                    types=dropped,
+                )
             await proc.wait()
             await stderr_task
 
@@ -398,6 +519,32 @@ class AgentRunner:
                     agent_type=config.get("agent_type", "unknown"),
                     is_error=True,
                     error_message=(f"agent produced no events for {idle_grace:.0f}s (idle watchdog); run killed"),
+                )
+
+            refused = _refused_result(final_result, results, nonce)
+            if refused is not None:
+                logger.warning(
+                    "agent_runner_result_refused",
+                    container=container,
+                    agent_type=config.get("agent_type"),
+                    reason=refused,
+                    results=results,
+                )
+                return AgentOutput(
+                    agent_type=config.get("agent_type", "unknown"),
+                    is_error=True,
+                    error_message=f"the run's result was not taken: {refused}",
+                    error_code=ErrorCode.SANDBOX_RESULT_REFUSED.value,
+                )
+            if final_result is not None and final_result.get("open_at_start") is True:
+                # The runner's own report: it was open to other processes of its user until it sealed itself, so
+                # the kernel did not start it closed (an interpreter the user can read, or the host's
+                # fs.suid_dumpable at 1). Its result still carries the mark; the protection is thinner.
+                logger.warning(
+                    "sandbox_runner_open_at_start",
+                    container=container,
+                    agent_type=config.get("agent_type"),
+                    hint=f"run it on {RUNNER_INTERPRETER} (execute-only) on a host whose fs.suid_dumpable is not 1",
                 )
 
             logger.info(
@@ -565,6 +712,18 @@ class AgentRunner:
         except Exception:
             return False
         return True
+
+    async def _warn_stale_image(self, container: str, config: dict[str, Any], outcome: str, missing: str) -> None:
+        """Say an image predates what this release runs its runner with, and count it: rebuild the image."""
+        logger.warning(
+            "sandbox_runner_stale_image",
+            image=await self._image_ref(container),
+            container=container,
+            agent_type=config.get("agent_type"),
+            outcome=outcome,
+            hint=f"the image predates {missing}; the run goes ahead without it this release — rebuild this image",
+        )
+        self._on_stale_image(outcome)
 
     async def _image_ref(self, container: str) -> str:
         """The image a container was created from, for the stale-image log."""

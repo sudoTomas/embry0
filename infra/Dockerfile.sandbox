@@ -109,14 +109,24 @@ RUN useradd --create-home agent
 # Create writable workspace (tmpfs in docker run, but need the dir)
 RUN mkdir -p /workspace && chown agent:agent /workspace
 
+# The agent runner's interpreter: a copy of python the agent user may run but
+# not read. The kernel starts a program its user cannot read as a process no
+# other process of that user can open (/proc/<pid>/fd, mem), from its first
+# instruction, so nothing a job runs can write on the runner's stdout or read
+# its stdin (embry0.execution.agent_runner.RUNNER_INTERPRETER).
+RUN install -o root -g root -m 0711 "$(readlink -f /usr/local/bin/python3)" /usr/local/bin/embry0-runner-python
+
 USER agent
 WORKDIR /workspace
 
 # Fail the build, not the first agent run (#497): the SDK must support the
 # Ring-3 PreToolUse hook, its bundled CLI must be the version it pins, and no
 # other `claude` version may be on PATH. Runs as the agent user, with a
-# throwaway HOME so the CLI leaves nothing in the image.
-RUN home=$(mktemp -d) && HOME="$home" python -m embry0.agents.sdk_support && rm -rf "$home"
+# throwaway HOME so the CLI leaves nothing in the image, on the runner's
+# interpreter, which the agent user must be able to run and not to read.
+RUN test -x /usr/local/bin/embry0-runner-python && ! test -r /usr/local/bin/embry0-runner-python \
+    && home=$(mktemp -d) && HOME="$home" /usr/local/bin/embry0-runner-python -m embry0.agents.sdk_support \
+    && rm -rf "$home"
 
 # --- dev-python -------------------------------------------------------------
 # Lean dev-check toolchain for Poetry-based Python repos. Same base as the

@@ -37,6 +37,7 @@ _BY_CODE: dict[str, str] = {
     ErrorCode.SANDBOX_GONE: "the paused job's sandbox no longer exists; run the job again",
     ErrorCode.SANDBOX_IMAGE_STALE: "the sandbox image is out of date and has to be rebuilt by an operator",
     ErrorCode.SANDBOX_EXEC_STALLED: "the sandbox did not start the agent",
+    ErrorCode.SANDBOX_RESULT_REFUSED: "an agent's result could not be confirmed as its own, so the job stopped rather than use it",
     ErrorCode.PR_LISTING_FAILED: "the repository's open pull requests could not be listed, so the job stopped rather than risk opening a duplicate",
     ErrorCode.SANDBOX_AGENT_START_FAILED: "the sandbox image could not start the agent and has to be checked by an operator",
     ErrorCode.SANDBOX_REQUIRED: "the job could not run because no sandbox was available",
