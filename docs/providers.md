@@ -168,7 +168,7 @@ What a run is charged:
 | Provider | Charged | The catalogue's rates |
 |---|---|---|
 | Anthropic, on the Agent SDK | what its CLI reports (`total_cost_usd`, net of a resumed session's earlier runs) | estimate each turn's cost as it runs |
-| any other on the Agent SDK (xAI's grok by default) | the catalogue's rates on the run's tokens: each API call's usage once, by its message id, so a resumed session's earlier calls are not counted again | the charge |
+| any other on the Agent SDK (xAI's grok by default) | the catalogue's rates on the run's tokens, as the CLI's result counts them for every call it made (its `modelUsage`, a compaction's and the session title's calls included), less what a resumed session restored | the charge |
 | a chat-completions provider, or grok's direct executor | the catalogue's rates on the run's tokens | the charge |
 
 The CLI knows Anthropic's pricing better than flat rates do (long-context
@@ -176,7 +176,15 @@ rates, cache lifetimes, a model it maps to another), so its figure stands for
 Anthropic and the catalogue's rates are an estimate there. For any other
 provider the CLI prices each call by its own table of Claude models, which
 knows nothing of the provider's: its figure is logged beside the charge
-(`sdk_run_charged_from_catalogue`) and not counted. A model with no rates in
+(`sdk_run_charged_from_catalogue`) and not counted. The tokens are not the
+stream's: the CLI sends each content block of a response as its own message,
+each with the usage the response started with (one output token), and the
+calls a compaction or the session title make send no message at all. The
+result's `modelUsage` counts them all; a resumed session's counts include its
+earlier runs, which the session file's saved totals give, and those are taken
+off. A result without `modelUsage` is charged its `usage` (the main loop's
+calls); a run that ends with no result, the calls the stream reported, each
+once, which undercounts their output. A model with no rates in
 the record is never metered at $0: a chat-completions run of it ends as "cost
 unknown", and the resolver refuses such a model before any run.
 

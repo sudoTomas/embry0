@@ -143,16 +143,18 @@ def provider_models(provider: ModelProvider) -> tuple[str, ...]:
     return provider.models
 
 
-def model_rates(model: str, catalogue: Catalogue | None = None) -> tuple[float, float] | None:
-    """``model``'s (input, output) $/Mtok now: OpenRouter's live price, its own entry in the installed catalogue
-    (its price in force today), else its provider's default rates."""
+def model_rates(
+    model: str, catalogue: Catalogue | None = None, *, at: datetime | None = None
+) -> tuple[float, float] | None:
+    """``model``'s (input, output) $/Mtok ``at`` (now, by default): OpenRouter's live price, its own entry in the
+    installed catalogue (its price in force that day), else its provider's default rates."""
     cat = catalogue if catalogue is not None else current()
     if model in cat.withheld:  # its price is not in force (catalogue.merge_stored): unpriced, so it does not run
         return None
     live = catalog_rates(model)
     if live is not None:
         return live
-    rates = cat.rates(model)
+    rates = cat.rates(model, at=at)
     return rates if rates is not None else cat.default_rates(model)
 
 
@@ -202,16 +204,21 @@ def price_usage(
 
 
 def provider_record(model: str, catalogue: Catalogue | None = None, *, at: datetime | None = None) -> ProviderRecord:
-    """What a sandbox needs of the provider ``model`` routes to, from ``catalogue`` (the installed one): its runtime,
-    the id its API knows the model by, the rates in force now (:func:`model_rates`), the cache factors, its address
-    and the sandbox variables of its key and of an operator-given API root. Anthropic's for a model that routes to no
-    other provider."""
+    """What a sandbox needs of the provider ``model`` routes to, from ``catalogue`` (the installed one; a caller that
+    routed the model passes the catalogue it routed by): its runtime, the id its API knows the model by, the rates in
+    force ``at`` (the run's start, now by default; :func:`model_rates`), the cache factors, its address and the sandbox
+    variables of its key and of an operator-given API root. Anthropic's for a model that routes to no other provider."""
     cat = catalogue if catalogue is not None else current()
     moment = at if at is not None else datetime.now(UTC)
     provider = provider_for_model(model, cat)
     if provider is None:
-        # Anthropic's own price of the model, which only estimates a run's turns: its CLI reports the run's cost.
-        rates = cat.anthropic.pricing_usd_per_mtok.get(model)
+        # Anthropic's own price of the model that day, which only estimates a run's turns: its CLI reports its cost.
+        anthropic = cat.document.providers.get(ANTHROPIC_NAME)
+        rates = (
+            cat.rates(model, at=moment)
+            if anthropic is not None and model in anthropic.models and model not in cat.withheld
+            else None
+        )
         return ProviderRecord(
             name=ANTHROPIC_NAME,
             runtime="sdk",
@@ -222,7 +229,7 @@ def provider_record(model: str, catalogue: Catalogue | None = None, *, at: datet
             resolved_at=moment.isoformat(),
         )
     chat = provider.runtime == "chat_completions"
-    rates = model_rates(model, cat)
+    rates = model_rates(model, cat, at=moment)
     return ProviderRecord(
         name=provider.name,
         runtime="chat_completions" if chat else "sdk",

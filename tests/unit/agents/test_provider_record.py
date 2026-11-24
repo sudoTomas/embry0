@@ -11,7 +11,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 import embry0.agents.executor_openai as eo
 from embry0.agents import catalogue, providers
@@ -261,36 +260,28 @@ def test_a_record_without_rates_leaves_the_run_unpriced(
 
 # ---- an Agent SDK run's charge ----
 
-SESSION = "2cde0b11-1cda-47f6-8a45-fb99f2126f24"
+#: Streams recorded from the sandbox image's CLI (claude-code 2.1.316, Agent SDK 0.2.176) against a fake upstream that
+#: answers as Anthropic's API does: each content block arrives as its own assistant message carrying the response's
+#: starting usage (``output_tokens: 1``), and the result's ``modelUsage`` counts every call the CLI made.
+STREAMS = Path(__file__).parents[2] / "fixtures" / "sdk-streams"
 
 
-def _assistant(message_id: str, usage: dict[str, int], model: str = "grok-4.7") -> AssistantMessage:
-    return AssistantMessage(
-        content=[TextBlock(text="x")], model=model, usage=usage, message_id=message_id, session_id=SESSION
-    )
+def _recorded(name: str, *, drop: tuple[str, ...] = (), without_result: bool = False) -> list[Any]:
+    from claude_agent_sdk._internal.message_parser import parse_message
+
+    messages = []
+    for line in (STREAMS / name).read_text().splitlines():
+        data = json.loads(line)
+        if data.get("type") == "result":
+            if without_result:
+                continue
+            data = {k: v for k, v in data.items() if k not in drop}
+        messages.append(parse_message(data))
+    return messages
 
 
-def _result(total_cost_usd: float, usage: dict[str, int]) -> ResultMessage:
-    return ResultMessage(
-        subtype="success",
-        duration_ms=1,
-        duration_api_ms=1,
-        is_error=False,
-        num_turns=2,
-        session_id=SESSION,
-        total_cost_usd=total_cost_usd,
-        usage=usage,
-        result="done",
-    )
-
-
-#: Two API calls; the first's usage sent again with its second content block, as the CLI does.
-CALLS = [
-    _assistant("msg-1", {"input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 400}),
-    _assistant("msg-1", {"input_tokens": 1000, "output_tokens": 100, "cache_read_input_tokens": 400}),
-    _assistant("msg-2", {"input_tokens": 2000, "output_tokens": 300, "cache_creation_input_tokens": 500}),
-]
-RESULT_USAGE = {"input_tokens": 3000, "output_tokens": 400}
+def _result_of(name: str) -> dict[str, Any]:
+    return next(json.loads(line) for line in (STREAMS / name).read_text().splitlines() if '"type":"result"' in line)
 
 
 async def _sdk_run(
@@ -299,8 +290,10 @@ async def _sdk_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    resume: float | None = None,
+    restored: dict[str, Any] | None = None,
 ) -> tuple[Any, list[dict[str, Any]], Any]:
+    """Run the Agent SDK executor over ``messages``; ``restored`` is the cost-state line a resumed session's file
+    ends with, as the CLI wrote it at the earlier run's exit."""
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path / "workspace"))
     monkeypatch.setenv("XAI_API_KEY", "console-key")
     monkeypatch.setenv("EMBRY0_XAI_CONSOLE_KEY", "console-key")
@@ -308,13 +301,12 @@ async def _sdk_run(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     kwargs: dict[str, Any] = {}
-    if resume is not None:
+    if restored is not None:
+        session = str(restored["sessionId"])
         session_dir = home / ".claude" / "projects" / sanitize_cwd_for_session_dir("/workspace")
         session_dir.mkdir(parents=True)
-        (session_dir / f"{SESSION}.jsonl").write_text(
-            json.dumps({"type": "cost-state", "sessionId": SESSION, "totalCostUSD": resume}) + "\n"
-        )
-        kwargs["resume_session_id"] = SESSION
+        (session_dir / f"{session}.jsonl").write_text(json.dumps(restored) + "\n")
+        kwargs["resume_session_id"] = session
     events: list[dict[str, Any]] = []
     captured: dict[str, Any] = {}
 
@@ -346,59 +338,103 @@ def _grok_record(**kw: Any) -> ProviderRecord:
     )
 
 
-#: msg-1 once and msg-2, at the grok record's rates and cache factors.
-GROK_CHARGE = ((1000 + 2000) * 2.0 + (100 + 300) * 6.0 + 400 * 2.0 * 0.25 + 500 * 2.0 * 1.5) / 1_000_000
+def _grok_price(input_tokens: int, output_tokens: int, cache_read: int, cache_creation: int) -> float:
+    return (input_tokens * 2.0 + output_tokens * 6.0 + cache_read * 2.0 * 0.25 + cache_creation * 2.0 * 1.5) / 1e6
 
 
-async def test_a_grok_sdk_run_is_charged_from_the_catalogue_not_the_cli(tmp_path, monkeypatch) -> None:
-    """The CLI prices grok by its own table of Claude models; the charge is the record's rates on each call's tokens,
-    a call's usage sent twice counted once."""
-    invocation = _inv(provider="xai", model="grok-4.7", provider_record=_grok_record())
-    out, events, options = await _sdk_run(invocation, [*CALLS, _result(0.777, RESULT_USAGE)], tmp_path, monkeypatch)
+def _grok() -> AgentInvocation:
+    return _inv(provider="xai", model="grok-4.7", provider_record=_grok_record())
+
+
+async def test_a_grok_sdk_run_is_charged_its_calls_real_output_not_the_cli_s_figure(tmp_path, monkeypatch) -> None:
+    """Two calls, the first sent as two messages; each message says 1 output token, the calls spent 400."""
+    out, events, options = await _sdk_run(_grok(), _recorded("grok-two-calls.jsonl"), tmp_path, monkeypatch)
     assert not out.is_error, out.error_message
-    assert out.cost_usd == pytest.approx(GROK_CHARGE), f"charged {out.cost_usd}, the CLI said 0.777"
-    assert [e["cost_usd"] for e in events if e.get("type") == "cost_update"] == [pytest.approx(GROK_CHARGE)]
+    charge = _grok_price(3000, 400, 400, 500)
+    assert out.cost_usd == pytest.approx(charge), f"charged {out.cost_usd}; the calls' tokens cost {charge}"
+    assert out.cost_usd != pytest.approx(_result_of("grok-two-calls.jsonl")["total_cost_usd"]), "the CLI's figure"
+    assert [e["cost_usd"] for e in events if e.get("type") == "cost_update"] == [pytest.approx(charge)]
     assert options.env["ANTHROPIC_BASE_URL"] == "https://grok.example.test", "the CLI was not pointed at the record's"
     assert options.env["ANTHROPIC_API_KEY"] == "console-key"
 
 
-async def test_a_resumed_grok_run_is_charged_its_own_calls_only(tmp_path, monkeypatch) -> None:
-    invocation = _inv(provider="xai", model="grok-4.7", provider_record=_grok_record())
-    out, _events, _options = await _sdk_run(
-        invocation, [*CALLS, _result(1.5, RESULT_USAGE)], tmp_path, monkeypatch, resume=0.723
+async def test_a_compaction_s_call_is_charged_too(tmp_path, monkeypatch) -> None:
+    """The compaction's call makes no assistant message and is not in the result's usage: only its modelUsage."""
+    out, _events, _ = await _sdk_run(_grok(), _recorded("grok-compacted.jsonl"), tmp_path, monkeypatch)
+    usage = _result_of("grok-compacted.jsonl")["modelUsage"]["grok-4.7"]
+    charge = _grok_price(usage["inputTokens"], usage["outputTokens"], usage["cacheReadInputTokens"], 0)
+    assert (usage["inputTokens"], usage["outputTokens"]) == (373500, 2150), "the recording moved"
+    assert out.cost_usd == pytest.approx(charge), f"charged {out.cost_usd}, the calls cost {charge}"
+
+
+async def test_a_resumed_grok_session_is_charged_this_run_s_calls_only(tmp_path, monkeypatch) -> None:
+    """The resumed run's modelUsage counts the session's earlier run too, as the CLI restored it from its file."""
+    first = _result_of("grok-session-first.jsonl")
+    restored = {
+        "type": "cost-state",
+        "sessionId": _result_of("grok-session-resumed.jsonl")["session_id"],
+        "totalCostUSD": first["total_cost_usd"],
+        "modelUsage": first["modelUsage"],
+    }
+    out, _events, _ = await _sdk_run(
+        _grok(), _recorded("grok-session-resumed.jsonl"), tmp_path, monkeypatch, restored=restored
     )
-    assert out.cost_usd == pytest.approx(GROK_CHARGE)
+    assert _result_of("grok-session-resumed.jsonl")["modelUsage"]["grok-4.7"]["inputTokens"] == 6000, "the recording"
+    assert out.cost_usd == pytest.approx(_grok_price(3000, 400, 400, 500))
+
+
+async def test_a_session_this_cli_did_not_restore_is_charged_its_whole_usage(tmp_path, monkeypatch) -> None:
+    """A result's totals below the saved ones: the CLI did not restore them, so its totals are the run's own (#501)."""
+    later = _result_of("grok-session-resumed.jsonl")
+    restored = {
+        "type": "cost-state",
+        "sessionId": _result_of("grok-session-first.jsonl")["session_id"],
+        "totalCostUSD": later["total_cost_usd"],
+        "modelUsage": later["modelUsage"],
+    }
+    out, _events, _ = await _sdk_run(
+        _grok(), _recorded("grok-session-first.jsonl"), tmp_path, monkeypatch, restored=restored
+    )
+    assert out.cost_usd == pytest.approx(_grok_price(3000, 400, 400, 500))
+
+
+async def test_a_result_without_model_usage_is_charged_its_usage(tmp_path, monkeypatch) -> None:
+    out, _events, _ = await _sdk_run(
+        _grok(), _recorded("grok-two-calls.jsonl", drop=("modelUsage",)), tmp_path, monkeypatch
+    )
+    assert out.cost_usd == pytest.approx(_grok_price(3000, 400, 400, 500))
+
+
+async def test_a_run_that_ends_with_no_result_is_charged_the_calls_it_reported(tmp_path, monkeypatch) -> None:
+    """A lower bound: each call once by its id, at the usage it started with."""
+    out, _events, _ = await _sdk_run(
+        _grok(), _recorded("grok-two-calls.jsonl", without_result=True), tmp_path, monkeypatch
+    )
+    assert out.cost_usd == pytest.approx(_grok_price(3000, 2, 400, 500))
 
 
 async def test_an_anthropic_run_is_charged_what_its_cli_reports(tmp_path, monkeypatch) -> None:
     """The CLI knows Anthropic's pricing (long context, cache tiers) better than flat rates: its figure stands, and
-    the record's rates only estimate the turns."""
+    the record's rates, resolved from the deployment's catalogue, only estimate the turns."""
     enable_providers(monkeypatch, anthropic={"models": {"claude-sonnet-5": {"prices": [{"in": 6.0, "out": 30.0}]}}})
     record = providers.provider_record("claude-sonnet-5", at=AT)
     catalogue.install(None)  # the sandbox: the shipped catalogue only
-    calls = [_assistant("msg-1", {"input_tokens": 1000, "output_tokens": 100}, model="claude-sonnet-5")]
-    out, events, _ = await _sdk_run(
-        _inv(provider_record=record), [*calls, _result(0.0123, RESULT_USAGE)], tmp_path, monkeypatch
-    )
-    assert out.cost_usd == pytest.approx(0.0123)
+    messages = _recorded("grok-two-calls.jsonl")
+    for message in messages:
+        if hasattr(message, "model"):
+            message.model = "claude-sonnet-5"
+    out, events, _ = await _sdk_run(_inv(provider_record=record), messages, tmp_path, monkeypatch)
+    assert out.cost_usd == pytest.approx(_result_of("grok-two-calls.jsonl")["total_cost_usd"])
     turn = [e for e in events if e.get("type") == "turn_usage"]
-    assert turn[0]["cost_usd"] == pytest.approx((1000 * 6.0 + 100 * 30.0) / 1_000_000), "estimated at the shipped price"
+    assert turn[0]["cost_usd"] == pytest.approx((1000 * 6.0 + 1 * 30.0 + 400 * 6.0 * 0.1) / 1e6), "the shipped price"
 
 
 async def test_a_run_from_an_orchestrator_without_records_is_charged_as_before(tmp_path, monkeypatch) -> None:
     out, _events, options = await _sdk_run(
-        _inv(provider="xai", model="grok-4.7"), [*CALLS, _result(0.777, RESULT_USAGE)], tmp_path, monkeypatch
+        _inv(provider="xai", model="grok-4.7"), _recorded("grok-two-calls.jsonl"), tmp_path, monkeypatch
     )
-    assert out.cost_usd == pytest.approx(0.777)
+    assert out.cost_usd == pytest.approx(_result_of("grok-two-calls.jsonl")["total_cost_usd"])
     assert options.env["ANTHROPIC_BASE_URL"] == "https://api.x.ai", "the sandbox's own table"
-
-
-async def test_a_grok_run_with_no_call_usage_is_charged_from_the_result_s(tmp_path, monkeypatch) -> None:
-    invocation = _inv(provider="xai", model="grok-4.7", provider_record=_grok_record())
-    out, _events, _ = await _sdk_run(
-        invocation, [_result(0.9, {"input_tokens": 1000, "output_tokens": 10})], tmp_path, monkeypatch
-    )
-    assert out.cost_usd == pytest.approx((1000 * 2.0 + 10 * 6.0) / 1_000_000)
 
 
 def test_a_run_resolved_in_the_orchestrator_sends_the_extras_the_deployment_set(
@@ -433,3 +469,61 @@ def test_a_run_resolved_in_the_orchestrator_sends_the_extras_the_deployment_set(
     server.answer(completion(content="done"))
     asyncio.run(OpenAICompatibleExecutor().run(invocation, {"_test_writer": lambda e: None}))
     assert server.chat_requests()[0]["json"].get("temperature") == 0.2, "the sandbox sent its shipped extras"
+
+
+def test_the_record_s_rates_are_those_of_its_moment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dated price: the record resolved for a run takes the price in force at the run's start, Anthropic's too."""
+    dated = {"prices": [{"in": 1.0, "out": 1.0}, {"from": "2027-01-01", "in": 9.0, "out": 9.0}]}
+    from datetime import date
+
+    def dated_of(spec: dict[str, Any]) -> dict[str, Any]:
+        prices = [dict(p) for p in spec["prices"]]
+        prices[1]["from"] = date.fromisoformat(prices[1]["from"])
+        return {"prices": prices}
+
+    enable_providers(
+        monkeypatch,
+        "deepseek",
+        deepseek={"models": {"deepseek-flash": dated_of(dated)}},
+        anthropic={"models": {"claude-sonnet-5": dated_of(dated)}},
+    )
+    before, after = datetime(2026, 12, 31, tzinfo=UTC), datetime(2027, 1, 2, tzinfo=UTC)
+    for model in ("deepseek-flash", "claude-sonnet-5"):
+        assert providers.provider_record(model, at=before).rates == (1.0, 1.0), model
+        assert providers.provider_record(model, at=after).rates == (9.0, 9.0), f"{model}: not the run's day's price"
+
+
+def test_one_catalogue_routes_the_model_and_makes_its_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Another process's write installed between two reads cannot route a model by one catalogue and hand its run
+    the other's record."""
+    from embry0.agents.resolver import resolve_agent_invocation
+    from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+    on = enable_providers(monkeypatch, "deepseek")
+    off = catalogue.seed()
+    reads = {"n": 0}
+
+    def installed() -> catalogue.Catalogue:
+        reads["n"] += 1
+        return on if reads["n"] == 1 else off
+
+    monkeypatch.setattr(catalogue, "current", installed)
+    monkeypatch.setattr(providers, "current", installed)
+    invocation = resolve_agent_invocation(
+        agent_type="developer",
+        prompt="p",
+        system_context="",
+        global_defaults={"execution_mode": "sdk", "auth_mode": "oauth"},
+        repo_prefs=None,
+        job_overrides={},
+        agent_definition=dict(BUILTIN_SEED["developer"]),
+        pipeline_config={},
+        max_turns=3,
+        timeout_seconds=60,
+        credentials={"api_key": "", "oauth_token": "tok"},
+        job_agent_models={"developer": "deepseek-flash"},
+    )
+    record = invocation.provider_record
+    assert record is not None and (invocation.provider, record.name) == ("deepseek", "deepseek"), (
+        f"routed to {invocation.provider!r}, recorded {record and record.name!r}"
+    )

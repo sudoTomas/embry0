@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -94,6 +95,50 @@ def find_session_file(
         project_cwd=project_cwd,
     )
     return None
+
+
+#: The token counts of a ``modelUsage`` entry, in the order (input, output, cache read, cache creation).
+USAGE_KEYS: tuple[str, str, str, str] = (
+    "inputTokens",
+    "outputTokens",
+    "cacheReadInputTokens",
+    "cacheCreationInputTokens",
+)
+
+
+def model_usage_tokens(model_usage: Any) -> tuple[int, int, int, int]:
+    """(input, output, cache read, cache creation) tokens summed over every model of a ``modelUsage`` map, as a
+    result message or a ``cost-state`` line carries it; zeros for what is not one."""
+    totals = [0, 0, 0, 0]
+    for usage in model_usage.values() if isinstance(model_usage, dict) else ():
+        if not isinstance(usage, dict):
+            continue
+        for i, key in enumerate(USAGE_KEYS):
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                totals[i] += value
+    return (totals[0], totals[1], totals[2], totals[3])
+
+
+def restored_usage(session_file: Path) -> tuple[int, int, int, int]:
+    """The token counts the CLI restores when it resumes ``session_file``: the last ``cost-state`` line's
+    ``modelUsage``, summed over its models (:func:`model_usage_tokens`). Zeros when there is none."""
+    restored: tuple[int, int, int, int] = (0, 0, 0, 0)
+    try:
+        with session_file.open(encoding="utf-8") as lines:
+            for line in lines:
+                if '"cost-state"' not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (ValueError, RecursionError):  # see embry0.json_text
+                    continue
+                if isinstance(entry, dict) and entry.get("type") == "cost-state":
+                    restored = model_usage_tokens(entry.get("modelUsage"))
+    except OSError as exc:
+        logger.warning("session_cost_state_unreadable", path=str(session_file), error=str(exc))
+        return (0, 0, 0, 0)
+    return restored
 
 
 def restored_cost_usd(session_file: Path) -> float:
