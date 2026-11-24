@@ -372,11 +372,22 @@ def _too_many(section: Section[Any], error: Mapping[str, Any], count: int | None
     )
 
 
-def _own_values(section: Section[Any], known: Mapping[str, Any]) -> dict[str, Any]:
+def _own_values(section: Section[Any], key: str, known: Mapping[str, Any]) -> tuple[dict[str, Any], list[Problem]]:
     """The keys of ``known`` a document merges or adds to, each as the document's own entries, checked alone:
-    what is stored, never what it inherits."""
+    what is stored, never what it inherits. With the problems of the section ``key`` that check refuses: the
+    entries as written can be more than a key holds while what it merges to is not (an entry written twice
+    counts once there, #669), and a refusal is the operator's to fix, never a crash."""
     names = {name: value for name, value in known.items() if name in section.merged_keys | section.added_keys}
-    return section.validate_alone(names) if names else {}
+    if not names:
+        return {}, []
+    try:
+        return section.validate_alone(names), []
+    except SectionRefused as exc:
+        problems = [
+            Problem((key, *(error.get("loc") or ())), str(error.get("type")), _message(section, error))
+            for error in exc.errors
+        ]
+        return {}, problems
 
 
 def validate_section(section: Section[Any], raw: Mapping[str, Any]) -> SectionModel:
@@ -633,7 +644,8 @@ def check(
                 else:
                     problems.append(Problem((key, *loc), str(error.get("type")), _message(section, error)))
             continue
-        own = _own_values(section, known)
+        own, refused_own = _own_values(section, key, known)
+        problems.extend(refused_own)
         if layer == "deployment":
             clean = {**model.model_dump(mode="json", exclude_unset=True), **own, **kept}
         else:
