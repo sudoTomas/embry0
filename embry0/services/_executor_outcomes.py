@@ -1059,7 +1059,7 @@ async def _handle_workflow_result(
         quarantine_reason: str | None = None
         if final_status == "failed":
             from embry0.execution.agent_runner import aware_datetime
-            from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES, classify_failure
+            from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES, RUN_NEVER_STARTED_CODES, classify_failure
 
             # #304: no node-level code — fall back to the runner's diagnosis
             # on the terminal output (stale sandbox image, stalled exec,
@@ -1068,11 +1068,13 @@ async def _handle_workflow_result(
             # the stage — never a bare ERR_UNKNOWN.
             terminal = outputs[-1] if outputs and ends_in_error else {}
             terminal_code = terminal.get("error_code")
-            if terminal_code in ACCOUNT_FAILURE_CODES:
+            if terminal_code in ACCOUNT_FAILURE_CODES or terminal_code in RUN_NEVER_STARTED_CODES:
                 # #466: the run that ended the job died because the account
                 # could not serve it (spent window, rate limit, refused
-                # token). Whatever a node concluded afterwards — "triage
-                # output malformed" — is a symptom of that, and the account
+                # token), or #673: never started (an image built before what
+                # this release runs agents with, a stalled exec, a failed
+                # start). Whatever a node concluded afterwards — "triage
+                # output malformed" — is a symptom of that, and the run's
                 # code is what the quarantine below and an operator act on.
                 error_code = terminal_code
             else:

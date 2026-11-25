@@ -203,3 +203,42 @@ async def test_a_non_account_triage_error_keeps_the_node_code() -> None:
     job, repo = await _job_outcome(command.update)
     assert job["error_code"] == MALFORMED, "only an account failure outranks the node's code"
     assert repo.status_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        (
+            "ERR_SANDBOX_IMAGE_STALE",
+            "The sandbox image 'acme-sandbox:old' was built before what this release runs agents with: it lacks the "
+            "runner's execute-only interpreter (/usr/local/bin/embry0-runner-python). No agent ran.",
+        ),
+        ("ERR_SANDBOX_EXEC_STALLED", "sandbox exec stalled before the agent started: no read of the config"),
+        ("ERR_SANDBOX_AGENT_START_FAILED", "The sandbox could not start the agent: docker exec exited 126"),
+    ],
+)
+async def test_a_triage_run_that_never_started_fails_the_job_with_its_own_code(code: str, message: str) -> None:
+    """#673: triage puts ERR_TRIAGE_MALFORMED on any agent error, but a run that never started (a stale image, a
+    stalled exec, a failed start) is what an operator acts on: the job carries the run's code, and no account is
+    quarantined."""
+    never_started = {
+        "agent_outputs": [
+            {
+                "agent_type": "triage",
+                "is_error": True,
+                "error_message": message,
+                "error_code": code,
+                "provider": "anthropic",
+                "output": "",
+            }
+        ],
+        "total_cost_usd": 0.0,
+        "current_stage": "triage_failed",
+        "errors": [f"triage: {message}"],
+    }
+    command = await _triage(never_started)
+    assert command.update.get("error_code") == MALFORMED, "triage itself still names its node's code"
+    job, repo = await _job_outcome(command.update)
+    assert job["error_code"] == code, f"the job must carry the run's own code, got {job['error_code']}"
+    assert repo.status_calls == [], "a run that never started is not the account's fault"

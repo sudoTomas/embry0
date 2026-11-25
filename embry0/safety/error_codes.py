@@ -415,6 +415,19 @@ ACCOUNT_FAILURE_CODES: frozenset[str] = frozenset(
     }
 )
 
+# Codes that say a run never started: the sandbox could not run the agent (an image built before
+# what this release runs agents with, an exec that never took its config, a start that failed before
+# the runner's first event). Nothing the agent would have done happened, so a job whose last agent
+# run ended on one is reported under it, as under an account failure, rather than under the
+# symptom a node saw afterwards ("triage output malformed"). No account is quarantined for it.
+RUN_NEVER_STARTED_CODES: frozenset[str] = frozenset(
+    {
+        ErrorCode.SANDBOX_IMAGE_STALE.value,
+        ErrorCode.SANDBOX_EXEC_STALLED.value,
+        ErrorCode.SANDBOX_AGENT_START_FAILED.value,
+    }
+)
+
 # What an xAI 403 means for the job and the account (embry0/safety/xai_denials.py).
 XAI_DENIAL_CODES: dict[XaiDenial, ErrorCode] = {
     XaiDenial.SPENDING_LIMIT: ErrorCode.PROVIDER_QUOTA_EXHAUSTED,

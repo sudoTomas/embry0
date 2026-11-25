@@ -203,6 +203,18 @@ def test_agent_spend_by_pipeline_provider_and_family() -> None:
     assert b'pipeline_template="x"' not in generate_latest(registry)
 
 
+def test_every_stale_image_outcome_is_seeded_at_zero() -> None:
+    """A check of the counter since the last deploy reads 0 for each outcome, not nothing (#673)."""
+    from embry0.execution.agent_runner import STALE_IMAGE_LACKS
+
+    _, registry = _metrics()
+    seeded = {
+        outcome: registry.get_sample_value("embry0_sandbox_runner_stale_image_total", {"outcome": outcome})
+        for outcome in STALE_IMAGE_LACKS
+    }
+    assert seeded == dict.fromkeys(STALE_IMAGE_LACKS, 0.0), f"an outcome has no series before its first count: {seeded}"
+
+
 def test_case_and_infra_events() -> None:
     m, registry = _metrics()
     m.case_opened("watcher")

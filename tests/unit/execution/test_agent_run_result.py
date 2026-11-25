@@ -37,6 +37,13 @@ _UNMARKED_USAGE = (
     b"                 [--session-id SESSION_ID]\n"
     b"runner.py: error: unrecognized arguments: --result-nonce\n"
 )
+#: What today's runner prints for a flag it does not know: its usage lists [--result-nonce], which it knows.
+_CURRENT_USAGE_OTHER = (
+    b"usage: runner.py [-h] (--config CONFIG | --config-stdin)\n"
+    b"                 [--session-blob SESSION_BLOB] [--session-id SESSION_ID]\n"
+    b"                 [--result-nonce]\n"
+    b"runner.py: error: unrecognized arguments: --zz-unknown\n"
+)
 #: What the daemon says when the program docker exec is to start is not in the image, by Docker major version, with
 #: the exit docker exec gives: measured against docker:27-dind (27.5.1) and Docker 29.4 on an image without the
 #: interpreter. Both write it as the exec's one stdout line, ending in CRLF, and nothing on stderr.
@@ -244,6 +251,14 @@ def _refused_as_stale(output: Any, logs: list[dict[str, Any]], stale: list[str],
 
 
 @pytest.mark.asyncio
+async def test_a_runner_that_names_the_mark_among_several_unknown_arguments_is_refused() -> None:
+    usage = _UNMARKED_USAGE.replace(b"--result-nonce\n", b"--result-nonce --zz-other\n")
+    output, logs, _, stale = await _run([_proc([], returncode=2, stderr=usage)])
+
+    _refused_as_stale(output, logs, stale, "result_unmarked", "--result-nonce")
+
+
+@pytest.mark.asyncio
 async def test_an_image_whose_runner_predates_the_mark_is_refused() -> None:
     output, logs, runner, stale = await _run(
         [_proc([], returncode=2, stderr=_UNMARKED_USAGE), _proc([_STARTED, _FINAL], mark=False)]
@@ -260,6 +275,7 @@ async def test_an_image_whose_runner_predates_the_mark_is_refused() -> None:
         pytest.param({"events": [_STARTED], "returncode": 2, "stderr": _UNMARKED_USAGE}, id="it-wrote-a-line"),
         pytest.param({"events": [], "returncode": 1, "stderr": _UNMARKED_USAGE}, id="not-a-usage-exit"),
         pytest.param({"events": [], "returncode": 2, "stderr": b"error: unrecognized arguments: --x\n"}, id="other"),
+        pytest.param({"events": [], "returncode": 2, "stderr": _CURRENT_USAGE_OTHER}, id="today-s-runner-other-flag"),
     ],
 )
 async def test_the_mark_refusal_cannot_fire_once_the_runner_did_anything(first: dict[str, Any]) -> None:

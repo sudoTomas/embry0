@@ -524,6 +524,24 @@ async def test_a_state_level_code_outranks_the_runner_code():
     """#304 × #322: a code a node (or the budget path) put on state is the
     job's classification; the runner's code only fills the ERR_UNKNOWN gap."""
     ex = _executor()
+    no_result = {**_err("review"), "error_code": "ERR_AGENT_NO_RESULT"}
+    kwargs = await _run(
+        ex,
+        {
+            "triage_decision": {"action": "proceed"},
+            "current_stage": "review_failed",
+            "error_code": "ERR_BUDGET_OVERRUN",
+            "agent_outputs": [_ok("triage"), _ok("developer"), no_result],
+        },
+    )
+    assert kwargs["error_code"] == "ERR_BUDGET_OVERRUN"
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_run_that_never_started_outranks_the_state_level_code():
+    """#673: a run refused for its image (or that never took its config, or failed to start) did nothing, so what
+    a node put on state after it is not the job's cause; the run's code is, as an account failure's is."""
+    ex = _executor()
     stale = {**_err("review"), "error_code": "ERR_SANDBOX_IMAGE_STALE"}
     kwargs = await _run(
         ex,
@@ -534,7 +552,7 @@ async def test_a_state_level_code_outranks_the_runner_code():
             "agent_outputs": [_ok("triage"), _ok("developer"), stale],
         },
     )
-    assert kwargs["error_code"] == "ERR_BUDGET_OVERRUN"
+    assert kwargs["error_code"] == "ERR_SANDBOX_IMAGE_STALE"
 
 
 # ---- the watcher's own analysis jobs send no per-job webhook --------------

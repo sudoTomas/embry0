@@ -216,8 +216,8 @@ def _is_start_crash(exit_code: int | None, stdout_lines: int, stderr: str) -> bo
 
 # What argparse prints when a runner that predates --config-stdin is handed it.
 _STALE_RUNNER_STDERR_MARKER = "arguments are required: --config"
-#: What argparse says of an image's runner that predates ``--result-nonce``: the flag is not one it knows.
-_UNMARKED_RUNNER_STDERR_MARKERS = ("unrecognized arguments", "--result-nonce")
+#: How argparse begins its error line naming the arguments a runner does not know, which follow it, space-separated.
+_UNRECOGNIZED_ARGUMENTS: Final = "error: unrecognized arguments:"
 #: The config key and flag the run's result nonce rides (embry0.sandbox.runner.RESULT_NONCE_KEY).
 _RESULT_NONCE_KEY = "result_nonce"
 _RESULT_NONCE_FLAG = "--result-nonce"
@@ -270,12 +270,16 @@ class _RunnerExit:
 
     def is_unmarked_runner_usage_error(self) -> bool:
         """True only for argparse refusing ``--result-nonce`` BEFORE any agent work: an image's runner that takes
-        its config on stdin but predates the run's result mark."""
-        return (
-            self.exit_code == 2
-            and self.stdout_lines == 0
-            and all(marker in self.stderr for marker in _UNMARKED_RUNNER_STDERR_MARKERS)
-        )
+        its config on stdin but predates the run's result mark. The flag must be one of the arguments argparse's
+        error line names as unrecognized: the current runner's usage line lists ``[--result-nonce]`` above any
+        error of its own, which is no lack of the mark."""
+        if self.exit_code != 2 or self.stdout_lines != 0:
+            return False
+        for line in self.stderr.splitlines():
+            _, found, named = line.partition(_UNRECOGNIZED_ARGUMENTS)
+            if found and _RESULT_NONCE_FLAG in named.split():
+                return True
+        return False
 
 
 class AgentRunner:
