@@ -19,21 +19,23 @@ different route and 404s.
 **Self-managed hosts.** There is no fixed API origin; ``GITLAB_URL`` supplies
 it and ``/api/v4`` is appended.
 
-Every write to a project, note, discussion or merge request goes through
-:meth:`GitLabClient.send_words`, which sends each field GitLab reads quick
-actions in (a note's or discussion's ``body``, a ``note``, a merge request's or
-issue's ``description``) through
+Every request the client sends (:meth:`GitLabClient.request`, which ``get``,
+``post``, ``put`` and ``patch`` all go through) sends each field GitLab reads
+quick actions in (a note's or discussion's ``body``, a ``note``, a merge
+request's or issue's ``description``), in the body or the query string, through
 :func:`embry0.execution.gitlab_notes.without_quick_actions`: GitLab runs a
 line-start ``/merge``, ``/approve`` or ``/target_branch`` in them with the
-poster's rights, and their words are not embry0's own.
+poster's rights, and their words are not embry0's own. However a write is
+spelled, so, it carries no quick action; :meth:`GitLabClient.send_words` is
+the entry point that says so where the words are written.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, unquote_plus
 
 import httpx
 import structlog
@@ -70,6 +72,78 @@ def encode_project(repo: str) -> str:
 #: The fields of a write GitLab reads quick actions in: a note's or discussion's ``body``, a draft note's ``note``, a
 #: merge request's or issue's ``description``.
 WORDS_FIELDS = frozenset({"body", "note", "description"})
+
+
+def words_without_quick_actions(payload: Any) -> Any:
+    """``payload`` with each field GitLab reads quick actions in (:data:`WORDS_FIELDS`, by its exact key: Grape
+    reads a JSON body's keys as written) without them, when it is a JSON object; anything else as given.
+    Idempotent."""
+    if not isinstance(payload, Mapping):
+        return payload
+    return {key: _words(key, value) for key, value in payload.items()}
+
+
+def _words(key: Any, value: Any) -> Any:
+    return without_quick_actions(value) if key in WORDS_FIELDS and isinstance(value, str) else value
+
+
+#: How GitLab's Rack names a query parameter (``Rack::QueryParser#normalize_params``, its pinned 2.2): the name is
+#: the key without the ``[`` and ``]`` before it and the ``]`` after it, so ``[body]``, ``body]`` and ``body[]`` (an
+#: array) are all ``body``.
+_RACK_NAME = re.compile(r"\A[\[\]]*([^\[\]]+)\]*")
+
+
+def _query_words(key: Any, value: Any) -> Any:
+    """A query parameter's value, without quick actions when GitLab's Rack names its key a words field."""
+    named = _RACK_NAME.match(key) if isinstance(key, str) else None
+    if named is None or named.group(1) not in WORDS_FIELDS or not isinstance(value, str):
+        return value
+    return without_quick_actions(value)
+
+
+def params_without_quick_actions(params: Any) -> Any:
+    """Query parameters with each words field without quick actions, its key read as GitLab's Rack reads it
+    (:data:`_RACK_NAME`): a mapping, ``httpx.QueryParams`` (every value of a repeated key), or any other iterable
+    of ``(key, value)`` pairs (a list, ``dict.items()``, ``zip(...)``), which is read once into a list; anything
+    else as given."""
+    if hasattr(params, "multi_items"):
+        params = list(params.multi_items())
+    elif isinstance(params, Mapping):
+        return {key: _query_words(key, value) for key, value in params.items()}
+    elif params is None or isinstance(params, str | bytes) or not isinstance(params, Iterable):
+        return params
+    else:
+        params = list(params)
+    if all(isinstance(pair, list | tuple) and len(pair) == 2 for pair in params):
+        return [(key, _query_words(key, value)) for key, value in params]
+    return params
+
+
+#: How GitLab's Rack splits a query string into its parameters (``Rack::QueryParser::DEFAULT_SEP``): on ``&`` and
+#: ``;``, each with any spaces after it.
+_QUERY_SEPARATOR = re.compile(r"([&;] *)")
+
+
+def path_without_quick_actions(path: str) -> str:
+    """``path`` with the words fields of its own query string (``/notes?body=...``, GitLab's documented form)
+    without quick actions, its parameters read as GitLab's Rack reads them (split on ``&`` and ``;``, ``+`` a space,
+    percent-decoded, the key too, and named by :data:`_RACK_NAME`: ``[body]`` and ``body[]`` are ``body``). Every
+    other parameter, and its separator, is kept byte for byte, and a query that names no words field is sent as
+    written, so a page link goes out as GitLab wrote it."""
+    base, mark, query = path.partition("?")
+    if not mark:
+        return path
+    parts = _QUERY_SEPARATOR.split(query)
+    changed = False
+    for index in range(0, len(parts), 2):
+        key, equals, value = parts[index].partition("=")
+        name, text = unquote_plus(key), unquote_plus(value)
+        cleaned = _query_words(name, text)
+        if equals and cleaned != text:
+            parts[index] = f"{quote(name, safe='')}={quote(cleaned, safe='')}"
+            changed = True
+    return f"{base}?{''.join(parts)}" if changed else path
+
 
 #: A GitLab API path that names a project or a group, under the API's base (``/api/v4``) or not.
 _GITLAB_SCOPE_PATH = re.compile(r"(?:^|/)(?:projects|groups)/([^/?#]+)")
@@ -119,6 +193,29 @@ class GitLabClient(ForgeClient):
 
     # -- writes -----------------------------------------------------------
 
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """:meth:`ForgeClient.request`, with each field GitLab reads quick actions in (:data:`WORDS_FIELDS`) sent
+        through ``without_quick_actions``, in a JSON object body and in the query string alike, given as parameters
+        (a mapping or pairs) or in the path itself (GitLab takes a note's ``body`` from any of them), and every other
+        field as given: whatever method, path or caller, and however
+        the call is spelled (``post``, ``ForgeClient.post(self, ...)``, a path built first). Any other body is sent
+        as given."""
+        return await super().request(
+            method,
+            path_without_quick_actions(path),
+            json=words_without_quick_actions(json),
+            params=params_without_quick_actions(params),
+            **kwargs,
+        )
+
     async def send_words(
         self,
         method: str,
@@ -128,14 +225,9 @@ class GitLabClient(ForgeClient):
         json: Mapping[str, Any],
         retry_transient: bool | None = None,
     ) -> httpx.Response:
-        """The one way a write reaches a project's issues, merge requests, notes or discussions: each field GitLab
-        reads quick actions in (:data:`WORDS_FIELDS`) is sent through ``without_quick_actions``, every other field
-        as given. A test reads the source and fails on any other write to those paths."""
-        payload = {
-            key: without_quick_actions(value) if key in WORDS_FIELDS and isinstance(value, str) else value
-            for key, value in json.items()
-        }
-        return await self.request(method, path, repo=repo, json=payload, retry_transient=retry_transient)
+        """A write of words to a project's issues, merge requests, notes or discussions: :meth:`request`, named for
+        what it carries. Each field GitLab reads quick actions in goes without them; every other field as given."""
+        return await self.request(method, path, repo=repo, json=json, retry_transient=retry_transient)
 
     # -- convenience ------------------------------------------------------
 
