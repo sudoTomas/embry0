@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from embry0.execution.pull_requests import PullRequest
 from embry0.services.comment_dispatch import CommentDispatchService
 
 
@@ -47,7 +48,7 @@ class _FakeExecutor:
         self.dispatched.append(job_id)
 
 
-def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=None, head_repo="acme/backend"):
+def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=None, from_fork=False):
     svc = CommentDispatchService(
         config=config or _config(),
         jobs_repo=MagicMock(
@@ -60,15 +61,13 @@ def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=Non
         executor=_FakeExecutor(),
     )
     svc._fetch_pr = AsyncMock(
-        return_value={
-            "state": pr_state,
-            "html_url": "https://github.com/acme/backend/pull/418",
-            "head": {
-                "ref": "embry0/iss-e9077b36-eng-1135-watcher-fix-non-i",
-                "repo": {"full_name": head_repo} if head_repo else None,
-            },
-            "base": {"ref": "main", "repo": {"full_name": "acme/backend"}},
-        }
+        return_value=PullRequest(
+            number=418,
+            state=pr_state,
+            url="https://github.com/acme/backend/pull/418",
+            head_ref="embry0/iss-e9077b36-eng-1135-watcher-fix-non-i",
+            from_fork=from_fork,
+        )
     )
     return svc
 
@@ -217,11 +216,10 @@ async def test_a_ledger_failure_never_stops_the_follow_up():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("head_repo", ["someone/backend", None], ids=["another-repository", "deleted-head"])
-async def test_a_fork_s_pull_request_is_not_followed_up(head_repo):
+async def test_a_fork_is_followed_up_neither_for_a_comment_nor_for_a_send_back():
     """Its branch is the fork's: a follow-up would work, and be granted a push, on this repository's branch of the
     same name. Refused before any job is made, for a comment and for a send-back alike."""
-    svc = _service(head_repo=head_repo)
+    svc = _service(from_fork=True)
     out = await svc.handle_pr_comment(_payload())
     assert out == {"dispatched": False, "reason": "pr_from_fork"}
     sent_back = await svc.start_followup(
@@ -231,7 +229,158 @@ async def test_a_fork_s_pull_request_is_not_followed_up(head_repo):
     svc._jobs.create.assert_not_awaited()
 
 
+# ---- the pull request's own forge (#181) ----
+
+
+def _forge_service(handler):
+    """A service that reads the forge over a mock transport, with the deployment's GitLab configured."""
+    import httpx
+
+    svc = _service()
+    del svc._fetch_pr  # the real read, over the transport
+    svc._config = _config(
+        gitlab_token="key-000000000001", gitlab_url="https://gitlab.example.test", gitlab_ca_bundle=""
+    )
+    svc._http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return svc
+
+
 @pytest.mark.asyncio
-async def test_the_pull_request_s_own_repository_in_another_case_is_not_a_fork():
-    svc = _service(head_repo="ACME/Backend")
-    assert (await svc.handle_pr_comment(_payload()))["dispatched"] is True
+async def test_a_merge_request_is_followed_up_on_its_source_branch():
+    import httpx
+
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "state": "opened",
+                "source_branch": "embry0/fix-it",
+                "web_url": "https://gitlab.example.test/acme/sub/web/-/merge_requests/7",
+                "source_project_id": 12,
+                "target_project_id": 12,
+            },
+        )
+
+    svc = _forge_service(handler)
+    out = await svc.start_followup(
+        "acme/sub/web", 7, request="sent back", dispatched_by="alex", title="t", kind="send_back", forge="gitlab"
+    )
+    assert out["dispatched"] is True, out
+    assert asked == ["https://gitlab.example.test/api/v4/projects/acme%2Fsub%2Fweb/merge_requests/7"]
+    assert svc._jobs.create.await_args.kwargs["context"]["ref"] == "embry0/fix-it"
+    assert svc._jobs.update.await_args.kwargs["pr_url"] == "https://gitlab.example.test/acme/sub/web/-/merge_requests/7"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "body", "reason"), [(404, {}, "pr_fetch_failed"), (200, {"state": "merged"}, "pr_not_open")]
+)
+async def test_a_merge_request_that_cannot_be_followed_up_says_why(status, body, reason):
+    import httpx
+
+    svc = _forge_service(lambda _request: httpx.Response(status, json=body))
+    out = await svc.start_followup(
+        "acme/sub/web", 7, request="sent back", dispatched_by="alex", title="t", kind="send_back", forge="gitlab"
+    )
+    assert out == {"dispatched": False, "reason": reason}
+    svc._jobs.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_github_pull_request_is_still_read_on_github():
+    import httpx
+
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "state": "open",
+                "head": {"ref": "embry0/fix", "repo": {"full_name": "acme/web"}},
+                "base": {"ref": "main", "repo": {"full_name": "acme/web"}},
+                "html_url": "https://github.com/acme/web/pull/7",
+            },
+        )
+
+    svc = _forge_service(handler)
+    out = await svc.start_followup(
+        "acme/web", 7, request="sent back", dispatched_by="alex", title="t", kind="send_back"
+    )
+    assert out["dispatched"] is True, out
+    assert asked == ["https://api.github.com/repos/acme/web/pulls/7"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("forge", "body"),
+    [
+        (
+            "gitlab",
+            {"state": "opened", "source_branch": "main", "source_project_id": 99, "target_project_id": 12},
+        ),
+        (
+            "github",
+            {
+                "state": "open",
+                "head": {"ref": "main", "repo": {"full_name": "someone/web"}},
+                "base": {"ref": "main", "repo": {"full_name": "acme/web"}},
+            },
+        ),
+    ],
+)
+async def test_a_fork_s_pull_request_is_not_followed_up(forge, body):
+    """Its branch is the fork's: a follow-up would work, and be granted a push, on the job repository's branch of the
+    same name. Refused before any job is made."""
+    import httpx
+
+    svc = _forge_service(lambda _request: httpx.Response(200, json=body))
+    kw = {"forge": forge} if forge == "gitlab" else {}
+    out = await svc.start_followup("acme/web", 7, request="r", dispatched_by="alex", title="t", kind="send_back", **kw)
+    assert out == {"dispatched": False, "reason": "pr_from_fork"}
+    svc._jobs.create.assert_not_awaited()
+
+
+class _Resolver:
+    """The credential registry: a secret per forge for any repository; keeps what it was asked."""
+
+    def __init__(self):
+        self.asked = []
+
+    async def resolve_forge(self, repo, forge):
+        self.asked.append((repo, forge))
+        return SimpleNamespace(secret=f"key-registry-{forge}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolver", [True, False], ids=["registry", "environment"])
+async def test_a_merge_request_is_read_with_the_repository_s_gitlab_credential(resolver):
+    """The registry's GitLab credential for the repository, else the deployment's GitLab token: never the GitHub
+    token."""
+    import httpx
+
+    tokens: list[tuple[str | None, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        tokens.append((request.headers.get("private-token"), request.headers.get("authorization")))
+        return httpx.Response(
+            200, json={"state": "opened", "source_branch": "b", "source_project_id": 1, "target_project_id": 1}
+        )
+
+    svc = _forge_service(handler)
+    svc._config.github_token = "key-github-000001"
+    svc._config.gitlab_token = "key-gitlab-000001"
+    registry = _Resolver() if resolver else None
+    svc._credential_resolver = registry
+    out = await svc.start_followup(
+        "acme/web", 7, request="r", dispatched_by="alex", title="t", kind="send_back", forge="gitlab"
+    )
+    assert out["dispatched"] is True, out
+    expected = "key-registry-gitlab" if resolver else "key-gitlab-000001"
+    assert tokens == [(expected, None)]
+    if registry is not None:
+        assert registry.asked == [("acme/web", "gitlab")]

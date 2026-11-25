@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from embry0.forge_urls import parse_pr_url
 from embry0.services.lead_kinds import KINDS
 
 _SEVERITY_TONE = {"critical": "bad", "high": "bad", "medium": "warn", "low": "info"}
@@ -222,10 +223,15 @@ def _checks(ask: Mapping[str, Any], verification: Mapping[str, Any] | None) -> F
 
 
 def _pr(pr: Mapping[str, Any] | None, pr_url: str | None) -> Fact | None:
+    """The card's pull request fact: its number as its forge writes it (``#7``, a merge request's ``!7``), from the
+    forge's read, else from its address; what it changes when the read says."""
     if not pr_url:
         return None
-    number = (pr or {}).get("number") or (re.search(r"/pull/(\d+)", pr_url) or [None, ""])[1]
-    parts = [f"#{number}" if number else "open"]
+    address = parse_pr_url(pr_url)
+    ref = (pr or {}).get("ref") or (
+        f"{'!' if address.forge == 'gitlab' else '#'}{address.number}" if address is not None else None
+    )
+    parts = [str(ref) if ref else "open"]
     if pr and pr.get("additions") is not None:
         parts.append(f"+{pr['additions']} −{pr.get('deletions') or 0}")
     if pr and pr.get("files") is not None:

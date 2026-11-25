@@ -63,18 +63,31 @@ An address on another host still parses, so a refusal can name it: `github at gh
 - A merged pull request is not closed on any forge (`closed_pr: false`).
 - Reads degrade: the guild's numbers (`world._pr_stats`), merge asks and the healing ledger's open times read github.com only, and return nothing for anything else. A merge ask logs `merge_approval_forge_not_supported` for a repository merge approvals cover.
 
-### A client per forge (PR 4)
+### Pull requests on their own forge (PR 4)
 
-- `make_forge_client` returns the client of `org.forge`: `GitLabClient` with the deployment's `GITLAB_URL` and CA bundle, or `GitHubClient`.
-- A `ForgeOps` protocol holds the pull request operations the actions need, so no route builds a forge path:
-  - `pull_request(repo, number)`: state (open, closed or merged), head branch, address, files, additions, deletions, commits and title;
+- **`embry0/execution/pull_requests.py`.** A `PullRequests` protocol holds the operations the actions on a job's pull request need, so no route builds a forge path:
+  - `read(repo, number)`: state (open, closed or merged), head branch, address and title, plus files, additions, deletions and commits where the forge's read gives them;
   - `comment(repo, number, body)`;
   - `close(repo, number)`.
 
-  GitHub's implementation wraps today's calls. GitLab's maps them onto `merge_requests/<iid>`: its `source_branch`, `state` (`opened`, `closed`, `merged`), notes, and `state_event: close`.
-- Comment dispatch reads the pull request through `ForgeOps`, so send-back starts the same pr-followup job on a merge request's source branch.
-- `decisions._pr` shows a merge request's number (`!<iid>`) from the parsed address.
-- `PR_ACTION_FORGES` gains `gitlab` for each action whose GitLab path is tested end to end.
+  `GitHubPullRequests` wraps the calls the routes made. `GitLabPullRequests` maps them onto `merge_requests/<iid>`:
+  - `source_branch` is the head branch;
+  - `state` (`opened`, `closed`, `merged`, `locked`) maps to open, closed and merged;
+  - `changes_count` is the file count. GitLab's read gives no line counts or commit count, so those are None;
+  - a note is the comment;
+  - `state_event: close` closes it.
+- **The organization's pull requests.** `organizations.org_pull_requests(request, org)` builds the client of `org.forge` with the organization's credential: `GitLabClient` with the deployment's `GITLAB_URL` and CA bundle, or `GitHubClient`. Reject with `close_pr` uses it.
+- **The guild's numbers** (`world._pr_stats`) read through `org_pull_requests` too, on either forge. Their answer adds `forge` and `ref`, the number as the forge writes it (`#7`, `!7`), which the quest scroll shows.
+- **Send-back.** Comment dispatch reads the pull request on its forge (`make_gitlab_client` for GitLab, as the other GitLab readers do), so send-back starts the same pr-followup job on a merge request's source branch.
+- **Forks.** `PullRequest.from_fork` says the head branch is another repository's, as the reviewer reads it (`pr_from_github`, `pr_from_gitlab`). A follow-up on a fork's pull request is refused (`pr_from_fork`): it would work, and be granted a push, on the job repository's branch of the same name.
+- **GitLab notes.** A note embry0 posts carries words it did not choose, so `embry0/execution/gitlab_notes.py` puts a zero-width space before every line-start slash: GitLab runs no quick action from it.
+- **The decision card.** `decisions._pr` shows a merge request's number (`!<iid>`).
+- **The developer's fallback** finds a merge request's address in its output too. The repository rule still decides.
+- **`PR_ACTION_FORGES`** gains `gitlab` for both actions.
+- **Other callers stay on GitHub.**
+  - Every other caller of `make_forge_client` / `org_forge_client` reads with GitHub's REST paths: the organization webhook routes, the context audit, the proposals' file reads, a finding's fix, the leads and the Slop-O-Meter.
+  - Both functions now refuse an organization on another forge with 422 `<what> is not supported for this forge (gitlab)` (`organizations.github_only`).
+  - The webhook routes, the context audit, the leads and the Slop-O-Meter already refused or skipped a GitLab organization. The proposals' file reads skip one, as they skip an unregistered owner. Fixing a finding refuses one.
 
 ### Backlogs and finders (PR 5)
 
@@ -105,15 +118,15 @@ These read a pull request address too. None of them is one of the three github.c
 | `services/unfinished_note.py:37-38`, `services/verification_publish.py:29-30` | a GitHub and a GitLab pattern on any host | already reads both forges; stays |
 | `storage/repositories/healing_cases.py:30`, `api/case_allowlist.py:71`, `services/healing/backfill.py:61`, `services/healing/recorder.py:46` | the repository or number of either forge, for the healing ledger and allowlists | forge-neutral already; stays |
 | `services/merge_sync/sweep.py:95` | merge sync's GitHub sweep | GitHub-only by function; stays |
-| `services/decisions.py:227` | the card's pull request number | PR 4, from the parsed address |
+| `services/decisions.py:227` | the card's pull request number | PR 4 reads it from the parsed address (`#7`, `!7`) |
 | `mcp_server/server.py:147` | a short `#<n>` label for a tool's answer | display only; stays |
-| `workflows/issue_to_pr/nodes/_developer.py:1257` | a github.com address in the developer's output, when its JSON line names none | PR 3 keeps only an address in the job's repository; PR 4 finds a merge request's address too |
+| `workflows/issue_to_pr/nodes/_developer.py:1257` | a pull request address in the developer's output, when its JSON line names none | PR 3 keeps only an address in the job's repository; PR 4 finds a merge request's address too |
 
 ## PR plan
 
 | PR | What | Size |
 |---|---|---|
 | 3 | `forge_urls`; the three copies replaced; actions only on the job's own repository; 422 for actions on another forge; this spec | M |
-| 4 | a client per forge, `ForgeOps`, GitLab send-back, close and merge request reads | L |
+| 4 | `PullRequests` for GitHub and GitLab; GitLab send-back, close and merge request reads; the other organization-client callers refuse a GitLab organization | L |
 | 5 | backlogs through the tracker registry; finders declare forges and are skipped with a reason; GitLab `ci` and `flaky` | L |
 | 6 | forge-qualified owners | M, after #179's people PR |

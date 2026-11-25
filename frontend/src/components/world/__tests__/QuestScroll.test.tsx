@@ -206,3 +206,21 @@ describe("QuestScroll slop verdict", () => {
     expect(screen.queryByTestId("quest-slop")).toBeNull();
   });
 });
+
+describe("QuestScroll pull request", () => {
+  const pr = { number: 7, state: "open", files: 3, additions: null, deletions: null, commits: null };
+
+  it("names a merge request by its number as GitLab writes it", () => {
+    renderScroll({
+      ...SCROLL,
+      pr_url: "https://gitlab.example.test/acme/web/-/merge_requests/7",
+      pr: { ...pr, forge: "gitlab", ref: "!7" },
+    } as QuestScroll);
+    expect(screen.getByRole("link", { name: "Pull request !7" })).toBeInTheDocument();
+  });
+
+  it("names a pull request #7 when the read gives no ref", () => {
+    renderScroll({ ...SCROLL, pr_url: "https://github.com/acme/web/pull/7", pr } as QuestScroll);
+    expect(screen.getByRole("link", { name: "Pull request #7" })).toBeInTheDocument();
+  });
+});

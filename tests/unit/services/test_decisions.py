@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import get_args
 
+import pytest
+
 from embry0.services.decisions import GATE_CHECKS, GATE_NOT_RUN, MAX_FACTS, done, done_actions, offered, ordered
 from embry0.workflows.verification.gate import GateVerdict
 
@@ -108,6 +110,22 @@ def test_a_clean_pull_request_reads_ready_to_merge_with_its_numbers() -> None:
     ]
     assert d["actions"] == ["merge", "send_back", "reject", "run_again", "send_to"]
     assert d["yes_starts"] is None
+
+
+@pytest.mark.parametrize(
+    ("pr_url", "pr", "fact"),
+    [
+        ("https://gitlab.example.test/acme/sub/web/-/merge_requests/7", {"ref": "!7", "files": 2}, "!7 · 2 files"),
+        ("https://gitlab.example.test/acme/sub/web/-/merge_requests/7", None, "!7"),
+        ("https://github.com/acme/web/pull/44", None, "#44"),
+        ("https://code.example.test/acme/web/changes/3", None, "open"),
+    ],
+    ids=["merge-request-read", "merge-request-unread", "pull-request-unread", "no-address"],
+)
+def test_the_card_writes_the_number_as_its_forge_does(pr_url: str, pr: dict[str, object] | None, fact: str) -> None:
+    """A merge request is !7, a pull request #44 (#181); an address that names neither shows "open"."""
+    facts = done(job(pr_url=pr_url, pr=pr)).to_dict()["facts"]
+    assert facts[0] == {"label": "Pull request", "value": fact, "tone": ""}
 
 
 def test_failing_checks_unmet_items_or_no_recommendation_need_a_look() -> None:

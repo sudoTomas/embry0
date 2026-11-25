@@ -16,6 +16,7 @@ from httpx import ASGITransport, AsyncClient
 from embry0.api.app import create_app
 from embry0.api.v1 import world as world_api
 from embry0.config import Embry0Config
+from embry0.execution.pull_requests import PullRequest
 from embry0.services.progression import Character, Progression
 from embry0.services.progression_pack import Rules, default_rules
 from embry0.services.world import WorldCache
@@ -459,16 +460,14 @@ async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_req
             return SimpleNamespace(owner=owner, forge="github")
 
     class Forge:
-        async def get(self, path: str, repo: str | None = None) -> Any:
-            number = int(path.rsplit("/", 1)[1])
-            body = {"state": "open", "changed_files": 1, "additions": number, "deletions": 0}
-            return SimpleNamespace(status_code=200, json=lambda: body)
+        async def read(self, repo: str, number: int) -> PullRequest:
+            return PullRequest(number, "open", "embry0/fix", "", False, files=1, additions=number, deletions=0)
 
     async def forge_client(_request: Any, org: Any) -> Forge:
         clients.append(org.owner)
         return Forge()
 
-    monkeypatch.setattr(organizations_api, "org_forge_client", forge_client)
+    monkeypatch.setattr(organizations_api, "org_pull_requests", forge_client)
     app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos()))
     request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
     cancelled = asyncio.create_task(world_api._pr_stats(request, "https://github.com/acme/web/pull/1", "acme/web"))
@@ -506,8 +505,9 @@ async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_req
 async def test_a_pull_request_not_on_github_com_shows_without_its_numbers(
     monkeypatch: pytest.MonkeyPatch, pr_url: str, registered_on: str
 ) -> None:
-    """The scroll's numbers are GitHub's, read with the organization's client (#181): a merge request, a pull request
-    on a host this deployment does not reach, or one whose owner is registered on another forge, makes no client."""
+    """The scroll's numbers are read on the job's own forge, with the organization's credential (#181): a merge
+    request of a job registered on GitHub, a pull request on a host this deployment does not reach, or one whose owner
+    is registered on another forge, makes no client."""
     from starlette.requests import Request
 
     from embry0.api.v1 import organizations as organizations_api
@@ -522,7 +522,7 @@ async def test_a_pull_request_not_on_github_com_shows_without_its_numbers(
         clients.append(org.owner)
         raise AssertionError("no forge client is made for this pull request")
 
-    monkeypatch.setattr(organizations_api, "org_forge_client", forge_client)
+    monkeypatch.setattr(organizations_api, "org_pull_requests", forge_client)
     app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos()))
     request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
     assert await world_api._pr_stats(request, pr_url, "acme/web") is None
@@ -546,7 +546,7 @@ async def test_a_job_s_pull_request_is_read_only_in_the_job_s_own_repository(mon
     async def forge_client(_request: Any, org: Any) -> Any:
         raise AssertionError("no forge client is made for another repository's pull request")
 
-    monkeypatch.setattr(organizations_api, "org_forge_client", forge_client)
+    monkeypatch.setattr(organizations_api, "org_pull_requests", forge_client)
     app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos()))
     request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
     assert await world_api._pr_stats(request, "https://github.com/globex/gizmos/pull/5", "acme/web") is None
@@ -568,3 +568,52 @@ async def test_the_scroll_reads_its_pull_request_in_the_quest_s_repository(
     async with await _client(app) as client:
         assert (await client.get("/api/v1/world/quests/job-1")).status_code == 200
     assert asked == [("https://github.com/acme/web/pull/7", "acme/web")]
+
+
+async def test_a_gitlab_job_s_merge_request_is_read_on_its_forge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GitLab's read gives the state, title and file count; its number is written !7, and the counts it does not give
+    are None."""
+    from starlette.requests import Request
+
+    from embry0.api.v1 import organizations as organizations_api
+
+    made: list[str] = []
+
+    class Organizations:
+        async def get(self, owner: str) -> Any:
+            return SimpleNamespace(owner=owner, forge="gitlab")
+
+    class Merges:
+        async def read(self, repo: str, number: int) -> PullRequest:
+            assert (repo, number) == ("acme/sub/web", 7)
+            return PullRequest(7, "merged", "embry0/fix", "", False, "Fix it", files=3)
+
+    async def pull_requests(_request: Any, org: Any) -> Merges:
+        made.append(f"{org.owner}@{org.forge}")
+        return Merges()
+
+    monkeypatch.setattr(organizations_api, "org_pull_requests", pull_requests)
+    state = SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos(**{"acme/sub/web": "gitlab"}))
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(state=state),
+            "method": "GET",
+            "path": "/",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
+    stats = await world_api._pr_stats(request, "https://gitlab.com/acme/sub/web/-/merge_requests/7", "acme/sub/web")
+    assert stats == {
+        "number": 7,
+        "forge": "gitlab",
+        "ref": "!7",
+        "state": "merged",
+        "files": 3,
+        "additions": None,
+        "deletions": None,
+        "commits": None,
+        "title": "Fix it",
+    }
+    assert made == ["acme@gitlab"]

@@ -21,6 +21,7 @@ from packaging.version import Version
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
+from embry0.execution.forge_client import ForgeWrite
 from tests.fixtures.routes import app_routes
 
 REPO = Path(__file__).resolve().parents[4]
@@ -333,10 +334,10 @@ async def test_closing_the_pull_request_on_reject_needs_admin(app: Any, monkeypa
     assert keeping.status_code == 200 and keeping.json()["closed_pr"] is False, keeping.text
 
 
-#: Pull requests of the job's repository an action cannot act on today, the forge the job's repository is registered
-#: on, and the forge the refusal names (#181).
+#: Pull requests of the job's repository an action cannot act on, the forge the job's repository is registered on,
+#: and the forge the refusal names (#181): on a host this deployment does not reach, or no pull request at all.
 NOT_ACTED_ON = [
-    ("https://gitlab.com/acme/widgets/-/merge_requests/7", "gitlab", "gitlab"),
+    ("https://gitlab.other.test/acme/widgets/-/merge_requests/7", "gitlab", "gitlab at gitlab.other.test"),
     ("https://ghe.example.test/acme/widgets/pull/7", "github", "github at ghe.example.test"),
     ("https://code.example.test/acme/widgets/changes/7", "github", "code.example.test"),
 ]
@@ -356,34 +357,42 @@ class Organizations:
 
 
 class Forge:
-    """A forge client: keeps every write, and answers each with ``status``."""
+    """An organization's pull requests on its forge: keeps every write as (forge, what, repo, number[, body]), and
+    answers a close with ``close_status``, a comment with ``comment_status``."""
 
-    def __init__(self, status: int = 200) -> None:
-        self.status = status
-        self.writes: list[tuple[str, str, dict[str, Any]]] = []
+    def __init__(self) -> None:
+        self.close_status, self.comment_status = 200, 201
+        self.writes: list[tuple[Any, ...]] = []
+        self.made_for: list[str] = []
 
-    async def post(self, path: str, *, repo: str, json: dict[str, Any], **_: Any) -> Any:
-        self.writes.append(("POST", path, json))
-        return SimpleNamespace(status_code=201)
+    def of(self, forge: str) -> Any:
+        writes, outer = self.writes, self
 
-    async def patch(self, path: str, *, repo: str, json: dict[str, Any], **_: Any) -> Any:
-        self.writes.append(("PATCH", path, json))
-        return SimpleNamespace(status_code=self.status)
+        class _PullRequests:
+            async def comment(self, repo: str, number: int, body: str) -> ForgeWrite:
+                writes.append((forge, "comment", repo, number, body))
+                return ForgeWrite(outer.comment_status)
+
+            async def close(self, repo: str, number: int) -> ForgeWrite:
+                writes.append((forge, "close", repo, number))
+                return ForgeWrite(outer.close_status)
+
+        return _PullRequests()
 
 
 @pytest.fixture
 def forge(app: Any, monkeypatch: pytest.MonkeyPatch) -> Forge:
     from embry0.api.v1 import organizations as organizations_api
 
-    client = Forge()
+    pulls = Forge()
 
-    async def org_forge_client(_request: Any, org: Any) -> Forge:
-        assert org.forge == "github", f"a {org.forge} organization's client was made for a GitHub pull request"
-        return client
+    async def org_pull_requests(_request: Any, org: Any) -> Any:
+        pulls.made_for.append(f"{org.owner}@{org.forge}")
+        return pulls.of(org.forge)
 
-    monkeypatch.setattr(organizations_api, "org_forge_client", org_forge_client)
+    monkeypatch.setattr(organizations_api, "org_pull_requests", org_pull_requests)
     app.state.organizations_repo = Organizations(acme="github")
-    return client
+    return pulls
 
 
 @pytest.mark.parametrize(
@@ -392,9 +401,9 @@ def forge(app: Any, monkeypatch: pytest.MonkeyPatch) -> Forge:
 async def test_a_pull_request_an_action_cannot_act_on_is_refused_naming_its_forge(
     app: Any, forge: Forge, pr_url: str, registered_on: str, forge_name: str
 ) -> None:
-    """Sending back and closing work on github.com only today: on another forge or host each answers 422 naming it,
-    and does nothing else. Before, sending back said the job had no pull request, and closing answered closed_pr
-    false with no error and recorded the rejection."""
+    """Sending back and closing work on github.com and the deployment's GitLab: on another host, or for an address
+    that names no pull request, each answers 422 naming it, and does nothing else. Before, sending back said the job
+    had no pull request, and closing answered closed_pr false with no error and recorded the rejection."""
     app.state.repos_repo = Repos(**{"acme/widgets": registered_on})
     app.state.world_repo.job_row["pr_url"] = pr_url
     async with await _client(app) as client:
@@ -412,7 +421,7 @@ async def test_a_pull_request_an_action_cannot_act_on_is_refused_naming_its_forg
     assert (app.state.world_repo.ratings, forge.writes) == ([], []), "a refused action recorded or wrote something"
 
 
-async def test_the_deployment_s_own_gitlab_is_named_as_gitlab(app: Any) -> None:
+async def test_a_merge_request_of_the_deployment_s_gitlab_is_sent_back_on_its_forge(app: Any) -> None:
     app.state.config.gitlab_url = "https://gitlab.example.test"
     app.state.repos_repo = Repos(**{"acme/platform/widgets": "gitlab"})
     app.state.world_repo.job_row.update(
@@ -420,7 +429,48 @@ async def test_the_deployment_s_own_gitlab_is_named_as_gitlab(app: Any) -> None:
     )
     async with await _client(app) as client:
         sent = await client.post("/api/v1/jobs/job-1/send-back", json={"notes": "x"}, headers=HEADERS)
-    assert sent.status_code == 422 and sent.json()["detail"].endswith("(gitlab)"), sent.text
+    assert sent.status_code == 202, sent.text
+    args, kwargs = app.state.comment_dispatch.start_followup.await_args
+    assert (args, kwargs["forge"]) == (("acme/platform/widgets", 7), "gitlab")
+
+
+async def test_rejecting_closes_a_gitlab_merge_request_with_its_organization_s_credential(
+    app: Any, forge: Forge
+) -> None:
+    app.state.config.gitlab_url = "https://gitlab.example.test"
+    app.state.repos_repo = Repos(**{"acme/platform/widgets": "gitlab"})
+    app.state.organizations_repo = Organizations(acme="gitlab")
+    app.state.world_repo.job_row.update(
+        repo="acme/platform/widgets", pr_url="https://gitlab.example.test/acme/platform/widgets/-/merge_requests/7"
+    )
+    async with await _client(app) as client:
+        rejected = await client.post(
+            "/api/v1/jobs/job-1/reject", json={"note": "not wanted", "close_pr": True}, headers=HEADERS
+        )
+    assert rejected.status_code == 200 and rejected.json()["closed_pr"] is True, rejected.text
+    assert forge.made_for == ["acme@gitlab"]
+    assert forge.writes == [
+        ("gitlab", "comment", "acme/platform/widgets", 7, "not wanted"),
+        ("gitlab", "close", "acme/platform/widgets", 7),
+    ]
+
+
+async def test_a_close_the_forge_refuses_is_a_502_and_records_nothing(app: Any, forge: Forge) -> None:
+    forge.close_status = 403
+    async with await _client(app) as client:
+        rejected = await client.post("/api/v1/jobs/job-1/reject", json={"close_pr": True}, headers=HEADERS)
+    assert rejected.status_code == 502 and "403" in rejected.json()["detail"], rejected.text
+    assert app.state.world_repo.ratings == []
+
+
+async def test_a_refused_comment_still_closes(app: Any, forge: Forge) -> None:
+    forge.comment_status = 403
+    async with await _client(app) as client:
+        rejected = await client.post(
+            "/api/v1/jobs/job-1/reject", json={"note": "no", "close_pr": True}, headers=HEADERS
+        )
+    assert rejected.status_code == 200 and rejected.json()["closed_pr"] is True, rejected.text
+    assert [w[1] for w in forge.writes] == ["comment", "close"]
 
 
 async def test_rejecting_closes_a_github_pull_request_with_its_organization_s_client(app: Any, forge: Forge) -> None:
@@ -430,8 +480,8 @@ async def test_rejecting_closes_a_github_pull_request_with_its_organization_s_cl
         )
     assert rejected.status_code == 200 and rejected.json()["closed_pr"] is True, rejected.text
     assert forge.writes == [
-        ("POST", "/repos/acme/widgets/issues/7/comments", {"body": "not wanted"}),
-        ("PATCH", "/repos/acme/widgets/pulls/7", {"state": "closed"}),
+        ("github", "comment", "acme/widgets", 7, "not wanted"),
+        ("github", "close", "acme/widgets", 7),
     ]
     assert app.state.organizations_repo.reads == ["acme"]
 
@@ -486,7 +536,7 @@ async def test_the_job_s_repository_is_compared_ignoring_case_and_after_renames(
     async with await _client(app) as client:
         rejected = await client.post("/api/v1/jobs/job-1/reject", json={"close_pr": True}, headers=HEADERS)
     assert rejected.status_code == 200 and rejected.json()["closed_pr"] is True, rejected.text
-    assert [w[0] for w in forge.writes] == ["PATCH"]
+    assert [w[1] for w in forge.writes] == ["close"]
 
 
 async def test_closing_checks_the_key_reaches_the_pull_request_s_repository(

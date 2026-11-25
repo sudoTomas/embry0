@@ -245,7 +245,7 @@ function ScrollBody({
               target="_blank"
               rel="noreferrer"
             >
-              Pull request{quest.pr ? ` #${quest.pr.number}` : ""}
+              Pull request{quest.pr ? ` ${quest.pr.ref ?? `#${quest.pr.number}`}` : ""}
             </a>
             {quest.pr && (
               <>

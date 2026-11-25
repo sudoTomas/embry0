@@ -408,12 +408,13 @@ async def _pr_stats(request: Request, pr_url: str | None, repo: str | None) -> d
 
     A request reads each owner's organization, and makes its forge client, once
     however many of its pull requests it reads, as the decisions do for their
-    quests to review (#296).
+    quests to review (#296). A GitHub pull request and a GitLab merge request are
+    read on their forge, with the organization's credential (#181); ``ref`` is how
+    the forge writes its number (``#7``, ``!7``), and a count the forge's read does
+    not give is None.
     """
     pr = parse_pr_url(pr_url)
-    # GitHub's numbers only, read with the organization's client on github.com (#181): any other pull request shows
-    # its link without them.
-    if pr is None or pr.forge != "github" or not ForgeHosts.of(getattr(request.app.state, "config", None)).reaches(pr):
+    if pr is None or not ForgeHosts.of(getattr(request.app.state, "config", None)).reaches(pr):
         return None
     job_repo = repo or ""
     forge = (
@@ -428,25 +429,26 @@ async def _pr_stats(request: Request, pr_url: str | None, repo: str | None) -> d
     org = await _once(request, "pr_organizations", owner, lambda: _organization(request, owner))
     if org is None or org.forge != pr.forge:
         return None
-    from embry0.api.v1.organizations import org_forge_client
+    from embry0.api.v1.organizations import org_pull_requests
 
     try:
-        client = await _once(request, "pr_forges", owner, lambda: org_forge_client(request, org))
-        resp = await asyncio.wait_for(client.get(f"/repos/{repo}/pulls/{number}", repo=repo), PR_STATS_SECONDS)
+        pull_requests = await _once(request, "pr_forges", owner, lambda: org_pull_requests(request, org))
+        read = await asyncio.wait_for(pull_requests.read(repo, number), PR_STATS_SECONDS)
     except Exception:  # noqa: BLE001 - the scroll shows the link without the numbers
         logger.info("world_pr_stats_unread", pr_url=pr_url, exc_info=True)
         return None
-    if resp.status_code != 200:
+    if read is None:
         return None
-    pr = resp.json()
     return {
         "number": number,
-        "state": "merged" if pr.get("merged") else pr.get("state"),
-        "files": pr.get("changed_files"),
-        "additions": pr.get("additions"),
-        "deletions": pr.get("deletions"),
-        "commits": pr.get("commits"),
-        "title": pr.get("title"),
+        "forge": pr.forge,
+        "ref": f"{'!' if pr.forge == 'gitlab' else '#'}{number}",
+        "state": read.state,
+        "files": read.files,
+        "additions": read.additions,
+        "deletions": read.deletions,
+        "commits": read.commits,
+        "title": read.title,
     }
 
 
