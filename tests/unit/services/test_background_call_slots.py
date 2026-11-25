@@ -61,7 +61,9 @@ class Leases:
         self.released.append(lease_id)
 
 
-def _calls(leases: Leases, *, cap: Any = 1, gate: Gate | None = None, spend: Spend | None = None) -> BackgroundCalls:
+def _calls(
+    leases: Leases, *, cap: Any = 1, gate: Gate | None = None, spend: Spend | None = None, proxy_upstream: str = ""
+) -> BackgroundCalls:
     async def read_cap() -> int:
         if isinstance(cap, Exception):
             raise cap
@@ -71,7 +73,7 @@ def _calls(leases: Leases, *, cap: Any = 1, gate: Gate | None = None, spend: Spe
         resolver=Resolver(),
         spend=spend or Spend(),
         gate=gate or Gate(),
-        local_slots=CallSlots(slots=LocalSlots(leases), cap=read_cap),
+        local_slots=CallSlots(slots=LocalSlots(leases), cap=read_cap, proxy_upstream=proxy_upstream),
     )
 
 
@@ -215,4 +217,16 @@ async def test_a_local_endpoint_names_the_server_it_reaches(
     assert endpoint is not None and endpoint.server == server, (
         "while the local-llm-proxy's upstream is set, every call on the custom provider shares its slots, whatever "
         f"name its credential gives the machine; else the credential's own: {endpoint}"
+    )
+
+
+async def test_while_the_upstream_is_set_a_background_call_holds_its_slot_whatever_its_credential_names() -> None:
+    """The slots' upstream reaches the endpoint the call is made to: a credential naming another machine, or the
+    same one by another name, still takes one of the agent runs' slots there (#697 review)."""
+    leases, sent = Leases(), []
+    calls = _calls(leases, proxy_upstream="http://10.0.0.5:8000/v1")
+    async with _answering(sent, leases) as client:
+        await _ask(calls, client)
+    assert [t["server"] for t in leases.taken] == [PROXY_SERVER], (
+        f"a background call took a slot of its own credential while LOCAL_LLM_UPSTREAM is set: {leases.taken}"
     )
