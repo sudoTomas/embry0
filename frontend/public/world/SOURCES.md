@@ -2,6 +2,8 @@
 
 Every image under `frontend/public/world/` was generated for embry0 with the PixelLab API (v2) from the text below, then cut, packed and sometimes touched up by hand as noted. Nothing was traced or copied from any game; the prompts describe generic things. Colours were forced to embry0's palette (the roster colours in `frontend/src/components/roster/appearance/palette.ts` plus terrain greens, blues, browns and greys) where the endpoint takes one.
 
+Licence: the account that generated the images owns them under PixelLab's terms of service (§1.3 and §3.3: the account that generates an output owns it, to use, change and distribute, on any plan, free or paid), and releases them here under the MIT licence with the rest of the repository (`LICENSE`); see `THIRD_PARTY_NOTICES.md`, Images.
+
 | Asset | Endpoint | Description or motion | Seed | Date |
 |---|---|---|---|---|
 | alert_wyrm (idle loop) | `/animate-pixminimax` | idle loop: the wyrm breathes, its head sways and its tail flicks, menacing | 3 | 2026-10-25 |

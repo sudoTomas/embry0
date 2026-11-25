@@ -20,7 +20,7 @@ The dashboard is honest now (workstream 1) but it is not a place anyone wants to
 **Goals**
 
 - An **arcane RPG** register on the existing navy and gold sigil identity: dark only, a pixel display face for headings and HUD numerals, body and code faces unchanged.
-- A **roster** of twelve pixel sprites, one per `avatar` id, drawn as SVG in code, tinted by the agent's `color`, animated by CSS per state. No image files, no runtime dependency.
+- A **roster** of twelve pixel sprites, one per `avatar` id, drawn as SVG in code, tinted by the agent's `color`, animated by CSS per state. No image files, no runtime dependency. *(Corrected 2026-11-25, #178: the roster still uses no image file, but the dashboard now ships some: the world view's art under `frontend/public/world/`, recorded in its `SOURCES.md` and released under MIT with the repository, `THIRD_PARTY_NOTICES.md`, Images.)*
 - **One node renderer** for the pipeline editor and the live graph.
 - **One job page** that is the live view: party, HUD, banners, graph, transcript, QA, verification, ledger.
 - Every surface in problem 5 reachable from the dashboard with a plain, tested page.

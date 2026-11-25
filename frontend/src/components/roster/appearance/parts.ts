@@ -241,3 +241,30 @@ export function arm(side: "left" | "right", pose: ArmPose, sleeve: Hex, hand: He
     colours: { o: OUTLINE, a: sleeve, A: dark(sleeve), g: hand, G: dark(hand) },
   };
 }
+
+/** A record's drawings by `<RECORD>.<key>`, the empty ones (a bald head's hair) left out: nothing is drawn. */
+function named<K extends string>(record: string, frames: Record<K, Frame>): Record<string, Frame> {
+  return Object.fromEntries(
+    (Object.entries(frames) as [K, Frame][])
+      .filter(([, frame]) => frame !== EMPTY_FRAME)
+      .map(([key, frame]) => [`${record}.${key}`, frame]),
+  );
+}
+
+/**
+ * The body kit's drawings, by the name SOURCES.md records each under (#178): the head's pieces, the hair styles,
+ * beards, torso, legs, feet and arms. shapes.test.ts holds this to what the kit draws.
+ */
+export const BODY_SHAPES: Readonly<Record<string, unknown>> = {
+  HEAD_TOP,
+  EYES,
+  NOSE,
+  MOUTH,
+  HEAD_BOTTOM,
+  ...named("HAIR_STYLES", HAIR_STYLES),
+  ...named("BEARDS", BEARDS),
+  TORSO,
+  LEGS,
+  FEET,
+  ...named("ARMS", ARMS),
+};

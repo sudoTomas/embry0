@@ -56,6 +56,20 @@ PSF-2.0 or MIT-0. These are the exceptions:
 - The dashboard loads Roboto Mono and Pixelify Sans from Google Fonts at runtime
   (SIL Open Font License 1.1), so each dashboard load makes a request to Google.
 
+## Images
+
+Every image the repository ships was made for embry0 and is released under the
+MIT licence with the rest of the repository ([LICENSE](LICENSE)). None is a
+third party's.
+
+| Images | Where | How they were made | Licence |
+|---|---|---|---|
+| The world art: tilesets, objects, creatures and effects | `frontend/public/world/` | Generated for embry0 with the PixelLab API (v2). PixelLab's [terms of service](https://www.pixellab.ai/termsofservice) (§1.3, §3.3) give the account that generates an output its ownership, to use, change and distribute, with no difference between free and paid plans; the generating account releases these images here under the MIT licence. §3.3's clause against training other models on the output without PixelLab's permission is a term between PixelLab and its users. Each image's prompt, seed and date, and any hand work, are in [`SOURCES.md`](frontend/public/world/SOURCES.md). | MIT, with the repository |
+| The roster's sprite parts: the body kit and the equipment | `frontend/src/components/roster/appearance/` (`parts.ts`, `items.ts`), as text grids in code | Drawn for embry0 as text grids: in #87, and four redrawn by hand in #718. How each shape was made is in [`SOURCES.md`](frontend/src/components/roster/appearance/SOURCES.md). | MIT, with the repository |
+| The world's creature glyphs, drawn for a creature the art has no sheet for | `frontend/src/components/world/CreatureIcon.tsx`, as 12×12 text grids in code | Drawn for embry0 as original glyphs in #134, with #146 and #156 | MIT, with the repository |
+| The achievement icons | `frontend/src/components/progression/achievementIconData.ts`, as 12×12 text grids in code | Drawn for embry0 as original glyphs in #130 | MIT, with the repository |
+| The embry0 mark (the favicons and touch icon), the documentation's screenshots and demo clip, and the roster's contact sheets | `frontend/public/`, `docs/assets/`, `docs/superpowers/plans/` | Drawn for embry0, or captured or rendered from embry0 itself | MIT, with the repository |
+
 ## Software in the images you build
 
 | Component | Images | Licence |
