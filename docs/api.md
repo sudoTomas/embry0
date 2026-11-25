@@ -478,12 +478,26 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
   - `owner` keeps the quests on offer a GitHub login owns; `include_held=false` leaves out what a chat does not ask.
 - `GET /api/v1/decisions/{id}`: one decision by its id; 404 for an answered proposal or an unknown job.
 
+## People
+
+Who embry0 asks and names as an owner, whether or not they sign in (#179, [the design](superpowers/specs/2026-11-23-people-and-agent-questions-design.md)). A person is `{"id", "name", "email", "user_id", "timezone", "hours", "weekdays", "disabled", "identities", "updated_at"}`; an identity is `{"kind", "value"}`, a login on a forge (`github`, `gitlab`) or a handle in a chat (`telegram`, `slack`, `teams`, `discord`), one person's per kind whatever its case. `hours`, `weekdays` and `timezone` take the [`asks` section](configuration.md#settings-document)'s grammar. Operators and admins read; admins write. People are the deployment's: a key with a [repository allowlist](#repository-allowlist) reads nobody and writes nothing.
+
+- `GET /api/v1/people` (`?include_disabled=true` for the disabled too): every person by name, as `{"people", "count"}`.
+- `GET /api/v1/people/suggestions`: who could be added, since embry0 adds nobody by itself: `users`, each user who signs in with no person (`{"user_id", "email", "name", "github_login"}`), and `owners`, each owner login embry0 keeps (a repository's `owners` preference, an area's owners) that no person holds, with the repositories that name it. An owner read from `CODEOWNERS` is not listed.
+- `GET /api/v1/people/{id}`: one person; the `ETag` is their `updated_at`.
+- `POST /api/v1/people` (201): add a person, `name` and any other field, and `identities`.
+- `PATCH /api/v1/people/{id}`: change the fields given (`null` clears an optional one); with `identities`, make them exactly the person's. `If-Match` with an `ETag` a read answered refuses a change someone made in between (409).
+- `DELETE /api/v1/people/{id}`: remove the person and their identities; a user they were linked to keeps their GitHub login.
+- `POST /api/v1/people/{id}/identities` (`{"kind", "value"}`) and `DELETE /api/v1/people/{id}/identities/{kind}/{value}`: give or take one identity.
+
+A write with problems is one 422 naming each by where it is (`["body", "identities", 0, "value"]`), never its value. A value another person or user holds is a 409 naming it: an email, a user, an identity, or a GitHub login another user signs in as, which no other person may hold. Every write is audited (`person.created`, `person.updated`, `person.deleted`, `person.identity.added`, `person.identity.removed`). The CLI's `embry0 people` and the MCP tools `people_get` and `people_set` are thin clients of these routes ([configuration.md](configuration.md#the-deployments-people-embry0-people)).
+
 ## Hand-offs
 
 Send a decision to the teammate better placed to make it; it is then theirs to decide ([the design](superpowers/specs/2026-10-27-decisions-design.md)).
 
-- `GET /api/v1/people`: who a decision can go to, everyone who signs in (`operator` or `admin`) or is named by a GitHub login (a chat assistant can ask them), as `{"people": [{"id", "email", "name", "github_login", "tier"}]}`. A key with a [repository allowlist](#repository-allowlist) reads an empty list.
-- `PUT /api/v1/me/github-login` (`{"login": "octocat"}`, empty to clear): the GitHub login you are, which owners are named by. A login belongs to one person (409 otherwise). `PUT /api/v1/users/{id}/github-login` does the same for someone else (admin).
+- `GET /api/v1/handoffs/people`: who a decision can go to, everyone who signs in (`operator` or `admin`) or is named by a GitHub login (a chat assistant can ask them), as `{"people": [{"id", "email", "name", "github_login", "tier"}]}`. A key with a [repository allowlist](#repository-allowlist) reads an empty list. It answered at `GET /api/v1/people` until the [people API](#people) took that path.
+- `PUT /api/v1/me/github-login` (`{"login": "octocat"}`, empty to clear): the GitHub login you are, which owners are named by. A login belongs to one person (409 otherwise). `PUT /api/v1/users/{id}/github-login` does the same for someone else (admin). A user who is a [person](#people) has the person's `github` identity follow: a login the person holds already leaves their identities as they are, and a cleared login falls to the person's oldest GitHub identity left, which the answer says (`fell_back_to` and `message`). A user who is not a person gets the login alone and is listed among `GET /api/v1/people/suggestions`. A login another person holds as an identity is someone else's (409).
 - `POST /api/v1/decisions/{id}/send-to` (`{"to": "<email>", "note": "..."}`, 201): opens a hand-off to someone else on that list. A hand-off already open for that decision closes as `passed`. It writes a `handoff.created` audit row and emits the `handoff.created` event. Anyone else, a person nobody knows, a disabled one or one with no role and no GitHub login, is the same 422, `send it to someone who signs in to embry0 or has a GitHub login`, and nothing is written.
 - **What the recipient may do.** The recipient may take every action the decision lists, including merge (merge approvals admit them for that quest's approval only).
 - **How it closes.** Whoever answers the decision closes its open hand-off as `decided`, with the outcome: `start`, `decline`, `later`, `merge`, `send_back`, `reject`, `run_again`, `good`, `bad` or `dismiss`. This emits `handoff.closed`.
@@ -1530,7 +1544,7 @@ Everything below narrows to the repositories the key covers:
   values and revisions, the content pack, the hosts (linked only to its
   repositories, above) and the names of the global variables. The
   deployment's own records read as a deployment that has none would answer
-  them: `GET /users` and `GET /people` list nobody;
+  them: `GET /users`, `GET /handoffs/people`, `GET /people` and `GET /people/suggestions` list nobody, and `GET /people/{id}` is a 404;
   `GET /config/providers/{name}/usage` answers `not_configured`, asking the
   provider nothing; `GET /config/models` has no provider's
   `credential_source`, no `base_url` the environment sets and no

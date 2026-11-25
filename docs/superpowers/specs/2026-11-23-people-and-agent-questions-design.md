@@ -213,11 +213,22 @@ agent_questions:
 1. **`feat(settings): the agent_questions section, read once per job`**: section 6, with this spec.
 2. **`feat(people): people and their identities`**: the two tables, the backfill and a repository, with the
    GitHub login kept in step (section 3). No consumer changes, and no API.
-3. **`feat(people): the people API`**:
-   - `GET/POST/PATCH/DELETE /people` and identity endpoints, written by the operator tier;
-   - the "add" suggestions from `users.github_login` and from unknown owner logins.
-   - `GET /people` is taken: it lists who a decision can be sent to (`embry0/api/v1/handoffs.py`), so the people API
-     either takes it over, serving the same list to the hand-off dialog, or takes another path.
+3. **`feat(people): the people API`** (decided 2026-11-25):
+   - `GET/POST/PATCH/DELETE /people` and identity endpoints. Operators and admins read, admins write, and a key with
+     a repository allowlist reads nobody and writes nothing. A write with problems is one 422 naming each by where it
+     is, never its value; `PATCH` takes `If-Match` with the person's `updated_at`.
+   - The hand-off list (who a decision can be sent to) moves to `GET /handoffs/people`, the same shape; the dialog
+     and the docs move with it, and `GET /people` is the people API's.
+   - The "add" suggestions (`GET /people/suggestions`): the users with no person, and the owner logins embry0 keeps
+     (repository preferences, areas) that no person holds. `CODEOWNERS` owners are read from the forge and are not
+     listed.
+   - `embry0 people check|diff|apply|export`: `apply` adds an entry without an `id` and changes one with it, deleting
+     nobody; each change is guarded by the `updated_at` it was exported with (409). MCP: `people_get`, and
+     `people_set` (admin, confirm=true).
+   - The login routes make no person for a user without one (D6): they set the login alone, and the user is a
+     suggestion. For a person, the answer says when a cleared login falls back to their oldest GitHub identity.
+   - A GitHub login is one person's: an identity may not be a login another user signs in as, and a user's login may
+     not be another person's identity.
 4. **`feat(owners): owners resolve to people`**: section 4, with unknown logins listed by the feed and decisions.
 5. **`feat(asks): a person's hours and chat handle`**: section 5.
 6. **`feat(frontend): the People page`**:
@@ -245,7 +256,7 @@ agent_questions:
 
 ## 9. To decide in their pull requests
 
-- Who may write people: the operator tier, as for areas, or admin alone. Whether an owner may add themselves.
+- Who may write people: admin alone (decided for pull request 3). Whether an owner may add themselves stays open.
 - Whether an identity needs proof (a sign-in through that forge) before asks reach its person.
 - Whether a person's handle may name more than one chat: yes, decided for pull request 2 (D4).
 

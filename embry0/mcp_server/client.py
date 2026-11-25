@@ -1084,6 +1084,31 @@ class Embry0Client:
             )
         )
 
+    # ------------------------------------------------------------------- people (#179)
+
+    async def people_list(self, *, include_disabled: bool = False) -> dict[str, Any]:
+        """Every person, by name; the disabled too with ``include_disabled``."""
+        params = {"include_disabled": "true"} if include_disabled else None
+        return _as_dict(await self._request("GET", "/api/v1/people", params=params))
+
+    async def person_get(self, person_id: str) -> dict[str, Any]:
+        """One person, with their identities and the ``updated_at`` a change names in ``If-Match``."""
+        return _as_dict(await self._request("GET", f"/api/v1/people/{quote(person_id, safe='')}"))
+
+    async def person_add(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Add a person: their fields and ``identities``."""
+        return _as_dict(await self._request("POST", "/api/v1/people", body=body))
+
+    async def person_change(
+        self, person_id: str, body: dict[str, Any], *, expected_updated_at: str = ""
+    ) -> dict[str, Any]:
+        """Change a person; ``expected_updated_at``, the version the caller read, goes in ``If-Match`` (409 when the
+        person changed since)."""
+        headers = {"If-Match": f'"{expected_updated_at}"'} if expected_updated_at else None
+        return _as_dict(
+            await self._request("PATCH", f"/api/v1/people/{quote(person_id, safe='')}", body=body, headers=headers)
+        )
+
     # ------------------------------------------------- areas (spec 2026-11-10) — kept in embry0, never in the repo
 
     async def areas_get(self, repo: str) -> dict[str, Any]:

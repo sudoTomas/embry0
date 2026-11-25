@@ -883,6 +883,21 @@ def cmd_areas(args: argparse.Namespace) -> None:
     sys.exit(areas.run(args, base_url=base, api_key=_resolve_api_key(args.api_key)))
 
 
+def cmd_people(args: argparse.Namespace) -> None:
+    """Handle ``embry0 people check|diff|apply|export`` (#179).
+
+    ``check`` runs offline; the other verbs are thin clients of
+    ``/api/v1/people`` on the running orchestrator. The exit codes are in
+    :mod:`embry0.cli.exit_codes`.
+    """
+    from embry0.cli import people
+
+    if people.offline(args):
+        sys.exit(people.run(args))
+    base = (args.api_url or os.environ.get("EMBRY0_API_URL") or "http://localhost:8200").rstrip("/")
+    sys.exit(people.run(args, base_url=base, api_key=_resolve_api_key(args.api_key)))
+
+
 def cmd_settings(args: argparse.Namespace) -> None:
     """Handle ``embry0 settings check|diff|apply|set|export|import-env|revisions|undo`` (#162).
 
@@ -1149,6 +1164,11 @@ def main() -> None:
 
     add_areas_parser(subparsers)
 
+    # people (#179)
+    from embry0.cli.people import add_parser as add_people_parser
+
+    add_people_parser(subparsers)
+
     args = parser.parse_args()
 
     commands = {
@@ -1169,6 +1189,7 @@ def main() -> None:
         "progression-pack": cmd_progression_pack,
         "settings": cmd_settings,
         "areas": cmd_areas,
+        "people": cmd_people,
     }
     commands[args.command](args)
 

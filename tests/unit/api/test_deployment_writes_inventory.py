@@ -94,6 +94,12 @@ DEPLOYMENT_WIDE: dict[tuple[str, str], Callable[[Mapping[str, str]], Any]] = {
     ("PUT", "/api/v1/users/{user_id}/disabled"): lambda v: {"disabled": True},
     ("POST", "/api/v1/users/{user_id}/force-logout"): lambda v: None,
     ("PUT", "/api/v1/users/{user_id}/github-login"): lambda v: {"login": "someone-else"},
+    # People (#179): the deployment's directory.
+    ("POST", "/api/v1/people"): lambda v: {"name": "Cy", "identities": [{"kind": "github", "value": "cy-login"}]},
+    ("PATCH", "/api/v1/people/{person_id}"): lambda v: {"timezone": "UTC"},
+    ("DELETE", "/api/v1/people/{person_id}"): lambda v: None,
+    ("POST", "/api/v1/people/{person_id}/identities"): lambda v: {"kind": "slack", "value": "U0000000001"},
+    ("DELETE", "/api/v1/people/{person_id}/identities/{kind}/{value}"): lambda v: None,
     ("POST", "/api/v1/credentials"): lambda v: {
         "kind": "forge_token",
         "provider": "github",
@@ -204,6 +210,14 @@ async def _deployment(app: FastAPI, db: DatabasePool) -> dict[str, str]:
     # What the production lifespan seeds beside _init_app_state: the builtin templates and profiles.
     await seed_builtin_pipeline_templates(app.state.templates_repo)
     await seed_builtin_sandbox_profiles(app.state.profiles_repo)
+    person = await call(
+        app,
+        "POST",
+        "/api/v1/people",
+        MASTER,
+        {"name": "Bo", "identities": [{"kind": "telegram", "value": "bo-chat-0000000001"}]},
+    )
+    assert person.status_code == 201, person.text
     templates = (await call(app, "GET", "/api/v1/pipelines/templates", MASTER)).json()
     template = templates[0] if isinstance(templates, list) else templates["templates"][0]
     host = await call(
@@ -250,6 +264,9 @@ async def _deployment(app: FastAPI, db: DatabasePool) -> dict[str, str]:
         "full_repo": COVERED,
         "user_id": "usr-bo",
         "credential_id": str(credential.json()["id"]),
+        "person_id": str(person.json()["id"]),
+        "kind": "telegram",
+        "value": "bo-chat-0000000001",
     }
 
 

@@ -183,8 +183,9 @@ async def test_setting_a_users_login_moves_their_persons_identity(db_with_migrat
         ("person.identity.added", "alex"),
     ]
     bo = await people.create({"name": "Bo"}, identities=[("github", "bo")], actor="t")
-    with pytest.raises(Exception, match="unique"):
+    with pytest.raises(PersonConflict) as held:  # Bo's identity: one person per login (#179 pull request 3)
         await users.set_github_login(user, "BO", actor="alex")
+    assert held.value.field == "github login", held.value
     assert await _login(db, user) == "ada-new" and await people.get(bo.id) == bo, "a refused login changed nothing"
     await users.set_github_login(user, None, actor="alex")
     cleared = await people.get(ada.id)

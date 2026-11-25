@@ -98,3 +98,40 @@ def test_a_field_a_person_cannot_hold_is_refused_naming_it(fields: dict[str, Any
     value = next(iter(fields.values()))
     if isinstance(value, str) and value.strip():
         assert value not in refused.problem, f"the refusal repeats the value: {refused}"
+
+
+def test_a_write_is_checked_whole_every_problem_by_where_and_none_repeating_a_value() -> None:
+    """#179 pull request 3: one 422 names every problem, a field's and an identity's, never echoing a value."""
+    from embry0.services import people
+
+    assert hasattr(people, "check_write"), "nothing checks a whole write of a person"
+    PeopleInvalid, check_write = people.PeopleInvalid, people.check_write  # noqa: N806
+
+    with pytest.raises(PeopleInvalid) as refused:
+        check_write(
+            {"email": "zz9-no", "hours": "zz9", "nickname": "zz9", "disabled": "zz9"},
+            [
+                {"kind": "github", "value": "zz9--"},
+                {"kind": "zz9"},
+                "zz9",
+                {"kind": "slack", "value": "U1"},
+                {"kind": "slack", "value": "u1"},
+            ],
+            creating=True,
+        )
+    where = sorted(".".join(map(str, loc)) for loc, _message in refused.value.problems)
+    assert where == [
+        "disabled",
+        "email",
+        "hours",
+        "identities.0.value",
+        "identities.1.kind",
+        "identities.2",
+        "identities.4",
+        "name",
+        "nickname",
+    ], where
+    assert "zz9" not in str(refused.value), f"a problem repeats a value: {refused.value}"
+    fields, identities = check_write({"name": " Ada ", "hours": "9-17"}, [{"kind": "github", "value": "@Ada-L"}])
+    assert (fields, identities) == ({"name": "Ada", "hours": "09-17"}, [("github", "Ada-L")])
+    assert check_write({"timezone": None})[1] is None, "identities not given are not touched"

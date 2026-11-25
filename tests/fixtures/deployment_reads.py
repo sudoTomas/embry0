@@ -93,7 +93,10 @@ OWN: dict[str, str] = {
     "which tracker team files on which repository": f"TEAM={UNCOVERED}",
     "the old job's QA image": OLD_IMAGE,
     "a host of none of the key's repositories": "build-farm.own-records.example.test",
+    "a person's chat handle": "ops-chat-handle-000000000001",
 }
+#: The planted person (#179): linked to no user, so the planted user is one of the people API's suggestions.
+PERSON_ID = "per-0000000ops1"
 #: The OpenAI-compatible providers enabled from the start: configuration, not one of the deployment's records.
 ENABLED_PROVIDERS = "openrouter,custom"
 #: The days each retention sweep keeps.
@@ -174,6 +177,12 @@ class Deployment:
             "VALUES ('usr-ops', 'auth0|ops', $1, 'Ops', 'admin', $2)",
             PERSON,
             OWN["a person's GitHub login"],
+        )
+        await db.execute("INSERT INTO people (id, name, email) VALUES ($1, 'Ops', $2)", PERSON_ID, PERSON)
+        await db.execute(
+            "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, 'telegram', $2)",
+            PERSON_ID,
+            OWN["a person's chat handle"],
         )
         _row, ops = await ApiKeysRepository(db).create(name="ops", scope="admin", user_id="usr-ops", created_by=PERSON)
         bust_api_key_cache()

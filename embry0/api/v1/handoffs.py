@@ -61,10 +61,11 @@ async def people_by_email(request: Request) -> dict[str, dict[str, Any]]:
         return {}
 
 
-@router.get("/people")
+@router.get("/handoffs/people")
 async def list_people(request: Request) -> dict[str, Any]:
     """The people a decision can be sent to: everyone who signs in to the dashboard or is named by a GitHub login. To a
-    key with a repository allowlist, as a deployment with none (embry0.api.deployment_reads)."""
+    key with a repository allowlist, as a deployment with none (embry0.api.deployment_reads). It answered at
+    ``/people`` until the people API took that path (#179)."""
     if deployment_hidden(request):
         return {"people": [], "count": 0}
     people = [p for p in (await people_by_email(request)).values() if _can_be_sent(p["tier"], p["github_login"])]
@@ -88,22 +89,42 @@ def _checked_login(raw: str) -> str | None:
 
 
 async def set_login(request: Request, user_id: str, raw: str) -> dict[str, Any]:
-    """Names (or, empty, clears) a person's GitHub login: 422 for a malformed one, 409 for one held by someone else."""
+    """Names (or, empty, clears) a person's GitHub login: 422 for a malformed one, 409 for one held by someone else.
+
+    A user with no person gets the login alone, as before people (#179, D6), and is listed among the people API's
+    suggestions to add. For a user who is a person, the person's ``github`` identity follows; a cleared login falls to
+    the person's oldest GitHub identity left, and the answer says so (``fell_back_to`` and ``message``)."""
     users = _repo(request, "users_repo")
     login = _checked_login(raw)
     from embry0.services.people import PersonInvalid
+    from embry0.storage.repositories.people import PersonConflict
 
+    taken = HTTPException(
+        status_code=409,
+        detail=f"{login} is already someone else's"
+        if login
+        else "the GitHub login your person would fall back to is someone else's",
+    )
     try:
         row = await users.set_github_login(user_id, login, actor=request_actor(request))
     except PersonInvalid as exc:  # the login the user's person would get (#179): GITHUB_LOGIN_RE checks it first
         raise HTTPException(status_code=422, detail=f"not a GitHub login: {exc.problem}") from exc
-    except Exception as exc:  # the unique index: another person holds that login
+    except PersonConflict as exc:  # another person holds it as an identity (#179)
+        raise taken from exc
+    except Exception as exc:  # the unique index: another user has that login
         if "uq_users_github_login_lower" in str(exc) or "unique" in str(exc).lower():
-            raise HTTPException(status_code=409, detail=f"{login} is already someone else's") from exc
+            raise taken from exc
         raise
     if row is None:
         raise HTTPException(status_code=404, detail="no such user")
-    return _person(row)
+    answer = _person(row)
+    if login is None and row.github_login:
+        answer["fell_back_to"] = row.github_login
+        answer["message"] = (
+            f"The login was cleared, and {row.github_login}, the oldest GitHub login of the person you are, names "
+            "you now. Take it from the person to name you by none."
+        )
+    return answer
 
 
 @router.put("/me/github-login")

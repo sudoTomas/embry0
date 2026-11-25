@@ -88,7 +88,12 @@ NO_ACTOR_ROUTES: dict[str, tuple[str, ...]] = {
     ),
     "admin-only, or only the caller's own keys to anyone else": ("/api/v1/users", "/api/v1/apikeys"),
     "the directory of people a decision can be sent to: who signs in or has a login, not who did what": (
+        "/api/v1/handoffs/people",
+    ),
+    "the people directory (#179): who a person is and who could be added, never who added them": (
         "/api/v1/people",
+        "/api/v1/people/{person_id}",
+        "/api/v1/people/suggestions",
     ),
     "configuration, catalogues and health, with no actor": (
         "/api/v1/health/ready",
@@ -291,8 +296,11 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
         "the admin-only users router; GET /people lists who can be sent one, not who did what",
     ),
     # People (#179): no route reads the tables yet; the people API decides how each is shown.
-    "people.created_by": (_UNSERVED, "no route returns it yet: who added a person, read by the people API to come"),
-    "people.email": (_UNSERVED, "no route returns it yet: a person's email, read by the people API to come"),
+    "people.created_by": (_UNSERVED, "no route returns it: who added a person is the audit log's (person.created)"),
+    "people.email": (
+        _VISIBLE,
+        "who a person is, read by operators and admins and by no key limited to some repositories: a directory",
+    ),
     "person_identities.person_id": (_UNSERVED, "no route returns it: it links an identity to its person"),
     "api_keys.created_by": (_UNSERVED, "GET /apikeys shows a caller who is not an admin only its own keys"),
     "credentials.created_by": (_UNSERVED, "no route returns it: CredentialOut leaves it out"),

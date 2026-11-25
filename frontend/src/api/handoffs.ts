@@ -37,7 +37,7 @@ export interface Handoff {
 }
 
 export async function fetchPeople(): Promise<Person[]> {
-  const { data } = await api.get<{ people: Person[] }>("/people");
+  const { data } = await api.get<{ people: Person[] }>("/handoffs/people");
   return data.people;
 }
 

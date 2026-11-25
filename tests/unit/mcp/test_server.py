@@ -121,6 +121,8 @@ EXPECTED_TOOLS = {
     "repo_skip_testing",
     "credential_bindings_get",
     "credential_bindings_set",
+    "people_get",
+    "people_set",
 }
 
 CONFIRM_GATED = {
@@ -176,6 +178,7 @@ CONFIRM_GATED = {
     "areas_undo",
     "repo_skip_testing",
     "credential_bindings_set",
+    "people_set",
 }
 
 
@@ -903,4 +906,41 @@ async def test_provider_catalogue_tools_pass_through(fake_client):
         ("provider_catalogue_set", ("providers: {}\n",), {"expected_generation": None, "reason": "r"}),
         ("provider_catalogue_revisions", (), {"limit": 3}),
         ("provider_catalogue_revision", (9,), {}),
+    ]
+
+
+async def test_people_set_asks_for_confirmation_then_adds_or_changes_guarded(monkeypatch) -> None:
+    """#179 pull request 3: people_set refuses without confirm, adds without an id, and changes one guarded."""
+    calls: list[tuple] = []
+
+    class PeopleClient:
+        async def person_add(self, body):
+            calls.append(("add", body))
+            return {"id": "per-new"}
+
+        async def person_change(self, person_id, body, *, expected_updated_at=""):
+            calls.append(("change", person_id, body, expected_updated_at))
+            return {"id": person_id}
+
+        async def person_get(self, person_id):
+            calls.append(("get", person_id))
+            return {"id": person_id}
+
+        async def people_list(self, *, include_disabled=False):
+            calls.append(("list", include_disabled))
+            return {"people": []}
+
+    monkeypatch.setattr(server, "_client", PeopleClient())
+    assert hasattr(server, "people_set"), "there are no people tools"
+    refused = await server.people_set(fields={"name": "Ada"})
+    assert refused["error"] == "confirmation_required" and calls == []
+    await server.people_set(fields={"name": "Ada"}, identities=[{"kind": "github", "value": "ada"}], confirm=True)
+    await server.people_set(person_id="per-1", fields={"hours": None}, expected_updated_at="v1", confirm=True)
+    await server.people_get()
+    await server.people_get(person_id="per-1")
+    assert calls == [
+        ("add", {"name": "Ada", "identities": [{"kind": "github", "value": "ada"}]}),
+        ("change", "per-1", {"hours": None}, "v1"),
+        ("list", False),
+        ("get", "per-1"),
     ]
