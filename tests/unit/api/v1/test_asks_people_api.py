@@ -165,3 +165,19 @@ async def test_waiting_for_me_is_what_my_person_s_identities_own(
     assert [d["id"] for d in mine] == ["offer:mine:1"], (
         "on a GitLab organization's quest, Pat's GitLab identity owns it and their GitHub login owns nothing"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_person_answers_nothing_even_what_was_handed_to_them(
+    app: Any,  # noqa: F811 - the imported fixture
+) -> None:
+    _people(app, GONE)
+    app.state.open_decisions["offer:crack:1"] = {
+        **CRACK,
+        "owners": ["gone"],
+        "assigned_to": {"email": "gone@example.com"},
+    }
+    app.state.settings = FakeSettings({"asks": {"enabled": True, **ALWAYS}})
+    body = {"code": "ABCD", "action": "start", "person": "gone@example.com"}
+    refused = await call(app, "POST", "/api/v1/asks/answer", json=body)
+    assert refused.status_code == 403, f"a disabled person answered what was handed to them: {refused.text}"
