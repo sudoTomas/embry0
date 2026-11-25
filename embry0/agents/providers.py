@@ -39,10 +39,12 @@ Caveats (documented on EMB-36):
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import UTC, datetime
 
 import structlog
 
 from embry0.agents.catalogue import Catalogue, ModelProvider, current, seed
+from embry0.agents.invocation import ANTHROPIC_NAME, ProviderRecord
 from embry0.agents.openrouter_catalog import catalog_model_ids, catalog_rates
 
 logger = structlog.get_logger(__name__)
@@ -141,16 +143,18 @@ def provider_models(provider: ModelProvider) -> tuple[str, ...]:
     return provider.models
 
 
-def model_rates(model: str, catalogue: Catalogue | None = None) -> tuple[float, float] | None:
-    """``model``'s (input, output) $/Mtok now: OpenRouter's live price, its own entry in the installed catalogue
-    (its price in force today), else its provider's default rates."""
+def model_rates(
+    model: str, catalogue: Catalogue | None = None, *, at: datetime | None = None
+) -> tuple[float, float] | None:
+    """``model``'s (input, output) $/Mtok ``at`` (now, by default): OpenRouter's live price, its own entry in the
+    installed catalogue (its price in force that day), else its provider's default rates."""
     cat = catalogue if catalogue is not None else current()
     if model in cat.withheld:  # its price is not in force (catalogue.merge_stored): unpriced, so it does not run
         return None
     live = catalog_rates(model)
     if live is not None:
         return live
-    rates = cat.rates(model)
+    rates = cat.rates(model, at=at)
     return rates if rates is not None else cat.default_rates(model)
 
 
@@ -168,8 +172,13 @@ def price_usage(
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
     rates: tuple[float, float] | None = None,
+    cache: tuple[float, float] | None = None,
 ) -> float | None:
     """Estimated USD for one message's usage, or None when the model is unpriced.
+
+    ``cache`` are the run's (read, write) factors of the input rate when its
+    provider record carries them; :data:`CACHE_READ_FACTOR` and
+    :data:`CACHE_WRITE_FACTOR` otherwise.
 
     ``rates`` are the run's own (input, output) $/Mtok when the orchestrator
     sent them: a model of OpenRouter's live catalog, which the sandbox has no
@@ -184,13 +193,57 @@ def price_usage(
     if rates is None:
         return None
     rate_in, rate_out = rates
+    read_factor, write_factor = cache if cache is not None else (CACHE_READ_FACTOR, CACHE_WRITE_FACTOR)
     per_mtok = (
         input_tokens * rate_in
         + output_tokens * rate_out
-        + cache_read_tokens * rate_in * CACHE_READ_FACTOR
-        + cache_creation_tokens * rate_in * CACHE_WRITE_FACTOR
+        + cache_read_tokens * rate_in * read_factor
+        + cache_creation_tokens * rate_in * write_factor
     )
     return per_mtok / 1_000_000
+
+
+def provider_record(model: str, catalogue: Catalogue | None = None, *, at: datetime | None = None) -> ProviderRecord:
+    """What a sandbox needs of the provider ``model`` routes to, from ``catalogue`` (the installed one; a caller that
+    routed the model passes the catalogue it routed by): its runtime, the id its API knows the model by, the rates in
+    force ``at`` (the run's start, now by default; :func:`model_rates`), the cache factors, its address and the sandbox
+    variables of its key and of an operator-given API root. Anthropic's for a model that routes to no other provider."""
+    cat = catalogue if catalogue is not None else current()
+    moment = at if at is not None else datetime.now(UTC)
+    provider = provider_for_model(model, cat)
+    if provider is None:
+        # Anthropic's own price of the model that day, which only estimates a run's turns: its CLI reports its cost.
+        anthropic = cat.document.providers.get(ANTHROPIC_NAME)
+        rates = (
+            cat.rates(model, at=moment)
+            if anthropic is not None and model in anthropic.models and model not in cat.withheld
+            else None
+        )
+        return ProviderRecord(
+            name=ANTHROPIC_NAME,
+            runtime="sdk",
+            upstream_model=model,
+            rates=rates,
+            cache_read_factor=CACHE_READ_FACTOR,
+            cache_write_factor=CACHE_WRITE_FACTOR,
+            resolved_at=moment.isoformat(),
+        )
+    chat = provider.runtime == "chat_completions"
+    rates = model_rates(model, cat, at=moment)
+    return ProviderRecord(
+        name=provider.name,
+        runtime="chat_completions" if chat else "sdk",
+        upstream_model=upstream_model(provider, model),
+        rates=rates,
+        cache_read_factor=CACHE_READ_FACTOR,
+        cache_write_factor=CACHE_WRITE_FACTOR,
+        base_url="" if chat else provider.base_url,
+        api_root=provider.openai_base_url if chat else "",
+        key_env=provider.sandbox_key_env if chat else provider.api_key_env,
+        base_url_env=provider.sandbox_base_url_env if chat else "",
+        request_extras=dict(provider.request_extras.get(model, {})),
+        resolved_at=moment.isoformat(),
+    )
 
 
 def known_models(catalogue: Catalogue | None = None) -> set[str]:

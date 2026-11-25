@@ -141,13 +141,59 @@ force: the last good list stays and the error is shown beside it, and the loop
 tries again within the hour. With no list ever read, the static entry above
 serves.
 
-A run on a model of the list carries its rates to the sandbox
-(`pricing_usd_per_mtok` in the runner config), since the sandbox has no copy of
-the list; so does a run on any provider other than Anthropic, at the rates of
-the deployment's catalogue. A sandbox image built before this reads no rates and ends a finished
-run as "cost unknown"; the orchestrator then prices the run from its token
-counts and keeps the outcome the agent reached, and logs
+A run on a model of the list carries its rates to the sandbox in its provider
+record ([Pricing a run](#pricing-a-run)), since the sandbox has no copy of the
+list. A sandbox image built before records reads the rates alone
+(`pricing_usd_per_mtok`); one built before those ends a finished run as "cost
+unknown", and the orchestrator then prices the run from its token counts and
+keeps the outcome the agent reached, logging
 `catalog_model_priced_by_orchestrator` until the image is rebuilt.
+
+### Pricing a run
+
+Each agent run carries its provider's record, resolved by the orchestrator from
+the deployment's catalogue when the run starts: the provider's runtime, the id
+its API knows the model by, the model's `request_extras`, the rates in force
+that day, the cache factors (a cached input token at 0.1 of the input rate, a
+cache write at 1.25), the provider's address and the sandbox variable of its
+key. The executors in the sandbox read the record, not a table of their own,
+so a change of the catalogue reaches the next run with no image rebuild. The
+run's trace keeps what it was priced with (`pricing` on `GET /traces`:
+`{"provider", "model", "rates": {"in", "out"}, "cache": {"read", "write"},
+"resolved_at", "charged_from"}`), so a run is never priced again at a later
+rate.
+
+What a run is charged:
+
+| Provider | Charged | The catalogue's rates |
+|---|---|---|
+| Anthropic, on the Agent SDK | what its CLI reports (`total_cost_usd`, net of a resumed session's earlier runs) | estimate each turn's cost as it runs |
+| any other on the Agent SDK (xAI's grok by default) | the catalogue's rates on the run's tokens, as the CLI's result counts them for every call it made (its `modelUsage`, a compaction's and the session title's calls included), less what a resumed session restored | the charge |
+| a chat-completions provider, or grok's direct executor | the catalogue's rates on the run's tokens | the charge |
+
+The CLI knows Anthropic's pricing better than flat rates do (long-context
+rates, cache lifetimes, a model it maps to another), so its figure stands for
+Anthropic and the catalogue's rates are an estimate there. For any other
+provider the CLI prices each call by its own table of Claude models, which
+knows nothing of the provider's: its figure is logged beside the charge
+(`sdk_run_charged_from_catalogue`) and not counted. The tokens are not the
+stream's: the CLI sends each content block of a response as its own message,
+each with the usage the response started with (one output token), and the
+calls a compaction or the session title make send no message at all. The
+result's `modelUsage` counts them all; a resumed session's counts include its
+earlier runs, which the session file's saved totals give, and those are taken
+off. No count is charged below the result's `usage` (the main loop's calls),
+so a `modelUsage` this release cannot read is never charged $0; a run that
+ends with no result is charged the calls the stream reported, each
+once, which undercounts their output. A model with no rates in
+the record is never metered at $0: a chat-completions run of it ends as "cost
+unknown", and the resolver refuses such a model before any run.
+
+A sandbox image built before records reads its own table, and for a provider
+other than Anthropic the rates alone when the orchestrator sends them (the
+chat-completions providers and grok's direct executor are then charged as
+above, an SDK run what its CLI reports). The records need the sandbox images
+rebuilt (`docs/ops/deploy.md`).
 
 ### Changing the catalogue
 
@@ -189,17 +235,10 @@ price written in one process is in force, dated, in every other.
 A write is in force at once in the process that took it, and every other
 process installs it within ten seconds: routing, the model pickers, the
 checks that a model is offered and priced, the turn and time budgets, and
-what the orchestrator prices. A sandbox carries the shipped catalogue, so
-each run on a provider other than Anthropic is sent its model's rates in
-force, and where embry0 prices a run from its tokens (the chat-completions
-providers, grok's direct executor) a model the overlay re-priced or added is
-metered at the overlay's price; a model's `request_extras` stay the shipped ones in a sandbox until
-each run carries its whole provider record (the next part of #173). **Not yet
-for an SDK-runtime provider** (xAI's grok on the Agent SDK, its default): such a
-run is charged what the CLI reports (`total_cost_usd`) and its per-turn
-estimates come from the sandbox's shipped table, so re-pricing a `grok-` model
-in the catalogue changes no run's charge until that same change carries the
-catalogue's rates into SDK runs. It is refused, with nothing stored,
+what the orchestrator prices, and each agent run that starts after it: the
+run carries its provider's record, resolved from the catalogue at its start
+([Pricing a run](#pricing-a-run)). A run already under way keeps the rates it
+started with. It is refused, with nothing stored,
 by a 422 naming every problem and never a value: the YAML's own (a syntax
 error, an alias, a key written twice), past 256 KiB (413), an overlay field
 it may not set, a catalogue it makes that cannot be (a chat-completions model

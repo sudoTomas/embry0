@@ -6,6 +6,7 @@ import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -469,7 +470,7 @@ def resolve_agent_invocation(
 
     from embry0.agents.providers import (
         chat_only_message,
-        model_rates,
+        provider_record,
         unpriced_models,
         unpriced_models_message,
     )
@@ -497,7 +498,13 @@ def resolve_agent_invocation(
         )
     final_model = final.model
 
+    from embry0.agents.catalogue import current as installed_catalogue
     from embry0.agents.providers import provider_for_model
+
+    # One read of the installed catalogue for routing, checking and the run's record, so a catalogue installed
+    # meanwhile (another process's write) cannot route the model by one and hand the run the other's record.
+    catalogue = installed_catalogue()
+    started = datetime.now(UTC)
 
     # Local models: the job prefers its local model for every agent it did not
     # name a model for. Before provider fallback, whose plan never pauses the
@@ -507,9 +514,8 @@ def resolve_agent_invocation(
         local_first_model
         and local_first_model != final_model
         and not _chosen_for_job(agent_type, job_agent_models)
-        and (local_provider := provider_for_model(local_first_model)) is not None
-        # By name: two lookups may read two installs of the same catalogue (embry0.agents.catalogue).
-        and local_provider.name != getattr(provider_for_model(final_model), "name", None)
+        and (local_provider := provider_for_model(local_first_model, catalogue)) is not None
+        and local_provider.name != getattr(provider_for_model(final_model, catalogue), "name", None)
     ):
         local_first_record = {"instead_of": final_model}
         logger.info("agent_model_local_first", agent_type=agent_type, model=local_first_model, instead_of=final_model)
@@ -538,11 +544,11 @@ def resolve_agent_invocation(
     # the provider reports no cost, so the price table is the only accounting.
     # Refused at configuration time; this catches what reached the run anyway
     # (an env tier model, triage's pick, a row saved before the check).
-    unpriced = unpriced_models([final_model])
+    unpriced = unpriced_models([final_model], catalogue)
     if unpriced:
         raise AuthConfigError(ErrorCode.INVALID_CONFIG, unpriced_models_message(unpriced))
 
-    provider = provider_for_model(final_model)
+    provider = provider_for_model(final_model, catalogue)
 
     # A model its provider serves without tool calling cannot run an agent that
     # needs tools. Refused here, before the sandbox runs it, rather than run with
@@ -602,6 +608,8 @@ def resolve_agent_invocation(
             reason="a job's run-time config cannot replace an agent's system prompt",
         )
     skills = resolved.skills or []
+    # #173 PR 3: what the sandbox needs of the model's provider, from the deployment's catalogue, now.
+    record = provider_record(final_model, catalogue, at=started)
 
     return AgentInvocation(
         agent_type=agent_type,
@@ -621,9 +629,10 @@ def resolve_agent_invocation(
         channel_config=None,  # Phase 3
         provider=provider.name if provider else None,
         fallback=fallback_record,
-        # The rates in force here: OpenRouter's live list, then the deployment's catalogue, which a sandbox
-        # carries no copy of (its own is the shipped one). Anthropic's CLI reports its own cost.
-        pricing_usd_per_mtok=model_rates(final_model) if provider is not None else catalog_rates(final_model),
+        # The rates in force here, for a sandbox image that predates the provider record: OpenRouter's live list,
+        # then the deployment's catalogue. Anthropic's CLI reports its own cost.
+        pricing_usd_per_mtok=record.rates if provider is not None else catalog_rates(final_model),
+        provider_record=record,
         local_first=local_first_record,
     )
 

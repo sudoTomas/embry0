@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 import structlog
 
 from embry0.agents._common import make_scrubber
-from embry0.agents.claude_cli_session import find_session_file, restored_cost_usd
+from embry0.agents.claude_cli_session import (
+    find_session_file,
+    model_usage_tokens,
+    restored_cost_usd,
+    restored_usage,
+)
 from embry0.agents.config_builder import build_sdk_options
 from embry0.agents.invocation import AgentInvocation
 from embry0.agents.output_text import FinalText, tail_on_line_boundary
@@ -235,14 +240,139 @@ def _cli_error_result(message: Any) -> _CliErrorResult | None:
     return _CliErrorResult(subtype, body, status_code)
 
 
-def _resumed_session_cost(session_id: str, cwd: str | Path | None) -> float:
-    """The session cost the CLI will restore when it resumes ``session_id``."""
+@dataclass(frozen=True)
+class _SdkProvider:
+    """An Agent SDK provider other than Anthropic, as the run's record (#173 PR 3) or the sandbox's table says."""
+
+    name: str
+    base_url: str
+    key_env: str
+
+
+def _sdk_provider(invocation: AgentInvocation) -> _SdkProvider | None:
+    """The provider the CLI is pointed at for ``invocation``: its record's, else the table's (an orchestrator that
+    predates records); None when neither knows it."""
+    record = invocation.provider_record
+    if record is not None and record.name == invocation.provider:
+        return _SdkProvider(record.name, record.base_url, record.key_env)
+    from embry0.agents.providers import PROVIDERS
+
+    prov = next((pr for pr in PROVIDERS if pr.name == invocation.provider), None)
+    return _SdkProvider(prov.name, prov.base_url, prov.api_key_env) if prov is not None else None
+
+
+def _turn_price(
+    invocation: AgentInvocation, model: str, input_tokens: int, output_tokens: int, cache_read: int, cache_creation: int
+) -> float | None:
+    """A turn's estimated cost: at the run's record's rates for its own model, or for any call of a provider other
+    than Anthropic (each of them is billed by that provider); else from the sandbox's table."""
+    record = invocation.provider_record
+    if record is not None and (record.charged_from == "catalogue" or model == invocation.model):
+        return record.price(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+        )
+    return price_usage(
+        model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
+    )
+
+
+Usage = tuple[int, int, int, int]
+"""(input, output, cache read, cache creation) tokens."""
+
+
+def _sdk_charge(
+    invocation: AgentInvocation,
+    cli_cost_usd: float,
+    *,
+    model_usage: Any,
+    restored: Usage,
+    result_usage: Usage,
+) -> float:
+    """What an Agent SDK run that ended with a result is charged (the design's "Pricing a run").
+
+    Anthropic's: what its CLI reports (``cli_cost_usd``, net of a resumed
+    session's earlier runs), which knows Anthropic's pricing better than flat
+    rates do. Any other provider's: the run's tokens at its record's rates; the
+    CLI prices every call by its own table of Claude models, which knows
+    nothing of the provider's, so its figure is logged beside the charge and
+    not counted. Each count is the larger of two: the result's ``model_usage``,
+    every model's, which counts each call the CLI made, a compaction's and the
+    session title's among them, less what a resumed session restored
+    (``restored``, its saved ``modelUsage``); and the result's ``usage``, which
+    counts the main loop's calls only. From an orchestrator that predates
+    records, or with no rates, the CLI's figure.
+    """
+    record = invocation.provider_record
+    if record is None or record.charged_from != "catalogue":
+        return cli_cost_usd
+    total = model_usage_tokens(model_usage)
+    # A total below the restored one means this CLI did not restore it: the total is this run's own (#501).
+    restored_here = all(now >= before for now, before in zip(total, restored, strict=True))
+    own = tuple(now - before for now, before in zip(total, restored, strict=True)) if restored_here else total
+    # Never under the result's usage, which counts the main loop's calls: a model_usage this code cannot read
+    # (renamed keys, a null entry) is then charged those, not $0 (#219), and so is a resumed run whose totals were
+    # taken for restored ones they are not.
+    tokens = (
+        max(own[0], result_usage[0]),
+        max(own[1], result_usage[1]),
+        max(own[2], result_usage[2]),
+        max(own[3], result_usage[3]),
+    )
+    return _charged(invocation, record, tokens, cli_cost_usd, source="result")
+
+
+def _tally_charge(invocation: AgentInvocation, run_usage: dict[str, Usage], cost_usd: float) -> float:
+    """What a run that ended with no result is charged: for a provider other than Anthropic, the record's rates on
+    the calls the stream reported, each once by message id. A lower bound: the CLI sends a call's usage as it starts,
+    with each content block, so its output is barely counted; a run that ends with no result has nothing better."""
+    record = invocation.provider_record
+    if record is None or record.charged_from != "catalogue" or not run_usage:
+        return cost_usd
+    calls = run_usage.values()
+    tokens = (
+        sum(c[0] for c in calls),
+        sum(c[1] for c in calls),
+        sum(c[2] for c in calls),
+        sum(c[3] for c in calls),
+    )
+    return _charged(invocation, record, tokens, cost_usd, source="calls")
+
+
+def _charged(invocation: AgentInvocation, record: Any, tokens: Usage, cli_cost_usd: float, *, source: str) -> float:
+    charged = record.price(
+        input_tokens=tokens[0], output_tokens=tokens[1], cache_read_tokens=tokens[2], cache_creation_tokens=tokens[3]
+    )
+    if charged is None:
+        logger.warning("sdk_run_unpriced_charged_cli_cost", provider=record.name, model=invocation.model)
+        return cli_cost_usd
+    logger.info(
+        "sdk_run_charged_from_catalogue",
+        provider=record.name,
+        model=invocation.model,
+        cost_usd=charged,
+        cli_cost_usd=cli_cost_usd,
+        tokens_from=source,
+    )
+    return float(charged)
+
+
+def _resumed_session_cost(session_id: str, cwd: str | Path | None) -> tuple[float, Usage]:
+    """The session cost, and the token counts, the CLI will restore when it resumes ``session_id``."""
     session_file = find_session_file(
         home_dir=Path(os.path.expanduser("~")),
         session_id=session_id,
         project_cwd=str(cwd) if cwd else None,
     )
-    return restored_cost_usd(session_file) if session_file is not None else 0.0
+    if session_file is None:
+        return 0.0, (0, 0, 0, 0)
+    return restored_cost_usd(session_file), restored_usage(session_file)
 
 
 def _workspace_root() -> Path:
@@ -617,10 +747,9 @@ class SdkAgentExecutor:
         # the Anthropic subscription. Missing credentials fail closed before
         # any tokens are spent.
         if invocation.provider:
-            from embry0.agents.providers import PROVIDERS
             from embry0.sandbox.xai_token import read_xai_proxy_token
 
-            prov = next((pr for pr in PROVIDERS if pr.name == invocation.provider), None)
+            prov = _sdk_provider(invocation)
             if prov is None:
                 return AgentOutput(
                     agent_type=invocation.agent_type,
@@ -640,12 +769,12 @@ class SdkAgentExecutor:
                     "CLAUDE_CODE_OAUTH_TOKEN": "",
                 }
             else:
-                provider_key = os.environ.get(prov.api_key_env, "")
+                provider_key = os.environ.get(prov.key_env, "")
                 if not provider_key:
                     cred_hint = (
-                        f"the xai-proxy (bearer file + EMBRY0_XAI_PROXY_URL) or {prov.api_key_env}"
+                        f"the xai-proxy (bearer file + EMBRY0_XAI_PROXY_URL) or {prov.key_env}"
                         if invocation.provider == "xai"
-                        else prov.api_key_env
+                        else prov.key_env
                     )
                     return AgentOutput(
                         agent_type=invocation.agent_type,
@@ -675,18 +804,22 @@ class SdkAgentExecutor:
         #    or missing blob). The bounded transcript is prepended to the
         #    prompt; lossier and re-billed as input, hence fallback-only.
         resumed_cost_usd = 0.0
+        resumed_usage: Usage = (0, 0, 0, 0)
         if resume_session_id:
             options.resume = resume_session_id
             # The CLI (2.1.277+) restores a resumed session's saved cost, so
             # the result's total_cost_usd then includes every earlier run of
             # the session, which the job total already counted. This run's
             # cost is that total minus what the CLI restored (#501).
-            resumed_cost_usd = _resumed_session_cost(resume_session_id, options.cwd)
+            resumed_cost_usd, resumed_usage = _resumed_session_cost(resume_session_id, options.cwd)
 
         # Denials the safety policy blocked this run, keyed by reason. Read by
         # the pause summary so "the agent went quiet" can be told apart from
         # "the agent spent its turns on a tool it was never going to be allowed".
         policy_denials: dict[str, int] = {}
+        # Each API call's (input, output, cache read, cache creation) tokens this run, by message id.
+        run_usage: dict[str, Usage] = {}
+        result_seen = False
 
         # --- The skills the CLI can load, read before it starts. A skill's
         # inline commands run from the text the CLI loaded, so a Skill call is
@@ -763,7 +896,7 @@ class SdkAgentExecutor:
         async def consume(stream: Any) -> None:
             nonlocal result_fallback, cost_usd, captured_session_id
             nonlocal input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
-            nonlocal is_error, provider_failure, cli_error
+            nonlocal is_error, provider_failure, cli_error, result_seen
             turn_number = 0
             # Subagent bookkeeping (spec 3.3): parent tool id -> the Task tool
             # call's name, recorded when the parent's tool_call was seen. A
@@ -825,18 +958,24 @@ class SdkAgentExecutor:
                         turn_out = int(usage_now.get("output_tokens", 0) or 0)
                         turn_cache_read = int(usage_now.get("cache_read_input_tokens", 0) or 0)
                         turn_cache_creation = int(usage_now.get("cache_creation_input_tokens", 0) or 0)
+                        # One API call's usage, under its message id: the CLI may send a message's usage again
+                        # with each of its content blocks, and the last is the call's (#173 PR 3).
+                        key = str(getattr(message, "message_id", None) or f"#{len(run_usage)}")
+                        before = run_usage.get(key, (0, 0, 0, 0))
+                        run_usage[key] = (
+                            max(before[0], turn_in),
+                            max(before[1], turn_out),
+                            max(before[2], turn_cache_read),
+                            max(before[3], turn_cache_creation),
+                        )
                         writer(
                             events.turn_usage(
                                 input_tokens=turn_in,
                                 output_tokens=turn_out,
                                 cache_read_tokens=turn_cache_read,
                                 cache_creation_tokens=turn_cache_creation,
-                                cost_usd=price_usage(
-                                    model_now,
-                                    input_tokens=turn_in,
-                                    output_tokens=turn_out,
-                                    cache_read_tokens=turn_cache_read,
-                                    cache_creation_tokens=turn_cache_creation,
+                                cost_usd=_turn_price(
+                                    invocation, model_now, turn_in, turn_out, turn_cache_read, turn_cache_creation
                                 ),
                                 model=model_now,
                                 **scoped,
@@ -902,6 +1041,14 @@ class SdkAgentExecutor:
                     output_tokens = int(usage.get("output_tokens", 0) or 0)
                     cache_read_tokens = int(usage.get("cache_read_input_tokens", 0) or 0)
                     cache_creation_tokens = int(usage.get("cache_creation_input_tokens", 0) or 0)
+                    result_seen = True
+                    cost_usd = _sdk_charge(
+                        invocation,
+                        cost_usd,
+                        model_usage=getattr(message, "model_usage", None),
+                        restored=resumed_usage,
+                        result_usage=(input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens),
+                    )
                     writer(
                         events.cost_update(
                             cost_usd=cost_usd,
@@ -1075,6 +1222,8 @@ class SdkAgentExecutor:
                 )
                 out_session_blob_path = str(discovered) if discovered else None
 
+        if not result_seen:
+            cost_usd = _tally_charge(invocation, run_usage, cost_usd)
         result = AgentOutput(
             agent_type=invocation.agent_type,
             is_error=is_error,

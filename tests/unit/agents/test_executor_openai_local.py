@@ -91,7 +91,7 @@ def test_a_conversation_that_cannot_fit_fails_with_its_own_code(proxied, monkeyp
 def test_without_a_setting_the_window_comes_from_the_servers_models(proxied, monkeypatch) -> None:
     seen: list[str] = []
 
-    async def window(provider, base_url, api_key, model):
+    async def window(base_url, api_key, model):
         seen.append(model)
         return 4096
 

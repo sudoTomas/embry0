@@ -1091,8 +1091,11 @@ async def run_agent_node(
         if not invocation.workspace_config:
             serialized["workspace_config"] = False
         if invocation.pricing_usd_per_mtok is not None:
-            # A model of OpenRouter's live catalog: the sandbox has no copy of it.
+            # The rates in force, for a sandbox image that predates the provider record.
             serialized["pricing_usd_per_mtok"] = list(invocation.pricing_usd_per_mtok)
+        if invocation.provider_record is not None:
+            # #173 PR 3: the provider as the catalogue says now; the sandbox reads it instead of its own table.
+            serialized["provider_record"] = invocation.provider_record.to_config()
 
         container = state.get("sandbox_container_id", "")
 
@@ -1103,9 +1106,12 @@ async def run_agent_node(
         traces_repo = configurable.get("traces_repo")
         trace_job_id = configurable.get("job_id", "")
         running_row_written = False
-        # The run's substitution, when it ran on a fallback model; kept off the
-        # call otherwise so a traces repository without the column still works.
-        trace_fallback: dict[str, Any] = {"fallback": invocation.fallback} if invocation.fallback is not None else {}
+        # The run's substitution, when it ran on a fallback model, and what it is
+        # priced with (#173 PR 3, its provider record); each kept off the call
+        # without one, so a traces repository without the column still works.
+        trace_extra: dict[str, Any] = {"fallback": invocation.fallback} if invocation.fallback is not None else {}
+        if invocation.provider_record is not None:
+            trace_extra["pricing"] = invocation.provider_record.trace_pricing()
         if traces_repo is not None and trace_job_id:
             try:
                 await traces_repo.create(
@@ -1114,7 +1120,7 @@ async def run_agent_node(
                     model=invocation.model,
                     result="running",
                     trace_id=run_id,
-                    **trace_fallback,
+                    **trace_extra,
                 )
                 running_row_written = True
             except Exception:
@@ -1139,7 +1145,7 @@ async def run_agent_node(
                         agent_type=agent_type,
                         model=invocation.model,
                         trace_id=run_id,
-                        **trace_fallback,
+                        **trace_extra,
                         **fields,
                     )
             except Exception:
