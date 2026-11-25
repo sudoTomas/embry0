@@ -969,17 +969,27 @@ class JobsRepository:
         return int(row["id"])
 
     async def run_events(self, run_id: str, event_types: Sequence[str]) -> list[dict[str, Any]]:
-        """The events of one agent run of these types, in the order they were kept (#694). An event that no longer
-        parses is skipped."""
+        """The events of one agent run of these types, in the order they were kept (#694). A ``tool_result`` comes back
+        as its type and parent alone: where it stands is what a reader needs of it, and its content can be long. An
+        event that no longer parses is skipped."""
         import json as json_mod
 
         rows = await self._db.fetch(
-            "SELECT text FROM job_logs WHERE run_id = $1 AND event_type = ANY($2::text[]) ORDER BY id",
+            """
+            SELECT event_type,
+                   CASE WHEN event_type = 'tool_result' THEN NULL ELSE text END AS text,
+                   CASE WHEN event_type = 'tool_result' AND text IS JSON OBJECT
+                        THEN text::jsonb->>'parent_tool_use_id' END AS parent
+              FROM job_logs WHERE run_id = $1 AND event_type = ANY($2::text[]) ORDER BY id
+            """,
             run_id,
             list(event_types),
         )
         events: list[dict[str, Any]] = []
         for row in rows:
+            if row["event_type"] == "tool_result":
+                events.append({"type": row["event_type"], "parent_tool_use_id": row["parent"]})
+                continue
             try:
                 event = json_mod.loads(row["text"])
             except (TypeError, ValueError):

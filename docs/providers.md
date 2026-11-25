@@ -283,7 +283,8 @@ its exec and finished after it. A run the orchestrator stopped in the middle of
 10 seconds before recovery, and the rest in the background. A run that was
 cancelled (its job cancelled, or a shutdown that could not wait for it), from
 its exec to its own finish, is closed at the cancel, waiting at most 3 seconds
-before its cancellation goes on. Either is closed `error` with
+before its cancellation goes on; one whose exec had already returned keeps its
+own outcome (success or its error), with the same charge. Either is closed `error` with
 `ERR_RUN_INTERRUPTED` and charged what is known of it
 (`embry0/agents/run_close.py`):
 - a run the metering proxies counted: the tallies kept of it in `run_meter`,

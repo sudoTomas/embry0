@@ -1288,6 +1288,8 @@ async def run_agent_node(
 
         # The run's usage as its sandbox reported it, so a run that never ends normally is charged its last figure.
         figure_events: list[dict[str, Any]] = []
+        # The run's result, once its exec returned: a close after that keeps the run's own outcome.
+        returned: dict[str, Any] = {}
 
         def _count_then_forward(event: dict[str, Any]) -> None:
             if event.get("type") in _FIGURE_EVENTS:
@@ -1354,6 +1356,20 @@ async def run_agent_node(
                 else None
             )
             fields = {**closing.fields, "tools_called": {}, "skill_actions": dict(skill_actions)}
+            own = returned.get("result")
+            if own is not None:
+                # The run finished and its result is in hand; only its trace's write was cut short. It keeps the
+                # charge reached above, and its own outcome.
+                fields.update(
+                    result="error" if own.is_error else "success",
+                    error_code=_str_or_none(getattr(own, "error_code", None)) if own.is_error else None,
+                    stderr_tail=_str_or_none(getattr(own, "stderr_tail", None)) if own.is_error else None,
+                    result_summary=redact_bounded(
+                        str(own.error_message or own.output or ""), TRACE_SUMMARY_CAP, redact=_redact_trace_text
+                    ),
+                    duration_ms=own.duration_ms,
+                    tools_called=own.tools_called or {},
+                )
             if running_row_written:
                 # One transaction: the trace closed (only while still running) and the charge added to the job's
                 # total, so neither is ever written without the other.
@@ -1397,6 +1413,7 @@ async def run_agent_node(
                 on_event=_count_then_forward,
                 resume_session=resume_session,
             )
+            returned["result"] = result
             # Inside the try: a cancel while the run is ended on the proxies closes its trace too.
             metering = await _end_metering(run_meter, meter_window)
             exec_returned = True

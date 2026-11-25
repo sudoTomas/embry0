@@ -242,7 +242,10 @@ async def test_a_cancel_while_the_run_is_ended_on_the_proxies_closes_its_trace()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert traces.finished, "a cancel after the exec returned left the trace running"
-    assert traces.finished[0]["cost_usd"] == pytest.approx(CALL_A + CALL_B)
+    closed = traces.finished[0]
+    assert closed["cost_usd"] == pytest.approx(CALL_A + CALL_B)
+    # The run finished and its result was in hand: the trace says how the run went, not that it was interrupted.
+    assert (closed["result"], closed["error_code"], closed["result_summary"]) == ("success", None, "done")
 
 
 async def test_a_cancel_while_the_local_slot_is_released_closes_the_trace(monkeypatch: Any) -> None:
@@ -268,7 +271,9 @@ async def test_a_cancel_while_the_local_slot_is_released_closes_the_trace(monkey
     with pytest.raises(asyncio.CancelledError):
         await task
     assert traces.finished, "a cancel while the slot was given back left the trace running"
-    assert traces.finished[0]["metering"]["closed"]["cause"] == "cancelled"
+    closed = traces.finished[0]
+    assert closed["metering"]["closed"]["cause"] == "cancelled"
+    assert (closed["result"], closed["error_code"]) == ("success", None), "a finished run was labelled interrupted"
 
 
 async def test_a_cancel_while_the_run_s_own_figures_are_written_does_not_lose_them() -> None:
