@@ -898,6 +898,13 @@ class SdkAgentExecutor:
             nonlocal input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
             nonlocal is_error, provider_failure, cli_error, result_seen
             turn_number = 0
+            # The model responses already counted as a turn, by message id: the CLI sends each content block of a
+            # response as its own assistant message under the response's id (#676). A message with no id is a
+            # response of its own.
+            turns_seen: set[str] = set()
+            # The responses whose usage was sent: the first message of each sends its usage, even all zeros.
+            run_usage_sent: set[str] = set()
+            unnamed = 0
             # Subagent bookkeeping (spec 3.3): parent tool id -> the Task tool
             # call's name, recorded when the parent's tool_call was seen. A
             # subagent is open from the first message that names it as parent
@@ -941,46 +948,56 @@ class SdkAgentExecutor:
                 if _is_assistant(message):
                     parent = getattr(message, "parent_tool_use_id", None) or None
                     scoped = _scoped_ids(parent)
-                    # Only a top-level message is a turn; a subagent's messages
-                    # ride under its parent's turn (spec 3.3).
-                    if parent is None:
+                    # One model response, under its message id (#173 PR 3, #676): the CLI sends each of its
+                    # content blocks as its own message, with the response's id and its usage again.
+                    named = getattr(message, "message_id", None)
+                    if not named:
+                        unnamed += 1
+                    key = str(named or f"#{unnamed}")
+                    # Only a top-level response is a turn, once whatever its blocks; a subagent's messages ride
+                    # under its parent's turn (spec 3.3).
+                    if parent is None and key not in turns_seen:
+                        turns_seen.add(key)
                         turn_number += 1
                         writer(
                             events.turn_start(turn_number=turn_number, model=getattr(message, "model", ""), **scoped)
                         )
-                    # One turn_usage per message that reports usage (the SDK's
-                    # AssistantMessage.usage is a dict or None); cost_update at
-                    # the result stays the run's authoritative total.
+                    # A response's usage once: each turn_usage carries what its message adds to the response's
+                    # usage so far (the SDK's AssistantMessage.usage is a dict or None), so the events sum to each
+                    # response's own. A block that adds nothing sends none. The stream gives no response's final
+                    # output count, so a running output total is a lower bound; cost_update at the result stays
+                    # the run's authoritative total.
                     usage_now = getattr(message, "usage", None)
                     if isinstance(usage_now, dict):
                         model_now = str(getattr(message, "model", "") or invocation.model)
-                        turn_in = int(usage_now.get("input_tokens", 0) or 0)
-                        turn_out = int(usage_now.get("output_tokens", 0) or 0)
-                        turn_cache_read = int(usage_now.get("cache_read_input_tokens", 0) or 0)
-                        turn_cache_creation = int(usage_now.get("cache_creation_input_tokens", 0) or 0)
-                        # One API call's usage, under its message id: the CLI may send a message's usage again
-                        # with each of its content blocks, and the last is the call's (#173 PR 3).
-                        key = str(getattr(message, "message_id", None) or f"#{len(run_usage)}")
+                        seen_now = (
+                            int(usage_now.get("input_tokens", 0) or 0),
+                            int(usage_now.get("output_tokens", 0) or 0),
+                            int(usage_now.get("cache_read_input_tokens", 0) or 0),
+                            int(usage_now.get("cache_creation_input_tokens", 0) or 0),
+                        )
                         before = run_usage.get(key, (0, 0, 0, 0))
-                        run_usage[key] = (
-                            max(before[0], turn_in),
-                            max(before[1], turn_out),
-                            max(before[2], turn_cache_read),
-                            max(before[3], turn_cache_creation),
+                        after = (
+                            max(before[0], seen_now[0]),
+                            max(before[1], seen_now[1]),
+                            max(before[2], seen_now[2]),
+                            max(before[3], seen_now[3]),
                         )
-                        writer(
-                            events.turn_usage(
-                                input_tokens=turn_in,
-                                output_tokens=turn_out,
-                                cache_read_tokens=turn_cache_read,
-                                cache_creation_tokens=turn_cache_creation,
-                                cost_usd=_turn_price(
-                                    invocation, model_now, turn_in, turn_out, turn_cache_read, turn_cache_creation
-                                ),
-                                model=model_now,
-                                **scoped,
+                        run_usage[key] = after
+                        added = (after[0] - before[0], after[1] - before[1], after[2] - before[2], after[3] - before[3])
+                        if key not in run_usage_sent or any(added):
+                            run_usage_sent.add(key)
+                            writer(
+                                events.turn_usage(
+                                    input_tokens=added[0],
+                                    output_tokens=added[1],
+                                    cache_read_tokens=added[2],
+                                    cache_creation_tokens=added[3],
+                                    cost_usd=_turn_price(invocation, model_now, *added),
+                                    model=model_now,
+                                    **scoped,
+                                )
                             )
-                        )
                     # Accumulate this assistant turn's text into the messages
                     # buffer (api_key resume path). We collapse all text
                     # blocks in the message into a single content string;
