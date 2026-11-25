@@ -100,7 +100,8 @@ areas:
 def test_two_areas_cannot_share_a_label() -> None:
     found = _problems("areas:\n  - name: Web App\n  - name: web-app\n")
     assert [(p["loc"], p["type"]) for p in found] == [(["areas", 1, "name"], "duplicate_slug")]
-    assert "area:web-app" in str(found[0]["msg"])
+    assert "the same label as area 0's name" in str(found[0]["msg"]), found
+    assert "web" not in str(found[0]["msg"]).lower(), "the name the operator wrote is never repeated"
 
 
 @pytest.mark.parametrize(

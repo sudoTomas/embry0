@@ -118,18 +118,34 @@ def _line(node: yaml.Node) -> int:
     return int(getattr(node.start_mark, "line", -1)) + 1
 
 
-def number_too_long(loc: Loc, *, key: bool = False) -> StructureProblem:
-    """The problem of a whole number at ``loc`` with more digits than the interpreter converts to or from text.
+def holding_mapping(loc: Loc) -> Loc:
+    """The place of the mapping that holds the value at ``loc``: past the list positions it is in, and without the
+    key it is under, which is what the operator wrote. A problem of the value is placed there, and its line says
+    where, as a key written twice is."""
+    end = len(loc)
+    while end and isinstance(loc[end - 1], int):
+        end -= 1
+    if end and isinstance(loc[end - 1], str):
+        end -= 1
+    return tuple(loc[:end])
 
-    ``key``: the number is a key of the mapping at ``loc``, which is not echoed back.
+
+def _at_line(line: int | None, sentence: str) -> str:
+    return f"Line {line}: {sentence[0].lower()}{sentence[1:]}" if line is not None else sentence
+
+
+def number_too_long(loc: Loc, *, key: bool = False, line: int | None = None) -> StructureProblem:
+    """The problem of a whole number with more digits than the interpreter converts to or from text.
+
+    ``key``: the number is a key of the mapping at ``loc``, which is not echoed back. Otherwise it is the value at
+    ``loc``, placed at the mapping that holds it (:func:`holding_mapping`), and said by its ``line`` when known.
     """
     limit = sys.get_int_max_str_digits()
-    what = (
-        f"A key is a whole number of more than {limit} digits."
-        if key
-        else f"A whole number can have at most {limit} digits."
+    if key:
+        return StructureProblem(loc, "number_too_long", f"A key is a whole number of more than {limit} digits.")
+    return StructureProblem(
+        holding_mapping(loc), "number_too_long", _at_line(line, f"A whole number can have at most {limit} digits.")
     )
-    return StructureProblem(loc, "number_too_long", what)
 
 
 #: The scalar types YAML reads into something other than text, and the words for one it cannot read.
@@ -161,21 +177,23 @@ def _scalar_problem(
     kind = _TYPED_SCALARS.get(str(node.tag))
     if kind is None:
         return None
+    line = _line(node)
     try:
         value = constructor.yaml_constructors[node.tag](constructor, node)
     except Exception:
         limit = sys.get_int_max_str_digits()
         if node.tag == _INT_TAG and limit and _decimal_digits(str(node.value)) > limit:
-            return number_too_long(loc, key=key)
+            return number_too_long(loc, key=key, line=line)
         type_, noun = kind
-        return StructureProblem(
-            loc, type_, f"A key is not {noun} YAML can read." if key else f"Not {noun} YAML can read."
-        )
+        if key:
+            return StructureProblem(loc, type_, f"A key is not {noun} YAML can read.")
+        # At the mapping that holds it, by its line, as a key written twice: the key it is under was written.
+        return StructureProblem(holding_mapping(loc), type_, _at_line(line, f"Not {noun} YAML can read."))
     if isinstance(value, int) and not isinstance(value, bool):
         try:
             str(value)
         except ValueError:
-            return number_too_long(loc, key=key)
+            return number_too_long(loc, key=key, line=line)
     return None
 
 

@@ -337,7 +337,7 @@ def check(values: Any) -> dict[str, Any]:
                 Problem(
                     ("areas", index, "name"),
                     "duplicate_slug",
-                    f"This name labels work as area 'area:{slug}', as area {first_by_slug[slug]}'s does: "
+                    f"This name labels work with the same label as area {first_by_slug[slug]}'s name: "
                     "each area needs a name of its own.",
                 )
             )

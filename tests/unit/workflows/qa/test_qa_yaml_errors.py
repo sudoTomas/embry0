@@ -142,3 +142,22 @@ def test_the_schema_s_own_options_stay_named():
 def test_text_that_is_not_a_setup_is_answered_without_repeating_it():
     assert _answering()(ValueError("a 'zz-name' went wrong"), "") == ["a '…' went wrong"]
     assert _answered("- zz-item\n") == ["qa.yaml must be a YAML mapping at the top level"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _HEAD
+        + "apps:\n  web:\n    boot_command: x\n    frontend_url: http://localhost:3000\napp_local:\n  zz-x:\n    seed_command: y\n",
+        _HEAD + "defaults:\n  browser_backend: zz-x\n",
+    ],
+    ids=["app_local names an unknown app", "an unknown browser backend"],
+)
+def test_a_check_s_own_message_is_answered_with_what_it_quotes_masked(text: str):
+    """End to end: a check's message names what the text holds (the app, the backend); the answer keeps the
+    check's words and says what it quoted as an ellipsis."""
+    answered = _answered(text)
+    assert answered and all("'…'" in sentence for sentence in answered), answered
+    assert not any("zz" in sentence for sentence in answered), f"the answer repeats what the setup holds: {answered}"
+    if "browser backend" in answered[0]:
+        assert "'playwright', 'vibium'" in answered[0], f"the backends it may name are embry0's words: {answered}"

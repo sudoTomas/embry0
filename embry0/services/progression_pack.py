@@ -333,9 +333,8 @@ def _from_pydantic(error: ValidationError, model: type[BaseModel], prefix: tuple
     for e in error.errors(include_input=False):
         loc, takes = _placed(model, tuple(e["loc"]))
         if e["type"] == "extra_forbidden" and takes is not None:
-            out.append(
-                Problem((*prefix, *loc), "extra_forbidden", f"no such key here; the keys here are {', '.join(takes)}")
-            )
+            keys = f"the keys here are {', '.join(takes)}" if takes else "it takes no keys"
+            out.append(Problem((*prefix, *loc), "extra_forbidden", f"no such key here; {keys}"))
         else:
             out.append(Problem((*prefix, *loc), e["type"], e["msg"]))
     return out
@@ -609,8 +608,9 @@ def cross_check(pack: Pack) -> list[Problem]:
             )
         if any(b <= a for a, b in zip(thresholds, thresholds[1:], strict=False)) or thresholds[0] < 1:
             problems.append(Problem((*loc, "thresholds"), "order", "thresholds start at 1 or more and rise"))
+        # The names a text may use are the metric's own parameters, never the keys the author wrote.
         problems += _check_text(
-            achievement.what_counts, set(achievement.params), (*loc, "what_counts"), achievement.params
+            achievement.what_counts, set(metric.params.model_fields), (*loc, "what_counts"), achievement.params
         )
         if achievement.metric == "skills_at_level" and not param_problems:
             if achievement.params["level"] > pack.curve.max_level:
@@ -634,7 +634,7 @@ def cross_check(pack: Pack) -> list[Problem]:
             )
         param_problems = _check_params(quest_kind.params, quest.params, (*loc, "params"))
         problems += param_problems
-        names = set(quest.params)
+        names = set(quest_kind.params.model_fields)
         for j, step in enumerate(quest.steps):
             problems += _check_text(step, names, (*loc, "steps", j), quest.params)
         problems += _check_text(quest.reward, names, (*loc, "reward"), quest.params)
@@ -665,7 +665,9 @@ def cross_check(pack: Pack) -> list[Problem]:
             if task.kind == "all_above" and i == 0:
                 problems.append(Problem((*loc, "kind"), "all_above", "the first tier has no tier above it"))
             problems += _check_params(vocab.TASK_KINDS[task.kind], task.params, (*loc, "params"))
-            problems += _check_text(task.text, set(task.params), (*loc, "text"), task.params)
+            problems += _check_text(
+                task.text, set(vocab.TASK_KINDS[task.kind].model_fields), (*loc, "text"), task.params
+            )
 
     for name, allowed in vocab.MESSAGE_PLACEHOLDERS.items():
         problems += _check_text(getattr(pack.messages, name), allowed, ("messages", name))

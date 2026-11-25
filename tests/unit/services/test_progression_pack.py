@@ -556,3 +556,20 @@ def test_a_key_the_pack_does_not_take_is_placed_at_its_mapping_and_not_named(
     problems = _problems(_edit(change))
     assert len(problems) == 1, f"one problem at the mapping, however many keys: {problems}"
     assert _WRITTEN not in problems[0], f"the problem names the key written: {problems}"
+
+
+def test_a_text_may_use_the_metric_s_own_parameters_never_the_keys_the_author_wrote() -> None:
+    """The names a text may use are the declared parameters of its metric, quest or task kind: a parameter the
+    author wrote and the kind does not take is refused at its mapping, and never offered as a placeholder."""
+
+    def change(d: dict[str, Any]) -> None:
+        d["achievements"][3]["params"]["zzwritten"] = 1
+        d["achievements"][3]["what_counts"] = "spent {nothing}"
+        d["quests"][0].setdefault("params", {})["zzother"] = 2
+        d["quests"][0]["reward"] = "a reward {nothing}"
+
+    problems = _problems(_edit(change))
+    assert "achievements[3].what_counts: names a value this text does not have; it may use {max_usd}" in problems, (
+        problems
+    )
+    assert not any("zz" in problem for problem in problems), f"a problem repeats a key the author wrote: {problems}"

@@ -23,6 +23,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from embry0.text_documents import unquoted
+from embry0.workflows.qa.browser_backends import backend_names
 from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
 
 # Where a problem sits when it is not inside one section of the setup.
@@ -108,14 +109,15 @@ def _answer(err: Any, data: Any) -> str:
 
 #: The error types whose message a check of the setup wrote, which may quote what the text holds.
 _CHECKS_SAY = frozenset({"value_error", "assertion_error"})
-#: Quoted words a check's message uses of the glob grammar itself, not of what was written.
-_GRAMMAR = frozenset({"..", "**"})
+#: Quoted words a check's message uses of embry0's own vocabulary, not of what was written: the glob grammar's,
+#: and the browser backends an unknown one is told from.
+_GRAMMAR = frozenset({"..", "**", *backend_names()})
 #: How a place says an entry of a mapping whose keys the setup names, by its position.
 _ENTRY = {"apps": "app", "packages": "package", "app_local": "app_local entry"}
 
 
 def _masked(text: str) -> str:
-    """``text`` with each quoted part said as ``'…'``, unless it is one character or a word of the glob grammar."""
+    """``text`` with each quoted part said as ``'…'``, unless it is one character or a word of :data:`_GRAMMAR`."""
     return unquoted(text, keep=_GRAMMAR)
 
 
