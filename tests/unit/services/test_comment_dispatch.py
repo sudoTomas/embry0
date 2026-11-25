@@ -48,7 +48,16 @@ class _FakeExecutor:
         self.dispatched.append(job_id)
 
 
-def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=None, from_fork=False):
+def _service(
+    *,
+    config=None,
+    donor_session=True,
+    pr_state="open",
+    jobs_by_pr=None,
+    from_fork=False,
+    head_ref="embry0/iss-e9077b36-eng-1135-watcher-fix-non-i",
+    default_branch="main",
+):
     svc = CommentDispatchService(
         config=config or _config(),
         jobs_repo=MagicMock(
@@ -65,8 +74,9 @@ def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=Non
             number=418,
             state=pr_state,
             url="https://github.com/acme/backend/pull/418",
-            head_ref="embry0/iss-e9077b36-eng-1135-watcher-fix-non-i",
+            head_ref=head_ref,
             from_fork=from_fork,
+            default_branch=default_branch,
         )
     )
     return svc
@@ -253,6 +263,8 @@ async def test_a_merge_request_is_followed_up_on_its_source_branch():
 
     def handler(request: httpx.Request) -> httpx.Response:
         asked.append(str(request.url))
+        if not request.url.path.endswith("/merge_requests/7"):
+            return httpx.Response(200, json={"default_branch": "main"})
         return httpx.Response(
             200,
             json={
@@ -269,7 +281,10 @@ async def test_a_merge_request_is_followed_up_on_its_source_branch():
         "acme/sub/web", 7, request="sent back", dispatched_by="alex", title="t", kind="send_back", forge="gitlab"
     )
     assert out["dispatched"] is True, out
-    assert asked == ["https://gitlab.example.test/api/v4/projects/acme%2Fsub%2Fweb/merge_requests/7"]
+    assert asked == [
+        "https://gitlab.example.test/api/v4/projects/acme%2Fsub%2Fweb/merge_requests/7",
+        "https://gitlab.example.test/api/v4/projects/acme%2Fsub%2Fweb",
+    ]
     assert svc._jobs.create.await_args.kwargs["context"]["ref"] == "embry0/fix-it"
     assert svc._jobs.update.await_args.kwargs["pr_url"] == "https://gitlab.example.test/acme/sub/web/-/merge_requests/7"
 
@@ -302,7 +317,7 @@ async def test_a_github_pull_request_is_still_read_on_github():
             json={
                 "state": "open",
                 "head": {"ref": "embry0/fix", "repo": {"full_name": "acme/web"}},
-                "base": {"ref": "main", "repo": {"full_name": "acme/web"}},
+                "base": {"ref": "main", "repo": {"full_name": "acme/web", "default_branch": "main"}},
                 "html_url": "https://github.com/acme/web/pull/7",
             },
         )
@@ -312,7 +327,7 @@ async def test_a_github_pull_request_is_still_read_on_github():
         "acme/web", 7, request="sent back", dispatched_by="alex", title="t", kind="send_back"
     )
     assert out["dispatched"] is True, out
-    assert asked == ["https://api.github.com/repos/acme/web/pulls/7"]
+    assert asked == ["https://api.github.com/repos/acme/web/pulls/7"], "GitHub's read gives the default branch"
 
 
 @pytest.mark.asyncio
@@ -367,6 +382,8 @@ async def test_a_merge_request_is_read_with_the_repository_s_gitlab_credential(r
 
     def handler(request: httpx.Request) -> httpx.Response:
         tokens.append((request.headers.get("private-token"), request.headers.get("authorization")))
+        if not request.url.path.endswith("/merge_requests/7"):
+            return httpx.Response(200, json={"default_branch": "main"})
         return httpx.Response(
             200, json={"state": "opened", "source_branch": "b", "source_project_id": 1, "target_project_id": 1}
         )
@@ -381,6 +398,88 @@ async def test_a_merge_request_is_read_with_the_repository_s_gitlab_credential(r
     )
     assert out["dispatched"] is True, out
     expected = "key-registry-gitlab" if resolver else "key-gitlab-000001"
-    assert tokens == [(expected, None)]
+    assert tokens == [(expected, None), (expected, None)], "the merge request and its project's default branch"
     if registry is not None:
-        assert registry.asked == [("acme/web", "gitlab")]
+        assert registry.asked == [("acme/web", "gitlab")] * 2
+
+
+# ---- the repository's default branch ----
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("head_ref", "default_branch", "reason"),
+    [("main", "main", "pr_head_is_default_branch"), ("embry0/fix", None, "default_branch_unread")],
+    ids=["head-is-default", "default-unread"],
+)
+async def test_a_pull_request_from_the_default_branch_is_not_followed_up(head_ref, default_branch, reason):
+    """A follow-up is granted a push to its pull request's branch: never the repository's default branch, and not
+    when which branch that is could not be read. Refused before any job is made, for a comment and a send-back."""
+    svc = _service(head_ref=head_ref, default_branch=default_branch)
+    assert await svc.handle_pr_comment(_payload()) == {"dispatched": False, "reason": reason}
+    sent_back = await svc.start_followup(
+        "acme/backend", 418, request="r", dispatched_by="alex", title="t", kind="send_back"
+    )
+    assert sent_back == {"dispatched": False, "reason": reason}
+    svc._jobs.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("forge", "answers", "reason"),
+    [
+        (
+            "github",
+            {
+                "pulls/7": {
+                    "state": "open",
+                    "head": {"ref": "trunk", "repo": {"full_name": "acme/web"}},
+                    "base": {"ref": "trunk", "repo": {"full_name": "acme/web", "default_branch": "trunk"}},
+                }
+            },
+            "pr_head_is_default_branch",
+        ),
+        (
+            "gitlab",
+            {
+                "merge_requests/7": {
+                    "state": "opened",
+                    "source_branch": "trunk",
+                    "source_project_id": 1,
+                    "target_project_id": 1,
+                },
+                "projects/acme%2Fweb": {"default_branch": "trunk"},
+            },
+            "pr_head_is_default_branch",
+        ),
+        (
+            "gitlab",
+            {
+                "merge_requests/7": {
+                    "state": "opened",
+                    "source_branch": "fix",
+                    "source_project_id": 1,
+                    "target_project_id": 1,
+                }
+            },
+            "default_branch_unread",
+        ),
+    ],
+    ids=["github-head-is-default", "gitlab-head-is-default", "gitlab-project-unread"],
+)
+async def test_the_default_branch_is_read_on_the_pull_request_s_forge(forge, answers, reason):
+    """GitHub's pull request read names the repository's default branch; GitLab's is the project's own read."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.raw_path.decode()
+        for suffix, body in answers.items():
+            if path.endswith(suffix):
+                return httpx.Response(200, json=body)
+        return httpx.Response(404, json={"message": "404 Not Found"})
+
+    svc = _forge_service(handler)
+    kw = {"forge": forge} if forge == "gitlab" else {}
+    out = await svc.start_followup("acme/web", 7, request="r", dispatched_by="alex", title="t", kind="send_back", **kw)
+    assert out == {"dispatched": False, "reason": reason}
+    svc._jobs.create.assert_not_awaited()

@@ -9,7 +9,6 @@ call :func:`start_lead` on a yes.
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -180,29 +179,37 @@ async def _start_ticket(request: Request, row: dict[str, Any], by: str, run_with
 
 
 async def _start_review(request: Request, row: dict[str, Any], by: str, run_with: RunWith | None) -> str:
-    """A follow-up job on the pull request's own branch, as a tagged PR comment starts one."""
+    """A follow-up job on the pull request's own branch, started as a tagged comment or a send-back starts one
+    (``CommentDispatchService.start_followup``): the pull request is read again now, and a fork's, one whose head is
+    the repository's default branch, or one no longer open gets none. The branch the lead stored is not trusted."""
+    from embry0.forge_urls import parse_pr_url
+
     data = dict(row.get("data") or {})
-    repo, head = str(row["repo"]), str(data.get("head_ref") or "")
-    if not head:
-        raise HTTPException(status_code=409, detail="the pull request's branch is not known; it cannot be followed up")
-    executor = getattr(request.app.state, "issue_executor", None)
-    if executor is None:
-        raise HTTPException(status_code=503, detail="executor not initialized")
-    task = lead_task(row)
-    jobs = request.app.state.jobs_repo
-    job_id: str = await jobs.create(
-        repo=repo,
-        task=task,
-        trace_id=f"trc-{uuid.uuid4().hex[:12]}",
-        context={"type": "git", "repo": repo, "ref": head},
-        pipeline_template="pr-followup",
-        pipeline_config=apply_run_with(None, run_with),
+    repo = str(row["repo"])
+    pr = parse_pr_url(str(row.get("url") or ""))
+    number = pr.number if pr is not None else data.get("number")
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        raise HTTPException(status_code=409, detail="the lead names no pull request; it cannot be followed up")
+    dispatch = getattr(request.app.state, "comment_dispatch", None)
+    if dispatch is None:
+        raise HTTPException(status_code=503, detail="comment dispatch not initialized")
+    result = await dispatch.start_followup(
+        repo,
+        number,
+        request=f"from a review lead accepted by {by}:\n\n{lead_task(row)}",
         dispatched_by=by,
+        title=f"[review] {repo}#{number}",
+        kind="lead",
+        asks="the lead",
+        pipeline_config=apply_run_with(None, run_with),
+        # The review finder reads GitHub's pull requests (leads.loop.FINDER_FORGES).
+        forge=pr.forge if pr is not None else "github",
     )
-    if row.get("url"):
-        await jobs.update(job_id, pr_url=row["url"])
-    executor.submit_job(job_id, repo=repo, title=f"[review] {repo}#{data.get('number')}", body=task, kind="lead")
-    return job_id
+    if not result.get("dispatched"):
+        raise HTTPException(
+            status_code=409, detail=f"not followed up: {str(result.get('reason') or 'refused').replace('_', ' ')}"
+        )
+    return str(result["job_id"])
 
 
 async def start_lead(request: Request, lead_id: str, *, by: str, run_with: RunWith | None) -> str:

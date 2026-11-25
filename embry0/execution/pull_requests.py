@@ -37,7 +37,9 @@ class PullRequest:
     - url: its address on the forge's web pages;
     - from_fork: its changes come from another repository than its own (GitLab: another project), or one the
       forge no longer names: ``head_ref`` is then a branch of that repository, not of the pull request's own;
-    - files, additions, deletions, commits: what it changes, None where the forge's read does not say.
+    - files, additions, deletions, commits: what it changes, None where the forge's read does not say;
+    - default_branch: its repository's default branch, when the read gives it (GitHub's does; GitLab's merge
+      request read does not, and :meth:`PullRequests.default_branch` reads it).
     """
 
     number: int
@@ -50,6 +52,7 @@ class PullRequest:
     additions: int | None = None
     deletions: int | None = None
     commits: int | None = None
+    default_branch: str | None = None
 
 
 class PullRequests(Protocol):
@@ -66,6 +69,9 @@ class PullRequests(Protocol):
     async def close(self, repo: str, number: int) -> ForgeWrite:
         """Close it. Safe to send again: closing a closed one leaves it closed."""
 
+    async def default_branch(self, repo: str) -> str | None:
+        """The repository's default branch, or None when it cannot be read."""
+
 
 def _count(value: Any) -> int | None:
     """A count the forge gave: an int, or GitLab's ``changes_count`` string (``"12"``, or ``"1000+"`` past its
@@ -78,6 +84,17 @@ def _count(value: Any) -> int | None:
         digits = value.rstrip("+")
         return int(digits) if digits.isdigit() else None
     return None
+
+
+async def _default_branch(client: Any, path: str, repo: str, forge: str) -> str | None:
+    """``default_branch`` of the repository (GitHub) or project (GitLab) at ``path``; None when it cannot be read."""
+    resp = await client.get(path, repo=repo)
+    body = resp.json() if resp.status_code == 200 else None
+    branch = body.get("default_branch") if isinstance(body, dict) else None
+    if not isinstance(branch, str) or not branch:
+        logger.info("default_branch_unread", forge=forge, repo=repo, status=resp.status_code)
+        return None
+    return branch
 
 
 class GitHubPullRequests:
@@ -102,6 +119,7 @@ class GitHubPullRequests:
         # reviewer reads it (pr_review.triggers.pr_from_github).
         head_repo = str((head.get("repo") or {}).get("full_name") or "")
         base_repo = str((base.get("repo") or {}).get("full_name") or "") or repo
+        default_branch = str((base.get("repo") or {}).get("default_branch") or "") or None
         return PullRequest(
             number=number,
             state=state,
@@ -109,6 +127,7 @@ class GitHubPullRequests:
             url=str(body.get("html_url") or ""),
             from_fork=not head_repo or head_repo.lower() != base_repo.lower(),
             title=str(body.get("title") or ""),
+            default_branch=default_branch,
             files=_count(body.get("changed_files")),
             additions=_count(body.get("additions")),
             deletions=_count(body.get("deletions")),
@@ -124,6 +143,9 @@ class GitHubPullRequests:
             f"/repos/{repo}/pulls/{number}", repo=repo, json={"state": "closed"}, retry_transient=True
         )
         return forge_write(resp)
+
+    async def default_branch(self, repo: str) -> str | None:
+        return await _default_branch(self._client, f"/repos/{repo}", repo, self.forge)
 
 
 class GitLabPullRequests:
@@ -173,6 +195,9 @@ class GitLabPullRequests:
             self._path(repo, number), repo=repo, json={"state_event": "close"}, retry_transient=True
         )
         return forge_write(resp)
+
+    async def default_branch(self, repo: str) -> str | None:
+        return await _default_branch(self._client, f"/projects/{encode_project(repo)}", repo, self.forge)
 
 
 def pull_requests_for(forge: str, client: Any) -> PullRequests:
