@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,6 +36,18 @@ def docker_mock():
     return docker
 
 
+@pytest.fixture
+async def pm(docker_mock) -> AsyncIterator[ProxyManager]:
+    """A manager over the mocked daemon, stopped when the test ends.
+
+    start() opens an HTTP session that only stop() closes; a test that
+    started one and never stopped it left the session open (#708).
+    """
+    manager = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+    yield manager
+    await manager.stop()
+
+
 def _launch_env(docker_mock, name: str) -> dict | None:
     for call in docker_mock.build_run_proxy_cmd.call_args_list:
         if call.kwargs.get("name") == name:
@@ -43,16 +56,14 @@ def _launch_env(docker_mock, name: str) -> dict | None:
 
 
 @pytest.mark.asyncio
-async def test_no_upstream_launches_no_proxy(docker_mock):
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+async def test_no_upstream_launches_no_proxy(docker_mock, pm):
     await pm.start(github_token="ghp_test")
     assert _launch_env(docker_mock, "local-llm-proxy") is None
     assert pm.local_llm_proxy_url == ""
 
 
 @pytest.mark.asyncio
-async def test_an_upstream_launches_the_proxy_on_the_restricted_network(docker_mock):
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+async def test_an_upstream_launches_the_proxy_on_the_restricted_network(docker_mock, pm):
     await pm.start(
         github_token="ghp_test",
         local_llm_upstream="http://model-box:8000/v1",

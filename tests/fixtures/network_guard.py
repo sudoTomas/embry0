@@ -46,7 +46,9 @@ resolver and are not stopped.
 A refused connection raises :class:`NetworkUseRefused`, which is not an
 ``OSError``, so code that retries on a network error does not take it for one
 and wait; and it is recorded, so a test whose code swallows the exception
-still fails. A test that must reach the network says so with
+still fails. A socket refused a connect is closed first: code that closes its
+socket only on an ``OSError`` (``socket.create_connection``) would leave it
+open, for the collector to report under another test. A test that must reach the network says so with
 ``@pytest.mark.allow_network(reason)``.
 """
 
@@ -305,12 +307,21 @@ class Guard:
 
         real = {name: getattr(socket.socket, name) for name in ("connect", "connect_ex", "sendto", "sendmsg")}
 
+        def refused_closes(sock: socket.socket, address: Any) -> None:
+            try:
+                guard.check_address(sock.family, address)
+            except NetworkUseRefused:
+                # A caller such as socket.create_connection (and httpx's sync transport over it) closes its socket
+                # only on an OSError, which a refusal is not: the socket, never connected, would be left open.
+                sock.close()
+                raise
+
         def connect(sock: socket.socket, address: Any) -> None:
-            guard.check_address(sock.family, address)
+            refused_closes(sock, address)
             return real["connect"](sock, address)
 
         def connect_ex(sock: socket.socket, address: Any) -> int:
-            guard.check_address(sock.family, address)
+            refused_closes(sock, address)
             return real["connect_ex"](sock, address)  # type: ignore[no-any-return]
 
         def sendto(sock: socket.socket, data: Any, *args: Any) -> int:
