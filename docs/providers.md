@@ -182,8 +182,9 @@ each with the usage the response started with (one output token), and the
 calls a compaction or the session title make send no message at all. The
 result's `modelUsage` counts them all; a resumed session's counts include its
 earlier runs, which the session file's saved totals give, and those are taken
-off. A result without `modelUsage` is charged its `usage` (the main loop's
-calls); a run that ends with no result, the calls the stream reported, each
+off. No count is charged below the result's `usage` (the main loop's calls),
+so a `modelUsage` this release cannot read is never charged $0; a run that
+ends with no result is charged the calls the stream reported, each
 once, which undercounts their output. A model with no rates in
 the record is never metered at $0: a chat-completions run of it ends as "cost
 unknown", and the resolver refuses such a model before any run.

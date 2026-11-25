@@ -266,7 +266,15 @@ def test_a_record_without_rates_leaves_the_run_unpriced(
 STREAMS = Path(__file__).parents[2] / "fixtures" / "sdk-streams"
 
 
-def _recorded(name: str, *, drop: tuple[str, ...] = (), without_result: bool = False) -> list[Any]:
+def _recorded(
+    name: str,
+    *,
+    drop: tuple[str, ...] = (),
+    without_result: bool = False,
+    model_usage: Any = None,
+) -> list[Any]:
+    """The recorded stream ``name``; its result without the keys ``drop`` names, or with ``model_usage`` in place
+    of its own."""
     from claude_agent_sdk._internal.message_parser import parse_message
 
     messages = []
@@ -276,6 +284,8 @@ def _recorded(name: str, *, drop: tuple[str, ...] = (), without_result: bool = F
             if without_result:
                 continue
             data = {k: v for k, v in data.items() if k not in drop}
+            if model_usage is not None:
+                data["modelUsage"] = model_usage
         messages.append(parse_message(data))
     return messages
 
@@ -290,10 +300,10 @@ async def _sdk_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    restored: dict[str, Any] | None = None,
+    restored: dict[str, Any] | list[dict[str, Any]] | None = None,
 ) -> tuple[Any, list[dict[str, Any]], Any]:
     """Run the Agent SDK executor over ``messages``; ``restored`` is the cost-state line a resumed session's file
-    ends with, as the CLI wrote it at the earlier run's exit."""
+    ends with, as the CLI wrote it at the earlier run's exit, or each such line the file holds, in order."""
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path / "workspace"))
     monkeypatch.setenv("XAI_API_KEY", "console-key")
     monkeypatch.setenv("EMBRY0_XAI_CONSOLE_KEY", "console-key")
@@ -302,10 +312,11 @@ async def _sdk_run(
     monkeypatch.setenv("HOME", str(home))
     kwargs: dict[str, Any] = {}
     if restored is not None:
-        session = str(restored["sessionId"])
+        lines = restored if isinstance(restored, list) else [restored]
+        session = str(lines[-1]["sessionId"])
         session_dir = home / ".claude" / "projects" / sanitize_cwd_for_session_dir("/workspace")
         session_dir.mkdir(parents=True)
-        (session_dir / f"{session}.jsonl").write_text(json.dumps(restored) + "\n")
+        (session_dir / f"{session}.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
         kwargs["resume_session_id"] = session
     events: list[dict[str, Any]] = []
     captured: dict[str, Any] = {}
@@ -396,6 +407,81 @@ async def test_a_session_this_cli_did_not_restore_is_charged_its_whole_usage(tmp
         _grok(), _recorded("grok-session-first.jsonl"), tmp_path, monkeypatch, restored=restored
     )
     assert out.cost_usd == pytest.approx(_grok_price(3000, 400, 400, 500))
+
+
+async def test_a_compacted_run_this_cli_did_not_restore_keeps_its_compaction(tmp_path, monkeypatch) -> None:
+    """Totals below the saved ones are the run's own, a compaction's call included: nothing is taken off them."""
+    saved = {"type": "cost-state", "sessionId": _result_of("grok-compacted.jsonl")["session_id"]}
+    saved["modelUsage"] = {"grok-4.7": {"inputTokens": 400_000, "outputTokens": 10}}
+    out, _events, _ = await _sdk_run(_grok(), _recorded("grok-compacted.jsonl"), tmp_path, monkeypatch, restored=saved)
+    usage = _result_of("grok-compacted.jsonl")["modelUsage"]["grok-4.7"]
+    charge = _grok_price(usage["inputTokens"], usage["outputTokens"], usage["cacheReadInputTokens"], 0)
+    assert out.cost_usd == pytest.approx(charge), f"charged {out.cost_usd}, the calls cost {charge}"
+
+
+def _cost_state(name: str, model_usage: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The cost-state line the CLI saves at the exit of the recorded run ``name`` (its result's totals), under the
+    resumed recording's session id; ``model_usage`` in place of its totals."""
+    result = _result_of(name)
+    return {
+        "type": "cost-state",
+        "sessionId": _result_of("grok-session-resumed.jsonl")["session_id"],
+        "totalCostUSD": result["total_cost_usd"],
+        "modelUsage": model_usage if model_usage is not None else result["modelUsage"],
+    }
+
+
+async def test_the_last_saved_totals_are_the_restored_ones(tmp_path, monkeypatch) -> None:
+    """A session file holds a cost-state line for each run that exited; the CLI restores the last one."""
+    earlier = {"grok-4.7": {"inputTokens": 1000, "outputTokens": 100, "cacheReadInputTokens": 0}}
+    lines = [_cost_state("grok-session-first.jsonl", earlier), _cost_state("grok-session-first.jsonl")]
+    out, _events, _ = await _sdk_run(
+        _grok(), _recorded("grok-session-resumed.jsonl"), tmp_path, monkeypatch, restored=lines
+    )
+    assert out.cost_usd == pytest.approx(_grok_price(3000, 400, 400, 500)), "not the last line's totals taken off"
+
+
+async def test_every_model_of_the_result_is_counted(tmp_path, monkeypatch) -> None:
+    """A run whose calls used two models (the CLI's small model for a title, say): their counts are summed."""
+    usage = _result_of("grok-two-calls.jsonl")["modelUsage"]["grok-4.7"]
+    small = {"inputTokens": 1000, "outputTokens": 50, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
+    out, _events, _ = await _sdk_run(
+        _grok(),
+        _recorded("grok-two-calls.jsonl", model_usage={"grok-4.7": usage, "grok-4.7-mini": small}),
+        tmp_path,
+        monkeypatch,
+    )
+    assert out.cost_usd == pytest.approx(_grok_price(4000, 450, 400, 500)), "a model of the result was not counted"
+
+
+@pytest.mark.parametrize(
+    "model_usage",
+    [
+        {"grok-4.7": {"input_tokens": 3000, "output_tokens": 400}},
+        {"grok-4.7": None},
+        {"grok-4.7": {"inputTokens": "3000", "outputTokens": "400"}},
+    ],
+    ids=["renamed keys", "a null entry", "text counts"],
+)
+async def test_a_model_usage_with_nothing_readable_is_charged_the_result_s_usage(
+    tmp_path, monkeypatch, model_usage: dict[str, Any]
+) -> None:
+    """Never a silent $0 (#219): the result's usage still counts the main loop's calls."""
+    out, _events, _ = await _sdk_run(
+        _grok(), _recorded("grok-two-calls.jsonl", model_usage=model_usage), tmp_path, monkeypatch
+    )
+    assert out.cost_usd == pytest.approx(_grok_price(3000, 400, 400, 500)), f"charged {out.cost_usd}"
+
+
+async def test_a_resumed_run_is_charged_at_least_its_main_loop_s_calls(tmp_path, monkeypatch) -> None:
+    """Saved totals that would leave less than the result's usage (a CLI that did not restore them, though its
+    own totals happen to be as large) are not all taken off: the result's usage is the floor."""
+    larger = {"grok-4.7": {"inputTokens": 5500, "outputTokens": 700, "cacheReadInputTokens": 700}}
+    lines = [_cost_state("grok-session-first.jsonl", larger)]
+    out, _events, _ = await _sdk_run(
+        _grok(), _recorded("grok-session-resumed.jsonl"), tmp_path, monkeypatch, restored=lines
+    )
+    assert out.cost_usd == pytest.approx(_grok_price(3000, 400, 400, 1000)), f"charged {out.cost_usd}"
 
 
 async def test_a_result_without_model_usage_is_charged_its_usage(tmp_path, monkeypatch) -> None:

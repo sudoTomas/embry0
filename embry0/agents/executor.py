@@ -302,26 +302,29 @@ def _sdk_charge(
     rates do. Any other provider's: the run's tokens at its record's rates; the
     CLI prices every call by its own table of Claude models, which knows
     nothing of the provider's, so its figure is logged beside the charge and
-    not counted. The tokens are the result's ``model_usage``, every model's,
-    which counts each call the CLI made, a compaction's and the session
-    title's among them, less what a resumed session restored (``restored``,
-    its saved ``modelUsage``); the result's ``usage``, which counts the main
-    loop's calls only, when it carries no ``model_usage``. From an
-    orchestrator that predates records, or with no rates, the CLI's figure.
+    not counted. Each count is the larger of two: the result's ``model_usage``,
+    every model's, which counts each call the CLI made, a compaction's and the
+    session title's among them, less what a resumed session restored
+    (``restored``, its saved ``modelUsage``); and the result's ``usage``, which
+    counts the main loop's calls only. From an orchestrator that predates
+    records, or with no rates, the CLI's figure.
     """
     record = invocation.provider_record
     if record is None or record.charged_from != "catalogue":
         return cli_cost_usd
-    tokens = result_usage
-    if isinstance(model_usage, dict) and model_usage:
-        total = model_usage_tokens(model_usage)
-        # A total below the restored one means this CLI did not restore it: the total is this run's own (#501).
-        restored_here = all(now >= before for now, before in zip(total, restored, strict=True))
-        tokens = (
-            (total[0] - restored[0], total[1] - restored[1], total[2] - restored[2], total[3] - restored[3])
-            if restored_here
-            else total
-        )
+    total = model_usage_tokens(model_usage)
+    # A total below the restored one means this CLI did not restore it: the total is this run's own (#501).
+    restored_here = all(now >= before for now, before in zip(total, restored, strict=True))
+    own = tuple(now - before for now, before in zip(total, restored, strict=True)) if restored_here else total
+    # Never under the result's usage, which counts the main loop's calls: a model_usage this code cannot read
+    # (renamed keys, a null entry) is then charged those, not $0 (#219), and so is a resumed run whose totals were
+    # taken for restored ones they are not.
+    tokens = (
+        max(own[0], result_usage[0]),
+        max(own[1], result_usage[1]),
+        max(own[2], result_usage[2]),
+        max(own[3], result_usage[3]),
+    )
     return _charged(invocation, record, tokens, cli_cost_usd, source="result")
 
 
