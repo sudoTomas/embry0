@@ -10,12 +10,12 @@ from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 
 
 @pytest.fixture
 def app(monkeypatch):
-    enable_providers(monkeypatch, "custom")
+    enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
     provider_repo = MagicMock()
     provider_repo.get = AsyncMock(return_value={"disabled_models": [], "fallback_models": []})

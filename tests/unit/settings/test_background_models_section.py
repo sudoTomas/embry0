@@ -18,7 +18,7 @@ import pytest
 from embry0.settings.document import DocumentInvalid, check, load_yaml, read_sections
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 
 FEATURES = ("watcher", "context_audit", "scout", "proposal_brief", "job_brief", "slop_judge")
 
@@ -55,7 +55,7 @@ def _model_of(values: dict[str, Any], feature: str) -> str:
 
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "openai", "custom")
+    enable_providers(monkeypatch, "openai", "custom", **LOCAL_SERVER)
 
 
 def test_the_section_reads_as_an_operator_writes_it() -> None:

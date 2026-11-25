@@ -49,7 +49,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -222,6 +222,99 @@ async def read_references(
     return out
 
 
+# ---- the custom provider's old defaults, kept once where a deployment relied on them ----
+
+#: The ``imported`` ledger key of the one-time import below.
+CUSTOM_IMPORT: Final = "custom.relied_on"
+#: The custom provider's turn and time factors before its defaults changed (#173), kept where it was used.
+RELIED_ON_FACTORS: Final[Mapping[str, float]] = {"turns": 2.0, "timeout": 2.0}
+#: What each custom model a deployment used had before: run at $0, and, on a background call, held to the call's
+#: JSON schema.
+RELIED_ON_MODEL: Final[Mapping[str, Any]] = {"free": True, "structured_output": "json_schema"}
+#: The server's thinking switch every background call sent before, kept as a request extra of each model a
+#: ``background_models`` value names only: a request extra goes with an agent's run too, which never sent it.
+THINKING_OFF: Final[Mapping[str, Any]] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+@dataclass(frozen=True)
+class UsedCustomModels:
+    """The custom models a deployment names or ran, and which of them a ``background_models`` value names."""
+
+    models: list[str]
+    background: frozenset[str] = frozenset()
+
+
+CustomModelReader = Callable[[Any], Awaitable[UsedCustomModels]]
+"""``(conn) -> used``: the custom models a deployment's stored configuration and runs name."""
+
+
+def _custom(model: str) -> bool:
+    provider = seed().named("custom")
+    prefix = provider.model_prefixes[0] if provider is not None else "custom/"
+    return model.startswith(prefix) and len(model) > len(prefix)
+
+
+async def read_custom_models(conn: Any, references: ReferenceReader = read_references) -> UsedCustomModels:
+    """Every ``custom/<model>`` the stored configuration names (a tier or the default model, the fallback order, an
+    agent definition, a ``background_models`` value at any layer, a job's ``agent_models`` override) and every one
+    a run was traced on; and which a ``background_models`` value names."""
+    found = await references(conn)
+    named = {reference.model for reference in found}
+    background = {reference.model for reference in found if reference.loc[:1] == ("background_models",)}
+    rows = await conn.fetch("SELECT DISTINCT model FROM traces WHERE model LIKE 'custom/%'")
+    named |= {str(row["model"]) for row in rows}
+    rows = await conn.fetch(
+        "SELECT DISTINCT override.value AS model FROM jobs, jsonb_each_text("
+        "CASE WHEN jsonb_typeof(jobs.pipeline_config -> 'agent_models_override') = 'object' "
+        "THEN jobs.pipeline_config -> 'agent_models_override' ELSE '{}'::jsonb END) AS override "
+        "WHERE override.value LIKE 'custom/%'"
+    )
+    named |= {str(row["model"]) for row in rows}
+    return UsedCustomModels(
+        sorted(model for model in named if _custom(model)),
+        frozenset(model for model in background if _custom(model)),
+    )
+
+
+def _custom_listed(data: Mapping[str, Any]) -> set[str]:
+    """The custom models an overlay lists."""
+    providers = data.get("providers") if isinstance(data, Mapping) else None
+    custom = providers.get("custom") if isinstance(providers, Mapping) else None
+    models = custom.get("models") if isinstance(custom, Mapping) else None
+    return set(models) if isinstance(models, Mapping) else set()
+
+
+def custom_import(
+    data: Mapping[str, Any], models: Iterable[str], background: Iterable[str] = ()
+) -> dict[str, Any] | None:
+    """The overlay ``data`` with what the deployment relied on of the custom provider kept: the old factors, unless
+    it sets its own; and each of ``models`` it does not list, as :data:`RELIED_ON_MODEL` (priced at the provider's
+    default price instead of ``free`` where the overlay sets one), with :data:`THINKING_OFF` as its request extras
+    where ``background`` names it. None when there is nothing to keep."""
+    models = sorted(set(models))
+    background = set(background)
+    if not models:
+        return None
+    overlay: dict[str, Any] = json.loads(json.dumps(dict(data or {})))
+    providers = overlay.setdefault("providers", {})
+    custom = providers.setdefault("custom", {})
+    custom.setdefault("factors", dict(RELIED_ON_FACTORS))
+    listed = custom.setdefault("models", {}) or {}
+    custom["models"] = listed
+    default_price = custom.get("default_price")
+    for model in models:
+        if model in listed:
+            continue
+        entry = json.loads(json.dumps(dict(RELIED_ON_MODEL)))
+        if model in background:
+            entry["request_extras"] = json.loads(json.dumps(dict(THINKING_OFF)))
+        if isinstance(default_price, Mapping):
+            del entry["free"]
+            entry["prices"] = [dict(default_price)]
+        listed[model] = entry
+    return overlay
+
+
 def broken_references(references: list[Reference], before: Catalogue, after: Catalogue) -> list[Problem]:
     """A problem for each reference ``before`` offers priced and ``after`` does not: what a write may not take
     out, leave unpriced or turn off."""
@@ -301,6 +394,9 @@ class CatalogueStore:
     db: DatabasePool
     references: ReferenceReader = field(default=read_references)
     audit_log_path: Path | None = None
+    #: What names a custom model, for the one-time import (:meth:`import_custom_defaults`); None: this store's
+    #: ``references``, the traces and the jobs' ``agent_models``.
+    custom_models: CustomModelReader | None = None
     #: ``LoopMetrics`` (``embry0_provider_catalogue_refused_parts``); the null one records nothing.
     metrics: Any = NULL_METRICS
     _installed_generation: int | None = None
@@ -508,6 +604,83 @@ class CatalogueStore:
             )
         await self.refresh()
         return SaveResult(generation, new_revision, True, _diff(stored.yaml_text, text))
+
+    async def import_custom_defaults(self, *, actor: str = "embry0:upgrade") -> list[str]:
+        """Keep, once, what the deployment relied on of the custom provider's old defaults; answer the models kept.
+
+        The custom provider shipped a $0 price for any model and doubled turn and time budgets, and its background
+        calls sent every model a JSON schema and turned its thinking off. Its defaults are now none of that
+        (#173): a custom model runs only priced or ``free``. So at the first start of this release, the custom
+        models the deployment names or ran (:func:`read_custom_models`) are written into its overlay as
+        :data:`RELIED_ON_MODEL`, the ones a ``background_models`` value names with the thinking switch as their
+        request extras (:data:`THINKING_OFF`; an agent's run, which never sent it, sends a model's request extras
+        too, so no other model gets it), with the old factors, as one revision (source ``upgrade``) and one
+        ``provider_catalogue.custom_imported`` audit row. The ``imported`` ledger is marked whether or not there
+        was anything to keep, so this never runs again; an overlay the catalogue refuses is logged at error level
+        and left as it is.
+        """
+        kept: list[str] = []
+        async with self.db.transaction() as conn:
+            stored = await self._locked(conn)
+            ledger = await conn.fetchval("SELECT imported FROM provider_catalogue WHERE scope = $1", SCOPE) or []
+            if CUSTOM_IMPORT in ledger:
+                return []
+            reader = self.custom_models or (lambda c: read_custom_models(c, self.references))
+            used = await reader(conn)
+            models = used.models
+            overlay = custom_import(stored.data, models, used.background)
+            if overlay == stored.data:
+                overlay = None  # it lists them all, with factors of its own: nothing to keep
+            if overlay is not None:
+                try:
+                    merge(seed().document, overlay, stored.shipped)
+                except CatalogueInvalid as invalid:
+                    logger.error(
+                        "provider_catalogue_custom_import_refused",
+                        models=models[:20],
+                        problems=[str(problem) for problem in invalid.problems[:10]],
+                        hint="list each custom model with its prices, or free: true, in the provider catalogue",
+                    )
+                    overlay = None
+            ledger = sorted({*ledger, CUSTOM_IMPORT})
+            if overlay is not None:
+                kept = [model for model in models if model not in _custom_listed(stored.data)]
+                day = datetime.now(UTC).date().isoformat()
+                text = (
+                    f"# Kept once on {day}: the custom provider's old defaults, for the custom models this deployment\n"
+                    "# used (free, a background call's JSON schema, its thinking off for a background model) and its old\n"
+                    "# factors.\n"
+                )
+                text += yaml.safe_dump(overlay, sort_keys=False, default_flow_style=False)
+                shipped = shipped_entries(seed().document, overlay, stored.shipped)
+                generation = await self._write(conn, text, overlay, actor=actor, shipped=shipped)
+                await conn.execute("UPDATE provider_catalogue SET imported = $2 WHERE scope = $1", SCOPE, ledger)
+                await ConfigRevisionsRepository(self.db).append(
+                    conn,
+                    scope=SCOPE,
+                    surface=SURFACE,
+                    before=_document(stored.yaml_text, stored.data, stored.shipped),
+                    after=_document(text, overlay, shipped),
+                    actor=actor,
+                    source="upgrade",
+                    reason="the custom provider's old defaults, kept for the custom models this deployment used",
+                )
+                logger.info(
+                    "provider_catalogue_custom_imported", models=kept[:20], count=len(kept), generation=generation
+                )
+            else:
+                await conn.execute("UPDATE provider_catalogue SET imported = $2 WHERE scope = $1", SCOPE, ledger)
+        if overlay is not None:
+            count = len(kept)
+            await emit_audit(
+                self.db,
+                "provider_catalogue.custom_imported",
+                actor=actor,
+                details={"models": kept[:50], "count": count},
+                audit_log_path=self.audit_log_path,
+            )
+        await self.refresh()
+        return kept
 
     async def _locked(self, conn: Any, *, for_update: bool = True) -> _Row:
         return await _held_row(conn, " FOR UPDATE" if for_update else "")

@@ -37,7 +37,7 @@ from embry0.settings.sections import CATALOG
 from embry0.settings.store import SettingsStore, build_snapshot
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.scout import ScoutRunsRepository
-from tests.fixtures.provider_catalogue import store_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, store_providers
 from tests.fixtures.settings_reads import snapshots_taken
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
@@ -76,7 +76,7 @@ async def app(
     """
     monkeypatch.setattr(ScoutLoop, "start", _no_ticks)
     # The custom provider on in the stored catalogue, which the lifespan installs, so the scout's model is offered.
-    await store_providers(db_with_migrations, "custom")
+    await store_providers(db_with_migrations, "custom", **LOCAL_SERVER)
     # The meter off from its first look; leads are off by default.
     await SettingsStore(db_with_migrations).set_keys("slop_meter", {"enabled": False}, actor="ops@example.com")
     with patch.dict(os.environ, {}, clear=True):

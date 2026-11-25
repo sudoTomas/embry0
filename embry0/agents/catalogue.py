@@ -123,6 +123,9 @@ class ModelProvider:
     """Models this provider serves without tool calling on its OpenAI-compatible API."""
     request_extras: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     """model -> extra chat-completions body fields a model needs (e.g. to enable tools)."""
+    structured_output_models: frozenset[str] = frozenset()
+    """Models a call may hold to a JSON schema while they decode (``response_format`` ``json_schema``): a background
+    call sends its own schema to these, and to no other."""
     default_pricing_usd_per_mtok: tuple[float, float] | None = None
     """Rates for a routed model with no entry of its own; None refuses such a model (#219)."""
     probe_path: str = "/models"
@@ -208,6 +211,11 @@ class ModelEntry(_Model):
         max_length=16,
         description="extra chat-completions body fields the model needs, from REQUEST_EXTRAS only",
     )
+    structured_output: Literal["json_schema"] | None = Field(
+        default=None,
+        description="json_schema: the model can be held to a JSON schema while it decodes, so a background call "
+        "sends its own (response_format); none: it is sent none",
+    )
 
 
 class ProviderEntry(_Model):
@@ -248,6 +256,7 @@ class ModelOverlay(_Model):
     free: bool | None = None
     chat_only: bool | None = None
     request_extras: dict[str, JsonValue] | None = Field(default=None, max_length=16)
+    structured_output: Literal["json_schema"] | None = None
 
 
 class ProviderOverlay(_Model):
@@ -415,6 +424,9 @@ def _provider(name: str, entry: ProviderEntry, day: date, withheld: frozenset[st
         request_extras={
             model: dict(spec.request_extras) for model, spec in entry.models.items() if spec.request_extras
         },
+        structured_output_models=frozenset(
+            model for model, spec in entry.models.items() if spec.structured_output == "json_schema"
+        ),
         default_pricing_usd_per_mtok=entry.default_price.pair if entry.default_price is not None else None,
         probe_path=entry.probe_path,
     )
@@ -845,10 +857,14 @@ def _merge_models(
                     )
                 )
                 continue
-            # What it was shipped with that no price says: chat-only unless known otherwise, its extras.
+            # What it was shipped with that no price says: chat-only unless known otherwise, its extras, whether it
+            # can be held to a schema.
             models[model] = {
                 "chat_only": was.get("chat_only") is not False,
                 "request_extras": dict(was.get("request_extras") or {}),
+                "structured_output": was.get("structured_output")
+                if was.get("structured_output") == "json_schema"
+                else None,
                 **given,
             }
             continue

@@ -12,7 +12,7 @@ from embry0.orchestration.nodes.agent import run_agent_node
 from embry0.safety.error_codes import ErrorCode
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 from tests.fixtures.budget_settings import BudgetStore
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 
 _LOCAL = "custom/qwen"
 _ROW = {
@@ -28,7 +28,7 @@ _ROW = {
 
 @pytest.fixture(autouse=True)
 def _custom_enabled(monkeypatch):
-    enable_providers(monkeypatch, "custom")
+    enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
 
 
 class _Db:

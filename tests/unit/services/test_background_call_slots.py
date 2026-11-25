@@ -24,7 +24,7 @@ except ImportError:
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
 from tests.fixtures.model_servers import fake_dns
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 from tests.unit.services.test_background_calls import GOOD, T0, Gate, Spend
 
 LOCAL = "custom/qwen"
@@ -38,7 +38,7 @@ def _servers_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "openai", "custom")
+    enable_providers(monkeypatch, "openai", "custom", **LOCAL_SERVER)
 
 
 class Resolver:

@@ -429,6 +429,49 @@ async def test_the_lifespan_installs_the_stored_catalogue_and_what_another_proce
         assert [p.name for p in providers.enabled_openai_compatible()] == ["groq"], "the write was never picked up"
 
 
+async def test_the_lifespan_keeps_the_custom_models_a_deployment_used_before_it_installs_the_catalogue(
+    db_with_migrations: DatabasePool,
+    stub_container_runtime: Any,  # noqa: F811
+    tmp_path: Any,
+) -> None:
+    """A custom model a tier names, from before the custom provider's defaults changed (#173), runs after the start:
+    the start keeps it free before the catalogue that no longer prices it is installed."""
+    import os
+    from unittest.mock import patch
+
+    from embry0.agents.providers import offered_problem
+    from embry0.api.app import create_app, lifespan
+    from embry0.config import Embry0Config
+    from embry0.services.provider_catalogue_store import CatalogueStore
+
+    await CatalogueStore(db_with_migrations).save("providers:\n  custom: {enabled: true}\n", actor="ops@example.com")
+    await db_with_migrations.execute(
+        "INSERT INTO provider_config (id, model_light) VALUES ('default', 'custom/qwen') "
+        "ON CONFLICT (id) DO UPDATE SET model_light = EXCLUDED.model_light"
+    )
+    catalogue.install(None)
+    with patch.dict(os.environ, {}, clear=True):
+        config = Embry0Config(  # type: ignore[call-arg]
+            _env_file=None,
+            database_url=db_with_migrations._url,  # noqa: SLF001
+            auth_dev_mode=True,
+            webhook_dev_mode=True,
+            api_key="",
+            watcher_enabled=False,
+            volume_reaper_enabled=False,
+            linear_reconcile_mode="off",
+            telegram_bot_token="",
+            xai_proxy_enabled=False,
+            auth_proxy_enabled=False,
+            context_proxy_enabled=False,
+            slop_meter_data_path=str(tmp_path / "slop-meter"),
+        )
+    app = create_app(config)
+    async with lifespan(app):
+        assert offered_problem("custom/qwen") is None, "the start must keep the tier's custom model, free"
+        assert offered_problem("custom/never-used") == "the catalogue has no price for it"
+
+
 @pytest.mark.parametrize("as_text", [True, False], ids=["text", "Path"])
 async def test_a_write_and_its_undo_are_audited_to_the_database_and_the_file(
     client: AsyncClient, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, as_text: bool

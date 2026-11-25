@@ -56,6 +56,8 @@ AuditAction = Literal[
     "provider_catalogue.bootstrapped",
     # This release refuses part of the stored provider catalogue: that part is not in force (#173)
     "provider_catalogue.refused",
+    # The custom models a deployment used, kept once at the custom provider's old defaults (#173)
+    "provider_catalogue.custom_imported",
     # The Slop-O-Meter removed what it kept of a repository that left its scope, or refused to (#165)
     "slop_meter.pruned",
     "slop_meter.prune.refused",
@@ -204,6 +206,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "provider_catalogue.change_undone": "Provider catalogue change undone",
     "provider_catalogue.bootstrapped": "Provider catalogue imported from the environment",
     "provider_catalogue.refused": "Part of the provider catalogue is not in force",
+    "provider_catalogue.custom_imported": "Custom models kept at their old defaults",
     "slop_meter.pruned": "Slop-O-Meter data of a repository removed",
     "slop_meter.prune.refused": "Slop-O-Meter removal refused",
     "background_enrollment.blocked": "Background enrollment held by a repository name",

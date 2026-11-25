@@ -232,13 +232,19 @@ def test_price_usage_is_none_for_an_unpriced_model() -> None:
     )
 
 
-def test_a_local_model_server_gets_the_slow_provider_budgets() -> None:
-    """A model served on the operator's own card is slower per call than a hosted one: the
-    agents' Claude-sized turn and time budgets double, as grok-4.7's do."""
-    from embry0.agents.providers import CUSTOM
+def test_a_local_model_server_gets_claude_sized_budgets_unless_its_overlay_raises_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The custom provider may be any server, a fast gateway too: its budgets are Claude-sized, and a slower server's
+    are raised in the overlay, as a deployment that used custom models before #173 keeps them doubled."""
+    from embry0.agents.providers import CUSTOM, provider_named
+    from tests.fixtures.provider_catalogue import enable_providers
 
-    assert CUSTOM.timeout_factor == XAI.timeout_factor == 2.0
-    assert CUSTOM.turn_budget_factor == XAI.turn_budget_factor == 2.0
+    assert (CUSTOM.timeout_factor, CUSTOM.turn_budget_factor) == (1.0, 1.0)
+    assert (XAI.timeout_factor, XAI.turn_budget_factor) == (2.0, 2.0), "grok-4.7's stay doubled"
+    enable_providers(monkeypatch, "custom", custom={"factors": {"turns": 2.0, "timeout": 2.0}})
+    custom = provider_named("custom")
+    assert custom is not None and (custom.timeout_factor, custom.turn_budget_factor) == (2.0, 2.0)
 
 
 def test_one_model_provider_names_the_provider_of_a_model_for_every_caller() -> None:

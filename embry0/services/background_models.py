@@ -15,11 +15,16 @@ model directly over chat completions. Each goes through
 - its key is resolved with the repository the call is about, so that
   repository's and its owner's key bindings apply
   (``CredentialResolver.resolve_llm``);
-- a call to a hosted model asks the budget gate first, the daily and
-  monthly caps a job's dispatch is held to, and is refused once one is
-  reached (:class:`BackgroundCallRefused`, logged; the loop goes on). The
-  operator's own server (``custom/``) bills nothing and is never refused
-  for spend;
+- a call asks the budget gate first, the daily and monthly caps a job's
+  dispatch is held to, and is refused once one is reached
+  (:class:`BackgroundCallRefused`, logged; the loop goes on). Only a model
+  of the operator's own server (``custom/``) its catalogue entry marks
+  ``free`` bills nothing and is never refused for spend; one it prices (a
+  paid gateway behind the server) is held to the caps as a hosted one is;
+- the body carries the model's ``request_extras`` (a local server's
+  thinking switch, say), the call's own fields after them; and the answer's
+  JSON schema as ``response_format`` only for a model whose entry says
+  ``structured_output: json_schema``;
 - a call to the operator's own server holds one of its slots for the
   length of the call, as an agent run does
   (:mod:`embry0.services.local_slots`): with every slot taken it is not
@@ -46,7 +51,7 @@ import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -126,13 +131,19 @@ class Endpoint:
     root: str
     key: str
     upstream_model: str
-    #: The custom provider: the operator's own server, which bills nothing.
+    #: The custom provider: the operator's server, whose slots a call holds (``services.local_slots``).
     local: bool
     #: The server a local call holds a slot of (``services.local_slots``); '' for a hosted model.
     server: str = ""
     #: The address a local call connects to, its server's host resolved and checked (``server_address``); '' for a
     #: hosted model, whose host is the provider's own.
     address: str = ""
+    #: The model's catalogue entry is ``free``: a call on the operator's own free model is not held to the caps.
+    free: bool = False
+    #: The chat-completions body fields the model's catalogue entry gives it (``request_extras``).
+    extras: Mapping[str, Any] = field(default_factory=dict)
+    #: The model can be held to a JSON schema while it decodes (``structured_output: json_schema``).
+    structured_output: bool = False
 
 
 @dataclass(frozen=True)
@@ -172,7 +183,13 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
     model's server is its credential's, as every agent run's is
     (``local_slots.server_of``).
     """
-    from embry0.agents.providers import provider_for_model, upstream_model
+    from embry0.agents.providers import (
+        model_rates,
+        provider_for_model,
+        request_extras,
+        structured_output,
+        upstream_model,
+    )
 
     provider = provider_for_model(model)
     if provider is None or provider.runtime != "chat_completions" or resolver is None:
@@ -205,6 +222,9 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
         local=local,
         server=server_of(getattr(cred, "id", None)) if local else "",
         address=address,
+        free=model_rates(model) == (0.0, 0.0),
+        extras=request_extras(model),
+        structured_output=structured_output(model),
     )
 
 
@@ -271,11 +291,13 @@ async def ask_json(
         "temperature": 0.3,
         "max_tokens": max_tokens,
     }
-    if endpoint.local:
-        # A vLLM-style server: the answer's own schema, enforced while it decodes,
-        # and no thinking for a short task.
+    if endpoint.structured_output:
+        # A server that holds the model to a schema while it decodes: the answer's own.
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": name, "schema": dict(schema)}}
-        body["chat_template_kwargs"] = {"enable_thinking": False}
+    # Then the model's own fields (its catalogue entry's request_extras, such as a local server's thinking switch),
+    # each only where the call set none of its own, so the call's always win.
+    for key, value in endpoint.extras.items():
+        body.setdefault(key, value)
     url = f"{endpoint.root}/chat/completions"
     headers = {"Authorization": f"Bearer {endpoint.key}"}
     extensions: dict[str, Any] = {}
@@ -397,7 +419,7 @@ class BackgroundCalls:
     ) -> str:
         """The model's answer; :class:`BackgroundCallRefused` when the call may not be made now.
 
-        A hosted model's call is refused while an earlier call's spend is
+        A call that bills (any but the operator's own free model) is refused while an earlier call's spend is
         not stored, and when the budget gate refuses it; a local model's when
         every slot of its server is taken (:class:`LocalServerBusy`), the slot
         it takes otherwise held until the answer is in. What the call spent
@@ -405,7 +427,9 @@ class BackgroundCalls:
         parse still counts; ``ValueError`` for a body that is not JSON.
         """
         stored = await self._store_unrecorded(feature)
-        if not endpoint.local:
+        # Only the operator's own free model bills nothing: any other call, a priced custom model's (a paid gateway
+        # behind it) included, is held to the caps.
+        if not (endpoint.local and endpoint.free):
             if not stored:
                 decision = DispatchDecision(
                     allowed=False,

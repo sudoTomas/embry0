@@ -1240,6 +1240,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             audit_log_path=config.audit_log_path,
             metrics=getattr(app.state, "loop_metrics", None) or NULL_METRICS,
         )
+        # Once: the custom models this deployment used keep the custom provider's old defaults (#173), before
+        # the catalogue that no longer gives them is installed.
+        try:
+            await app.state.provider_catalogue.import_custom_defaults()
+        except Exception:
+            logger.error("provider_catalogue_custom_import_failed", exc_info=True)
         await app.state.provider_catalogue.refresh()
     except Exception:
         logger.critical("provider_catalogue_unavailable", exc_info=True)
