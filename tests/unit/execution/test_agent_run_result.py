@@ -37,6 +37,13 @@ _UNMARKED_USAGE = (
     b"                 [--session-id SESSION_ID]\n"
     b"runner.py: error: unrecognized arguments: --result-nonce\n"
 )
+#: What today's runner prints for a flag it does not know: its usage lists [--result-nonce], which it knows.
+_CURRENT_USAGE_OTHER = (
+    b"usage: runner.py [-h] (--config CONFIG | --config-stdin)\n"
+    b"                 [--session-blob SESSION_BLOB] [--session-id SESSION_ID]\n"
+    b"                 [--result-nonce]\n"
+    b"runner.py: error: unrecognized arguments: --zz-unknown\n"
+)
 #: What the daemon says when the program docker exec is to start is not in the image, by Docker major version, with
 #: the exit docker exec gives: measured against docker:27-dind (27.5.1) and Docker 29.4 on an image without the
 #: interpreter. Both write it as the exec's one stdout line, ending in CRLF, and nothing on stderr.
@@ -229,31 +236,36 @@ async def test_a_second_final_result_fails_the_run_whichever_it_is(order: str) -
     assert refused and refused[0]["results"] == 2, f"the refusal does not count the results: {refused}"
 
 
-# --- an image whose runner predates the mark ------------------------------------------------------------------
+# --- an image built before what this release runs agents with ------------------------------------------------
+
+_STALE = "ERR_SANDBOX_IMAGE_STALE"
+
+
+def _refused_as_stale(output: Any, logs: list[dict[str, Any]], stale: list[str], outcome: str, lacks: str) -> None:
+    assert output.is_error is True and output.error_code == _STALE, f"the stale image was not refused: {output}"
+    assert "'acme-sandbox:old'" in output.error_message and lacks in output.error_message, output.error_message
+    assert "No agent ran" in output.error_message, output.error_message
+    assert stale == [outcome], f"the refusal was not counted: {stale}"
+    said = [e for e in logs if e["event"] == "sandbox_runner_stale_image"]
+    assert [(e["log_level"], e["outcome"], e["image"]) for e in said] == [("error", outcome, "acme-sandbox:old")], said
 
 
 @pytest.mark.asyncio
-async def test_an_image_whose_runner_predates_the_mark_runs_once_more_without_it() -> None:
+async def test_a_runner_that_names_the_mark_among_several_unknown_arguments_is_refused() -> None:
+    usage = _UNMARKED_USAGE.replace(b"--result-nonce\n", b"--result-nonce --zz-other\n")
+    output, logs, _, stale = await _run([_proc([], returncode=2, stderr=usage)])
+
+    _refused_as_stale(output, logs, stale, "result_unmarked", "--result-nonce")
+
+
+@pytest.mark.asyncio
+async def test_an_image_whose_runner_predates_the_mark_is_refused() -> None:
     output, logs, runner, stale = await _run(
         [_proc([], returncode=2, stderr=_UNMARKED_USAGE), _proc([_STARTED, _FINAL], mark=False)]
     )
-    calls = _calls(runner)
 
-    assert len(calls) == 2, f"the image's runner refused the mark and was not run again: {len(calls)} exec(s)"
-    assert "--result-nonce" not in calls[1]["command"] and _nonce(calls[1]) is None, "the retry still marks"
-    assert output.is_error is False and output.output == "done", f"its unmarked result was refused: {output}"
-    assert stale == ["result_unmarked"], f"the stale image was not counted: {stale}"
-    warned = [e for e in logs if e["event"] == "sandbox_runner_stale_image"]
-    assert warned and warned[0]["outcome"] == "result_unmarked" and warned[0]["image"] == "acme-sandbox:old"
-
-
-@pytest.mark.asyncio
-async def test_on_an_image_without_the_mark_a_second_final_result_still_fails_the_run() -> None:
-    output, _, _, _ = await _run(
-        [_proc([], returncode=2, stderr=_UNMARKED_USAGE), _proc([_STARTED, _ANOTHER, _FINAL], mark=False)]
-    )
-
-    assert output.is_error is True and output.error_code == _REFUSED, f"two results on an unmarked run: {output}"
+    assert len(_calls(runner)) == 1, "the image's runner refused the mark and was run again without it"
+    _refused_as_stale(output, logs, stale, "result_unmarked", "--result-nonce")
 
 
 @pytest.mark.asyncio
@@ -263,12 +275,14 @@ async def test_on_an_image_without_the_mark_a_second_final_result_still_fails_th
         pytest.param({"events": [_STARTED], "returncode": 2, "stderr": _UNMARKED_USAGE}, id="it-wrote-a-line"),
         pytest.param({"events": [], "returncode": 1, "stderr": _UNMARKED_USAGE}, id="not-a-usage-exit"),
         pytest.param({"events": [], "returncode": 2, "stderr": b"error: unrecognized arguments: --x\n"}, id="other"),
+        pytest.param({"events": [], "returncode": 2, "stderr": _CURRENT_USAGE_OTHER}, id="today-s-runner-other-flag"),
     ],
 )
-async def test_the_unmarked_retry_cannot_fire_once_the_runner_did_anything(first: dict[str, Any]) -> None:
-    _, _, runner, stale = await _run([_proc(**first), _proc([_STARTED, _FINAL])])
+async def test_the_mark_refusal_cannot_fire_once_the_runner_did_anything(first: dict[str, Any]) -> None:
+    output, _, runner, stale = await _run([_proc(**first), _proc([_STARTED, _FINAL])])
 
-    assert len(_calls(runner)) == 1 and stale == [], "the runner was run again after it had run or failed otherwise"
+    assert len(_calls(runner)) == 1 and stale == [], "a run was counted as a stale image after it ran or failed"
+    assert output.error_code != _STALE, output
 
 
 # --- the runner's interpreter ---------------------------------------------------------------------------------
@@ -286,31 +300,32 @@ async def test_the_runner_runs_on_its_execute_only_interpreter() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("docker", sorted(_NOT_FOUND_BY_DOCKER), ids=lambda major: f"docker-{major}")
-async def test_an_image_without_the_runner_s_interpreter_runs_it_on_its_own_python(docker: int) -> None:
-    """As each Docker says it: the daemon's line on the exec's stdout, 126 from Docker 27 and 127 from Docker 29."""
+async def test_an_image_without_the_runner_s_interpreter_is_refused(docker: int) -> None:
+    """As each Docker says it: the daemon's line on the exec's stdout, 126 from Docker 27 and 127 from Docker 29.
+    Nothing runs on the image's own python any more."""
     code, line = _NOT_FOUND_BY_DOCKER[docker]
     output, logs, runner, stale = await _run([_said([line], returncode=code), _proc([_STARTED, _FINAL])])
-    calls = _calls(runner)
 
-    assert len(calls) == 2, f"an image without the interpreter was not run again: {len(calls)} exec(s)"
-    assert calls[1]["command"][:5] == ["python", "-P", "-s", "-m", "embry0.sandbox.runner"], calls[1]["command"]
-    assert "--result-nonce" in calls[1]["command"] and _nonce(calls[1]) == _nonce(calls[0]), "the retry is unmarked"
-    assert output.is_error is False and output.output == "done", f"its marked result was refused: {output}"
-    assert stale == ["interpreter_missing"], f"the stale image was not counted: {stale}"
-    warned = [e for e in logs if e["event"] == "sandbox_runner_stale_image"]
-    assert warned and warned[0]["outcome"] == "interpreter_missing"
+    assert len(_calls(runner)) == 1, "an image without the interpreter was run again on its own python"
+    _refused_as_stale(output, logs, stale, "interpreter_missing", _INTERPRETER)
 
 
 @pytest.mark.asyncio
 async def test_a_cli_that_writes_the_daemon_s_line_on_stderr_is_read_there_too() -> None:
-    _, _, runner, stale = await _run([_said([], returncode=127, stderr=_NO_INTERPRETER), _proc([_STARTED, _FINAL])])
+    output, _, runner, stale = await _run(
+        [_said([], returncode=127, stderr=_NO_INTERPRETER), _proc([_STARTED, _FINAL])]
+    )
 
-    assert len(_calls(runner)) == 2 and stale == ["interpreter_missing"], stale
+    assert len(_calls(runner)) == 1 and stale == ["interpreter_missing"] and output.error_code == _STALE, (
+        output,
+        stale,
+    )
 
 
 def test_the_stack_s_dind_daemon_is_a_docker_whose_answer_is_covered() -> None:
     """The exec the runner makes goes to the stack's DinD daemon: its Docker must be one whose missing-program
-    answer is measured above (and so covered), or the older-image retry may never fire, as on 27 before."""
+    answer is measured above (and so covered), or an image without the interpreter is not known as one, as on 27
+    before (#686)."""
     compose = yaml.safe_load((Path(__file__).parents[3] / "infra" / "docker-compose.yml").read_text())
     image = compose["services"]["dind"]["image"]
     major = int(re.fullmatch(r"docker:(\d+)[.\w-]*-dind", image).group(1))  # type: ignore[union-attr]
@@ -322,22 +337,6 @@ def test_the_stack_s_dind_daemon_is_a_docker_whose_answer_is_covered() -> None:
         f"docker exec on {image} exits {_NOT_FOUND_BY_DOCKER[major][0]} for a missing program; the runner does not "
         f"take that exit as one: {sorted(covered)}"
     )
-
-
-@pytest.mark.asyncio
-async def test_an_image_without_the_interpreter_or_the_mark_runs_on_its_python_unmarked() -> None:
-    code, line = _NOT_FOUND_BY_DOCKER[27]
-    output, _, runner, stale = await _run(
-        [
-            _said([line], returncode=code),
-            _proc([], returncode=2, stderr=_UNMARKED_USAGE),
-            _proc([_STARTED, _FINAL], mark=False),
-        ]
-    )
-    last = _calls(runner)[-1]
-
-    assert last["command"][0] == "python" and "--result-nonce" not in last["command"], last["command"]
-    assert output.output == "done" and stale == ["interpreter_missing", "result_unmarked"], (output, stale)
 
 
 _LINE_27 = _NOT_FOUND_BY_DOCKER[27][1]
@@ -364,26 +363,26 @@ _LINE_27 = _NOT_FOUND_BY_DOCKER[27][1]
         pytest.param(_said([], returncode=127, stderr=b"sh: 1: claude: not found\n"), id="other-program"),
     ],
 )
-async def test_the_interpreter_retry_cannot_fire_otherwise(first: Any) -> None:
-    _, _, runner, stale = await _run([first, _proc([_STARTED, _FINAL])])
+async def test_the_interpreter_refusal_cannot_fire_otherwise(first: Any) -> None:
+    output, _, runner, stale = await _run([first, _proc([_STARTED, _FINAL])])
 
-    assert len(_calls(runner)) == 1 and stale == [], "the runner was run again on the image's python"
+    assert len(_calls(runner)) == 1 and stale == [], "a run was counted as a stale image"
+    assert output.error_code != _STALE, output
 
 
 @pytest.mark.asyncio
 async def test_an_exec_the_daemon_could_not_start_says_what_the_daemon_said() -> None:
     """The daemon's line arrives on stdout, where no other non-event line is kept: the failure says it, and is a
-    start failure, not a run that returned nothing."""
-    python_missing = (
+    start failure, not a run that returned nothing nor a stale image."""
+    denied = (
         b"OCI runtime exec failed: exec failed: unable to start container process: exec: "
-        b'"python": executable file not found in $PATH: unknown\r\n'
+        b'"/usr/local/bin/embry0-runner-python": permission denied: unknown\r\n'
     )
-    code, line = _NOT_FOUND_BY_DOCKER[27]
-    output, logs, _, stale = await _run([_said([line], returncode=code), _said([python_missing], returncode=126)])
+    output, logs, _, stale = await _run([_said([denied], returncode=126)])
 
-    assert stale == ["interpreter_missing"], stale
+    assert stale == [], stale
     assert output.error_code == "ERR_SANDBOX_AGENT_START_FAILED", output
-    assert 'exec: "python": executable file not found' in output.error_message, output.error_message
+    assert "permission denied" in output.error_message, output.error_message
     failed = [e for e in logs if e["event"] == "agent_runner_subprocess_failed"]
     assert failed and all(e["exec_failed"] for e in failed), failed
 

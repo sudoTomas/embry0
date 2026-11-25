@@ -423,9 +423,9 @@ async def test_runner_ships_config_on_stdin_not_argv() -> None:
 
 
 # ---------------------------------------------------------------------------
-# #304: stale-image fallback. Prebaked per-repo QA images are `docker commit`s
-# of an old sandbox and profile images are built FROM it, so a runner that
-# predates --config-stdin can outlive an orchestrator deploy.
+# #304: a runner that predates --config-stdin. Prebaked per-repo QA images are
+# `docker commit`s of an old sandbox and profile images are built FROM it, so
+# such a runner can outlive an orchestrator deploy; it is refused (#673).
 # ---------------------------------------------------------------------------
 
 _OLD_RUNNER_USAGE = (
@@ -472,42 +472,33 @@ def _runner_with_procs(procs: list[_FakeProc]) -> AgentRunner:
 
 
 @pytest.mark.asyncio
-async def test_stale_runner_falls_back_to_argv_once(caplog: pytest.LogCaptureFixture) -> None:
+@pytest.mark.parametrize("size", [len("small"), 2 * _MAX_ARG_STRLEN], ids=["small", "past argv's limit"])
+async def test_a_runner_without_config_stdin_is_refused_as_stale_not_run_by_argv(size: int) -> None:
+    """Its runner once ran again with the config on argv and its result taken unmarked (#304); it is refused now,
+    whatever the config's size, and the config never reaches a command line."""
+    from structlog.testing import capture_logs
+
+    from embry0.safety.error_codes import ErrorCode
+
+    seen: list[str] = []
     runner = _runner_with_procs(
         [_proc(returncode=2, stderr=_OLD_RUNNER_USAGE), _proc(returncode=0, stdout=[_FINAL_OK])]
     )
-    config = {"agent_type": "qa", "timeout_seconds": 5, "prompt": "small"}
-
-    from structlog.testing import capture_logs
+    runner._on_stale_image = seen.append
+    config = {"agent_type": "qa", "timeout_seconds": 5, "prompt": "P" * size}
 
     with capture_logs() as logs:
         out = await runner.run(container="c", config=config)
 
-    assert out.is_error is False and out.output == "done"
-    calls = runner._docker.stream_exec.call_args_list
-    assert len(calls) == 2
-    retry = calls[1].kwargs
-    assert retry.get("stdin_data") is None
-    assert json.loads(retry["command"][retry["command"].index("--config") + 1]) == config
+    assert runner._docker.stream_exec.await_count == 1, "the runner was run again by argv"
+    assert not any(
+        "PPPPP" in arg for call in runner._docker.stream_exec.call_args_list for arg in call.kwargs["command"]
+    )
+    assert out.is_error is True and out.error_code == ErrorCode.SANDBOX_IMAGE_STALE.value, out
+    assert "embry0-qa-owner_repo:2026-08-12T22-32" in out.error_message and "--config-stdin" in out.error_message
+    assert seen == ["config_stdin_missing"], seen
     stale = [entry for entry in logs if entry["event"] == "sandbox_runner_stale_image"]
-    assert stale and stale[0]["log_level"] == "warning"
-    assert stale[0]["image"] == "embry0-qa-owner_repo:2026-08-12T22-32"
-
-
-@pytest.mark.asyncio
-async def test_stale_runner_with_oversized_config_fails_with_a_specific_code() -> None:
-    from embry0.safety.error_codes import ErrorCode
-
-    runner = _runner_with_procs([_proc(returncode=2, stderr=_OLD_RUNNER_USAGE)])
-    config = {"agent_type": "qa", "timeout_seconds": 5, "prompt": "d" * (2 * _MAX_ARG_STRLEN)}
-
-    out = await runner.run(container="c", config=config)
-
-    assert out.is_error is True
-    assert out.error_code == ErrorCode.SANDBOX_IMAGE_STALE.value
-    assert "embry0-qa-owner_repo:2026-08-12T22-32" in out.error_message
-    assert "rebuil" in out.error_message
-    assert runner._docker.stream_exec.await_count == 1  # never put an oversized config on argv
+    assert [(e["log_level"], e["outcome"]) for e in stale] == [("error", "config_stdin_missing")], stale
 
 
 @pytest.mark.asyncio
@@ -534,12 +525,14 @@ async def test_current_runner_never_falls_back_or_touches_argv() -> None:
         {"returncode": 2, "stderr": b"python: can't open file\n"},
     ],
 )
-async def test_fallback_cannot_fire_once_the_runner_did_anything(first: dict) -> None:
+async def test_the_refusal_cannot_fire_once_the_runner_did_anything(first: dict) -> None:
+    from embry0.safety.error_codes import ErrorCode
+
     runner = _runner_with_procs([_proc(**first), _proc(returncode=0, stdout=[_FINAL_OK])])
 
     out = await runner.run(container="c", config={"agent_type": "qa", "timeout_seconds": 5})
 
-    assert out.is_error is True
+    assert out.is_error is True and out.error_code != ErrorCode.SANDBOX_IMAGE_STALE.value, out
     assert runner._docker.stream_exec.await_count == 1  # no second execution
 
 
@@ -756,7 +749,7 @@ async def test_a_chatty_agent_cannot_grow_the_stderr_buffer_without_bound() -> N
     proc.stdout = _LinesStdout([])  # type: ignore[assignment]
 
     runner = _runner_with_procs([proc])
-    _out, exit_facts = await runner._exec_runner("c", ["runner"], None, {"agent_type": "qa"}, None)
+    _out, exit_facts = await runner._exec_runner("c", ["runner"], None, {"agent_type": "qa"}, None, nonce="n")
 
     retained = len(exit_facts.stderr.encode())
     assert retained <= _STDERR_BUFFER_MAX_BYTES + len(chunk), retained

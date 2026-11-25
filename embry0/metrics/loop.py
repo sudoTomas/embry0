@@ -292,12 +292,19 @@ class LoopMetrics:
         )
 
         # ---- runner / infrastructure --------------------------------------
+        # Seeded 0 for every outcome, so the series exists on the first scrape and a check of it since the last
+        # deploy reads 0, not nothing (#673).
         self._stale_image = Counter(
             "embry0_sandbox_runner_stale_image_total",
-            "Agent runs that met a sandbox image older than what this release runs the agent runner with.",
+            "Agent runs refused because their sandbox image was built before what this release runs agents with, "
+            "by what it lacks.",
             ["outcome"],
             registry=r,
         )
+        from embry0.execution.agent_runner import STALE_IMAGE_LACKS
+
+        for outcome in STALE_IMAGE_LACKS:
+            self._stale_image.labels(outcome=outcome)
         self._state_folds = Counter(
             "embry0_state_channel_folded_concurrent_writes_total",
             "Concurrent same-superstep writes folded by a JobState channel (always a routing bug).",
@@ -526,10 +533,10 @@ class LoopMetrics:
 
     @_never_raises
     def sandbox_runner_stale_image(self, outcome: str) -> None:
-        """What the image predates and what the run did: ``argv_fallback`` (``--config-stdin``; it went ahead),
-        ``config_too_large`` (the same; it could not), ``interpreter_missing`` (the runner's execute-only interpreter;
-        it went ahead on the image's python) or ``result_unmarked`` (``--result-nonce``; its result was taken
-        unmarked). The last two go ahead for one release only."""
+        """An image built before what this release runs agents with, refused before any agent ran, by what it
+        lacks: ``interpreter_missing`` (the runner's execute-only interpreter), ``result_unmarked``
+        (``--result-nonce``) or ``config_stdin_missing`` (``--config-stdin``). ``argv_fallback`` and
+        ``config_too_large`` were counted by releases that ran such a runner with its config on argv."""
         self._stale_image.labels(outcome=outcome).inc()
 
     @_never_raises

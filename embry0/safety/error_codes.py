@@ -65,7 +65,7 @@ class ErrorCode(StrEnum):
     VERIFY_NEW_TEST_FAILURES = "ERR_VERIFY_NEW_TEST_FAILURES"  # the repo's configured test command fails on the job's head in a way it does not fail on the base commit (a test, or a whole test target, that is green on base and red on head — after the head re-run). Failures that are red on base too, or pass when re-run, never produce this code.
 
     # #304 — sandbox runner config transport
-    SANDBOX_IMAGE_STALE = "ERR_SANDBOX_IMAGE_STALE"  # the sandbox image's runner predates --config-stdin AND the agent config is too large for the argv fallback — rebuild the named image (prebaked QA / profile images are not covered by the standard deploy recipe)
+    SANDBOX_IMAGE_STALE = "ERR_SANDBOX_IMAGE_STALE"  # the sandbox image was built before what this release runs agents with (the runner's execute-only interpreter, its result mark, or its config on stdin); no agent ran — rebuild the named image (prebaked QA / profile images are not covered by the standard deploy recipe)
     SANDBOX_RESULT_REFUSED = "ERR_SANDBOX_RESULT_REFUSED"  # the run's result was not taken: its runner's output held more than one final result, or one without this run's mark (the per-run nonce the orchestrator hands the runner on stdin), so the run is failed rather than trusting either
     SANDBOX_EXEC_STALLED = "ERR_SANDBOX_EXEC_STALLED"  # docker exec never read the agent config from stdin within the hand-off window (wedged exec / daemon); the runner was killed before any agent work
     # #305 — the duplicate-PR check fails closed
@@ -412,6 +412,19 @@ ACCOUNT_FAILURE_CODES: frozenset[str] = frozenset(
         # Not quarantined (CredentialHealth has no reason for it): the xAI token
         # loop force-refreshes the account. Still the account's failure, not the run's.
         ErrorCode.PROVIDER_TOKEN_STALE.value,
+    }
+)
+
+# Codes that say a run never started: the sandbox could not run the agent (an image built before
+# what this release runs agents with, an exec that never took its config, a start that failed before
+# the runner's first event). Nothing the agent would have done happened, so a job whose last agent
+# run ended on one is reported under it, as under an account failure, rather than under the
+# symptom a node saw afterwards ("triage output malformed"). No account is quarantined for it.
+RUN_NEVER_STARTED_CODES: frozenset[str] = frozenset(
+    {
+        ErrorCode.SANDBOX_IMAGE_STALE.value,
+        ErrorCode.SANDBOX_EXEC_STALLED.value,
+        ErrorCode.SANDBOX_AGENT_START_FAILED.value,
     }
 )
 
