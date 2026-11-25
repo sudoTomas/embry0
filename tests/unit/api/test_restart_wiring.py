@@ -91,3 +91,116 @@ async def test_boot_recovers_jobs_and_shutdown_drains(
     channels.set_fold_observer(None)
 
     assert calls[-1] == ("drain", 42), f"shutdown must drain the executor for SHUTDOWN_DRAIN_SECONDS; calls {calls}"
+
+
+@pytest.mark.changes_schema  # the boot creates the checkpointer's tables
+async def test_boot_closes_the_runs_the_previous_process_left_running(
+    db_with_migrations: DatabasePool,
+    stub_container_runtime: dict[str, MagicMock],  # noqa: F811 — the imported fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#694: a run left running is closed at boot, before recovery, and charged its sandbox's last figure: its trace
+    no longer reads running at $0, and its orphaned job's total and job_finished carry the charge."""
+    from embry0.execution import events
+    from embry0.storage.repositories.traces import TracesRepository
+
+    jobs, traces = JobsRepository(db_with_migrations), TracesRepository(db_with_migrations)
+    job_id = await jobs.create(repo="o/r", task="t")
+    await jobs.update(job_id, status="running")
+    await traces.create(job_id=job_id, agent_type="developer", model="m", result="running", trace_id="run-left")
+    usage = events.turn_usage(
+        input_tokens=1000,
+        output_tokens=50,
+        cache_read_tokens=0,
+        cache_creation_tokens=0,
+        cost_usd=0.42,
+        model="m",
+        run_id="run-left",
+        node="developer",
+        agent="developer",
+    )
+    await jobs.append_log_event(job_id, usage)
+    monkeypatch.setattr(IssueExecutor, "resume_after_restart", lambda self, job: None)
+    monkeypatch.setattr(IssueExecutor, "relaunch", lambda self, job: None)
+
+    async def drain(self: IssueExecutor, timeout: float) -> list[str]:
+        return []
+
+    monkeypatch.setattr(IssueExecutor, "drain", drain)
+    config = Embry0Config(
+        _env_file=None,
+        database_url=db_with_migrations._url,  # noqa: SLF001
+        auth_dev_mode=True,
+        webhook_dev_mode=True,
+        api_key="",
+        watcher_enabled=False,
+        volume_reaper_enabled=False,
+        linear_reconcile_mode="off",
+        telegram_bot_token="",
+        xai_proxy_enabled=False,
+        auth_proxy_enabled=False,
+        context_proxy_enabled=False,
+    )
+    channels.set_fold_observer(None)
+    app = create_app(config)
+    async with lifespan(app):
+        trace = await traces.get("run-left")
+        assert trace is not None and trace["result"] != "running", "boot left the run's trace running"
+        assert (trace["result"], trace["error_code"], trace["cost_usd"]) == ("error", "ERR_RUN_INTERRUPTED", 0.42)
+        row = await jobs.get(job_id)
+        assert row is not None and row["status"] == "failed"
+        assert row["total_cost_usd"] == pytest.approx(0.42), "the run's charge did not reach its job's total"
+        finished = await db_with_migrations.fetchval(
+            "SELECT text FROM job_logs WHERE job_id = $1 AND event_type = 'job_finished'", job_id
+        )
+        assert finished is not None and '"total_cost_usd": 0.42' in finished, finished
+    channels.set_fold_observer(None)
+
+
+@pytest.mark.changes_schema  # the boot creates the checkpointer's tables
+async def test_runs_the_start_up_budget_leaves_are_closed_in_the_background(
+    db_with_migrations: DatabasePool,
+    stub_container_runtime: dict[str, MagicMock],  # noqa: F811 — the imported fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#694: past its budget, start-up goes on and the background closes the rest."""
+    import asyncio
+
+    from embry0.services import interrupted_runs
+    from embry0.storage.repositories.traces import TracesRepository
+
+    monkeypatch.setattr(interrupted_runs, "STARTUP_BUDGET_SECONDS", 0.0)
+    jobs, traces = JobsRepository(db_with_migrations), TracesRepository(db_with_migrations)
+    job_id = await jobs.create(repo="o/r", task="t")
+    await traces.create(job_id=job_id, agent_type="developer", model="m", result="running", trace_id="run-later")
+    monkeypatch.setattr(IssueExecutor, "resume_after_restart", lambda self, job: None)
+    monkeypatch.setattr(IssueExecutor, "relaunch", lambda self, job: None)
+
+    async def drain(self: IssueExecutor, timeout: float) -> list[str]:
+        return []
+
+    monkeypatch.setattr(IssueExecutor, "drain", drain)
+    config = Embry0Config(
+        _env_file=None,
+        database_url=db_with_migrations._url,  # noqa: SLF001
+        auth_dev_mode=True,
+        webhook_dev_mode=True,
+        api_key="",
+        watcher_enabled=False,
+        volume_reaper_enabled=False,
+        linear_reconcile_mode="off",
+        telegram_bot_token="",
+        xai_proxy_enabled=False,
+        auth_proxy_enabled=False,
+        context_proxy_enabled=False,
+    )
+    channels.set_fold_observer(None)
+    app = create_app(config)
+    async with lifespan(app):
+        for _ in range(100):
+            trace = await traces.get("run-later")
+            if trace is not None and trace["result"] != "running":
+                break
+            await asyncio.sleep(0.05)
+        assert trace is not None and trace["result"] == "error", "the background left the run's trace running"
+    channels.set_fold_observer(None)

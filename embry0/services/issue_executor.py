@@ -397,6 +397,8 @@ class IssueExecutor:
                 "deliver_as_is": self._deliver_as_is,
                 "credential_resolver": getattr(self, "_credential_resolver", None),
                 "traces_repo": self._traces,
+                # #694: a run cancelled mid-exec counts its trace's close here.
+                "loop_metrics": getattr(self, "_metrics", None),
                 "credentials": credentials,
                 # Provider names and kinds only. Secrets stay in the resolver.
                 "llm_providers": tuple(llm_providers),

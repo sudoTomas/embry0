@@ -322,3 +322,17 @@ def test_job_event_dropped_counts() -> None:
     assert registry.get_sample_value("embry0_job_events_dropped_total") == 1, (
         "an event dropped because the scrub raised must be visible in Prometheus (review issue 8)"
     )
+
+
+def test_closed_runs_are_counted_by_cause_and_source_seeded_at_zero() -> None:
+    """#694: every cause and source reads 0 from the first scrape, so a rule on a $0 close can fire on its first."""
+    m, registry = _metrics()
+    name = "embry0_interrupted_runs_closed_total"
+    for cause in ("restart", "cancelled"):
+        for charged_from in ("proxy", "sandbox", "nothing"):
+            labels = {"cause": cause, "charged_from": charged_from}
+            assert registry.get_sample_value(name, labels) == 0, labels
+    m.run_closed("restart", "nothing")
+    m.run_closed("cancelled", "made-up")
+    assert registry.get_sample_value(name, {"cause": "restart", "charged_from": "nothing"}) == 1
+    assert registry.get_sample_value(name, {"cause": "cancelled", "charged_from": "other"}) == 1

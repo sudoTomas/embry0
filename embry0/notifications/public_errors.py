@@ -31,6 +31,7 @@ _BY_CODE: dict[str, str] = {
     ErrorCode.MAX_AGENT_QUESTIONS: "the agents needed more clarification rounds than are allowed",
     ErrorCode.MAX_TRIAGE_QUESTIONS: "triage needed more clarification rounds than are allowed",
     ErrorCode.ORPHANED: "embry0 was restarted while the job was running",
+    ErrorCode.RUN_INTERRUPTED: "an agent run stopped before it ended, when embry0 stopped or the job was cancelled",
     ErrorCode.INTERRUPTED_BY_SHUTDOWN: "embry0 was shut down while the job was running and could not resume it; run the job again",
     ErrorCode.RESUME_LIMIT: "embry0 restarted several times while the job was running, so it was not resumed again",
     ErrorCode.SANDBOX_INIT: "the sandbox for the job could not be set up",

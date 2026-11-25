@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from embry0.storage.database import DatabasePool
@@ -646,3 +648,58 @@ async def test_result_summaries_answers_each_jobs_report(jobs_repo: JobsReposito
     assert newest["acme/web"]["pr_url"] == "https://github.com/acme/web/pull/3", (
         "the read endpoint links the audit's PR"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_run_s_events_of_given_types_are_read_in_the_order_kept(db_with_migrations):
+    """#694: what an interrupted run's sandbox reported is read back from its own events."""
+    from embry0.storage.repositories.jobs import JobsRepository
+
+    repo = JobsRepository(db_with_migrations)
+    job_id = await repo.create(repo="a/b", task="t")
+    kept = [
+        {"type": "turn_usage", "run_id": "run-1", "cost_usd": 0.1},
+        {"type": "text", "run_id": "run-1", "text": "hi"},
+        {"type": "turn_usage", "run_id": "run-2", "cost_usd": 9.0},
+        {"type": "cost_update", "run_id": "run-1", "cost_usd": 0.3},
+        {"type": "turn_usage", "run_id": "run-1", "cost_usd": 0.2},
+    ]
+    for event in kept:
+        await repo.append_log_event(job_id, event)
+    await db_with_migrations.execute(
+        "INSERT INTO job_logs (job_id, stream, text, run_id, event_type) VALUES ($1, 'pipeline', 'not json', 'run-1', 'turn_usage')",
+        job_id,
+    )
+    long_result = {"type": "tool_result", "run_id": "run-1", "parent_tool_use_id": "task-1", "content": "x" * 50_000}
+    await repo.append_log_event(job_id, long_result)
+    await db_with_migrations.execute(
+        "INSERT INTO job_logs (job_id, stream, text, run_id, event_type) VALUES ($1, 'pipeline', '{broken', 'run-1', 'tool_result')",
+        job_id,
+    )
+    results = await repo.run_events("run-1", ("tool_result",))
+    assert results == [
+        {"type": "tool_result", "parent_tool_use_id": "task-1"},
+        {"type": "tool_result", "parent_tool_use_id": None},
+    ], "a tool_result was read whole, or a broken one failed the read"
+
+    class _Spy:
+        """The pool, keeping the rows the database sent back."""
+
+        def __init__(self) -> None:
+            self.rows: list[Any] = []
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(db_with_migrations, name)
+
+        async def fetch(self, sql: str, *args: Any) -> Any:
+            rows = await db_with_migrations.fetch(sql, *args)
+            self.rows.extend(rows)
+            return rows
+
+    spy = _Spy()
+    await JobsRepository(spy).run_events("run-1", ("tool_result",))  # type: ignore[arg-type]
+    sent = [r["text"] for r in spy.rows if r["event_type"] == "tool_result"]
+    assert sent == [None, None], "the database sent a tool_result's whole text"
+    got = await repo.run_events("run-1", ("turn_usage", "cost_update"))
+    assert [(e["type"], e["cost_usd"]) for e in got] == [("turn_usage", 0.1), ("cost_update", 0.3), ("turn_usage", 0.2)]
+    assert await repo.run_events("run-9", ("turn_usage",)) == []

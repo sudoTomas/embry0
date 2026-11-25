@@ -1368,6 +1368,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.qa_event_bus = QAEventBus()
 
+    # #694: close the traces of the runs the previous process left running, each
+    # charged what is known of it (embry0.services.interrupted_runs). Taken
+    # before any run of this process can write a running trace of its own, and
+    # closed before recovery under a time budget, so an orphaned job's
+    # job_finished carries its total with them; what the budget leaves is closed
+    # in the background, each trace only while still running.
+    interrupted_runs_task: asyncio.Task[Any] | None = None
+    try:
+        from embry0.services.interrupted_runs import STARTUP_BUDGET_SECONDS, close_interrupted_runs, close_runs
+        from embry0.storage.repositories.run_meter import RunMeterRepository
+        from embry0.storage.repositories.traces import TracesRepository as _BootTracesRepository
+
+        boot_metrics_for_runs = getattr(app.state, "loop_metrics", None)
+        boot_runs = (
+            _BootTracesRepository(db, metrics=boot_metrics_for_runs),
+            RunMeterRepository(db),
+            JobsRepository(db, metrics=boot_metrics_for_runs),
+        )
+        sweep = await close_interrupted_runs(*boot_runs, boot_metrics_for_runs, budget_seconds=STARTUP_BUDGET_SECONDS)
+        if sweep.left:
+            interrupted_runs_task = asyncio.create_task(close_runs(sweep.left, *boot_runs, boot_metrics_for_runs))
+    except Exception:
+        logger.exception("interrupted_runs_close_failed")
+
     # Recover the jobs the previous orchestrator lifecycle left in flight.
     # Lifecycle knowledge lives in the repositories (RAV-1063): fail_orphaned /
     # reopen_stuck_for_jobs are the set-based boot-reconciliation writes.
@@ -1822,6 +1846,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.volume_reaper = volume_reaper
 
     app.state.background_tasks = set()
+    if interrupted_runs_task is not None:
+        app.state.background_tasks.add(interrupted_runs_task)
+        interrupted_runs_task.add_done_callback(app.state.background_tasks.discard)
     if qa_minio_task is not None:
         app.state.background_tasks.add(qa_minio_task)
         qa_minio_task.add_done_callback(app.state.background_tasks.discard)

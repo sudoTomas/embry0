@@ -131,6 +131,32 @@ class ProviderRecord:
             resolved_at=str(value.get("resolved_at") or ""),
         )
 
+    @classmethod
+    def from_trace_pricing(cls, value: Any) -> ProviderRecord | None:
+        """A record that prices a run again from what its trace kept (:meth:`trace_pricing`); None when the trace kept
+        none, or not that shape. It is good for pricing only: a trace keeps no runtime, address or key variable, so
+        ``runtime`` is a placeholder and the rest are empty."""
+        if not isinstance(value, Mapping) or not isinstance(value.get("provider"), str) or not value["provider"]:
+            return None
+        rates_kept = value.get("rates")
+        rates = _rate_pair([rates_kept.get("in"), rates_kept.get("out")]) if isinstance(rates_kept, Mapping) else None
+        if rates_kept is not None and rates is None:
+            return None
+        cache = value.get("cache")
+        if not isinstance(cache, Mapping) or not (
+            _non_negative(cache.get("read")) and _non_negative(cache.get("write"))
+        ):
+            return None
+        return cls(
+            name=value["provider"],
+            runtime="sdk",
+            upstream_model=str(value.get("model") or ""),
+            rates=rates,
+            cache_read_factor=float(cache["read"]),
+            cache_write_factor=float(cache["write"]),
+            resolved_at=str(value.get("resolved_at") or ""),
+        )
+
     def price(
         self, *, input_tokens: int, output_tokens: int, cache_read_tokens: int = 0, cache_creation_tokens: int = 0
     ) -> float | None:
