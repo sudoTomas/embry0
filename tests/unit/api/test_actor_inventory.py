@@ -290,6 +290,10 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
         _UNSERVED,
         "the admin-only users router; GET /people lists who can be sent one, not who did what",
     ),
+    # People (#179): no route reads the tables yet; the people API decides how each is shown.
+    "people.created_by": (_UNSERVED, "no route returns it yet: who added a person, read by the people API to come"),
+    "people.email": (_UNSERVED, "no route returns it yet: a person's email, read by the people API to come"),
+    "person_identities.person_id": (_UNSERVED, "no route returns it: it links an identity to its person"),
     "api_keys.created_by": (_UNSERVED, "GET /apikeys shows a caller who is not an admin only its own keys"),
     "credentials.created_by": (_UNSERVED, "no route returns it: CredentialOut leaves it out"),
     "credentials.created_by_key_id": (

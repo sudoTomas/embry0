@@ -4852,6 +4852,131 @@ deliverable under an "Assumptions" heading.$seed$
            AND position('"groups":' IN substr(graph, 1, position(',"nodes":' IN graph))) = 0;
         """,
     ),
+    (
+        154,
+        "people and their identities, one person backfilled for each user (#179)",
+        # spec 2026-11-23 (people and agent questions), section 3. A person is
+        # who embry0 asks and names as an owner, whether or not they sign in;
+        # an identity is a login on a forge or a handle in a chat, one
+        # person's on its kind whatever its case. Each user who signed in
+        # before this release becomes one person, linked to them, with their
+        # name, email and disabled flag, and their github_login as a github
+        # identity; each is audited as person.created. Nothing reads these
+        # tables yet: users.github_login stays what owners are matched by,
+        # kept in step with a linked person's github identity for a release.
+        #
+        # Only what the repository reads back is stored. A name is cleaned of
+        # every character the name check refuses (control, format, private
+        # use, a line or paragraph separator), trimmed of Unicode blanks and
+        # cut at 200, else the email names the person. A login that is not a
+        # GitHub login (forge_logins.GITHUB_LOGIN_RE, as alphanumeric runs
+        # joined by single hyphens, at most 39) becomes no identity: it stays
+        # on the user, matching what it matched before, which no owner can be,
+        # is listed in the person's audit row (left_off) and counted in a
+        # warning. An email or a login that only blanks or case set apart from
+        # another user's, which the old indexes allowed, goes to the user
+        # whose stored value is trimmed already, then the enabled one, then the
+        # oldest; the others' are left off, never failing the migration.
+        r"""
+        CREATE TABLE IF NOT EXISTS people (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL CHECK (name <> ''),
+            email      TEXT CHECK (email IS NULL OR email <> ''),
+            user_id    TEXT REFERENCES users (id) ON DELETE SET NULL,
+            timezone   TEXT,
+            hours      TEXT,
+            weekdays   TEXT,
+            disabled   BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by TEXT NOT NULL DEFAULT 'system',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_people_email_lower ON people (LOWER(email)) WHERE email IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_people_user ON people (user_id) WHERE user_id IS NOT NULL;
+        COMMENT ON TABLE people IS
+            'spec 2026-11-23: a person embry0 asks or names as an owner; user_id links their sign-in, when they have one.';
+
+        CREATE TABLE IF NOT EXISTS person_identities (
+            person_id  TEXT NOT NULL REFERENCES people (id) ON DELETE CASCADE,
+            kind       TEXT NOT NULL
+                       CHECK (kind IN ('github', 'gitlab', 'telegram', 'slack', 'teams', 'discord')),
+            value      TEXT NOT NULL CHECK (value <> ''),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_person_identities_kind_value ON person_identities (kind, LOWER(value));
+        CREATE INDEX IF NOT EXISTS idx_person_identities_person ON person_identities (person_id, created_at);
+        COMMENT ON TABLE person_identities IS
+            'spec 2026-11-23: who a person is on a forge (github, gitlab) or in a chat; one person per kind and value, any case.';
+
+        WITH users_now AS (
+            SELECT u.id, u.disabled, u.created_at,
+                   btrim(u.email) AS email, u.email = btrim(u.email) AS email_trimmed,
+                   btrim(COALESCE(u.github_login, '')) AS login,
+                   COALESCE(u.github_login, '') = btrim(COALESCE(u.github_login, '')) AS login_trimmed,
+                   regexp_replace(
+                       left(regexp_replace(regexp_replace(u.name, '[\u0001-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890\u0891\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]+', ' ', 'g'), '^[ \u0085\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+|[ \u0085\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$', '', 'g'), 200),
+                       '[ \u0085\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$', '', 'g'
+                   ) AS name
+              FROM users u
+             WHERE NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id = u.id)
+        ), ranked AS (
+            SELECT n.*,
+                   row_number() OVER (
+                       PARTITION BY LOWER(n.email) ORDER BY n.email_trimmed DESC, n.disabled, n.created_at, n.id
+                   ) AS email_rank,
+                   row_number() OVER (
+                       PARTITION BY LOWER(n.login) ORDER BY n.login_trimmed DESC, n.disabled, n.created_at, n.id
+                   ) AS login_rank,
+                   n.login ~ '^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$' AND char_length(n.login) <= 39 AS login_ok
+              FROM users_now n
+        ), made AS (
+            INSERT INTO people (id, name, email, user_id, disabled, created_by)
+            SELECT 'per-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 12),
+                   COALESCE(NULLIF(r.name, ''), NULLIF(r.email, ''), r.id),
+                   CASE WHEN r.email_rank = 1 THEN NULLIF(r.email, '') END,
+                   r.id, r.disabled, 'embry0:migration'
+              FROM ranked r
+            RETURNING id, user_id
+        ), linked AS (
+            INSERT INTO person_identities (person_id, kind, value)
+            SELECT made.id, 'github', r.login
+              FROM made JOIN ranked r ON r.id = made.user_id
+             WHERE r.login <> '' AND r.login_ok AND r.login_rank = 1
+            ON CONFLICT DO NOTHING
+            RETURNING person_id, value
+        )
+        INSERT INTO audit_log (action, actor, details)
+        SELECT 'person.created', 'embry0:migration',
+               jsonb_build_object(
+                   'person_id', made.id, 'user_id', made.user_id, 'source', 'users',
+                   'identities', COALESCE(
+                       (SELECT jsonb_agg(jsonb_build_object('kind', 'github', 'value', l.value))
+                          FROM linked l WHERE l.person_id = made.id),
+                       '[]'::jsonb
+                   ),
+                   'left_off', CASE
+                       WHEN r.login = '' OR (r.login_ok AND r.login_rank = 1) THEN '[]'::jsonb
+                       WHEN NOT r.login_ok THEN jsonb_build_array(jsonb_build_object(
+                           'kind', 'github', 'value', r.login, 'reason', 'not a GitHub login'))
+                       ELSE jsonb_build_array(jsonb_build_object(
+                           'kind', 'github', 'value', r.login,
+                           'reason', 'another user''s, set apart only by case or blanks'))
+                   END
+               )
+          FROM made JOIN ranked r ON r.id = made.user_id;
+
+        DO $$
+        DECLARE kept INTEGER;
+        BEGIN
+            SELECT count(*) INTO kept FROM audit_log
+             WHERE action = 'person.created' AND actor = 'embry0:migration'
+               AND jsonb_array_length(COALESCE(details -> 'left_off', '[]'::jsonb)) > 0;
+            IF kept > 0 THEN
+                RAISE WARNING '% user(s) kept a GitHub login their person was not given: see left_off in their person.created audit row', kept;
+            END IF;
+        END $$;
+        """,
+    ),
 ]
 
 

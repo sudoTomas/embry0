@@ -164,6 +164,12 @@ AuditAction = Literal[
     # A template a settings document names that no longer fits its use, replaced or skipped at it (#180)
     "map.analysis_template.replaced",
     "job.slop_route.skipped",
+    # People and their identities (#179)
+    "person.created",
+    "person.updated",
+    "person.deleted",
+    "person.identity.added",
+    "person.identity.removed",
 ]
 
 AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
@@ -284,6 +290,11 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "map.owner_changed": "Map owner changed",
     "map.analysis_template.replaced": "Map analysis ran another template",
     "job.slop_route.skipped": "Slop route skipped",
+    "person.created": "Person added",
+    "person.updated": "Person changed",
+    "person.deleted": "Person removed",
+    "person.identity.added": "Identity added to a person",
+    "person.identity.removed": "Identity taken from a person",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))

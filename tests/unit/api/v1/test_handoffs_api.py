@@ -38,7 +38,7 @@ class FakeUsers:
     async def get_by_email(self, email: str) -> Any:
         return next((u for u in self.rows if u.email.lower() == email.lower()), None)
 
-    async def set_github_login(self, user_id: str, login: str | None) -> Any:
+    async def set_github_login(self, user_id: str, login: str | None, *, actor: str = "system") -> Any:
         u = next((u for u in self.rows if u.id == user_id), None)
         if u is not None:
             u.github_login = login

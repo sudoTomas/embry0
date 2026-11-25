@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import pathlib
 import secrets
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -852,7 +853,10 @@ async def _init_app_state(
     app.state.jobs_repo = JobsRepository(db, metrics=loop_metrics)
     app.state.dispatch_ledger = DispatchLedgerRepository(db)
     app.state.traces_repo = TracesRepository(db, metrics=loop_metrics)
-    app.state.users_repo = UsersRepository(db)
+    users_audit_log = executor_kwargs.get("audit_log_path")
+    app.state.users_repo = UsersRepository(
+        db, audit_log_path=users_audit_log if isinstance(users_audit_log, str | pathlib.Path) else None
+    )
     app.state.api_keys_repo = ApiKeysRepository(db)
     app.state.audit_repo = AuditRepository(db)
     app.state.deliverables_repo = DeliverablesRepository(db)

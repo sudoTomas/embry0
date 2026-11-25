@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from embry0.forge_logins import GITHUB_LOGIN_RE
 from embry0.orchestration import dispatch_actors
 from embry0.services import lead_kinds
 from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_path
@@ -48,7 +49,8 @@ FINDING_COLUMNS = ("severity", "location", "claim", "evidence", "fix")
 _LOCATION = re.compile(r"^`?(?P<path>[^`:\s]+)(?::(?P<line>\d+)(?:-\d+)?)?`?$")
 #: Where CODEOWNERS may live, in the order GitHub reads them.
 CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
-_LOGIN = re.compile(r"^@([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})$")
+#: An owner written ``@login``, the login by :data:`embry0.forge_logins.GITHUB_LOGIN_RE`.
+_LOGIN = re.compile(r"^@(.+)$")
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -144,7 +146,7 @@ def codeowners_for_all(text: str | None) -> list[str]:
             continue
         pattern, *entries = line.split()
         if pattern in ("*", "/*", "/**", "**"):
-            owners = [m.group(1) for e in entries if (m := _LOGIN.match(e))]
+            owners = [m.group(1) for e in entries if (m := _LOGIN.match(e)) and GITHUB_LOGIN_RE.fullmatch(m.group(1))]
     return owners
 
 
