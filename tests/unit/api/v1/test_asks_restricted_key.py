@@ -276,3 +276,28 @@ async def test_the_feed_hands_a_key_exactly_the_decisions_the_list_shows_it_for_
     assert handed == listed, (
         f"seed {seed}: the feed and the list disagree on {sorted(handed ^ listed)} (reviews {reviews}, offers {offers})"
     )
+
+
+@pytest.mark.parametrize(
+    ("scope", "hands_out"), [("read", False), ("merge", False), ("propose", True), ("operate", True)]
+)
+@pytest.mark.asyncio
+async def test_only_the_assistant_and_operators_hand_asks_out(app: Any, scope: str, hands_out: bool) -> None:
+    """A plain call by a key that does not send asks reads the page as ``peek=1`` does: it leases nothing, so it
+    cannot hold asks away from the assistant for ``asks.lease_minutes``."""
+    from dataclasses import replace
+
+    keys = app.state.api_keys_repo
+    row = await keys.get_by_hash(hash_token(KEY))
+    caller = replace(row, scope=scope, allowed_repos=None)
+    keys.get_by_hash = AsyncMock(side_effect=lambda h: caller if h == hash_token(KEY) else None)
+    bust_api_key_cache()
+    app.state.offers.append(_offer("issue:web", "acme/web"))
+    app.state.asks_repo.codes["offer:issue:web"] = "WEBQ"
+    app.state.asks_repo.rows = [ask("q-offer-web", "offer:issue:web", "ed@example.com")]
+    handed = (await _get(app, "/api/v1/asks/due"))["asks"]
+    [stored] = app.state.asks_repo.rows
+    assert [a["id"] for a in handed] == ["q-offer-web"], f"{scope}: the page is read all the same"
+    assert (stored.get("lease_until") is not None) is hands_out, (
+        f"a {scope} key {'did not lease' if hands_out else 'leased'} the asks it read: {stored}"
+    )
