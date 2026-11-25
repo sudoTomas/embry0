@@ -64,8 +64,14 @@ jobs:
       # one their files hash to, so a part cut from the matrix could take
       # them with it.
       - name: The workflow's own guards
+        # pytest also reads options from the environment and its config: the
+        # step's own env outranks the job's and the workflow's, and -o addopts=
+        # drops any the config adds, so nothing can turn this into --co.
+        env:
+          PYTEST_ADDOPTS: ""
+          PYTHONWARNINGS: ""
         run: >-
-          uv run --no-sync pytest -q -p no:cacheprovider tests/unit/test_ci_workflow.py
+          uv run --no-sync pytest -o addopts= -q -p no:cacheprovider tests/unit/test_ci_workflow.py
           tests/unit/test_fail_on_warnings.py tests/unit/test_test_shards.py
 
   # The unit suite in two parts, on two runners at once (#695). On a hosted
@@ -124,10 +130,16 @@ jobs:
       # --fail-on-warnings (tests/conftest.py): the suite has no warnings, so a
       # new one fails the run and is named in its warnings summary (#336).
       # --durations: the slowest tests, so the next slow-down shows in the log.
+      # The step's own env and -o addopts=: as in the lint's guards, no option
+      # from the environment or the config can make this collect only, or hide
+      # a warning from --fail-on-warnings.
       - name: Run unit tests
+        env:
+          PYTEST_ADDOPTS: ""
+          PYTHONWARNINGS: ""
         run: >-
-          uv run --no-sync pytest tests/unit/ --shard ${{ matrix.shard }}/2 -n 4 -v --tb=short --timeout=60
-          --fail-on-warnings --durations=25
+          uv run --no-sync pytest -o addopts= tests/unit/ --shard ${{ matrix.shard }}/2 -n 4 -v --tb=short
+          --timeout=60 --fail-on-warnings --durations=25
 
   # The check the main branch requires: the lint and every part of the suite
   # passed. It runs whatever they did (always()), since a required check that

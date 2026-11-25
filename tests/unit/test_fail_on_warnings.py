@@ -58,5 +58,5 @@ def test_the_flag_changes_nothing_else(flag: bool, warnings: int, status: int, w
 def test_ci_runs_the_unit_suite_with_the_flag() -> None:
     jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"].values()
     steps = [step for job in jobs for step in job.get("steps", [])]
-    runs = [str(step.get("run", "")) for step in steps if "pytest tests/unit" in str(step.get("run", ""))]
+    runs = [str(step.get("run", "")) for step in steps if " tests/unit/ " in str(step.get("run", ""))]
     assert runs and all("--fail-on-warnings" in run for run in runs), f"CI's unit suite must fail on warnings: {runs}"

@@ -174,11 +174,23 @@ def test_nothing_in_the_backend_jobs_lets_a_failure_pass_or_a_part_go_unrun():
             )
 
 
+#: What a pytest step sets for itself, so nothing outside the command adds options or silences warnings: a step's env
+#: outranks the job's and the workflow's.
+_PYTEST_STEP_ENV = {"PYTEST_ADDOPTS": "", "PYTHONWARNINGS": ""}
+#: The pytest keys the repository's config may set; any other (addopts, filterwarnings) changes what a pinned
+#: command runs without changing its words.
+_PYTEST_KEYS = {"asyncio_mode", "asyncio_default_fixture_loop_scope", "testpaths", "markers"}
+
+
 def _one_command(job: str, marker: str) -> list[str]:
-    """The words of the one command in ``job``'s step whose script holds ``marker``: one line, nothing chained."""
-    runs = [str(step.get("run", "")) for step in _jobs()[job]["steps"] if marker in str(step.get("run", ""))]
-    assert len(runs) == 1, f"{job} has {len(runs)} steps running {marker!r}"
-    (run,) = runs
+    """The words of the one command in ``job``'s step whose script holds ``marker``: one line, nothing chained, run
+    with the step's own pytest env and from the repository's root."""
+    steps = [step for step in _jobs()[job]["steps"] if marker in str(step.get("run", ""))]
+    assert len(steps) == 1, f"{job} has {len(steps)} steps running {marker!r}"
+    (step,) = steps
+    assert step.get("env") == _PYTEST_STEP_ENV, f"{job}'s {marker!r} step reads pytest's options: {step.get('env')}"
+    assert "working-directory" not in step, f"{job}'s {marker!r} step runs elsewhere: {step['working-directory']}"
+    run = str(step["run"])
     assert not re.search(r"[;&|\n`]|\$\(", run.strip()), f"{job}'s {marker!r} step chains its command: {run!r}"
     return shlex.split(run)
 
@@ -187,7 +199,7 @@ def test_the_lint_job_runs_the_workflow_s_own_guards_whole():
     """In the parts they would run only in the one their files hash to: a part cut from the matrix takes them. The
     command is pinned whole, so it cannot be narrowed (-k, --co, a file dropped) while this reads it as run."""
     words = _one_command("backend-lint", "pytest")
-    assert words == ["uv", "run", "--no-sync", "pytest", "-q", "-p", "no:cacheprovider", *_GUARDS], (
+    assert words == ["uv", "run", "--no-sync", "pytest", "-o", "addopts=", "-q", "-p", "no:cacheprovider", *_GUARDS], (
         f"the lint job's guards run as {words}"
     )
     for path in _GUARDS:
@@ -196,8 +208,9 @@ def test_the_lint_job_runs_the_workflow_s_own_guards_whole():
 
 def test_each_part_runs_the_whole_unit_suite_s_command():
     """Each part runs tests/unit/ whole but for its own part: no other path, -k, -m, --deselect, --ignore or --co."""
-    words = _one_command("backend-tests", "pytest tests/unit")
-    expected = ["uv", "run", "--no-sync", "pytest", "tests/unit/", "--shard", "${{", "matrix.shard", "}}/2"]
+    words = _one_command("backend-tests", " tests/unit/ ")
+    expected = ["uv", "run", "--no-sync", "pytest", "-o", "addopts=", "tests/unit/", "--shard", "${{", "matrix.shard"]
+    expected += ["}}/2"]
     expected += ["-n", "4", "-v", "--tb=short", "--timeout=60", "--fail-on-warnings", "--durations=25"]
     assert words == expected, f"the unit suite runs as {words}"
 
@@ -208,7 +221,26 @@ def test_the_unit_suite_runs_every_part_of_itself():
     tests = _jobs().get("backend-tests")
     assert tests is not None, "no job runs the unit suite in parts"
     shards = tests["strategy"]["matrix"]["shard"]
-    (run,) = [str(step["run"]) for step in tests["steps"] if "pytest tests/unit/" in str(step.get("run", ""))]
+    (run,) = [str(step["run"]) for step in tests["steps"] if " tests/unit/ " in str(step.get("run", ""))]
     found = re.search(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", run)
     assert found is not None, f"the unit suite does not run its matrix's part: {run}"
     assert sorted(shards) == list(range(1, int(found.group(1)) + 1)), f"parts run {shards} of {found.group(1)}"
+
+
+def test_the_repository_gives_pytest_no_options_beyond_its_own_few():
+    """pytest reads options from its config as well as its command line: an `addopts = "--co"` or a
+    `filterwarnings = ["ignore"]` would make a pinned command collect only, or hide every warning from
+    --fail-on-warnings. So pyproject's pytest table holds only its four keys, and no other file pytest reads exists."""
+    import tomllib
+
+    root = WORKFLOW.parents[2]
+    tool = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8")).get("tool", {})
+    pytest_table = tool.get("pytest", {})
+    assert set(pytest_table) == {"ini_options"}, f"[tool.pytest] holds {sorted(pytest_table)}, not only ini_options"
+    assert set(pytest_table["ini_options"]) == _PYTEST_KEYS, f"pytest is given {sorted(pytest_table['ini_options'])}"
+    for name in ("pytest.ini", ".pytest.ini", "pytest.toml", ".pytest.toml", "tox.ini", "setup.cfg"):
+        path = root / name
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+            assert name in ("tox.ini", "setup.cfg"), f"{name} gives pytest its options"
+            assert "[pytest]" not in text and "[tool:pytest]" not in text, f"{name} gives pytest its options"
