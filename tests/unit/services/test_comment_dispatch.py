@@ -47,7 +47,7 @@ class _FakeExecutor:
         self.dispatched.append(job_id)
 
 
-def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=None):
+def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=None, head_repo="acme/backend"):
     svc = CommentDispatchService(
         config=config or _config(),
         jobs_repo=MagicMock(
@@ -63,7 +63,11 @@ def _service(*, config=None, donor_session=True, pr_state="open", jobs_by_pr=Non
         return_value={
             "state": pr_state,
             "html_url": "https://github.com/acme/backend/pull/418",
-            "head": {"ref": "embry0/iss-e9077b36-eng-1135-watcher-fix-non-i"},
+            "head": {
+                "ref": "embry0/iss-e9077b36-eng-1135-watcher-fix-non-i",
+                "repo": {"full_name": head_repo} if head_repo else None,
+            },
+            "base": {"ref": "main", "repo": {"full_name": "acme/backend"}},
         }
     )
     return svc
@@ -210,3 +214,24 @@ async def test_a_ledger_failure_never_stops_the_follow_up():
     result = await svc.handle_pr_comment(_payload())
     assert result["dispatched"] is True
     assert svc._executor.dispatched == ["job-new1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("head_repo", ["someone/backend", None], ids=["another-repository", "deleted-head"])
+async def test_a_fork_s_pull_request_is_not_followed_up(head_repo):
+    """Its branch is the fork's: a follow-up would work, and be granted a push, on this repository's branch of the
+    same name. Refused before any job is made, for a comment and for a send-back alike."""
+    svc = _service(head_repo=head_repo)
+    out = await svc.handle_pr_comment(_payload())
+    assert out == {"dispatched": False, "reason": "pr_from_fork"}
+    sent_back = await svc.start_followup(
+        "acme/backend", 418, request="r", dispatched_by="alex", title="t", kind="send_back"
+    )
+    assert sent_back == {"dispatched": False, "reason": "pr_from_fork"}
+    svc._jobs.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_pull_request_s_own_repository_in_another_case_is_not_a_fork():
+    svc = _service(head_repo="ACME/Backend")
+    assert (await svc.handle_pr_comment(_payload()))["dispatched"] is True
