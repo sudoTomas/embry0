@@ -355,6 +355,12 @@ class AnswerBody(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+def _disabled(me: Any, who: Sequence[Any]) -> bool:
+    """Whether a caller from a chat is refused for being disabled: their user (``me``), or any person they are
+    (``who``, :meth:`Directory.claimants`). A disabled user or person decides and steers nothing (#179)."""
+    return (me is not None and bool(getattr(me, "disabled", False))) or any(p.disabled for p in who)
+
+
 async def _may_decide(request: Request, decision: dict[str, Any], person: str) -> bool:
     """Whether ``person``, an email the assistant verified, may answer ``decision``.
 
@@ -374,7 +380,7 @@ async def _may_decide(request: Request, decision: dict[str, Any], person: str) -
     me = await users.get_by_email(person) if users is not None else None
     directory = await directory_of(request.app.state, [decision.get("repo")])
     who = directory.claimants(person, me.id if me is not None else None)
-    if (me is not None and getattr(me, "disabled", False)) or any(p.disabled for p in who):
+    if _disabled(me, who):
         return False
     admin = me is not None and me.tier == "admin"
     held = (decision.get("assigned_to") or {}).get("email")
@@ -629,9 +635,10 @@ async def _their_waiting_jobs(request: Request, who: str) -> dict[str, list[dict
 
 async def _their_job(request: Request, job_id: str, person: str, *, action: str) -> dict[str, Any]:
     """The job, when ``person`` may steer it: whoever started it, or an admin. A job no person started, whose question
-    goes to the group chat (``asks.unowned_group``), is anyone's embry0 knows. One the caller's key does not cover
-    answers as one that does not exist."""
+    goes to the group chat (``asks.unowned_group``), is anyone's embry0 knows. A disabled user or person steers
+    nothing, as any of those. One the caller's key does not cover answers as one that does not exist."""
     from embry0.services._executor_outcomes import person_who_started
+    from embry0.services.owner_people import directory_of
 
     none = HTTPException(status_code=404, detail="no job has that id")
     job = await _repo(request, "jobs_repo").get(job_id)
@@ -643,10 +650,15 @@ async def _their_job(request: Request, job_id: str, person: str, *, action: str)
     users = getattr(request.app.state, "users_repo", None)
     me = await users.get_by_email(person) if users is not None else None
     started_by = person_who_started(job)
-    if me is None or not (
-        me.tier == "admin"
-        or (started_by or "").lower() == person.lower()
-        or (started_by is None and (await ask_policy(request)).deployment().unowned_group)
+    who = [] if me is None else (await directory_of(request.app.state, ())).claimants(person, me.id)
+    if (
+        me is None
+        or _disabled(me, who)
+        or not (
+            me.tier == "admin"
+            or (started_by or "").lower() == person.lower()
+            or (started_by is None and (await ask_policy(request)).deployment().unowned_group)
+        )
     ):
         raise HTTPException(status_code=403, detail="it is not theirs to steer: whoever started the job, or an admin")
     return dict(job)
