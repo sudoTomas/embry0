@@ -197,7 +197,7 @@ exactly like a stuck reconciler.
 
 | Metric | Type | Labels |
 |---|---|---|
-| `embry0_sandbox_runner_stale_image_total` | counter | `outcome`: `argv_fallback`, `config_too_large`, `interpreter_missing`, `result_unmarked` |
+| `embry0_sandbox_runner_stale_image_total` | counter | `outcome`: `argv_fallback` (ran, config on argv), `config_too_large`, `interpreter_missing`, `result_unmarked` (each refused: `ERR_SANDBOX_IMAGE_STALE`, no agent ran) |
 | `embry0_state_channel_folded_concurrent_writes_total` | counter | `key`, `channel` |
 | `embry0_volume_reaper_volumes_total` | counter | `outcome`: `removed`, `would_remove`, `failed`, `kept`; `reason` |
 | `embry0_volume_reaper_sweeps_total` | counter | `result`: `ok`, `list_failed`, `status_fetch_failed` |

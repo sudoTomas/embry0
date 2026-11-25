@@ -65,7 +65,7 @@ class ErrorCode(StrEnum):
     VERIFY_NEW_TEST_FAILURES = "ERR_VERIFY_NEW_TEST_FAILURES"  # the repo's configured test command fails on the job's head in a way it does not fail on the base commit (a test, or a whole test target, that is green on base and red on head — after the head re-run). Failures that are red on base too, or pass when re-run, never produce this code.
 
     # #304 — sandbox runner config transport
-    SANDBOX_IMAGE_STALE = "ERR_SANDBOX_IMAGE_STALE"  # the sandbox image's runner predates --config-stdin AND the agent config is too large for the argv fallback — rebuild the named image (prebaked QA / profile images are not covered by the standard deploy recipe)
+    SANDBOX_IMAGE_STALE = "ERR_SANDBOX_IMAGE_STALE"  # the sandbox image was built before what this release runs agents with (the runner's execute-only interpreter, its result mark, or --config-stdin with an agent config too large for the argv fallback); no agent ran — rebuild the named image (prebaked QA / profile images are not covered by the standard deploy recipe)
     SANDBOX_RESULT_REFUSED = "ERR_SANDBOX_RESULT_REFUSED"  # the run's result was not taken: its runner's output held more than one final result, or one without this run's mark (the per-run nonce the orchestrator hands the runner on stdin), so the run is failed rather than trusting either
     SANDBOX_EXEC_STALLED = "ERR_SANDBOX_EXEC_STALLED"  # docker exec never read the agent config from stdin within the hand-off window (wedged exec / daemon); the runner was killed before any agent work
     # #305 — the duplicate-PR check fails closed

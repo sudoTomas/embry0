@@ -11,7 +11,7 @@ import hmac
 import json
 import secrets
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -59,8 +59,6 @@ SANDBOX_PROJECT_CWD = "/workspace"
 # stdin or its memory (spec 2026-11-23, an agent run's own result).
 RUNNER_INTERPRETER: Final = "/usr/local/bin/embry0-runner-python"
 RUNNER_COMMAND: tuple[str, ...] = (RUNNER_INTERPRETER, "-P", "-s", "-m", "embry0.sandbox.runner")
-#: The same runner on the image's own python: for an image built before it had the runner's interpreter.
-_PLAIN_RUNNER_COMMAND: tuple[str, ...] = ("python", *RUNNER_COMMAND[1:])
 #: What ``docker exec`` exits with when the program it is to start does not exist in the container: 126 from
 #: Docker 27 (the stack's DinD daemon), 127 from Docker 29. Either way the daemon writes why as the exec's one
 #: stdout line, ``OCI runtime exec failed: …`` ending in CRLF, and nothing on stderr: an exec whose start fails
@@ -225,6 +223,11 @@ _UNMARKED_RUNNER_STDERR_MARKERS = ("unrecognized arguments", "--result-nonce")
 #: The config key and flag the run's result nonce rides (embry0.sandbox.runner.RESULT_NONCE_KEY).
 _RESULT_NONCE_KEY = "result_nonce"
 _RESULT_NONCE_FLAG = "--result-nonce"
+#: What a sandbox image built before this release lacks, by the outcome its refusal is counted under.
+STALE_IMAGE_LACKS: Final[Mapping[str, str]] = {
+    "interpreter_missing": f"the runner's execute-only interpreter ({RUNNER_INTERPRETER})",
+    "result_unmarked": f"the runner's result mark ({_RESULT_NONCE_FLAG})",
+}
 
 
 @dataclass
@@ -336,28 +339,12 @@ class AgentRunner:
                 on_event,
                 nonce=nonce,
             )
+            # An image built before what this release runs agents with (a prebaked QA or profile image the deploy
+            # recipe does not rebuild) is refused: nothing started, and nothing runs on it now.
             if exit_facts.is_missing_runner_interpreter():
-                # An image built before the runner's interpreter (a prebaked QA or profile image the deploy recipe
-                # does not rebuild): nothing started, so one retry on the image's own python cannot run the agent
-                # twice. That runner starts open, until it seals itself, for this release only.
-                await self._warn_stale_image(container, config, "interpreter_missing", RUNNER_INTERPRETER)
-                runner = list(_PLAIN_RUNNER_COMMAND)
-                output, exit_facts = await self._exec_runner(
-                    container,
-                    [*runner, "--config-stdin", _RESULT_NONCE_FLAG, *extra_args],
-                    marked,
-                    config,
-                    on_event,
-                    nonce=nonce,
-                )
+                return await self._refuse_stale_image(container, config, "interpreter_missing")
             if exit_facts.is_unmarked_runner_usage_error():
-                # The image's runner predates the mark. argparse refused the flag before the runner imported
-                # anything, so one retry without it cannot run the agent twice. Its result is taken unmarked, for
-                # this release only.
-                await self._warn_stale_image(container, config, "result_unmarked", _RESULT_NONCE_FLAG)
-                output, exit_facts = await self._exec_runner(
-                    container, [*runner, "--config-stdin", *extra_args], config_json.encode(), config, on_event
-                )
+                return await self._refuse_stale_image(container, config, "result_unmarked")
             if not exit_facts.is_stale_runner_usage_error():
                 return output
 
@@ -761,17 +748,30 @@ class AgentRunner:
             return False
         return True
 
-    async def _warn_stale_image(self, container: str, config: dict[str, Any], outcome: str, missing: str) -> None:
-        """Say an image predates what this release runs its runner with, and count it: rebuild the image."""
-        logger.warning(
+    async def _refuse_stale_image(self, container: str, config: dict[str, Any], outcome: str) -> AgentOutput:
+        """Refuse a run in an image built before what this release runs agents with, naming the image and what it
+        lacks (:data:`STALE_IMAGE_LACKS`), and count it: the image is to be rebuilt. Only before anything ran."""
+        image = await self._image_ref(container)
+        lacks = STALE_IMAGE_LACKS[outcome]
+        logger.error(
             "sandbox_runner_stale_image",
-            image=await self._image_ref(container),
+            image=image,
             container=container,
             agent_type=config.get("agent_type"),
             outcome=outcome,
-            hint=f"the image predates {missing}; the run goes ahead without it this release — rebuild this image",
+            hint=f"the image lacks {lacks}: no agent ran; rebuild this image",
         )
         self._on_stale_image(outcome)
+        return AgentOutput(
+            agent_type=config.get("agent_type", "unknown"),
+            is_error=True,
+            error_message=(
+                f"The sandbox image {image!r} was built before what this release runs agents with: it lacks {lacks}. "
+                "No agent ran. Rebuild the image (a QA image with `embry0 build-qa-image`, a profile image from the "
+                "current base)."
+            ),
+            error_code=ErrorCode.SANDBOX_IMAGE_STALE.value,
+        )
 
     async def _image_ref(self, container: str) -> str:
         """The image a container was created from, for the stale-image log."""

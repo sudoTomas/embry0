@@ -527,9 +527,8 @@ class LoopMetrics:
     @_never_raises
     def sandbox_runner_stale_image(self, outcome: str) -> None:
         """What the image predates and what the run did: ``argv_fallback`` (``--config-stdin``; it went ahead),
-        ``config_too_large`` (the same; it could not), ``interpreter_missing`` (the runner's execute-only interpreter;
-        it went ahead on the image's python) or ``result_unmarked`` (``--result-nonce``; its result was taken
-        unmarked). The last two go ahead for one release only."""
+        ``config_too_large`` (the same; it could not), ``interpreter_missing`` (the runner's execute-only interpreter)
+        or ``result_unmarked`` (``--result-nonce``). The last two are refused: no agent ran."""
         self._stale_image.labels(outcome=outcome).inc()
 
     @_never_raises

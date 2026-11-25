@@ -77,4 +77,7 @@ def test_ci_checks_the_sealed_start_as_the_orchestrator_execs_it_in_a_sandbox() 
     )
     assert f"docker exec runner-sandbox-flags {_INTERPRETER} -c" in script, "the interpreter is not exec'd directly"
     assert f"docker exec runner-default-caps {_INTERPRETER} -c" in script, "no default-capabilities counter-case"
-    assert 'test "$sealed" != 1 && test "$default_caps" = 1' in script, "the check does not expect both outcomes"
+    assert "docker exec runner-sandbox-flags python -c" in script, "no counter-case on the image's own python"
+    assert 'test "$sealed" != 1 && test "$default_caps" = 1 && test "$plain" = 1' in script, (
+        "the check does not expect the sealed start and both counter-cases (default capabilities, plain python)"
+    )

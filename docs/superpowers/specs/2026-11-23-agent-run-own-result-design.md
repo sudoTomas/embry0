@@ -31,13 +31,14 @@ The code a job runs (the agent's tools, the repository's own scripts, anything t
 
 Images the deploy recipe does not rebuild keep the runner of the day they were built: prebaked per-repo QA images whose base digest was never recorded (selection still uses them), and profile images built `FROM` an older base.
 
-**Decision: such an image runs agents for this release, and is refused by the next one.**
+**Decision: such an image runs agents for this release, and is refused by the next one.** (Done: the release after refuses it, #673.)
 
 - An image without the interpreter: `docker exec` exits 127 naming it, before anything ran. The orchestrator runs the same command once more on the image's own `python`, with the mark.
 - A runner that does not know `--result-nonce`: argparse refuses the flag (exit 2, `unrecognized arguments: --result-nonce`, no stdout line) before the runner imports anything. The orchestrator runs it once more without the flag and without the mark, and takes its result unmarked. A second `final_result` still fails the run.
 - Neither retry can run an agent twice: each fires only when the first exec wrote no stdout line and exited with that exact failure.
 - Each is a `sandbox_runner_stale_image` warning with an `outcome` and a count on `embry0_sandbox_runner_stale_image_total{outcome="interpreter_missing"|"result_unmarked"}`, beside the existing `argv_fallback` and `config_too_large`.
 - Why not refuse now: refusing would fail every run on those images the moment this deploys, before an operator could rebuild them, and they run with exactly the exposure they had before this change. Refusing in the next release gives the counter one release to show which images are left. That change replaces both retries with `ERR_SANDBOX_IMAGE_STALE`.
+- **The refusal (#673).** Both retries are gone. Either failure, still only before anything ran, fails the run with `ERR_SANDBOX_IMAGE_STALE`: the image, what it lacks, and that no agent ran. The counter keeps both outcomes, now meaning refused, and the log line is an error. The refusal is worded for any capability an image built before the release lacks, so a later one (a provider whose key moves) refuses the same way.
 
 ## Deploying it
 
