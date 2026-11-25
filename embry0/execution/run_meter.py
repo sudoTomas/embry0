@@ -22,6 +22,7 @@ from typing import Any, Protocol
 import structlog
 
 from embry0.agents.run_charge import BootTally, Charge, RunMetering
+from embry0.execution.admin_seq import next_admin_seq
 from embry0.metrics.loop import NULL_METRICS, LoopMetrics
 from embry0.storage.repositories.run_meter import RunMeterRepository
 
@@ -41,7 +42,7 @@ class MeteringProxies(Protocol):
     def metered_proxies(self) -> list[str]: ...
     def metered_proxies_for(self, sandbox_id: str) -> list[str]: ...
     async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str: ...
-    async def end_run(self, proxy: str, run_id: str) -> dict[str, Any] | None: ...
+    async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None: ...
     async def read_meter(self, proxy: str) -> dict[str, Any]: ...
     def declared_unordered(self, proxy: str, run_id: str) -> bool: ...
     def replay_abandoned(self, proxy: str) -> bool: ...
@@ -55,6 +56,8 @@ class RunWindow:
     run_id: str
     targets: tuple[str, ...]
     declared: dict[str, str] = field(default_factory=dict)
+    #: The number each proxy's end carries, taken when the run ended (:meth:`RunMeter.number_end`).
+    end_seqs: dict[str, int] = field(default_factory=dict)
 
 
 def _unattributed_requests(tallies: list[Any]) -> int:
@@ -103,8 +106,17 @@ class RunMeter:
                 logger.warning("run_meter_declare_failed", proxy=proxy, run_id=run_id, error=str(exc))
         return window
 
+    def number_end(self, window: RunWindow) -> None:
+        """Number the run's end on every proxy now, when it is decided, before any wait: the sandbox's next run is
+        declared after this, so its declarations are newer than every one of these ends, and an end that lands first
+        never has them refused. Idempotent; :meth:`end` calls it first, a caller that ends the run in the background
+        calls it before handing the end over."""
+        for proxy in window.declared:
+            window.end_seqs.setdefault(proxy, next_admin_seq())
+
     async def end(self, window: RunWindow) -> RunMetering:
         """End the run on every proxy it was declared on, keep each proxy's final tally, and gather what is known."""
+        self.number_end(window)
         finals: dict[tuple[str, str], BootTally] = {}
         unreached: list[str] = []
         unordered: list[str] = []
@@ -114,7 +126,7 @@ class RunMeter:
                 # its tally there is not taken as whole (the run is charged at least what its sandbox reported).
                 unordered.append(proxy)
             try:
-                ended = await self._proxies.end_run(proxy, window.run_id)
+                ended = await self._proxies.end_run(proxy, window.run_id, seq=window.end_seqs[proxy])
             except Exception as exc:  # noqa: BLE001 — a lost end is a gap, never a failed run
                 self._metrics.meter_admin_failed(proxy, "end")
                 logger.warning("run_meter_end_failed", proxy=proxy, run_id=window.run_id, error=str(exc))

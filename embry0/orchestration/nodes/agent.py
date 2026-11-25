@@ -188,6 +188,8 @@ _BACKGROUND_ENDS: set[asyncio.Task[Any]] = set()
 
 
 def _end_in_background(run_meter: Any, window: Any) -> None:
+    # Numbered now, when the run ends, not when the task gets to run: the sandbox's next run may be declared first.
+    run_meter.number_end(window)
     task = asyncio.ensure_future(_end_metering(run_meter, window))
     _BACKGROUND_ENDS.add(task)
     task.add_done_callback(_BACKGROUND_ENDS.discard)

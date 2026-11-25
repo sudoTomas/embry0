@@ -227,6 +227,7 @@ output. A proxy process that went away mid-run leaves its last read in
 `run_meter` with its calls in flight, and the recreated proxy is given the run
 back after the sandbox's enrollment, under a new process (`boot_id`), so the
 run's calls are the two tallies summed and the charge is the larger figure.
+
 **Every admin request is ordered.** The orchestrator numbers each request it
 sends a proxy (an enrollment, its end, a change of push branches, a run
 declared or ended, a token pushed) when it decides it, and a replay sends each
@@ -236,6 +237,16 @@ a token); an older one is refused (409, `stale_request`), logged and counted
 (`embry0_proxy_stale_admin_requests`). So a request that reaches the proxy
 late (a `docker exec` that ran after its client gave up) or a replayed older
 one can never take a sandbox from a newer run or enrollment, however late.
+"When it decides it" is meant exactly: a run's ends are numbered when the run
+ends (a cancelled run's before its end is handed to the background), so the
+sandbox's next run is always declared with a newer number, and a token push
+carries the number its token was fetched with, so of two pushes for one
+credential the proxy keeps the token fetched last. The numbers start at the
+wall clock and grow (`embry0/execution/admin_seq.py`); a clock that goes back
+across an orchestrator restart cannot lock a proxy out, because `start()`
+relaunches every proxy and a proxy never compares numbers of two processes.
+Keeping a proxy across restarts would need the counter seeded from the numbers
+the proxies last took.
 
 Metering never holds a run up for long: a replay that times out is given up
 at once, and a run's declaration or end waits at most 30 seconds for a replay

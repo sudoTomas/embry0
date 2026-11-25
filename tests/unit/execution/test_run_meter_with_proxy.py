@@ -18,11 +18,12 @@ from embry0.agents.run_charge import charge_run
 from embry0.execution.proxy import manager as manager_module
 from embry0.execution.proxy.manager import ProxyManager
 from embry0.execution.proxy.metering import METER
-from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
+from embry0.execution.proxy.xai_proxy import TOKENS, create_xai_proxy_app
 from embry0.execution.run_meter import RunMeter
 from tests.unit.execution.proxy.test_metered_proxies import _SSE, _Answer, _Upstream
 from tests.unit.execution.proxy.upstream_stub import route_upstream
 from tests.unit.execution.test_run_meter import _Repo
+from tests.unit.execution.test_xai_refresher_registry import scrubber_snapshot  # noqa: F401
 
 ANSWERS = Path(__file__).parents[2] / "fixtures" / "model-answers"
 ADMIN = "test-admin-secret-not-real"
@@ -833,3 +834,146 @@ async def test_a_remainder_is_not_queued_behind_a_replay_under_way(proxy: Any) -
     finally:
         lock.release()
         mgr._replay_abandoned.discard("xai-proxy")
+
+
+async def test_a_cancelled_run_s_end_never_has_the_next_run_s_declaration_refused(proxy: Any) -> None:
+    """The review's probe: a replay holds the lock; run A's background end and run B's declaration both wait for it,
+    and A's end reaches the proxy first. A's end was numbered when A ended, before B's declaration, so B is taken and
+    charged its own call (it was refused, and B charged its sandbox's figure)."""
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    window_a = await meter.begin("sbx-1", "run-A", "job-1")
+    lock = mgr._replay_locks.setdefault("xai-proxy", asyncio.Lock())
+    await lock.acquire()  # a replay under way
+    end_a = asyncio.create_task(meter.end(window_a))
+    await asyncio.sleep(0.05)
+    real_once = mgr._exec_admin_once
+
+    async def _b_lands_last(**kw: Any) -> dict[str, Any]:
+        if kw["path"] == "/admin/runs" and kw["method"] == "POST":
+            await asyncio.sleep(0.5)
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _b_lands_last  # type: ignore[method-assign]
+    begin_b = asyncio.create_task(meter.begin("sbx-1", "run-B", "job-1"))
+    await asyncio.sleep(0.05)
+    lock.release()
+    metering_a, window_b = await asyncio.gather(end_a, begin_b)
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    assert "xai-proxy" in window_b.declared, "the next run's declaration was refused as older than the end"
+    assert metering_a.unreached == (), "the cancelled run's own end was lost"
+    await _call_to(proxy)
+    charge = charge_run(await meter.end(window_b), _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert (charge.source, charge.cost_usd) == ("proxy", pytest.approx(ONE_CALL))
+
+
+async def test_an_end_is_numbered_before_it_waits_for_a_replay(proxy: Any) -> None:
+    mgr = proxy.mgr
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
+    lock = mgr._replay_locks.setdefault("xai-proxy", asyncio.Lock())
+    await lock.acquire()
+    sent: list[int] = []
+    real_once = mgr._exec_admin_once
+
+    async def _record(**kw: Any) -> dict[str, Any]:
+        if kw["method"] == "DELETE":
+            sent.append(kw["body"]["seq"])
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _record  # type: ignore[method-assign]
+    ending = asyncio.create_task(mgr.end_run("xai-proxy", "run-1"))
+    await asyncio.sleep(0.05)
+    decided_after = mgr._next_seq()  # anything decided while the end waits
+    lock.release()
+    await ending
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    assert sent and sent[0] < decided_after, f"the end was numbered after its wait: {sent} vs {decided_after}"
+
+
+async def test_a_token_fetched_earlier_but_pushed_later_never_replaces_a_newer_one(
+    proxy: Any, monkeypatch: Any
+) -> None:
+    """Two pushes for one credential, each numbered when its value was fetched: the newer value goes first. The older
+    one is refused, and its push is done, not an error: the proxy and what is held for a recreated proxy keep the newer
+    value."""
+    mgr = proxy.mgr
+    real = mgr._exec_admin_request
+
+    async def _to_the_test_proxy(**kw: Any) -> dict[str, Any]:
+        return await real(**{**kw, "port": proxy.port})  # push_xai_token sends to the proxy's fixed port
+
+    monkeypatch.setattr(mgr, "_exec_admin_request", _to_the_test_proxy)
+    older, newer = mgr._next_seq(), mgr._next_seq()
+    await mgr.push_xai_token("cred-1", "at-newer", "2030-01-01T00:00:00Z", seq=newer)
+    await mgr.push_xai_token("cred-1", "at-older", "2030-01-01T00:00:00Z", seq=older)
+    assert proxy.app[TOKENS]["cred-1"]["access_token"] == "at-newer", "an older token replaced a newer one"
+    assert mgr._admin_state["xai-proxy"]["token:cred-1"][2]["access_token"] == "at-newer"
+
+
+async def test_what_is_held_never_goes_back_to_an_older_request(proxy: Any) -> None:
+    """Answers come back in any order: the older request's answer, handled last, does not replace or drop the newer
+    one's entry, so a recreated proxy is given what this one took last."""
+    mgr = proxy.mgr
+    port = proxy.port
+    enroll = {"sandbox_id": "sbx-9", "sandbox_token": TOKEN}
+    mgr._remember("xai-proxy", "POST", "/admin/enroll", port, {**enroll, "seq": 20})
+    mgr._remember("xai-proxy", "POST", "/admin/enroll", port, {**enroll, "sandbox_token": "older", "seq": 10})
+    assert mgr._admin_state["xai-proxy"]["enroll:sbx-9"][2]["seq"] == 20, "an older enrollment replaced a newer one"
+    mgr._remember("xai-proxy", "DELETE", "/admin/enroll/sbx-9", port, {"seq": 15})
+    assert "enroll:sbx-9" in mgr._admin_state["xai-proxy"], "an older unenroll dropped a newer enrollment"
+    token = {"credential_id": "cred-9", "access_token": "at-new", "seq": 20}
+    mgr._remember("xai-proxy", "POST", "/admin/token", port, token)
+    mgr._remember("xai-proxy", "POST", "/admin/token", port, {**token, "access_token": "at-old", "seq": 10})
+    assert mgr._admin_state["xai-proxy"]["token:cred-9"][2]["access_token"] == "at-new"
+    run = {"sandbox_id": "sbx-9", "run_id": "run-9", "seq": 20}
+    mgr._remember("xai-proxy", "POST", "/admin/runs", port, run)
+    mgr._remember("xai-proxy", "POST", "/admin/runs", port, {**run, "job_id": "older", "seq": 10})
+    assert "job_id" not in mgr._admin_state["xai-proxy"]["run:run-9"][2]
+    mgr._remember("xai-proxy", "DELETE", "/admin/enroll/sbx-9", port, {"seq": 30})
+    assert "enroll:sbx-9" not in mgr._admin_state["xai-proxy"], "a newer unenroll was not taken"
+
+
+@pytest.mark.usefixtures("scrubber_snapshot")  # the test tokens are taken out of the log scrubber after
+async def test_the_token_fetched_last_stays_at_the_proxy_whichever_push_is_sent_last(
+    proxy: Any, monkeypatch: Any
+) -> None:
+    """The review's second item, end to end. The initial push's batch fetched cred-a's token, then waits on cred-b. A
+    stale-token hit meanwhile force-refreshes cred-a and pushes the newer token. The batch's push of the older one is
+    sent last; the proxy keeps the newer."""
+    from embry0.api.app import _apply_xai_proxy_health, _push_initial_xai_token
+    from embry0.execution.xai_credential import XaiRefresherRegistry
+    from tests.unit.execution.test_xai_refresher_registry import _cipher, _row, _Secrets
+    from tests.unit.execution.test_xai_refresher_registry import _Health as _Quarantine
+    from tests.unit.execution.test_xai_refresher_registry import _Repo as _Credentials
+
+    mgr = proxy.mgr
+    real = mgr._exec_admin_request
+
+    async def _to_the_test_proxy(**kw: Any) -> dict[str, Any]:
+        return await real(**{**kw, "port": proxy.port})  # push_xai_token sends to the proxy's fixed port
+
+    monkeypatch.setattr(mgr, "_exec_admin_request", _to_the_test_proxy)
+    repo = _Credentials([_row("cred-a"), _row("cred-b")], {"cred-a": _cipher("rt-a"), "cred-b": _cipher("rt-b")})
+    registry = XaiRefresherRegistry(repo, _Secrets(), health=_Quarantine())
+    gate = asyncio.Event()
+
+    class _Refresher:
+        def __init__(self, tokens: list[str], wait: bool = False) -> None:
+            self.tokens, self.wait = tokens, wait
+            self._access_expiry, self._clock = 3600.0, lambda: 0.0
+
+        async def ensure_fresh(self, *, force: bool = False) -> str:
+            if self.wait:
+                await gate.wait()
+            return self.tokens.pop(0)
+
+    registry._refreshers["cred-a"] = _Refresher(["at-a-older", "at-a-newer"])
+    registry._refreshers["cred-b"] = _Refresher(["at-b"], wait=True)
+    initial = asyncio.create_task(_push_initial_xai_token(registry, mgr, attempts=1, delay_seconds=0))
+    await asyncio.sleep(0.01)  # the batch holds cred-a's token and waits on cred-b
+    await _apply_xai_proxy_health({"credentials": {"cred-a": {"stale": 1}}}, registry, mgr, _Quarantine())
+    assert proxy.app[TOKENS]["cred-a"]["access_token"] == "at-a-newer"
+    gate.set()
+    await initial
+    assert proxy.app[TOKENS]["cred-a"]["access_token"] == "at-a-newer", "the token fetched first replaced the later one"
+    assert mgr._admin_state["xai-proxy"]["token:cred-a"][2]["access_token"] == "at-a-newer"

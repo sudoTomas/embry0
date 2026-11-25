@@ -259,7 +259,7 @@ async def test_refresh_credential_leaves_the_other_account_alone(refuse_auth_jso
     )
     registry = XaiRefresherRegistry(repo, _Secrets(), http_client=client, health=_Health())
 
-    token, _expiry = await registry.refresh_credential("cred-a")
+    token, _expiry, _seq = await registry.refresh_credential("cred-a")
 
     assert token == "access-token-cred-a-only"
     assert seen == ["rt-a"], f"verifying one account must not refresh the other, posts={seen}"
@@ -311,3 +311,36 @@ async def test_a_registry_row_is_never_reseeded_from_the_cli_store(tmp_path, ref
         await refresher.ensure_fresh()
     assert repo.rotations == [], f"a refused re-seed must not write the row, got {repo.rotations}"
     await client.aclose()
+
+
+async def test_a_token_is_numbered_when_it_is_fetched_not_when_its_batch_returns(refuse_auth_json, scrubber_snapshot):
+    """refresh_all fetches one account, then the next. A forced refresh of the first, done while the batch is still on
+    the second, fetched a newer token: it carries the newer number, so its push is never undone by the batch's."""
+    import asyncio
+
+    XaiRefresherRegistry = _import_registry()
+    repo = _Repo([_row("cred-a"), _row("cred-b")], {"cred-a": _cipher("rt-a"), "cred-b": _cipher("rt-b")})
+    registry = XaiRefresherRegistry(repo, _Secrets(), health=_Health())
+    gate = asyncio.Event()
+
+    class _Refresher:
+        def __init__(self, tokens: list[str], wait: bool = False) -> None:
+            self.tokens, self.wait = tokens, wait
+            self._access_expiry, self._clock = 3600.0, lambda: 0.0
+
+        async def ensure_fresh(self, *, force: bool = False) -> str:
+            if self.wait:
+                await gate.wait()
+            return self.tokens.pop(0)
+
+    registry._refreshers["cred-a"] = _Refresher(["at-a-1", "at-a-2"])
+    registry._refreshers["cred-b"] = _Refresher(["at-b-1"], wait=True)
+    batch = asyncio.create_task(registry.refresh_all())
+    await asyncio.sleep(0.01)  # the batch has fetched cred-a and waits on cred-b
+    forced = await registry.refresh_credential("cred-a", force=True)
+    gate.set()
+    refreshed = await batch
+    assert (refreshed["cred-a"].token, forced.token) == ("at-a-1", "at-a-2")
+    assert refreshed["cred-a"].seq < forced.seq, (
+        f"the token fetched first carries the newer number: {refreshed['cred-a'].seq} vs {forced.seq}"
+    )

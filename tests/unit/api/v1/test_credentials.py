@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
+from embry0.execution.xai_credential import FreshToken
 from embry0.services.credentials.resolver import CredentialResolver
 from embry0.storage.repositories.credentials import BindingValidationError, CredentialBoundError
 from tests.fixtures.routes import app_routes
@@ -624,9 +625,9 @@ async def test_verify_xai_oauth_probes_the_registry_access_token(client, app):
         def __init__(self) -> None:
             self.ids: list[str] = []
 
-        async def refresh_credential(self, credential_id: str) -> tuple[str, str]:
+        async def refresh_credential(self, credential_id: str) -> FreshToken:
             self.ids.append(credential_id)
-            return (access, "2030-01-01T00:00:00+00:00")
+            return FreshToken(access, "2030-01-01T00:00:00+00:00", 1)
 
     registry = _Registry()
     app.state.xai_refresher_registry = registry

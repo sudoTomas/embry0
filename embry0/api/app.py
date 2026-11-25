@@ -465,8 +465,9 @@ async def _push_initial_xai_token(
     for attempt in range(1, attempts + 1):
         try:
             refreshed = await registry.refresh_all()  # type: ignore[attr-defined]
-            for credential_id, (token, expires_at) in refreshed.items():
-                await proxy_mgr.push_xai_token(credential_id, token, expires_at)  # type: ignore[attr-defined]
+            for credential_id, (token, expires_at, seq) in refreshed.items():
+                # The number it was fetched with: a push of an older value sent later never replaces it.
+                await proxy_mgr.push_xai_token(credential_id, token, expires_at, seq=seq)  # type: ignore[attr-defined]
             return
         except Exception as exc:
             if attempt == attempts:
@@ -560,8 +561,8 @@ async def _xai_token_refresh_loop(registry: object, proxy_mgr: object, health: o
         try:
             if tick % ticks_per_refresh == 0:
                 refreshed = await registry.refresh_all()  # type: ignore[attr-defined]
-                for credential_id, (token, expires_at) in refreshed.items():
-                    await proxy_mgr.push_xai_token(credential_id, token, expires_at)  # type: ignore[attr-defined]
+                for credential_id, (token, expires_at, seq) in refreshed.items():
+                    await proxy_mgr.push_xai_token(credential_id, token, expires_at, seq=seq)  # type: ignore[attr-defined]
             report = await proxy_mgr.xai_proxy_health()  # type: ignore[attr-defined]
             await _apply_xai_proxy_health(report, registry, proxy_mgr, health)
         except asyncio.CancelledError:
@@ -588,8 +589,8 @@ async def _apply_xai_proxy_health(report: object, registry: object, proxy_mgr: o
             continue
         if int(bucket.get("stale") or 0) > 0:
             try:
-                token, expires_at = await registry.refresh_credential(credential_id, force=True)  # type: ignore[attr-defined]
-                await proxy_mgr.push_xai_token(credential_id, token, expires_at)  # type: ignore[attr-defined]
+                token, expires_at, seq = await registry.refresh_credential(credential_id, force=True)  # type: ignore[attr-defined]
+                await proxy_mgr.push_xai_token(credential_id, token, expires_at, seq=seq)  # type: ignore[attr-defined]
                 logger.info(
                     "xai_credential_force_refreshed", credential_id=credential_id, stale_hits=bucket.get("stale")
                 )

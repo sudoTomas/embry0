@@ -40,6 +40,7 @@ from typing import Any
 import aiohttp
 import structlog
 
+from embry0.execution.admin_seq import next_admin_seq
 from embry0.execution.docker_client import DockerClient
 from embry0.execution.image_registry import qualify_image
 from embry0.execution.proxy.forge_scope import SCOPE_FIELD, normalize_github_repo, normalize_gitlab_project
@@ -259,7 +260,6 @@ class ProxyManager:
         self._remainder_tasks: set[asyncio.Task[None]] = set()
         # The last admin request number given: from the wall clock in nanoseconds, so a later process's numbers are
         # newer than an earlier one's, and never less than the last plus one.
-        self._last_seq = 0
         self._on_recreated: Callable[[], Awaitable[None]] | None = None
         self.auth_proxy_url: str = ""
         self.xai_proxy_url: str = ""
@@ -976,12 +976,20 @@ class ProxyManager:
         credential_id: str,
         access_token: str | None = None,
         expires_at: str | None = None,
+        *,
+        seq: int | None = None,
     ) -> None:
         """Push a SuperGrok access token to the xai-proxy.
 
         ``push_xai_token(credential_id, access_token, expires_at)`` fills that
         credential's slot. The one-argument form ``push_xai_token(access_token)``
         fills the global holder the file-backed refresher still uses.
+
+        ``seq`` is the number the token was fetched with
+        (``XaiRefresherRegistry``): two pushes for one credential then leave
+        the proxy holding the value fetched last, whichever is sent last. A
+        push the proxy refuses as older is done: it holds a newer value.
+        Without ``seq`` the push is numbered when it is sent.
 
         No-op if the xai-proxy isn't running. Raises RuntimeError if the push
         fails so the caller's background loop can log and retry.
@@ -1000,13 +1008,19 @@ class ProxyManager:
                 "access_token": access_token,
                 "expires_at": expires_at,
             }
-        await self._exec_admin_request(
-            container="xai-proxy",
-            method="POST",
-            path="/admin/token",
-            port=9106,
-            body=body,
-        )
+        if seq is not None:
+            body["seq"] = seq
+        try:
+            await self._exec_admin_request(
+                container="xai-proxy",
+                method="POST",
+                path="/admin/token",
+                port=9106,
+                body=body,
+            )
+        except StaleAdminRequest:
+            logger.info("xai_proxy_token_push_superseded", credential_id=credential_id if access_token else None)
+            return
         logger.info("xai_proxy_token_pushed", credential_id=credential_id if access_token is not None else None)
 
     async def xai_proxy_health(self) -> dict[str, Any]:
@@ -1064,18 +1078,29 @@ class ProxyManager:
             self._unordered_runs.add((proxy, run_id))
         return str(response.get("boot_id") or "")
 
-    async def end_run(self, proxy: str, run_id: str) -> dict[str, Any] | None:
+    async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
         """End ``run_id`` on ``proxy``: its last tally and the proxy's boot id (``{"boot_id", "tally"}``), or None
         when the proxy holds no such run (it was recreated and not given the run back). Raises RuntimeError when
-        the proxy cannot be reached."""
+        the proxy cannot be reached.
+
+        ``seq`` is the number taken when the run ended; without one, the end is numbered now, before any wait, as a
+        declaration is: a number taken after the wait could be newer than the sandbox's next run's declaration, and
+        an end landing first would then have that declaration refused."""
         port = METERED_PROXIES[proxy][0]
+        if seq is None:
+            seq = self._next_seq()
         # Ended, or as good as, from now: an end whose answer is lost may still reach the proxy, and a run given back
         # to a recreated proxy after its end would take the calls of the sandbox's next run.
         self._admin_state.get(proxy, {}).pop(f"run:{run_id}", None)
         await self._after_replay(proxy)
         try:
             response = await self._exec_admin_request(
-                container=proxy, method="DELETE", path=f"/admin/runs/{run_id}", port=port, body=None, accept_404=True
+                container=proxy,
+                method="DELETE",
+                path=f"/admin/runs/{run_id}",
+                port=port,
+                body={"seq": seq},
+                accept_404=True,
             )
         except StaleAdminRequest:
             return None  # a newer request for the sandbox came first (its next run ended this one): no final tally
@@ -1114,9 +1139,8 @@ class ProxyManager:
         return proxy in self._replay_abandoned
 
     def _next_seq(self) -> int:
-        """The next admin request number: newer than every one this process gave, and than an earlier process's."""
-        self._last_seq = max(time.time_ns(), self._last_seq + 1)
-        return self._last_seq
+        """The next admin request number (:func:`embry0.execution.admin_seq.next_admin_seq`)."""
+        return next_admin_seq()
 
     def _resume_replay_soon(self, proxy: str) -> None:
         """``proxy`` answered: send what its given-up replay did not, in the background, so the request that answered
@@ -1189,21 +1213,34 @@ class ProxyManager:
         return response
 
     def _remember(self, container: str, method: str, path: str, port: int, body: dict[str, Any] | None) -> None:
-        """Keep the admin state a proxy holds in memory, so a recreated proxy gets it back."""
+        """Keep the admin state a proxy holds in memory, so a recreated proxy gets it back.
+
+        Answers come back in any order: an entry is never replaced or dropped by a request older than the one it
+        holds, so what is held is what the proxy took last, and a replay gives back that."""
         held = self._admin_state.setdefault(container, {})
         now = time.monotonic()
         for key in [k for k, (_, _, _, expires) in held.items() if expires <= now]:
             del held[key]
+
+        def newer(key: str) -> bool:
+            entry = held.get(key)
+            mine, theirs = (body or {}).get("seq"), entry[2].get("seq") if entry is not None else None
+            return not (isinstance(mine, int) and isinstance(theirs, int) and mine < theirs)
+
         if method == "POST" and path == "/admin/enroll" and body and body.get("sandbox_id"):
             ttl = float(body.get("ttl_seconds") or self._enroll_ttl_seconds)
-            held[f"enroll:{body['sandbox_id']}"] = (path, port, dict(body), now + ttl)
+            if newer(key := f"enroll:{body['sandbox_id']}"):
+                held[key] = (path, port, dict(body), now + ttl)
         elif method == "DELETE" and path.startswith("/admin/enroll/"):
-            held.pop(f"enroll:{path.removeprefix('/admin/enroll/')}", None)
+            if newer(key := f"enroll:{path.removeprefix('/admin/enroll/')}"):
+                held.pop(key, None)
         elif method == "POST" and path == "/admin/token" and body:
-            held[f"token:{body.get('credential_id') or ''}"] = (path, port, dict(body), float("inf"))
+            if newer(key := f"token:{body.get('credential_id') or ''}"):
+                held[key] = (path, port, dict(body), float("inf"))
         elif method == "POST" and path == "/admin/runs" and body and body.get("run_id"):
             # Lives no longer than an enrollment: a run whose end was never heard of is not replayed forever.
-            held[f"run:{body['run_id']}"] = (path, port, dict(body), now + self._enroll_ttl_seconds)
+            if newer(key := f"run:{body['run_id']}"):
+                held[key] = (path, port, dict(body), now + self._enroll_ttl_seconds)
         elif method == "DELETE" and path.startswith("/admin/runs/"):
             held.pop(f"run:{path.removeprefix('/admin/runs/')}", None)
 

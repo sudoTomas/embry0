@@ -80,7 +80,8 @@ class _Proxies:
         }
         return self.boot[proxy]
 
-    async def end_run(self, proxy: str, run_id: str) -> dict[str, Any] | None:
+    async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
+        self.end_seqs = {**getattr(self, "end_seqs", {}), proxy: seq}
         self._maybe_fail(proxy, "end")
         tally = self.tallies[proxy].pop(run_id, None)
         return None if tally is None else {"boot_id": self.boot[proxy], "tally": tally}
@@ -289,3 +290,28 @@ async def test_the_stale_requests_a_proxy_refused_are_a_gauge_seeded_0() -> None
     proxies.stale = {"xai-proxy": 3}  # type: ignore[attr-defined]
     await meter.poll_once()
     assert sample(registry, "embry0_proxy_stale_admin_requests", {"proxy": "xai-proxy"}) == 3
+
+
+async def test_a_run_s_ends_are_numbered_when_it_ends_on_every_proxy() -> None:
+    """A run declared on two proxies is ended on one, then the other. The sandbox's next run, declared meanwhile, is
+    numbered after both ends: the second proxy's end is not numbered only when its turn comes."""
+    from embry0.execution.admin_seq import next_admin_seq
+
+    proxies = _Proxies({"sbx-1": ["xai-proxy", "local-llm-proxy"]})
+    meter, _registry = _meter(proxies, _Repo())
+    window = await meter.begin("sbx-1", "run-A", "job-1")
+    real_end = proxies.end_run
+    meanwhile: list[int] = []
+
+    async def _end_run(proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
+        if not meanwhile:
+            meanwhile.append(next_admin_seq())  # the next run's declaration, numbered while this end goes out
+        return await real_end(proxy, run_id, seq=seq)
+
+    proxies.end_run = _end_run  # type: ignore[method-assign]
+    await meter.end(window)
+    ends = getattr(proxies, "end_seqs", {})
+    assert set(ends) == {"xai-proxy", "local-llm-proxy"}, f"ends sent unnumbered: {ends}"
+    assert all(isinstance(n, int) and n < meanwhile[0] for n in ends.values()), (
+        f"an end was numbered after the next run's declaration: {ends} vs {meanwhile}"
+    )

@@ -130,6 +130,7 @@ async def test_health_endpoint():
 
 async def test_push_initial_xai_token_retries_then_succeeds():
     from embry0.api.app import _push_initial_xai_token
+    from embry0.execution.xai_credential import FreshToken
 
     class _Registry:
         def __init__(self):
@@ -137,13 +138,13 @@ async def test_push_initial_xai_token_retries_then_succeeds():
 
         async def refresh_all(self):
             self.calls += 1
-            return {"cred-a": ("access-token-cred-a", "2030-01-01T00:00:00+00:00")}
+            return {"cred-a": FreshToken("access-token-cred-a", "2030-01-01T00:00:00+00:00", 1)}
 
     class _ProxyMgr:
         def __init__(self):
             self.calls = []
 
-        async def push_xai_token(self, credential_id, access_token=None, expires_at=None):
+        async def push_xai_token(self, credential_id, access_token=None, expires_at=None, *, seq=None):
             self.calls.append((credential_id, access_token, expires_at))
             if len(self.calls) < 3:
                 raise RuntimeError("Connection refused")
@@ -158,6 +159,7 @@ async def test_push_initial_xai_token_retries_then_succeeds():
 
 async def test_push_initial_xai_token_gives_up_after_attempts():
     from embry0.api.app import _push_initial_xai_token
+    from embry0.execution.xai_credential import FreshToken
 
     class _Registry:
         def __init__(self):
@@ -165,13 +167,13 @@ async def test_push_initial_xai_token_gives_up_after_attempts():
 
         async def refresh_all(self):
             self.calls += 1
-            return {"cred-a": ("access-token-cred-a", "2030-01-01T00:00:00+00:00")}
+            return {"cred-a": FreshToken("access-token-cred-a", "2030-01-01T00:00:00+00:00", 1)}
 
     class _ProxyMgr:
         def __init__(self):
             self.calls = 0
 
-        async def push_xai_token(self, credential_id, access_token=None, expires_at=None):
+        async def push_xai_token(self, credential_id, access_token=None, expires_at=None, *, seq=None):
             self.calls += 1
             raise RuntimeError("still down")
 
@@ -318,3 +320,50 @@ async def test_ca_pem_reaches_the_sandbox_and_proxy_managers(tmp_path, monkeypat
 
     assert captured["sandbox"] == CA_PEM
     assert captured["proxy"] == CA_PEM
+
+
+async def test_the_initial_push_carries_the_number_each_token_was_fetched_with():
+    from embry0.api.app import _push_initial_xai_token
+    from embry0.execution.xai_credential import FreshToken
+
+    class _Registry:
+        async def refresh_all(self):
+            return {"cred-a": FreshToken("access-token-cred-a", "2030-01-01T00:00:00+00:00", 41)}
+
+    class _ProxyMgr:
+        def __init__(self):
+            self.seqs = []
+
+        async def push_xai_token(self, credential_id, access_token=None, expires_at=None, *, seq=None):
+            self.seqs.append(seq)
+
+    mgr = _ProxyMgr()
+    await _push_initial_xai_token(_Registry(), mgr, attempts=1, delay_seconds=0)
+    assert mgr.seqs == [41], f"the push was not numbered when its token was fetched: {mgr.seqs}"
+
+
+async def test_the_refresh_loop_pushes_each_token_with_the_number_it_was_fetched_with(monkeypatch):
+    import asyncio
+
+    import embry0.api.app as app_module
+    from embry0.execution.xai_credential import FreshToken
+
+    monkeypatch.setattr(app_module, "_XAI_HEALTH_POLL_SECONDS", 0.001)
+    monkeypatch.setattr(app_module, "_XAI_TOKEN_PUSH_INTERVAL_SECONDS", 0.001)  # every tick refreshes
+
+    class _Registry:
+        async def refresh_all(self):
+            return {"cred-a": FreshToken("access-token-cred-a", "2030-01-01T00:00:00+00:00", 43)}
+
+    class _ProxyMgr:
+        def __init__(self):
+            self.seqs = []
+
+        async def push_xai_token(self, credential_id, access_token=None, expires_at=None, *, seq=None):
+            self.seqs.append(seq)
+            raise asyncio.CancelledError  # one tick is enough
+
+    mgr = _ProxyMgr()
+    with pytest.raises(asyncio.CancelledError):
+        await app_module._xai_token_refresh_loop(_Registry(), mgr, None)
+    assert mgr.seqs == [43], f"the loop's push was not numbered when its token was fetched: {mgr.seqs}"

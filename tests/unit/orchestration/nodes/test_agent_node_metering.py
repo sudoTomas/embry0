@@ -54,14 +54,18 @@ class _Meter(RunMeter):
         self.charges: list[Any] = []
 
     async def begin(self, sandbox_id: str, run_id: str, job_id: str | None = None) -> Any:
+        from embry0.execution.run_meter import RunWindow
+
         self.begun.append((sandbox_id, run_id, job_id))
-        return type("W", (), {"run_id": run_id, "sandbox_id": sandbox_id})()
+        return RunWindow(sandbox_id, run_id, ("xai-proxy",), {"xai-proxy": "b1"})
 
     async def end(self, window: Any) -> Any:
         # Imported here, so the module loads on a tree without metering and its tests fail on what they assert.
         from embry0.agents.run_charge import BootTally, RunMetering
+        from embry0.execution.admin_seq import next_admin_seq
 
         self.ended.append(window.run_id)
+        self.end_numbers = (dict(getattr(window, "end_seqs", {})), next_admin_seq())
         snapshot = {"run_id": window.run_id, "models": self.models, "errors": 0, "open": []}
         return RunMetering(
             run_id=window.run_id,
@@ -163,6 +167,32 @@ async def test_a_cancelled_run_is_ended_on_the_proxies_without_waiting() -> None
             break
         await asyncio.sleep(0.01)
     assert meter.ended == [meter.begun[0][1]], "a cancelled run's declaration was left on the proxies"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_s_end_is_numbered_before_it_is_handed_over() -> None:
+    """The sandbox's next run may be declared before the background end gets to run: the end's numbers are taken when
+    the run is cancelled, so they are older than that declaration's, and an end that lands first never has it refused."""
+    meter, traces = _Meter(PROXY_COUNT), _Traces()
+    started = asyncio.Event()
+
+    async def run(**kwargs: Any) -> AgentOutput:
+        started.set()
+        await asyncio.sleep(60)
+        raise AssertionError("not cancelled")
+
+    task = asyncio.create_task(_run(_runner(meter, run), traces))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(50):
+        if meter.ended:
+            break
+        await asyncio.sleep(0.01)
+    numbered, later = meter.end_numbers
+    assert set(numbered) == {"xai-proxy"}, "the cancelled run's end was handed over unnumbered"
+    assert numbered["xai-proxy"] < later
 
 
 @pytest.mark.asyncio
