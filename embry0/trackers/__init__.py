@@ -20,6 +20,11 @@ from embry0.trackers.author_association import (
 from embry0.trackers.base import IssueTracker, TriggerContext
 from embry0.trackers.dispatch import create_tracked_issue, dispatch_open_issue, end_waits, start_triage
 from embry0.trackers.models import (
+    BACKLOG_CUT_SHORT,
+    BACKLOG_ISSUE_PAGES,
+    BACKLOG_NO_CLIENT,
+    BacklogItem,
+    BacklogRead,
     TrackerIssue,
     TrackerIssueRef,
     actor_of,
@@ -28,11 +33,17 @@ from embry0.trackers.models import (
     github_number_of,
     linear_identifier_of,
     linear_native_id_of,
+    read_failed,
 )
 from embry0.trackers.registry import TrackerRegistry
 
 __all__ = [
+    "BACKLOG_CUT_SHORT",
+    "BACKLOG_ISSUE_PAGES",
+    "BACKLOG_NO_CLIENT",
     "DEFAULT_AUTHOR_ROLES",
+    "BacklogItem",
+    "BacklogRead",
     "IssueTracker",
     "TrackerIssue",
     "TrackerIssueRef",
@@ -48,6 +59,7 @@ __all__ = [
     "github_number_of",
     "linear_identifier_of",
     "linear_native_id_of",
+    "read_failed",
     "parse_author_roles",
     "start_triage",
 ]

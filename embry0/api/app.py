@@ -2524,7 +2524,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         from embry0.api.trigger_context import resolve_trigger_labels
         from embry0.api.v1.organizations import app_request as _leads_request
-        from embry0.api.v1.organizations import org_forge_client as _leads_forge_client
+        from embry0.api.v1.organizations import org_own_forge_client as _leads_forge_client
         from embry0.services.background_scope import enrollment as _leads_enrollment
         from embry0.services.background_scope import registered_reader as _leads_registered
         from embry0.services.leads.loop import LeadsLoop
@@ -2544,16 +2544,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             stacks = [s.repo for s in await app.state.watcher_stacks_repo.list_all(enabled_only=True)]
             return enrolled.scope("leads", await _leads_candidates(), among=[*owned, *stacks])
 
+        async def _lead_forge(repo: str) -> str | None:
+            forge = await app.state.repos_repo.forge_or_none(repo)
+            return str(forge) if forge else None
+
         async def _lead_client(repo: str) -> Any:
             org = await app.state.organizations_repo.get(repo.split("/", 1)[0])
-            if org is None or org.status != "active" or org.forge != "github":
+            if org is None or org.status != "active":
+                return None
+            # The client of the organization's own forge: GitHub's, or the deployment's GitLab (#181). None when the
+            # repository is registered on another forge, so no finder reads one forge's repository with the other's.
+            if org.forge != await _lead_forge(repo):
                 return None
             return await _leads_forge_client(_leads_request(app), org)
 
-        async def _lead_linear() -> Any:
+        async def _lead_trackers() -> dict[str, Any]:
+            # The tracker registry's, with Linear resolved now (DB over env), as its webhook route resolves it:
+            # the registry's Linear is refreshed only by a delivery.
+            registry = app.state.trackers
+            found: dict[str, Any] = {name: registry.get(name) for name in registry.names()}
             provider = getattr(app.state, "linear_provider", None)
             resolved = (await provider.resolve())[0] if provider is not None else None
-            return resolved or getattr(app.state, "linear_sync", None)
+            if resolved is not None:
+                found["linear"] = resolved
+            return found
 
         async def _lead_tracked(tracker: str, repo: str, key: str) -> bool:
             return await app.state.issues_repo.get_by_tracker_ref(tracker, repo, key) is not None
@@ -2566,7 +2580,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             leads=app.state.leads_repo,
             targets=_lead_targets,
             client_for=_lead_client,
-            linear=_lead_linear,
+            forge_of=_lead_forge,
+            trackers=_lead_trackers,
             tracked=_lead_tracked,
             trigger_labels=_lead_triggers,
             # Spec 2026-11-10: the areas embry0 keeps, never a file of the repository.

@@ -1,11 +1,12 @@
 """The backlog intake (leads, spec 2026-10-25): tickets nobody sent to embry0 that it could do.
 
 Until now a ticket reached embry0 only when a person put the trigger label
-on it. This finder reads the backlog itself: Linear tickets nobody started
+on it. This finder reads the backlog itself, through each tracker of the
+registry (``IssueTracker.list_backlog``, #181): Linear tickets nobody started
 (unassigned, or assigned to the account embry0's key acts as) whose project
-resolves to the repository, and the repository's open GitHub issues nobody
-holds. A ticket that already carries the trigger label, or that embry0
-already tracks, is left to the paths that have it.
+resolves to the repository, and the open GitHub or GitLab issues nobody holds
+of a repository on that forge. A ticket that already carries the trigger
+label, or that embry0 already tracks, is left to the paths that have it.
 
 What it offers is judged first by a cheap reading of the ticket in its
 organization's words (:class:`~embry0.services.leads.readiness.Readiness`,
@@ -20,15 +21,13 @@ model-based reading is not part of this version.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from typing import Any
 
-from embry0.services.leads import FinderResult, Lead
+from embry0.services.leads import Lead
 from embry0.services.leads.readiness import Readiness, paths_in
 from embry0.services.trigger_labels import normalize_labels
+from embry0.trackers.models import BacklogItem
 
 KIND = "ticket"
-#: Pages of 100 GitHub issues read per repository per pass, newest-updated first.
-GITHUB_ISSUE_PAGES = 3
 
 
 def _summary(title: str, score: int, why: Sequence[str]) -> str:
@@ -84,82 +83,34 @@ def ticket_lead(
 Tracked = Callable[[str, str, str], Awaitable[bool]]
 
 
-async def linear_leads(
-    repo: str,
-    tickets: Sequence[Any],
+async def backlog_leads(
+    items: Iterable[BacklogItem],
     *,
     trigger_labels: Iterable[str],
     tracked: Tracked,
     min_score: int,
     readiness: Readiness,
 ) -> list[Lead]:
-    """The leads among Linear backlog tickets (``LinearSyncService.list_backlog_tickets``) for ``repo``, read in
-    its organization's words (``readiness``)."""
+    """The leads among the backlog items the trackers read (``IssueTracker.list_backlog``), in their repository's
+    organization's words (``readiness``): not labelled for embry0, not tracked yet, and reading as ready."""
     triggers = normalize_labels(trigger_labels)
     out: list[Lead] = []
-    for ticket in tickets:
-        issue = ticket.issue
-        if ticket.repo.lower() != repo.lower() or (ticket.assigned and not ticket.mine):
-            continue
-        if normalize_labels(issue.labels) & triggers or await tracked("linear", ticket.repo, issue.key):
+    for item in items:
+        if normalize_labels(item.labels) & triggers or await tracked(item.tracker, item.repo, item.key):
             continue
         lead = ticket_lead(
-            repo=ticket.repo,
-            tracker="linear",
-            key=issue.key,
-            title=issue.title,
-            body=issue.body,
-            url=issue.url,
-            labels=list(issue.labels),
-            priority=ticket.priority,
-            estimate=ticket.estimate,
+            repo=item.repo,
+            tracker=item.tracker,
+            key=item.key,
+            title=item.title,
+            body=item.body,
+            url=item.url,
+            labels=list(item.labels),
+            priority=item.priority,
+            estimate=item.estimate,
             min_score=min_score,
             readiness=readiness,
         )
         if lead is not None:
             out.append(lead)
     return out
-
-
-async def find_github_tickets(
-    client: Any,
-    repo: str,
-    *,
-    trigger_labels: Iterable[str],
-    tracked: Tracked,
-    min_score: int,
-    readiness: Readiness,
-) -> FinderResult:
-    """The repository's open GitHub issues nobody holds, not labelled for embry0 and not yet tracked, that read as ready
-    in its organization's words (``readiness``)."""
-    listing = await client.paginate_listing(
-        f"/repos/{repo}/issues",
-        repo=repo,
-        params={"state": "open", "sort": "updated", "direction": "desc"},
-        per_page=100,
-        max_pages=GITHUB_ISSUE_PAGES,
-    )
-    triggers = normalize_labels(trigger_labels)
-    out: list[Lead] = []
-    for issue in listing.items:
-        if not isinstance(issue, dict) or "pull_request" in issue or issue.get("assignees"):
-            continue
-        labels = [str(label.get("name")) for label in issue.get("labels") or [] if isinstance(label, dict)]
-        key = str(issue.get("number") or "")
-        if not key or normalize_labels(labels) & triggers or await tracked("github", repo, key):
-            continue
-        lead = ticket_lead(
-            repo=repo,
-            tracker="github",
-            key=key,
-            title=str(issue.get("title") or ""),
-            body=str(issue.get("body") or ""),
-            url=issue.get("html_url"),
-            labels=labels,
-            min_score=min_score,
-            readiness=readiness,
-        )
-        if lead is not None:
-            out.append(lead)
-    # A repository with more open issues than the pages hold is read in part, and closes nothing.
-    return FinderResult(out, complete=listing.complete)

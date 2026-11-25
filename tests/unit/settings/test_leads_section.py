@@ -397,7 +397,7 @@ def test_the_finders_are_the_lead_kinds_a_finder_stores_and_the_ones_the_loop_ru
     found_by_a_finder = set(lead_kinds.ids(lead=True)) - {"crack", "weed"}
     assert set(finders) == found_by_a_finder, f"each finder stores its own lead kind: {finders}"
     loop = LeadsLoop.__new__(LeadsLoop)
-    run = {"ticket"} | {kind for kind, _ in loop._github_finders("acme/widgets", None, None, section.defaults())}  # noqa: SLF001
+    run = {"ticket"} | set(loop._finders("acme/widgets", None, section.defaults()))  # noqa: SLF001
     assert run == set(finders), f"the loop runs exactly the finders the section names: {sorted(run)}"
 
 

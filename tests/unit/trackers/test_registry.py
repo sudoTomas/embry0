@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
-from embry0.trackers import IssueTracker, TrackerIssueRef, TrackerRegistry, TriggerContext
+from embry0.trackers import BacklogRead, IssueTracker, TrackerIssueRef, TrackerRegistry, TriggerContext
 
 
 class _Conforming:
@@ -22,6 +23,9 @@ class _Conforming:
 
     async def post_issue_comment(self, ref: TrackerIssueRef, body: str) -> bool:
         return True
+
+    async def list_backlog(self, repos: Sequence[str]) -> BacklogRead:
+        return BacklogRead()
 
 
 def test_registers_and_resolves_by_name():

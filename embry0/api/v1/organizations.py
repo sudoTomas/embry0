@@ -1044,6 +1044,13 @@ async def org_pull_requests(request: Request, org: Organization) -> PullRequests
     return pull_requests_for(org.forge, make_pull_request_client(request, org, token))
 
 
+async def org_own_forge_client(request: Request, org: Organization) -> Any:
+    """The client of the organization's own forge (GitHub's or GitLab's) with its credential: what the leads read a
+    repository with (#181). Raises HTTPException as the routes answer when the credential cannot be resolved."""
+    token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
+    return make_pull_request_client(request, org, token)
+
+
 def make_pull_request_client(request: Request, org: Organization, token: str) -> Any:
     """The client of ``org``'s forge with ``token``: the deployment's GitLab (``GITLAB_URL`` and its CA bundle) for
     a GitLab organization, GitHub's otherwise. A module function so tests swap in a fake."""

@@ -2,9 +2,10 @@
 
 ``GET /leads`` lists the stored leads (open by default), each with what a
 person or a game-like view needs: kind, repository, area, severity, effort,
-when it was first and last seen. ``POST /leads/run`` runs one pass of the
-finders now. Owners answer leads through the owner proposals routes, which
-call :func:`start_lead` on a yes.
+when it was first and last seen. ``GET /leads/status`` says what the last
+pass did on each repository, by kind, a finder it skipped with the reason.
+``POST /leads/run`` runs one pass of the finders now. Owners answer leads
+through the owner proposals routes, which call :func:`start_lead` on a yes.
 """
 
 from __future__ import annotations
@@ -73,6 +74,18 @@ async def list_leads(
     )
     rows = [r for r in rows if key_covers(request, r.get("repo"))]
     return {"leads": [lead_view(r) for r in rows], "count": len(rows)}
+
+
+@router.get("/leads/status")
+async def leads_status(request: Request) -> dict[str, Any]:
+    """What the last pass did on each repository the caller's key covers, by kind: what each finder found, stored,
+    capped and closed, or why it was skipped (``skipped``), such as a finder enabled on a forge it does not read."""
+    loop = getattr(request.app.state, "leads_loop", None)
+    if loop is None:
+        raise HTTPException(status_code=503, detail="the leads loop is not initialized")
+    status = loop.status()
+    repos = {repo: entry for repo, entry in status["repos"].items() if key_covers(request, repo)}
+    return {"last_pass_at": status["last_pass_at"], "repos": repos}
 
 
 class RunBody(BaseModel):
@@ -144,29 +157,28 @@ async def _start_ticket(request: Request, row: dict[str, Any], by: str, run_with
         if result.get("action") != "dispatched" or not job_id:
             raise _linear_refusal(key, result)
         return job_id
-    if tracker != "github":
+    if tracker not in ("github", "gitlab"):
         raise HTTPException(status_code=409, detail=f"a {tracker or 'trackerless'} ticket cannot be started here")
-    from embry0.api.v1.cases import _github_issues
-
-    fetched = await _github_issues(request).get_issue(repo, int(key))
+    fetched = await _forge_issue(request, tracker, repo, key)
+    forge = "GitHub" if tracker == "github" else "GitLab"
     if fetched is None:
-        raise HTTPException(status_code=502, detail=f"GitHub could not serve {repo}#{key}")
-    if str(fetched.get("state") or "open") != "open":
-        raise HTTPException(status_code=409, detail=f"{repo}#{key} is {fetched.get('state')} on GitHub")
+        raise HTTPException(status_code=502, detail=f"{forge} could not serve {repo}#{key}")
+    if fetched["state"] != "open":
+        raise HTTPException(status_code=409, detail=f"{repo}#{key} is {fetched['state']} on {forge}")
     issues = request.app.state.issues_repo
-    existing = await issues.get_by_tracker_ref("github", repo, key)
+    existing = await issues.get_by_tracker_ref(tracker, repo, key)
     if existing is not None:
         issue_id, status = str(existing["id"]), str(existing.get("status") or "")
     else:
         issue_id = await create_tracked_issue(
             issues,
             TrackerIssue(
-                tracker="github",
+                tracker=tracker,
                 key=key,
-                title=str(fetched.get("title") or row.get("title") or ""),
-                body=str(fetched.get("body") or ""),
-                url=str(fetched.get("html_url") or row.get("url") or ""),
-                labels=[str(lbl.get("name")) for lbl in fetched.get("labels") or [] if isinstance(lbl, dict)],
+                title=fetched["title"] or str(row.get("title") or ""),
+                body=fetched["body"],
+                url=fetched["url"] or str(row.get("url") or ""),
+                labels=fetched["labels"],
                 repo=repo,
                 state="open",
             ),
@@ -175,7 +187,47 @@ async def _start_ticket(request: Request, row: dict[str, Any], by: str, run_with
         status = str(IssueStatus.OPEN)
     if status != IssueStatus.OPEN:
         raise HTTPException(status_code=409, detail=f"{repo}#{key} has a job already, or is closed in embry0")
-    return await _dispatch_issue(request, issue_id, status, tracker="github", by=by, run_with=run_with)
+    return await _dispatch_issue(request, issue_id, status, tracker=tracker, by=by, run_with=run_with)
+
+
+async def _forge_issue(request: Request, tracker: str, repo: str, key: str) -> dict[str, Any] | None:
+    """The issue ``key`` of ``repo`` on its forge's tracker, read now: title, body, url, labels and ``state``
+    (``open`` or what the forge calls it otherwise); None when the forge cannot serve it."""
+    from embry0.trackers.models import extract_labels
+
+    if not key.isdigit():
+        return None
+    if tracker == "gitlab":
+        # Read with the organization's own client, as the backlog that found the lead was read: a lead found is one
+        # that can be accepted, whatever the deployment's own GitLab credential reaches.
+        from embry0.api.v1.organizations import org_own_forge_client
+
+        org = await request.app.state.organizations_repo.get(repo.split("/", 1)[0])
+        if org is None or org.status != "active" or org.forge != "gitlab":
+            raise HTTPException(status_code=409, detail=f"{repo} has no active GitLab organization to read it with")
+        issue = await (await org_own_forge_client(request, org)).get_issue(repo, int(key))
+        if issue is None:
+            return None
+        state = str(issue.get("state") or "opened")
+        return {
+            "title": str(issue.get("title") or ""),
+            "body": str(issue.get("description") or ""),
+            "url": str(issue.get("web_url") or ""),
+            "labels": extract_labels(issue.get("labels")),
+            "state": "open" if state == "opened" else state,
+        }
+    from embry0.api.v1.cases import _github_issues
+
+    issue = await _github_issues(request).get_issue(repo, int(key))
+    if issue is None:
+        return None
+    return {
+        "title": str(issue.get("title") or ""),
+        "body": str(issue.get("body") or ""),
+        "url": str(issue.get("html_url") or ""),
+        "labels": extract_labels(issue.get("labels")),
+        "state": str(issue.get("state") or "open"),
+    }
 
 
 async def _start_review(request: Request, row: dict[str, Any], by: str, run_with: RunWith | None) -> str:

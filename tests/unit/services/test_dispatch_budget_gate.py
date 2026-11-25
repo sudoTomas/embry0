@@ -210,6 +210,11 @@ async def test_the_tracker_comment_for_a_refusal_shows_no_spend():
         async def handle_webhook_event(self, payload, ctx):
             return {}
 
+        async def list_backlog(self, repos, *, client_for=None):
+            from embry0.trackers import BacklogRead
+
+            return BacklogRead()
+
         async def post_issue_comment(self, ref: TrackerIssueRef, body: str) -> bool:
             self.posts.append(body)
             return True

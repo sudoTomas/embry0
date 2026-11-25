@@ -288,3 +288,119 @@ async def test_a_leads_issue_is_labelled_as_its_organization_says_and_never_with
     assert response.status_code == 202, response.text
     labels = app.state.issues_repo.create.await_args.kwargs["labels"]
     assert labels == ["team-lead", "lead:ci"], f"the organization's labels, without a trigger label: {labels}"
+
+
+def _gitlab_ticket(app: FastAPI, issue: dict[str, Any] | None, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """``ticket:1`` is a GitLab issue, 5 of ``acme/web``, of the active GitLab organization ``acme``: read with the
+    organization's own client over a faked GitLab. The deployment's GitLab tracker would answer it open, so a read
+    that used it would not be told apart. Returns the organizations whose clients were built."""
+    from embry0.api.v1 import organizations as organizations_api
+    from embry0.services.gitlab_sync import GitLabSyncService
+    from tests.unit.services.leads.fakes import fake_gitlab
+
+    app.state.leads_repo.rows["ticket:1"]["data"] = {"tracker": "gitlab", "key": "5", "paths": [], "labels": []}
+    answers = {} if issue is None else {"/projects/acme%2Fweb/issues/5": issue}
+    deployment = {"/projects/acme%2Fweb/issues/5": {"iid": 5, "state": "opened", "title": "the deployment's"}}
+    app.state.gitlab_sync = GitLabSyncService(fake_gitlab(deployment))
+    app.state.organizations_repo = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(owner="acme", forge="gitlab", status="active", credential_id=None))
+    )
+    built: list[Any] = []
+
+    async def token_for(request: Any, owner: str, forge: str, credential_id: Any, **kwargs: Any) -> tuple[str, str]:
+        return "token-of-acme", "env:TEST"
+
+    def client(request: Any, org: Any, token: str) -> Any:
+        built.append((org.owner, token))
+        return fake_gitlab(answers)
+
+    monkeypatch.setattr(organizations_api, "_token_for", token_for)
+    monkeypatch.setattr(organizations_api, "make_pull_request_client", client)
+    return built
+
+
+async def test_a_yes_to_a_gitlab_ticket_brings_it_in_and_runs_it(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> None:
+    built = _gitlab_ticket(
+        app,
+        {
+            "iid": 5,
+            "state": "opened",
+            "title": "Export fails",
+            "description": "b",
+            "labels": ["bug"],
+            "web_url": "https://gitlab.example.test/acme/web/-/issues/5",
+        },
+        monkeypatch,
+    )
+    async with await _client(app) as client:
+        response = await client.post("/api/v1/proposals/ticket:1/accept", json={"by": "octo"}, headers=HEADERS)
+    assert response.status_code == 202, response.text
+    created = app.state.issues_repo.create.await_args.kwargs
+    assert (created["tracker"], created["tracker_key"], created["repo"]) == ("gitlab", "5", "acme/web")
+    assert created["tracker_url"] == "https://gitlab.example.test/acme/web/-/issues/5"
+    assert created["title"] == "Export fails", "read with the organization's client, not the deployment's"
+    assert built == [("acme", "token-of-acme")]
+    app.state.issue_executor.execute.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("issue", "status", "detail"),
+    [
+        ({"iid": 5, "state": "closed", "title": "t"}, 409, "acme/web#5 is closed on GitLab"),
+        (None, 502, "GitLab could not serve acme/web#5"),
+    ],
+    ids=["closed", "unread"],
+)
+async def test_a_gitlab_ticket_closed_or_unread_now_is_not_started(
+    app: FastAPI, issue: dict[str, Any] | None, status: int, detail: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gitlab_ticket(app, issue, monkeypatch)
+    async with await _client(app) as client:
+        response = await client.post("/api/v1/proposals/ticket:1/accept", json={"by": "octo"}, headers=HEADERS)
+    assert (response.status_code, response.json()["detail"]) == (status, detail)
+    app.state.issues_repo.create.assert_not_awaited()
+
+
+async def test_the_status_says_why_a_finder_was_skipped_on_the_repositories_the_key_covers(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skipped = {"skipped": "review reads github repositories; this one is on gitlab"}
+    status = {
+        "last_pass_at": "2026-10-25T12:00:00+00:00",
+        "repos": {
+            "acme/web": {"forge": "gitlab", "at": "2026-10-25T12:00:00+00:00", "kinds": {"review": skipped}},
+            "other/api": {"forge": "github", "at": "2026-10-25T12:00:00+00:00", "kinds": {}},
+        },
+    }
+    app.state.leads_loop = SimpleNamespace(status=lambda: status)
+    monkeypatch.setattr(leads_api, "key_covers", lambda request, repo: repo == "acme/web")
+    async with await _client(app) as client:
+        response = await client.get("/api/v1/leads/status", headers=HEADERS)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "last_pass_at": status["last_pass_at"],
+        "repos": {"acme/web": status["repos"]["acme/web"]},
+    }
+
+
+@pytest.mark.parametrize(
+    "org",
+    [
+        None,
+        SimpleNamespace(owner="acme", forge="gitlab", status="inactive", credential_id=None),
+        SimpleNamespace(owner="acme", forge="github", status="active", credential_id=None),
+    ],
+    ids=["missing", "inactive", "on-github"],
+)
+async def test_a_gitlab_ticket_of_no_active_gitlab_organization_is_not_read(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, org: Any
+) -> None:
+    built = _gitlab_ticket(app, {"iid": 5, "state": "opened", "title": "t"}, monkeypatch)
+    app.state.organizations_repo.get = AsyncMock(return_value=org)
+    async with await _client(app) as client:
+        response = await client.post("/api/v1/proposals/ticket:1/accept", json={"by": "octo"}, headers=HEADERS)
+    assert (response.status_code, response.json()["detail"]) == (
+        409,
+        "acme/web has no active GitLab organization to read it with",
+    )
+    assert built == [] and not app.state.issues_repo.create.await_count

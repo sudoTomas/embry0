@@ -82,6 +82,10 @@ class _NoFinders:
     async def tick(self, repos: list[str] | None, **_kwargs: Any) -> list[dict[str, Any]]:
         return [{"repo": repo, "found": 0} for repo in repos or []]
 
+    def status(self) -> dict[str, Any]:
+        """No pass has run: the leads status names no repository."""
+        return {"last_pass_at": None, "repos": {}}
+
 
 class _NoFollowUps:
     """Comment dispatch that starts no follow-up job and says so."""

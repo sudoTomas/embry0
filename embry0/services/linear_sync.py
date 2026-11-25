@@ -26,7 +26,7 @@ import inspect
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -43,6 +43,9 @@ from embry0.services.linear_dispatch import LINEAR_GRAPHQL_URL, compose_addition
 from embry0.services.trigger_labels import matching_triggers, normalize_labels
 from embry0.storage.repositories.jobs import StatusTransitionConflict
 from embry0.trackers import (
+    BACKLOG_CUT_SHORT,
+    BacklogItem,
+    BacklogRead,
     TrackerIssue,
     TrackerIssueRef,
     TriggerContext,
@@ -500,6 +503,33 @@ class LinearSyncService:
                 return found, True
             after = page.get("endCursor")
         return found, False
+
+    async def list_backlog(self, repos: Sequence[str], *, client_for: Any = None) -> BacklogRead:
+        """The backlog's tickets (:meth:`list_backlog_tickets`) whose project resolves to one of ``repos``, nobody
+        holding them but the account this key acts as. Linear is read once for every repository, so either all of
+        ``repos`` are read whole or none is. Raises on API failure. ``client_for`` is a forge's: Linear is read
+        with its own key."""
+        tickets, read_whole = await self.list_backlog_tickets()
+        wanted = {repo.lower() for repo in repos}
+        items = [
+            BacklogItem(
+                tracker=self.name,
+                # Linear's own name for the repository, as its label path stores a ticket's issue under.
+                repo=ticket.repo,
+                key=ticket.issue.key,
+                title=ticket.issue.title,
+                body=ticket.issue.body,
+                url=ticket.issue.url,
+                labels=tuple(ticket.issue.labels),
+                priority=ticket.priority,
+                estimate=ticket.estimate,
+            )
+            for ticket in tickets
+            if ticket.repo.lower() in wanted and not (ticket.assigned and not ticket.mine)
+        ]
+        if read_whole:
+            return BacklogRead(items, frozenset(repos))
+        return BacklogRead(items, frozenset(), dict.fromkeys(repos, BACKLOG_CUT_SHORT))
 
     async def issue_state_types(self, team_id: str, identifiers: list[str]) -> dict[str, str]:
         """Map issue identifiers (e.g. 'RAV-1109') → workflow-state *type*.

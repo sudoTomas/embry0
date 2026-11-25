@@ -282,6 +282,7 @@ UNREAD: dict[str, str] = {
     "/api/v1/github/repos": _FORGE,
     "/api/v1/github/discoverable-repos": _FORGE,
     "/api/v1/admin/retention/preview": "counts what a retention sweep would delete; a service the test app lacks",
+    "/api/v1/leads/status": "what the leads loop's last pass did, kept in its memory; no stored row",
     "/api/v1/progression/preview": "compiles the draft pack, which no value of the sweep's shape is (422); the draft"
     " itself is read at /progression/pack/draft",
     "/api/v1/credentials/resolve": "answers 422 without a repository, and the sweep names none: resolving one"

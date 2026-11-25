@@ -128,8 +128,11 @@ def _loop(store: SettingsStore, db: DatabasePool, clock: list[datetime], *repos:
     async def client_for(repo: str) -> Any:
         return forge
 
-    async def nothing() -> Any:
-        return None
+    async def github(repo: str) -> str:
+        return "github"
+
+    async def no_trackers() -> dict[str, Any]:
+        return {}
 
     async def tracked(tracker: str, repo: str, key: str) -> bool:
         return False
@@ -142,7 +145,8 @@ def _loop(store: SettingsStore, db: DatabasePool, clock: list[datetime], *repos:
         leads=LeadsRepository(db),
         targets=targets,
         client_for=client_for,
-        linear=nothing,
+        forge_of=github,
+        trackers=no_trackers,
         tracked=tracked,
         trigger_labels=triggers,
         areas_for=no_areas_for,

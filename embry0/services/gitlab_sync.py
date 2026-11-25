@@ -21,6 +21,7 @@ here is what #156 and #157 were spent removing.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import structlog
@@ -31,12 +32,18 @@ from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.repositories.jobs import StatusTransitionConflict
 from embry0.storage.schemas import IssueStatus
 from embry0.trackers import (
+    BACKLOG_CUT_SHORT,
+    BACKLOG_ISSUE_PAGES,
+    BACKLOG_NO_CLIENT,
+    BacklogItem,
+    BacklogRead,
     TrackerIssue,
     TrackerIssueRef,
     TriggerContext,
     create_tracked_issue,
     end_waits,
     extract_labels,
+    read_failed,
     start_triage,
 )
 
@@ -203,6 +210,61 @@ class GitLabSyncService:
             await issues_repo.update(issue_id, status=status)
         except (ValueError, StatusTransitionConflict):
             logger.info("gitlab_status_transition_skipped", issue_id=issue_id, target=status)
+
+    async def get_issue(self, repo: str, iid: int) -> dict[str, Any] | None:
+        """The project's issue ``iid`` as GitLab reads it now, or None when it cannot be read."""
+        return await self._client.get_issue(repo, iid)
+
+    async def list_backlog(
+        self, repos: Sequence[str], *, client_for: Callable[[str], Awaitable[Any]] | None = None
+    ) -> BacklogRead:
+        """Each project's open issues nobody is assigned, newest-updated first, up to ``BACKLOG_ISSUE_PAGES``
+        pages; a project whose read failed or stopped at the cap is not read whole.
+
+        ``client_for``: the client to read a project with (the leads read with its organization's own credential);
+        a project it gives none for is not read. This tracker's own client when absent."""
+        items: list[BacklogItem] = []
+        whole: set[str] = set()
+        unread: dict[str, str] = {}
+        for repo in repos:
+            try:
+                client = self._client if client_for is None else await client_for(repo)
+                if client is None:
+                    unread[repo] = BACKLOG_NO_CLIENT
+                    continue
+                listing = await client.paginate_listing(
+                    client.project_path(repo, "/issues"),
+                    repo=repo,
+                    params={"state": "opened", "order_by": "updated_at", "sort": "desc"},
+                    per_page=100,
+                    max_pages=BACKLOG_ISSUE_PAGES,
+                )
+            except Exception as exc:  # noqa: BLE001 - one project's read is its own
+                logger.warning("gitlab_backlog_unread", repo=repo, error=type(exc).__name__)
+                unread[repo] = read_failed(exc)
+                continue
+            if listing.complete:
+                whole.add(repo)
+            else:
+                unread[repo] = BACKLOG_CUT_SHORT
+            for issue in listing.items:
+                if not isinstance(issue, dict) or issue.get("assignees") or issue.get("assignee"):
+                    continue
+                key = str(issue.get("iid") or "")
+                if not key:
+                    continue
+                items.append(
+                    BacklogItem(
+                        tracker=self.name,
+                        repo=repo,
+                        key=key,
+                        title=str(issue.get("title") or ""),
+                        body=str(issue.get("description") or ""),
+                        url=issue.get("web_url"),
+                        labels=tuple(extract_labels(issue.get("labels"))),
+                    )
+                )
+        return BacklogRead(items, frozenset(whole), unread)
 
     async def post_issue_comment(self, ref: TrackerIssueRef, body: str) -> bool:
         """Best-effort note back on the GitLab issue. Never raises."""

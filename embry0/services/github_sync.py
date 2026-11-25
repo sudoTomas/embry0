@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -16,6 +16,11 @@ from embry0.services.trigger_labels import matching_triggers, normalize_labels
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.schemas import IssueStatus
 from embry0.trackers import (
+    BACKLOG_CUT_SHORT,
+    BACKLOG_ISSUE_PAGES,
+    BACKLOG_NO_CLIENT,
+    BacklogItem,
+    BacklogRead,
     TrackerIssue,
     TrackerIssueRef,
     TriggerContext,
@@ -23,6 +28,7 @@ from embry0.trackers import (
     end_waits,
     extract_labels,
     github_number_of,
+    read_failed,
     start_triage,
 )
 
@@ -517,6 +523,57 @@ class GitHubSyncService:
         await issues_repo.update(issue_id, github_synced_at=datetime.now(UTC))
         logger.info("github_issue_updated", issue_id=issue_id, github_number=number)
         return data
+
+    async def list_backlog(
+        self, repos: Sequence[str], *, client_for: Callable[[str], Awaitable[Any]] | None = None
+    ) -> BacklogRead:
+        """Each repository's open issues nobody is assigned, newest-updated first (pull requests left out), up to
+        ``BACKLOG_ISSUE_PAGES`` pages; a repository whose read failed or stopped at the cap is not read whole.
+
+        ``client_for``: the client to read a repository with (the leads read with its organization's own
+        credential); a repository it gives none for is not read. This tracker's own client when absent."""
+        items: list[BacklogItem] = []
+        whole: set[str] = set()
+        unread: dict[str, str] = {}
+        for repo in repos:
+            try:
+                client = self._client if client_for is None else await client_for(repo)
+                if client is None:
+                    unread[repo] = BACKLOG_NO_CLIENT
+                    continue
+                listing = await client.paginate_listing(
+                    f"/repos/{repo}/issues",
+                    repo=repo,
+                    params={"state": "open", "sort": "updated", "direction": "desc"},
+                    per_page=100,
+                    max_pages=BACKLOG_ISSUE_PAGES,
+                )
+            except Exception as exc:  # noqa: BLE001 - one repository's read is its own
+                logger.warning("github_backlog_unread", repo=repo, error=type(exc).__name__)
+                unread[repo] = read_failed(exc)
+                continue
+            if listing.complete:
+                whole.add(repo)
+            else:
+                unread[repo] = BACKLOG_CUT_SHORT
+            for issue in listing.items:
+                if not isinstance(issue, dict) or "pull_request" in issue or issue.get("assignees"):
+                    continue
+                key = str(issue.get("number") or "")
+                if not key:
+                    continue
+                items.append(
+                    BacklogItem(
+                        tracker=self.name,
+                        repo=repo,
+                        key=key,
+                        title=str(issue.get("title") or ""),
+                        body=str(issue.get("body") or ""),
+                        url=issue.get("html_url"),
+                        labels=tuple(extract_labels(issue.get("labels"))),
+                    )
+                )
+        return BacklogRead(items, frozenset(whole), unread)
 
     async def post_issue_comment(self, ref: TrackerIssueRef, body: str) -> bool:
         """Best-effort comment on a GitHub issue. Never raises."""

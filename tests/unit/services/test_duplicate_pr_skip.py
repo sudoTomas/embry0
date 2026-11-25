@@ -110,6 +110,11 @@ async def test_the_ticket_comment_says_skipped_and_names_the_existing_pr():
         async def handle_webhook_event(self, payload, ctx):
             return {}
 
+        async def list_backlog(self, repos, *, client_for=None):
+            from embry0.trackers import BacklogRead
+
+            return BacklogRead()
+
         async def post_issue_comment(self, ref: TrackerIssueRef, body: str) -> bool:
             self.posts.append(body)
             return True
