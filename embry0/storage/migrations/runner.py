@@ -47,7 +47,7 @@ logger = structlog.get_logger(__name__)
 # with hashtextextended: `qa_image_tags:<repo>`, `org_needs:<owner>`,
 # `standards:<owner>:<kind>`, `org_discovery:<owner>`,
 # `credential_bindings:<scope_kind>:<scope_value>`,
-# `settings_documents:<scope>`, `asks:hand_out`, `local_model_slots`,
+# `settings_documents:<scope>`, `asks:hand_out`, `local_model_slots:<server>`,
 # `progression_rollup` and `github_login:<login>`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
@@ -5027,6 +5027,22 @@ deliverable under an "Assumptions" heading.$seed$
             '{"source", "expected", "gap", "proxy_cost_usd", "sandbox_cost_usd", "disagreement", "proxies": {...}}: how the run''s charge was reached from the metering proxies'' tallies; NULL before metering.';
         COMMENT ON COLUMN traces.sandbox_cost_usd IS
             'The cost the sandbox reported for the run, kept beside the charge (cost_usd); NULL before metering.';
+        """,
+    ),
+    (
+        157,
+        "local_model_leases.server: the local model server each lease holds a slot of (#174)",
+        # #174: the cap is per server, a custom credential (services/local_slots.py),
+        # and each server's leases are counted under a lock of its own. A lease
+        # taken before had no server: it is '' (a server that could not be told)
+        # and frees itself by its expiry. The default goes once they are filled,
+        # so a lease written without its server is refused.
+        """
+        ALTER TABLE local_model_leases ADD COLUMN IF NOT EXISTS server TEXT NOT NULL DEFAULT '';
+        ALTER TABLE local_model_leases ALTER COLUMN server DROP DEFAULT;
+        CREATE INDEX IF NOT EXISTS idx_local_model_leases_server ON local_model_leases (server, expires_at);
+        COMMENT ON COLUMN local_model_leases.server IS
+            'the server the lease holds a slot of: a custom credential id, env (the environment''s credential), env:LOCAL_LLM_UPSTREAM (every agent run through the local-llm-proxy), or '''' (not told)';
         """,
     ),
 ]

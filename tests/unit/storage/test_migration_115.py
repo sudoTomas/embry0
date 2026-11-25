@@ -42,7 +42,7 @@ async def test_leases_hold_the_cap_free_on_release_and_expire_by_themselves(db_w
 
     leases = LocalModelLeasesRepository(db_with_migrations)
     now = datetime.now(UTC)
-    args = {"job_id": "job-1", "agent_type": "analysis", "model": "custom/qwen"}
+    args = {"server": "cred-a", "job_id": "job-1", "agent_type": "analysis", "model": "custom/qwen"}
     first = await leases.try_take(cap=1, run_seconds=600, now=now, **args)
     assert first is not None
     assert await leases.try_take(cap=1, run_seconds=600, now=now, **args) is None, "the one slot is held"

@@ -745,16 +745,36 @@ itself (proposal and job briefs, the Slop-O-Meter's judgments; see
 [Background models](#background-models)) still use the custom account's base
 URL and key, so keep them pointing at the same server.
 
-**One run at a time.** `local_max_runs` in the provider settings (default 1,
-at most 64) is how many agent runs embry0 sends the server at once. Each run
-on the custom provider holds a slot, a row in `local_model_leases`, from just
-before it starts until it ends, however it ends. A lease expires by itself
-five minutes after the run's own time limit, so one left by a process that
-died frees its slot. A run that has to use the local model (it is the
-fallback, or the job named it) waits for a slot up to
+**One run at a time, per server.** `local_max_runs` in the provider settings
+(default 1, at most 64) is how many calls embry0 sends each of the
+operator's servers at once. A server is the custom credential a call is
+made with, so two credentials bound to different repositories are two
+servers, each with its own slots; the environment's credential
+(`CUSTOM_LLM_API_KEY`) is one more. While `LOCAL_LLM_UPSTREAM` is set, every
+agent run on the custom provider goes to that one root whatever its
+credential, so every call on the custom provider shares its slots, a
+background call's included (below).
+
+Each run on the custom provider holds a slot of its server, a row in
+`local_model_leases`, from just before it starts until it ends, however it
+ends. A lease expires by itself five minutes after the run's own time limit,
+so one left by a process that died frees its slot. A run that has to use the
+local model (it is the fallback, or the job named it) waits for a slot up to
 `LOCAL_LLM_SLOT_WAIT_SECONDS` (900), saying so in a `progress` event. Then
 the job is parked for five minutes and tries again
 ([Spent account waits](#spent-account-waits)).
+
+A background call to a local model (a proposal or job brief, a
+Slop-O-Meter judgment) holds a slot of its server for the length of the
+call. It never waits: with every slot taken the call is not made
+(`background_model_busy` in the log). A brief writer's tick stops there and
+the next one tries again; the Slop-O-Meter scores the repository without
+that judgment, provisionally, as when the caps refuse one. Background work
+never crowds out the runs the server is for. While `LOCAL_LLM_UPSTREAM` is
+set it holds one of that upstream's slots, as the agent runs do, although it
+reaches its credential's base URL itself: one machine may go by several
+names (an address, a name, a trailing dot), so the name a call uses never
+gives it slots of its own.
 
 **Preferring the local model.** A background feature that prefers a model
 (the watcher's log analyses, scheduled context audits; see
@@ -851,7 +871,11 @@ each call goes the way a job's run would:
   it is not sent, the feature logs `background_model_refused` (a warning,
   then once an hour while it lasts) and its loop goes on, trying again on
   its next tick.
-  A `custom/` model bills nothing and is never refused;
+  A `custom/` model bills nothing and is never refused for spend;
+- a call to a `custom/` model holds a slot of its server while it is made,
+  and is not made while every slot is taken: the feature logs
+  `background_model_busy` and goes on as when the caps refuse a call
+  ([Local models](#local-models));
 - a model with no price is never called (`background_model_unpriced`, a
   warning once an hour per model);
 - the tokens the provider reports are priced as a job's run is and recorded

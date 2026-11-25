@@ -81,6 +81,7 @@ async def _run(
     state: dict[str, Any] | None = None,
     providers: tuple[str, ...] = ("anthropic", "custom"),
     runner_error: BaseException | None = None,
+    configurable: dict[str, Any] | None = None,
 ) -> tuple[str | None, dict[str, Any], _Traces, list[dict[str, Any]]]:
     captured: dict[str, Any] = {}
     traces = _Traces()
@@ -112,6 +113,7 @@ async def _run(
                 "job_id": "job-1",
                 "llm_providers": providers,
                 "local_slots": slots,
+                **(configurable or {}),
             }
         },
         on_event=seen.append,
@@ -202,3 +204,119 @@ async def test_a_cloud_run_never_touches_the_slots() -> None:
     model, *_ = await _run(slots=slots)
     assert model == BUILTIN_SEED["analysis"]["model"]
     assert slots.taken == [] and slots.released == []
+
+
+# ---- #174: the slot is the server's the run reaches ----
+
+
+def _server_names() -> Any:
+    from embry0.services import local_slots
+
+    names = [getattr(local_slots, name, None) for name in ("PROXY_SERVER", "UNKNOWN_SERVER")]
+    assert None not in names, "services.local_slots names no server a run can be on"
+    return names
+
+
+class _Sandboxes:
+    """The sandbox manager's record of the accounts it put in each container."""
+
+    def __init__(self, held: dict[str, Any]) -> None:
+        self.held = held
+
+    def last_llm_credentials(self, container_id: str) -> dict[str, Any]:
+        return dict(self.held) if container_id == "c1" else {}
+
+
+class _Resolver:
+    def __init__(self, credential_id: str | None = "cred-resolved", error: Exception | None = None) -> None:
+        self.credential_id, self.error = credential_id, error
+        self.asked: list[tuple[str, str, str]] = []
+
+    async def resolve_llm(self, repo: str, provider: str, *, job_id: str = "") -> Any:
+        self.asked.append((repo, provider, job_id))
+        if self.error is not None:
+            raise self.error
+        from types import SimpleNamespace
+
+        return SimpleNamespace(id=self.credential_id)
+
+
+def _held(credential_id: str | None) -> dict[str, Any]:
+    from types import SimpleNamespace
+
+    return {"anthropic": SimpleNamespace(id="cred-claude"), "custom": SimpleNamespace(id=credential_id)}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", [{"local_first_model": _LOCAL}, {"agent_models_override": {"*": _LOCAL}}])
+async def test_a_run_takes_a_slot_of_the_server_its_sandbox_s_credential_names(state: dict[str, Any]) -> None:
+    slots, resolver = _Slots(), _Resolver()
+    model, *_ = await _run(
+        slots=slots,
+        state=state,
+        configurable={"sandbox_manager": _Sandboxes(_held("cred-box")), "credential_resolver": resolver},
+    )
+    assert model == _LOCAL
+    assert [t.get("server") for t in slots.taken] == ["cred-box"], (
+        "a local-first run's slot and a must-use run's are the server the sandbox's custom credential names"
+    )
+    assert resolver.asked == [], "the sandbox's own record is read first"
+
+
+@pytest.mark.asyncio
+async def test_without_the_sandbox_s_record_the_job_s_credential_names_the_server() -> None:
+    slots, resolver = _Slots(), _Resolver()
+    await _run(
+        slots=slots,
+        state={"agent_models_override": {"*": _LOCAL}, "repo": "acme/widgets"},
+        configurable={"credential_resolver": resolver},
+    )
+    assert [t.get("server") for t in slots.taken] == ["cred-resolved"], (
+        "a sandbox this process did not create (a resume after a restart) takes its slot on the job's credential"
+    )
+    assert resolver.asked == [("acme/widgets", "custom", "job-1")], "resolved as the job's run would be"
+
+
+@pytest.mark.asyncio
+async def test_every_run_through_the_environment_s_proxy_is_on_its_one_upstream() -> None:
+    from embry0.config import Embry0Config
+
+    PROXY_SERVER, _ = _server_names()
+    slots = _Slots()
+    await _run(
+        slots=slots,
+        state={"agent_models_override": {"*": _LOCAL}},
+        configurable={
+            "sandbox_manager": _Sandboxes(_held("cred-box")),
+            "embry0_config": Embry0Config.model_construct(local_llm_upstream="http://models.test:8000/v1"),
+        },
+    )
+    assert [t.get("server") for t in slots.taken] == [PROXY_SERVER], (
+        "LOCAL_LLM_UPSTREAM sends every custom run to one root whatever its credential: one server, one cap"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolver", [None, _Resolver(error=RuntimeError("registry down"))])
+async def test_a_server_that_cannot_be_told_shares_one_cap(resolver: _Resolver | None) -> None:
+    _, UNKNOWN_SERVER = _server_names()
+    slots = _Slots()
+    extra = {"credential_resolver": resolver} if resolver is not None else {}
+    model, *_ = await _run(slots=slots, state={"agent_models_override": {"*": _LOCAL}}, configurable=extra)
+    assert model == _LOCAL and [t.get("server") for t in slots.taken] == [UNKNOWN_SERVER]
+
+
+@pytest.mark.asyncio
+async def test_a_credential_too_deep_to_read_fails_the_run_instead_of_sharing_a_cap() -> None:
+    """#527: a stored value too deep to read is never taken for a default, here the shared cap of servers that
+    cannot be told."""
+    from embry0.storage.database import StoredValueTooDeep
+
+    slots = _Slots()
+    with pytest.raises(StoredValueTooDeep):
+        await _run(
+            slots=slots,
+            state={"agent_models_override": {"*": _LOCAL}},
+            configurable={"credential_resolver": _Resolver(error=StoredValueTooDeep("credentials"))},
+        )
+    assert slots.taken == [], "no slot was taken on a server read as unknown"

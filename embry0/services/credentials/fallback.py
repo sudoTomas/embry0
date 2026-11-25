@@ -19,9 +19,9 @@ from embry0.agents.fallback import (
     Pause,
     candidates,
     fallback_order,
-    model_provider,
     runnable_fallback_models,
 )
+from embry0.agents.providers import model_provider
 
 logger = structlog.get_logger(__name__)
 

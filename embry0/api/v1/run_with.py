@@ -22,10 +22,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from embry0.agents.providers import model_provider
 from embry0.api.repo_allowlist import answer_as_missing, enforce_repo_allowlist, key_covers, restricted_key_name
 from embry0.api.schemas import RunWithRequest
 from embry0.api.v1.credentials import key_owns_credential
-from embry0.services.run_with import ALL_AGENTS, LLM_KINDS, RunWith, key_scopes, model_provider
+from embry0.services.run_with import ALL_AGENTS, LLM_KINDS, RunWith, key_scopes
 
 router = APIRouter()
 

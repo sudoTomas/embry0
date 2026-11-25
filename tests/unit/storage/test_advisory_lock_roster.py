@@ -28,7 +28,7 @@ LOCKS: dict[str, tuple[str, str]] = {
     ),
     "storage/repositories/settings_documents.py": ("`settings_documents:<scope>`", "'settings_documents:'"),
     "storage/repositories/asks.py": ("`asks:hand_out`", '"asks:hand_out"'),
-    "storage/repositories/local_model_leases.py": ("`local_model_slots`", '"local_model_slots"'),
+    "storage/repositories/local_model_leases.py": ("`local_model_slots:<server>`", '"local_model_slots"'),
     "storage/repositories/progression_rollup.py": ("`progression_rollup`", '"progression_rollup"'),
     "storage/repositories/people.py": ("`github_login:<login>`", '"github_login"'),
     "storage/repositories/progression_packs.py": ("0x65307061636B", "WRITE_LOCK_KEY"),

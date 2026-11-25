@@ -27,9 +27,11 @@ class _Leases:
     def __init__(self, answers: list[Any]) -> None:
         self.answers = list(answers)
         self.calls = 0
+        self.servers: list[str] = []
         self.released: list[str] = []
 
-    async def try_take(self, **_kwargs: Any) -> str | None:
+    async def try_take(self, **kwargs: Any) -> str | None:
+        self.servers.append(kwargs["server"])
         self.calls += 1
         answer = self.answers.pop(0) if self.answers else None
         if isinstance(answer, Exception):
@@ -58,7 +60,7 @@ def _slots(answers: list[Any]) -> tuple[LocalSlots, _Leases, _Clock]:
     return LocalSlots(leases, sleep=clock.sleep, clock=clock, poll_seconds=5.0), leases, clock
 
 
-_ARGS = {"cap": 1, "job_id": "job-1", "agent_type": "analysis", "model": _LOCAL, "run_seconds": 600}
+_ARGS = {"cap": 1, "server": "cred-a", "job_id": "job-1", "agent_type": "analysis", "model": _LOCAL, "run_seconds": 600}
 
 
 async def test_try_acquire_never_waits_and_a_failed_read_is_no_slot() -> None:
@@ -81,6 +83,27 @@ async def test_acquire_gives_up_after_the_wait() -> None:
     slots, leases, clock = _slots([])
     assert await slots.acquire(**_ARGS, wait_seconds=12) is None
     assert clock.now == 12.0, "never waits past the limit"
+
+
+async def test_each_take_asks_for_a_slot_of_the_server_it_names() -> None:
+    import inspect
+
+    assert "server" in inspect.signature(LocalSlots.acquire).parameters, "a slot is taken of no server in particular"
+    slots, leases, _ = _slots([None, "lease-1"])
+    await slots.acquire(**{**_ARGS, "server": "cred-b"}, wait_seconds=60)
+    await slots.try_acquire(**_ARGS)
+    assert leases.servers == ["cred-b", "cred-b", "cred-a"], "every try, waiting or not, is for its own server"
+
+
+def test_how_many_calls_a_server_takes_at_once() -> None:
+    from embry0.services import local_slots
+
+    local_cap = getattr(local_slots, "local_cap", None)
+    assert local_cap is not None, "agent runs and background calls read the cap each by a rule of their own"
+
+    assert [local_cap(row) for row in (None, {}, {"local_max_runs": 3}, {"local_max_runs": 0})] == [1, 1, 3, 1]
+    flag = local_cap({"local_max_runs": True})
+    assert type(flag) is int and flag == 1, f"a flag is no count: {flag!r}"
 
 
 async def test_release_never_raises() -> None:

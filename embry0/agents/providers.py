@@ -121,6 +121,12 @@ def provider_for_model(model: str, catalogue: Catalogue | None = None) -> ModelP
     return None
 
 
+def model_provider(model: str) -> str:
+    """The name of the provider that serves ``model``: a routed provider's, else ``anthropic``."""
+    provider = provider_for_model(model)
+    return provider.name if provider is not None else ANTHROPIC_NAME
+
+
 def upstream_model(provider: ModelProvider, model: str) -> str:
     """The id the provider's API knows ``model`` by."""
     prefix = provider.model_prefixes[0] if provider.model_prefixes else ""
