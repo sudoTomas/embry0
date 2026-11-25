@@ -143,6 +143,10 @@ class UsersRepository:
         )
         return [_row(r) for r in rows]
 
+    async def disabled_ids(self) -> set[str]:
+        """The users who may not sign in: no person they are linked to is asked, owns or decides (#179)."""
+        return {str(r["id"]) for r in await self._db.fetch("SELECT id FROM users WHERE disabled")}
+
     async def set_github_login(self, user_id: str, login: str | None, *, actor: str = "system") -> UserRow | None:
         """Set (or clear, with None) the GitHub login a person is named by; one person per login.
 

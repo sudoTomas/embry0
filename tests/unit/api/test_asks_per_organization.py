@@ -315,6 +315,7 @@ async def feed(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
         get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None),
         get_by_email=AsyncMock(return_value=None),
         people=AsyncMock(return_value=[]),
+        disabled_ids=AsyncMock(return_value=set()),
     )
     decisions = [
         {"id": "acme-1", "repo": "acme/widgets", "stage": "offered", "owners": ["ada"], "actions": []},

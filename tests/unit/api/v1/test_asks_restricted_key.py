@@ -131,7 +131,10 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     app.state.api_keys_repo = keys
     chat = MagicMock(disabled=False, email="chat@example.com")
     app.state.users_repo = MagicMock(
-        get=AsyncMock(return_value=chat), get_by_email=AsyncMock(return_value=None), people=AsyncMock(return_value=[])
+        get=AsyncMock(return_value=chat),
+        get_by_email=AsyncMock(return_value=None),
+        people=AsyncMock(return_value=[]),
+        disabled_ids=AsyncMock(return_value=set()),
     )
     offers: list[Proposal] = []
     app.state.offers = offers
@@ -327,4 +330,32 @@ async def test_a_key_with_an_allowlist_reads_no_person_s_chat_handle_or_hours(ap
     )
     assert "chat" not in handed["recipient"] and "timezone" not in handed["recipient"], (
         f"a key with a repository allowlist read a person's chat handle or hours: {handed['recipient']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_read_key_reads_no_person_s_chat_handle_or_hours_either(app: Any) -> None:
+    """#179, #704 review: not only an allowlist keeps them; a read key, which GET /people refuses, reads none."""
+    from dataclasses import replace
+
+    from tests.fixtures.people_directory import person
+
+    ed = person("Ed", email="ed@example.com", identities=[("telegram", "ed_tg")], timezone="Asia/Tokyo")
+
+    class People:
+        async def all(self, *, include_disabled: bool = False) -> list[Any]:
+            return [ed]
+
+    keys = app.state.api_keys_repo
+    row = await keys.get_by_hash(hash_token(KEY))
+    reader = replace(row, scope="read", allowed_repos=None)
+    keys.get_by_hash = AsyncMock(side_effect=lambda h: reader if h == hash_token(KEY) else None)
+    bust_api_key_cache()
+    app.state.people_repo = People()
+    app.state.offers.append(_offer("issue:web", "acme/web"))
+    app.state.asks_repo.codes["offer:issue:web"] = "WEBQ"
+    app.state.asks_repo.rows = [ask("q-offer-web", "offer:issue:web", "ed@example.com")]
+    [handed] = (await _get(app, "/api/v1/asks/due?peek=1"))["asks"]
+    assert "chat" not in handed["recipient"] and "timezone" not in handed["recipient"], (
+        f"a read key read a person's chat handle or hours: {handed['recipient']}"
     )

@@ -35,6 +35,9 @@ class FakeUsers:
     async def people(self) -> list[Any]:
         return list(self.rows)
 
+    async def disabled_ids(self) -> set[str]:
+        return {u.id for u in self.rows if getattr(u, "disabled", False)}
+
     async def get_by_email(self, email: str) -> Any:
         return next((u for u in self.rows if u.email.lower() == email.lower()), None)
 

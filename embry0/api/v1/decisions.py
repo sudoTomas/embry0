@@ -253,8 +253,9 @@ async def with_assignees(request: Request, shown: list[dict[str, Any]]) -> list[
     return [{**d, "assigned_to": assignee(open_[d["id"]], people) if d["id"] in open_ else None} for d in shown]
 
 
-async def _me(request: Request, shown: list[dict[str, Any]]) -> tuple[Any, Any]:
-    """``(directory, the viewer's person)`` over ``shown``'s repositories; ``(None, None)`` when they cannot be read."""
+async def _me(request: Request, shown: list[dict[str, Any]]) -> tuple[Any, list[Any]]:
+    """``(directory, the persons the viewer is)`` over ``shown``'s repositories; ``(None, [])`` when they cannot be
+    read."""
     from embry0.services.owner_people import directory_of
 
     users = getattr(request.app.state, "users_repo", None)
@@ -264,8 +265,8 @@ async def _me(request: Request, shown: list[dict[str, Any]]) -> tuple[Any, Any]:
         user = await users.get_by_email(email) if users is not None else None
     except Exception:  # noqa: BLE001 - without the people, owned quests are not known
         logger.warning("decisions_mine_people_unread", exc_info=True)
-        return None, None
-    return directory, directory.by_email(email) or directory.by_user(user.id if user is not None else None)
+        return None, []
+    return directory, directory.claimants(email, user.id if user is not None else None)
 
 
 async def mine(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -273,14 +274,14 @@ async def mine(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, 
     when one of their person's identities is one of its owners on its repository's forge, as who may answer it from a
     chat is decided (#179)."""
     me = request_actor(request).lower()
-    directory, person = await _me(request, shown)
+    directory, persons = await _me(request, shown)
     out = []
     for d in shown:
         to = (d.get("assigned_to") or {}).get("email")
         if to:
             if to == me:
                 out.append(d)
-        elif directory is not None and d.get("stage") == "offered" and directory.owns(person, d):
+        elif directory is not None and d.get("stage") == "offered" and any(directory.owns(p, d) for p in persons):
             out.append(d)
     return out
 

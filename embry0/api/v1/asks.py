@@ -93,6 +93,25 @@ async def _dashboard_link_for(request: Request, who: str, decision: dict[str, An
     return dashboard_link(request, decision)
 
 
+def reads_people(request: Request) -> bool:
+    """Whether the caller may read a person's chat handles and hours: whom ``GET /people`` answers (an operator, an
+    admin, the master key) and the assistant's propose key, which asks them; never through a repository allowlist
+    (D4 of the people spec). A read key and a merge key may not."""
+    from embry0.api.deployment_reads import deployment_hidden
+    from embry0.api.deps import TIER_PROPOSE
+
+    if deployment_hidden(request):
+        return False
+    principal = getattr(request.state, "principal", None)
+    if principal is not None:
+        return principal.kind == "master" or principal.tier in (TIER_OPERATOR, TIER_ADMIN, TIER_PROPOSE)
+    session = getattr(request.state, "session", None)
+    if session is not None:
+        return session.tier in (TIER_OPERATOR, TIER_ADMIN)
+    # No identity reached the handler: only AUTH_DEV_MODE lets that through, with full access.
+    return bool(getattr(request.app.state.config, "auth_dev_mode", False))
+
+
 async def _person(
     request: Request, who: str, directory: Directory | None = None, *, timed_by: AskSettings | None = None
 ) -> dict[str, Any]:
@@ -212,7 +231,6 @@ async def asks_due(
     section = await ask_policy(request)
     if not section.deployment().enabled:
         return {"asks": [], "count": 0, "enabled": False}
-    from embry0.api.deployment_reads import deployment_hidden
     from embry0.services.owner_people import directory_of
 
     asks = _repo(request, "asks_repo")
@@ -220,8 +238,8 @@ async def asks_due(
     decisions = await open_decisions(request.app)
     directory = await directory_of(request.app.state, (d.get("repo") for d in decisions))
     policy = AskPolicy(section, decisions, directory)
-    # The people's handles and hours are the deployment's: a key with a repository allowlist reads none (D4).
-    unrestricted = not deployment_hidden(request)
+    # The people's handles and hours are the deployment's, read by who may read people (D4).
+    unrestricted = reads_people(request)
     by_id = {str(d["id"]): d for d in decisions}
     order = asked_order(decisions)
 
@@ -355,8 +373,8 @@ async def _may_decide(request: Request, decision: dict[str, Any], person: str) -
     users = getattr(request.app.state, "users_repo", None)
     me = await users.get_by_email(person) if users is not None else None
     directory = await directory_of(request.app.state, [decision.get("repo")])
-    who = directory.by_email(person) or directory.by_user(me.id if me is not None else None)
-    if (me is not None and getattr(me, "disabled", False)) or (who is not None and who.disabled):
+    who = directory.claimants(person, me.id if me is not None else None)
+    if (me is not None and getattr(me, "disabled", False)) or any(p.disabled for p in who):
         return False
     admin = me is not None and me.tier == "admin"
     held = (decision.get("assigned_to") or {}).get("email")
@@ -365,8 +383,8 @@ async def _may_decide(request: Request, decision: dict[str, Any], person: str) -
     if decision.get("owners_unread"):
         return admin
     if not directory.live_owners(decision) and (await ask_policy(request)).deployment().unowned_group:
-        return who is not None or me is not None
-    return admin or directory.owns(who, decision)
+        return bool(who) or me is not None
+    return admin or any(directory.owns(p, decision) for p in who)
 
 
 async def _do(request: Request, decision: dict[str, Any], body: AnswerBody) -> dict[str, Any]:
@@ -433,6 +451,10 @@ async def answer_ask(body: AnswerBody, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="that decision was answered or moved on elsewhere") from None
     if body.action not in chat_actions(decision):
         raise HTTPException(status_code=409, detail=f"{body.action} is not open on that decision from a chat")
+    session = getattr(request.state, "session", None)
+    if session is not None and str(getattr(session, "email", "") or "").lower() != body.person.strip().lower():
+        # A key names whom the assistant verified; a dashboard session answers as itself.
+        raise HTTPException(status_code=403, detail="a dashboard session answers as the person signed in")
     if not await _may_decide(request, decision, body.person):
         raise HTTPException(
             status_code=403, detail="it is not theirs to decide: an owner, the person it was sent to, or an admin"

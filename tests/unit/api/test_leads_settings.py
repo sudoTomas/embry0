@@ -78,7 +78,9 @@ async def app(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch)
     app.state.api_keys_repo = keys
     user = MagicMock(disabled=False, email="alex@example.com")
     app.state.users_repo = MagicMock(
-        get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None), people=AsyncMock(return_value=[])
+        get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None),
+        people=AsyncMock(return_value=[]),
+        disabled_ids=AsyncMock(return_value=set()),
     )
     # The proposals feed: two backlog tickets of acme/api, ready 70 and 40 (tests.unit.api.v1.test_proposals_api).
     app.state.proposals_repo = FakeRepo()

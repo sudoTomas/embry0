@@ -146,8 +146,11 @@ It now returns, for each login, the person its identity names, or the login mark
 - **Hand-offs** name a person by email. An email with no person is listed as unknown with "add", as a login is.
 - **Who may decide.** `_may_decide` resolves the email the assistant verified to a person, signed in or not, and
   compares that person's identities with the decision's owners on its forge, instead of `users.github_login`
-  (decided for pull request 4). Acting as admin still needs a signed-in admin; a person with no email answers
-  nothing from a chat. `GET /decisions?for=me` matches the viewer's person the same way.
+  (decided for pull request 4). A caller owns a decision only as the person the directory names for one of its
+  owners, so a login left on an unlinked user owns nothing the person holds. Acting as admin still needs a
+  signed-in admin; a dashboard session answers as itself; a person with no email answers nothing from a chat. A
+  disabled user or person decides nothing, and a person whose sign-in is disabled is disabled with it.
+  `GET /decisions?for=me` matches the viewer's person the same way.
 
 ## 5. Asks
 

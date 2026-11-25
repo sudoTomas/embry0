@@ -86,11 +86,16 @@ class _Repos:
 
 
 class _Users:
-    def __init__(self, *rows: Any) -> None:
-        self.rows = rows
+    """Users as the repository reads them: ``people()`` those not disabled, ``disabled_ids()`` the rest."""
+
+    def __init__(self, *rows: Any, disabled: tuple[str, ...] = ()) -> None:
+        self.rows, self.disabled = rows, set(disabled)
 
     async def people(self) -> list[Any]:
-        return list(self.rows)
+        return [u for u in self.rows if u.id not in self.disabled]
+
+    async def disabled_ids(self) -> set[str]:
+        return set(self.disabled)
 
 
 async def test_each_repository_s_forge_is_its_organization_s_else_its_own_else_github() -> None:
@@ -119,3 +124,28 @@ async def test_a_user_with_no_person_stands_in_with_their_github_login() -> None
     assert d.holder("globex/gizmos", "lin") is linked, "a user who is a person is that person, not a stand-in"
     assert d.holder("globex/gizmos", "taken") is holder, "a person holding the login wins over a user's"
     assert d.by_email("none@example.com") is None, "a user with no login stands in for nothing"
+
+
+async def test_a_person_whose_sign_in_is_disabled_reads_as_disabled_and_a_disabled_user_stands_in_for_nobody() -> None:
+    linked = person("Lin", email="lin@example.com", identities=[("github", "lin")], user_id="usr-lin")
+    users = _Users(
+        SimpleNamespace(id="usr-lin", email="lin@example.com", name="Lin", github_login="lin"),
+        SimpleNamespace(id="usr-off", email="off@example.com", name="Off", github_login="offy"),
+        disabled=("usr-lin", "usr-off"),
+    )
+    d = await read_directory(_People(linked), None, None, ["globex/gizmos"], users)
+    assert d.recipient("globex/gizmos", "lin") is None, "a person whose sign-in is disabled is not asked"
+    assert not d.owns(d.by_email("lin@example.com"), {"repo": "globex/gizmos", "owners": ["lin"]})
+    assert d.holder("globex/gizmos", "offy") is None, "a disabled user stands in for nobody"
+
+
+def test_a_caller_is_every_person_their_email_and_sign_in_name_and_owns_only_as_a_login_s_holder() -> None:
+    holder = person("Alice", email="alice@corp.example", identities=[("github", "alice")])
+    stand_in = person("U", email="u@x.example", identities=[("github", "alice")], user_id="usr-u")
+    d = Directory(people=(stand_in, holder), forges=FORGES)
+    decision = {"repo": "globex/gizmos", "owners": ["alice"]}
+    claimants = getattr(d, "claimants", None)
+    assert claimants is not None, "a caller is whoever their email names, never whoever their sign-in is too"
+    assert [p.id for p in claimants("u@x.example", "usr-u")] == [stand_in.id]
+    assert not d.owns(stand_in, decision), "the same login on a user standing in owns nothing a person holds"
+    assert d.owns(holder, decision)

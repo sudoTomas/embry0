@@ -30,7 +30,7 @@ before; a person holding the login wins. This goes with the column.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from embry0.settings.scope import organization_of
@@ -114,14 +114,26 @@ class Directory:
             if not ((person := self.holder(repo, owner)) is not None and person.disabled)
         ]
 
+    def claimants(self, email: str | None, user_id: str | None) -> list[Person]:
+        """Every person a caller is: the one their email names, and the one their sign-in is (the same one, or a
+        user standing in), each once."""
+        found: list[Person] = []
+        for person in (self.by_email(email) if email else None, self.by_user(user_id)):
+            if person is not None and all(person.id != other.id for other in found):
+                found.append(person)
+        return found
+
     def owns(self, person: Person | None, decision: Mapping[str, Any]) -> bool:
-        """Whether one of ``person``'s identities is an owner of ``decision`` on its repository's forge. A disabled
-        person owns nothing."""
+        """Whether ``person`` holds one of ``decision``'s owners on its repository's forge: is the one the directory
+        names for that login, not merely one with an identity of the same text (a user standing in for a login a
+        person holds owns nothing). A disabled person owns nothing."""
         if person is None or person.disabled:
             return False
-        forge = self.forge_of(decision.get("repo"))
-        held = {identity.value.lower() for identity in person.identities if identity.kind == forge}
-        return any(login_of(owner) in held for owner in decision.get("owners") or [])
+        repo = decision.get("repo")
+        return any(
+            (holder := self.holder(repo, owner)) is not None and holder.id == person.id
+            for owner in decision.get("owners") or []
+        )
 
 
 def unknown(key: str, directory: Directory) -> bool:
@@ -166,9 +178,13 @@ async def read_directory(
 ) -> Directory:
     """The people, and the forge of each repository in ``asked_about``: its organization's when the organization is
     registered, else the repository's own registration's, else GitHub's. ``people``, ``organizations``, ``repos``
-    and ``users`` are the repositories; a missing one reads as none. A user with no person stands in as one."""
+    and ``users`` are the repositories; a missing one reads as none. A user with no person stands in as one, and a
+    person whose user is disabled reads as disabled."""
     everyone = tuple(await people.all(include_disabled=True)) if people is not None else ()
     if users is not None:
+        # A person whose sign-in is disabled is disabled with it; a disabled user stands in for nobody.
+        off = await users.disabled_ids()
+        everyone = tuple(replace(p, disabled=True) if p.user_id in off and not p.disabled else p for p in everyone)
         linked = {p.user_id for p in everyone if p.user_id}
         everyone = (*_stand_ins(await users.people(), linked), *everyone)
     names = {str(repo).lower() for repo in asked_about if repo}

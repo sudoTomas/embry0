@@ -181,3 +181,62 @@ async def test_a_disabled_person_answers_nothing_even_what_was_handed_to_them(
     body = {"code": "ABCD", "action": "start", "person": "gone@example.com"}
     refused = await call(app, "POST", "/api/v1/asks/answer", json=body)
     assert refused.status_code == 403, f"a disabled person answered what was handed to them: {refused.text}"
+
+
+@pytest.mark.asyncio
+async def test_a_dashboard_session_answers_only_as_the_person_signed_in(
+    app: Any,  # noqa: F811 - the imported fixture
+) -> None:
+    """A key names the person the assistant verified; a session is someone already, and answers as them alone."""
+    import os
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from httpx import ASGITransport, AsyncClient
+
+    from embry0.api.deps import bust_api_key_cache, bust_user_gate_cache
+    from embry0.api.session import SESSION_COOKIE, SessionData, encode_session
+    from embry0.config import Embry0Config
+
+    secret = "s" * 48
+    with patch.dict(os.environ, {}, clear=True):
+        app.state.config = Embry0Config(
+            _env_file=None,
+            auth_dev_mode=False,
+            api_key="master-key",
+            auth0_issuer="https://t.example.com/",
+            auth0_client_id="cid",
+            auth0_client_secret="sec",
+            session_secret=secret,
+            sso_public_origin="https://e.example.com",
+            sso_roles_claim="https://example.com/roles",
+        )
+    signed_in = MagicMock(id="usr-ada", email="ada@example.com", session_epoch=1, disabled=False, tier="operator")
+    app.state.users_repo.get_by_sub = AsyncMock(return_value=signed_in)
+    app.state.users_repo.get = AsyncMock(return_value=signed_in)
+    bust_api_key_cache()
+    bust_user_gate_cache()
+    app.state.settings = FakeSettings({"asks": {"enabled": True, **ALWAYS}})
+    cookie = encode_session(
+        secret,
+        SessionData(
+            sub="auth0|ada", email="ada@example.com", name="Ada", roles=["embry0-operator"], tier="operator", epoch=1
+        ),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        client.cookies.set(SESSION_COOKIE, cookie)
+        as_other = await client.post(
+            "/api/v1/asks/answer",
+            json={"code": "ABCD", "action": "start", "person": "root@example.com"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        as_self = await client.post(
+            "/api/v1/asks/answer",
+            json={"code": "ABCD", "action": "start", "person": "ada@example.com"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+    bust_api_key_cache()
+    bust_user_gate_cache()
+    assert as_other.status_code == 403 and "signed in" in as_other.json()["detail"], (
+        f"a session answered as an admin it is not: {as_other.status_code} {as_other.text}"
+    )
+    assert as_self.status_code == 200, f"Ada, signed in, could not answer her own quest: {as_self.text}"

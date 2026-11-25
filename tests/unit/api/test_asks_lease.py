@@ -305,7 +305,10 @@ async def keyed(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatc
     feed.state.api_keys_repo = keys
     chat = MagicMock(disabled=False, email="chat@example.com")
     feed.state.users_repo = MagicMock(
-        get=AsyncMock(return_value=chat), get_by_email=AsyncMock(return_value=None), people=AsyncMock(return_value=[])
+        get=AsyncMock(return_value=chat),
+        get_by_email=AsyncMock(return_value=None),
+        people=AsyncMock(return_value=[]),
+        disabled_ids=AsyncMock(return_value=set()),
     )
     decisions = [
         {"id": f"offer:{quest}", "repo": repo, "stage": "offered", "owners": ["ada"], "actions": []}

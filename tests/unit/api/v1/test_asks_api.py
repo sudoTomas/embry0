@@ -189,6 +189,9 @@ class FakeUsers:
     async def people(self) -> list[Any]:
         return list(self.USERS.values())
 
+    async def disabled_ids(self) -> set[str]:
+        return set()
+
 
 class FakeSettings:
     """The settings store as the feed reads it: a snapshot of a document held in memory."""
