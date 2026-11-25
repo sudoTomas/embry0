@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import pathlib
 from typing import Any
@@ -46,6 +47,13 @@ READS_FILES = (
     "/-/raw/",
     "/zipball",
     "/tarball",
+    # GraphQL: GitHub's `object(expression: "HEAD:path") { ... on Blob { text } }`, GitLab's
+    # `repository { blobs(paths: [...]) { nodes { rawTextBlob } } }`.
+    "object(expression",
+    "... on blob",
+    "blobs(paths",
+    "rawblob",
+    "rawtextblob",
 )
 #: Every module that reads a repository's files through a forge, and what it reads: files the repository keeps for
 #: itself, never embry0's configuration (#175). A new one is added here, with its reason, in review.
@@ -57,6 +65,16 @@ KNOWN_READERS = {
 }
 
 
+#: The forge files helper's public names: one taken from a module that passes it on is still the helper's.
+_HELPER_NAMES = tuple(
+    sorted(
+        node.name
+        for node in ast.parse((ROOT / "embry0/services/forge_files.py").read_text()).body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and not node.name.startswith("_")
+    )
+)
+
+
 def _modules() -> list[tuple[str, pathlib.Path]]:
     return sorted((str(path.relative_to(ROOT)), path) for path in (ROOT / "embry0").rglob("*.py"))
 
@@ -64,18 +82,26 @@ def _modules() -> list[tuple[str, pathlib.Path]]:
 def test_no_code_names_the_repository_s_old_areas_file() -> None:
     """In any form: spelled, pieced together, held in a constant, joined as a path or URL-encoded (GitLab's files
     API reads ``.embry0%2Fareas.yml``)."""
-    from tests.fixtures.source_strings import spells
+    from tests.fixtures.source_strings import Tree, spells
 
-    named = [name for name, path in _modules() if name != MIGRATIONS and spells(path.read_text(), ".embry0/areas")]
+    tree = Tree(ROOT)
+    named = [
+        name
+        for name, path in _modules()
+        if name != MIGRATIONS and spells(path.read_text(), ".embry0/areas", tree=tree, path=path)
+    ]
     assert named == [], f"code that names the repository's old areas file: {named}"
     spelled = [
-        name for name, path in _modules() if name not in MAY_SPELL_AN_AREAS_FILE and spells(path.read_text(), "areas.y")
+        name
+        for name, path in _modules()
+        if name not in MAY_SPELL_AN_AREAS_FILE and spells(path.read_text(), "areas.y", tree=tree, path=path)
     ]
     assert spelled == [], f"code that spells an areas file's name: {spelled}"
 
 
 def test_nothing_but_the_owners_fallback_takes_from_the_forge_files_helper() -> None:
-    """However it is imported: ``from … import``, the module itself, a relative import, or by name."""
+    """However it is reached: ``from … import``, the module itself, a relative import, by name, as an attribute of
+    its package, or one of its names taken from a module that passes it on."""
     from tests.fixtures.source_strings import imports_of
 
     helper = "embry0/services/forge_files.py"
@@ -83,7 +109,7 @@ def test_nothing_but_the_owners_fallback_takes_from_the_forge_files_helper() -> 
         (name, imported)
         for name, path in _modules()
         if name != helper
-        for imported in imports_of(path, ROOT, "embry0.services.forge_files")
+        for imported in imports_of(path, ROOT, "embry0.services.forge_files", _HELPER_NAMES)
     )
     assert readers == [("embry0/api/v1/proposals.py", "read_contents")], f"what uses the forge files helper: {readers}"
 
@@ -91,9 +117,10 @@ def test_nothing_but_the_owners_fallback_takes_from_the_forge_files_helper() -> 
 def test_a_repository_s_files_are_read_only_by_the_known_readers() -> None:
     """embry0 reads no configuration of its own from a target repository (#175). What reads a repository's files
     through a forge reads files the repository keeps for itself: :data:`KNOWN_READERS`, and nothing else."""
-    from tests.fixtures.source_strings import spells
+    from tests.fixtures.source_strings import Tree, spells
 
-    readers = [name for name, path in _modules() if spells(path.read_text(), *READS_FILES)]
+    tree = Tree(ROOT)
+    readers = [name for name, path in _modules() if spells(path.read_text(), *READS_FILES, tree=tree, path=path)]
     assert readers == sorted(KNOWN_READERS), f"what reads a repository's files through a forge: {readers}"
 
 

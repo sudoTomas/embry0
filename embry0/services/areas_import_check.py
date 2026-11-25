@@ -24,7 +24,9 @@ registry, takes it off the list.
 The lifespan runs the check in the background, and its queries stop after
 :data:`STATEMENT_TIMEOUT` seconds, so a start never waits on it: a lock on
 the ledger or a slow plan delays the warning, not the start. A check that
-fails is logged, and nothing else happens.
+times out logs ``areas_import_check_timed_out`` at error level, with what to
+look at, so a deployment whose ledger is locked at every start still hears of
+it; one that fails otherwise is logged, and nothing else happens.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+import asyncpg
 import structlog
 
 from embry0.storage.repo_renames import repo_slug_variants
@@ -44,6 +47,8 @@ logger = structlog.get_logger(__name__)
 
 #: The log event. Stable: alerts and log queries key on it.
 EVENT: Final = "areas_import_skipped"
+#: The log event of a check whose queries ran past :data:`STATEMENT_TIMEOUT`. Stable, as :data:`EVENT`.
+TIMED_OUT: Final = "areas_import_check_timed_out"
 #: How many repositories of each group the log line names; the counts are always whole.
 NAMED: Final = 20
 #: How many failed reads the import made of a repository before it stopped trying (the ledger's ``attempts``).
@@ -58,6 +63,11 @@ IMPORTING_BUILDS: Final = (
 REMEDY_DUE: Final = (
     f"start {IMPORTING_BUILDS} once, which reads their old areas files, then this one again; "
     "or write or map their areas (docs/areas.md)"
+)
+REMEDY_TIMED_OUT: Final = (
+    "the check of the repositories whose old areas file was never read gave up at its timeout: see what holds a "
+    "lock on repo_areas_imports (pg_locks), or ANALYZE it; it runs again at the next start (docs/areas.md, the old "
+    "file)"
 )
 REMEDY_EXHAUSTED: Final = (
     f"write or map their areas (docs/areas.md): their reads failed {MAX_ATTEMPTS} times, and no build reads them again"
@@ -135,6 +145,11 @@ async def warn_if_areas_never_imported(
         return Unread()
     try:
         found = await unread(db, timeout=timeout)
+    except asyncpg.QueryCanceledError:
+        # A lock held on the ledger, or a plan slower than the timeout: said at error level, as the warning it
+        # stands in for is, so a deployment whose check times out at every start still hears of it.
+        logger.error(TIMED_OUT, timeout_seconds=timeout, remedy=REMEDY_TIMED_OUT)
+        return Unread()
     except Exception:
         logger.warning("areas_import_check_failed", exc_info=True)
         return Unread()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import pathlib
 from typing import Any
 
@@ -62,6 +63,14 @@ _IMPORTS = {
     "the module, relatively": ("from . import forge_files\n", ["<module>"]),
     "the module, from a sibling package": ("from ..services import forge_files\n", ["<module>"]),
     "by name": ('import importlib\nfiles = importlib.import_module("embry0.services.forge_files")\n', ["<by name>"]),
+    "as an attribute of its package": (
+        "import embry0.services as services\nservices.forge_files.read_contents(get, repo, path)\n",
+        ["<.read_contents>", "<.forge_files>"],
+    ),
+    "a name passed on by another module": (
+        "from embry0.api.v1.proposals import read_contents\n",
+        ["read_contents (from embry0.api.v1.proposals)"],
+    ),
     "nothing of it": ("from embry0.services import areas_store\nimport embry0.services\n", []),
 }
 
@@ -73,4 +82,31 @@ def test_an_import_is_seen_in_every_form(tmp_path: pathlib.Path, form: str) -> N
     package.mkdir(parents=True)
     module = package / "reader.py"
     module.write_text(source)
-    assert _helper().imports_of(module, tmp_path, "embry0.services.forge_files") == taken, form
+    imports_of = _helper().imports_of
+    if "names" not in inspect.signature(imports_of).parameters:
+        pytest.fail("a name of the helper taken from a module that passes it on must be seen")
+    assert imports_of(module, tmp_path, "embry0.services.forge_files", ("read_contents",)) == taken, form
+
+
+def test_a_constant_imported_from_another_module_is_followed(tmp_path: pathlib.Path) -> None:
+    """The path's pieces held as constants in another module of the checkout, imported by name, by module, or
+    relatively."""
+    helper = _helper()
+    package = tmp_path / "embry0" / "services"
+    package.mkdir(parents=True)
+    (tmp_path / "embry0" / "__init__.py").write_text("")
+    (package / "__init__.py").write_text("")
+    (package / "names.py").write_text('DIR = ".embry0"\nFILE = "are" + "as.yml"\n')
+    tree_of = getattr(helper, "Tree", None)
+    if tree_of is None:
+        pytest.fail("a constant imported from another module of the checkout must be followed there")
+    tree = tree_of(tmp_path)
+    for source in (
+        'from embry0.services.names import DIR, FILE\npath = f"{DIR}/{FILE}"\n',
+        'from embry0.services import names\npath = names.DIR + "/" + names.FILE\n',
+        'import embry0.services.names as n\npath = n.DIR + "/" + n.FILE\n',
+        'from .names import DIR as D, FILE as F\npath = D + "/" + F\n',
+    ):
+        reader = package / "reader.py"
+        reader.write_text(source)
+        assert helper.spells(source, ".embry0/areas", tree=tree, path=reader), f"missed: {source!r}"

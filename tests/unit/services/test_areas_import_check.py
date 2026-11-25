@@ -153,7 +153,8 @@ async def test_a_repository_is_matched_as_the_areas_store_matches_it(
 
 
 async def test_a_locked_ledger_stops_the_check_not_the_start(db_with_migrations: DatabasePool) -> None:
-    """A lock held on the ledger: each query stops at its statement timeout, and the check says it failed."""
+    """A lock held on the ledger: each query stops at its statement timeout, and the check says so at error level,
+    with what to look at."""
     await _registered(db_with_migrations, "acme/widgets")
     await _ledger(db_with_migrations, "acme/widgets", "pending")
     warn = _check().warn_if_areas_never_imported
@@ -166,7 +167,11 @@ async def test_a_locked_ledger_stops_the_check_not_the_start(db_with_migrations:
             found = await asyncio.wait_for(warn(db_with_migrations, timeout=0.5), timeout=20)
         took = time.monotonic() - started
     assert _groups(found) == ([], []), found
-    assert [e["event"] for e in logs] == ["areas_import_check_failed"], logs
+    said = [(e["event"], e["log_level"]) for e in logs]
+    assert said == [("areas_import_check_timed_out", "error")], (
+        f"a check that times out must say so at error level, or a ledger locked at every start goes unheard: {said}"
+    )
+    assert "repo_areas_imports" in logs[0]["remedy"] and "docs/areas.md" in logs[0]["remedy"], logs
     assert took < 5, f"the check waited {took:.1f}s on the lock"
 
 
