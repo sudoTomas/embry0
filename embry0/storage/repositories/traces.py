@@ -46,6 +46,8 @@ class TracesRepository:
         trace_id: str | None = None,
         fallback: dict[str, Any] | None = None,
         pricing: dict[str, Any] | None = None,
+        metering: dict[str, Any] | None = None,
+        sandbox_cost_usd: float | None = None,
     ) -> str:
         """Create a trace record and return its ID.
 
@@ -63,6 +65,9 @@ class TracesRepository:
         ``pricing`` is what the run was priced with: its provider record's
         rates, cache factors, when they were resolved and what it is charged
         from (#173 PR 3, ``ProviderRecord.trace_pricing``).
+
+        ``metering`` is how the run's charge (``cost_usd``) was reached from the metering proxies' tallies, and
+        ``sandbox_cost_usd`` what the sandbox reported (``embry0.agents.run_charge``).
         """
         trace_id = trace_id or f"trc-{uuid.uuid4().hex[:12]}"
         await self._db.execute(
@@ -71,9 +76,9 @@ class TracesRepository:
                 trace_id, job_id, agent_type, model, result,
                 cost_usd, duration_ms, tools_called, result_summary,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                error_code, stderr_tail, skill_actions, fallback, pricing
+                error_code, stderr_tail, skill_actions, fallback, pricing, metering, sandbox_cost_usd
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             """,
             trace_id,
             job_id,
@@ -93,6 +98,8 @@ class TracesRepository:
             skill_actions or {},
             fallback,
             pricing,
+            metering,
+            sandbox_cost_usd,
         )
         logger.info("trace_created", trace_id=trace_id, job_id=job_id, agent_type=agent_type)
         if self._metrics is not None and cost_usd > 0:
@@ -115,16 +122,19 @@ class TracesRepository:
         error_code: str | None,
         stderr_tail: str | None,
         skill_actions: dict[str, int] | None = None,
+        metering: dict[str, Any] | None = None,
+        sandbox_cost_usd: float | None = None,
     ) -> None:
         """Finalize the row written at run start (result='running').
 
-        The running row carries no cost, so spend is counted here, once.
+        The running row carries no cost, so spend is counted here, once. ``metering`` and ``sandbox_cost_usd`` as in
+        :meth:`create`.
         """
         await self._db.execute(
             """
             UPDATE traces SET result = $2, cost_usd = $3, duration_ms = $4, tools_called = $5, result_summary = $6,
                 input_tokens = $7, output_tokens = $8, cache_read_tokens = $9, cache_creation_tokens = $10,
-                error_code = $11, stderr_tail = $12, skill_actions = $13
+                error_code = $11, stderr_tail = $12, skill_actions = $13, metering = $14, sandbox_cost_usd = $15
             WHERE trace_id = $1
             """,
             trace_id,
@@ -140,6 +150,8 @@ class TracesRepository:
             error_code,
             stderr_tail,
             skill_actions or {},
+            metering,
+            sandbox_cost_usd,
         )
         logger.info("trace_finished", trace_id=trace_id, result=result)
         if self._metrics is not None and cost_usd > 0:

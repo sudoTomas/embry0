@@ -291,9 +291,14 @@ class AgentRunner:
         docker: DockerClient,
         *,
         on_stale_image: Callable[[str], None] | None = None,
+        run_meter: Any = None,
     ) -> None:
         self._sandbox = sandbox_manager
         self._docker = docker
+        # The orchestrator's meter (embry0.execution.run_meter.RunMeter): run_agent_node declares each run to the
+        # metering proxies through it and charges the run from their tallies. Held, never called here, and untyped:
+        # this module is baked into the sandbox image, which ships neither the meter nor the metrics.
+        self.run_meter = run_meter
         # #285: called with the outcome (a STALE_IMAGE_LACKS key) when an image
         # built before what this release runs agents with is refused. A plain
         # callable, not the metrics facade: this module is baked into the

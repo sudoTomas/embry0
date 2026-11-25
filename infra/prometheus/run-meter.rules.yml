@@ -1,0 +1,62 @@
+# Metering at the proxies (embry0.execution.run_meter, embry0.agents.run_charge).
+# Load this into the Prometheus that scrapes the orchestrator's /metrics
+# (docs/ops/metrics.md, "Where it is exposed").
+#
+# Every series below is seeded when the process starts (the disagreement gauge
+# at 0 for each direction, the read gauges at 0 for each metering proxy), so
+# each rule reads a series from the first scrape. Tested by
+# run-meter.rules.test.yml (promtool test rules), each rule shown able to fire.
+groups:
+  - name: embry0-run-meter
+    rules:
+      # A metered run whose sandbox reported more than the proxy counted, in
+      # the last 30 minutes: calls the proxy did not see, or answers it could
+      # not read. The run was charged the larger figure only if its tally was
+      # not whole; otherwise it was charged the proxy's. `> 0` leaves out the
+      # seeded 0, so the rule fires on a real disagreement and on nothing else.
+      - alert: Embry0RunMeterUnderCounted
+        expr: |
+          (time() - max(embry0_run_meter_last_disagreement_timestamp_seconds{direction="sandbox_higher"} > 0)) < 1800
+        labels:
+          severity: warning
+        annotations:
+          summary: "A metered run's sandbox reported more than its proxy counted"
+          description: >-
+            An agent run's sandbox reported a higher cost than the metering
+            proxy counted for it (by more than 10% and $0.05). The run's trace
+            has both figures (metering, sandbox_cost_usd); the orchestrator logs
+            run_meter_figures_disagree with the run id. docs/providers.md,
+            "Metering at the proxies".
+      # A metering proxy's tallies have not been read for 2 minutes, for 5
+      # minutes on end; seeded 0, so a proxy never read since the start counts.
+      - alert: Embry0MeterReadsFailing
+        expr: |
+          max by (proxy) (time() - embry0_meter_last_read_timestamp_seconds) > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A metering proxy's tallies are not being read"
+          description: >-
+            The orchestrator has not read {{ $labels.proxy }}'s tallies for over
+            2 minutes (embry0_meter_admin_failures_total{call="read"} counts the
+            failures; the orchestrator logs run_meter_read_failed). Runs still
+            end and are charged, but a proxy that goes away now loses what it
+            counted since the last read. docs/providers.md, "Metering at the
+            proxies".
+      # Model calls counted under no declared run for 15 minutes: something in
+      # a sandbox calls the provider outside an agent run. Must stay quiet
+      # before the proxies are told to refuse such calls (METER_REQUIRE_RUN).
+      - alert: Embry0MeterCallsOutsideRuns
+        expr: |
+          max by (proxy) (embry0_meter_unattributed_requests) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A metering proxy counts model calls under no run"
+          description: >-
+            {{ $labels.proxy }} forwarded model calls from a sandbox with no
+            declared run. They are kept in run_meter (tally_key
+            unattributed:<sandbox>:<started>) and charged to no job.
+            docs/providers.md, "Metering at the proxies".

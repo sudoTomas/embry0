@@ -1611,10 +1611,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         skill_sources_repo=SkillSourcesRepository(db),
     )
     loop_metrics = getattr(app.state, "loop_metrics", None)
+    # Metering at the proxies: each run is declared to the metering proxies its
+    # sandbox is enrolled with, and charged from their tallies, read every 5 s
+    # into run_meter (embry0.execution.run_meter). Started once the proxies run.
+    from embry0.execution.run_meter import RunMeter
+    from embry0.metrics.loop import NULL_METRICS
+    from embry0.storage.repositories.run_meter import RunMeterRepository
+
+    run_meter = RunMeter(
+        proxy_mgr,
+        RunMeterRepository(db),
+        metrics=loop_metrics if loop_metrics is not None else NULL_METRICS,
+    )
+    app.state.run_meter = run_meter
     agent_runner = AgentRunner(
         sandbox_mgr,
         docker,
         on_stale_image=loop_metrics.sandbox_runner_stale_image if loop_metrics is not None else None,
+        run_meter=run_meter,
     )
     if loop_metrics is not None:
         from embry0.execution.sandbox_git import set_refusal_observer
@@ -1789,6 +1803,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # #626: a proxy found stopped is recreated, maybe at new addresses, and
     # the rules naming its addresses must follow it.
     proxy_mgr.on_proxy_recreated(sandbox_mgr.refresh_proxy_policy)
+
+    # The proxies run: their tallies are read from now on.
+    run_meter.start()
 
     # Provision the xai-proxy with each registered account so the first grok
     # request doesn't race the background refresh loop.
@@ -3033,6 +3050,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await xai_registry.aclose()
         except Exception:
             logger.warning("xai_refresher_registry_close_failed", exc_info=True)
+    # The meter's last read, while the proxies still hold their tallies.
+    try:
+        await asyncio.wait_for(run_meter.stop(), timeout=30)
+    except Exception:
+        logger.warning("run_meter_stop_failed", exc_info=True)
     await proxy_mgr.stop()
     # Close the long-lived GitHub HTTP client used by the github-comment channel.
     gh_client = getattr(app.state, "github_http_client", None)

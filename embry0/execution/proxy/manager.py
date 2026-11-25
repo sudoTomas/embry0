@@ -56,6 +56,13 @@ from embry0.execution.proxy.git_scope import (
 logger = structlog.get_logger(__name__)
 
 _BASE_IMAGE = "embry0-proxy:latest"
+
+#: The proxies that meter the model calls they forward (``proxy/metering.py``), each with its admin port and the
+#: provider whose calls it carries (the provider record's name).
+METERED_PROXIES: dict[str, tuple[int, str]] = {"xai-proxy": (9106, "xai"), "local-llm-proxy": (9108, "custom")}
+
+#: The order a recreated proxy is given back its state: an enrollment before the run declared for it.
+_REPLAY_ORDER = {"enroll": 0, "token": 1, "run": 2}
 _RESTRICTED = "sandbox-restricted"
 _INTERNET = "sandbox-internet"
 
@@ -983,6 +990,55 @@ class ProxyManager:
         )
         return report if isinstance(report, dict) else {}
 
+    def metered_proxies(self) -> list[str]:
+        """The metering proxies this process launched."""
+        launched = {"xai-proxy": self.xai_proxy_url, "local-llm-proxy": self.local_llm_proxy_url}
+        return [name for name in METERED_PROXIES if launched.get(name)]
+
+    def metered_proxies_for(self, sandbox_id: str) -> list[str]:
+        """The metering proxies ``sandbox_id`` is enrolled with now."""
+        now = time.monotonic()
+        held = self._admin_state
+        return [
+            name
+            for name in self.metered_proxies()
+            if (entry := held.get(name, {}).get(f"enroll:{sandbox_id}")) is not None and entry[3] > now
+        ]
+
+    async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str:
+        """Declare ``run_id`` as ``sandbox_id``'s run on ``proxy``, so the calls it forwards count under it.
+        Returns the proxy's boot id. Raises RuntimeError when the proxy refuses or cannot be reached."""
+        port = METERED_PROXIES[proxy][0]
+        body: dict[str, Any] = {"sandbox_id": sandbox_id, "run_id": run_id}
+        if job_id:
+            body["job_id"] = job_id
+        response = await self._exec_admin_request(
+            container=proxy, method="POST", path="/admin/runs", port=port, body=body
+        )
+        return str(response.get("boot_id") or "")
+
+    async def end_run(self, proxy: str, run_id: str) -> dict[str, Any] | None:
+        """End ``run_id`` on ``proxy``: its last tally and the proxy's boot id (``{"boot_id", "tally"}``), or None
+        when the proxy holds no such run (it was recreated and not given the run back). Raises RuntimeError when
+        the proxy cannot be reached."""
+        port = METERED_PROXIES[proxy][0]
+        response = await self._exec_admin_request(
+            container=proxy, method="DELETE", path=f"/admin/runs/{run_id}", port=port, body=None, accept_404=True
+        )
+        if not isinstance(response.get("tally"), dict):
+            return None
+        return response
+
+    async def read_meter(self, proxy: str) -> dict[str, Any]:
+        """Every tally ``proxy`` holds, cumulative, with its boot id. Raises RuntimeError when it cannot be read."""
+        port = METERED_PROXIES[proxy][0]
+        response = await self._exec_admin_request(
+            container=proxy, method="GET", path="/admin/meter", port=port, body=None
+        )
+        if not isinstance(response.get("boot_id"), str) or not isinstance(response.get("tallies"), list):
+            raise RuntimeError(f"{proxy} answered its meter without a boot id or tallies")
+        return response
+
     async def _exec_admin_request(
         self,
         *,
@@ -1033,6 +1089,11 @@ class ProxyManager:
             held.pop(f"enroll:{path.removeprefix('/admin/enroll/')}", None)
         elif method == "POST" and path == "/admin/token" and body:
             held[f"token:{body.get('credential_id') or ''}"] = (path, port, dict(body), float("inf"))
+        elif method == "POST" and path == "/admin/runs" and body and body.get("run_id"):
+            # Lives no longer than an enrollment: a run whose end was never heard of is not replayed forever.
+            held[f"run:{body['run_id']}"] = (path, port, dict(body), now + self._enroll_ttl_seconds)
+        elif method == "DELETE" and path.startswith("/admin/runs/"):
+            held.pop(f"run:{path.removeprefix('/admin/runs/')}", None)
 
     async def _revive(self, name: str) -> bool:
         """Recreate the stopped proxy ``name`` and replay its admin state. True when it runs again.
@@ -1070,14 +1131,16 @@ class ProxyManager:
         return str(out).strip() == "true"
 
     async def _replay(self, name: str) -> tuple[int, int]:
-        """Send a recreated proxy the enrollments and tokens it held. Returns (restored, failed).
+        """Send a recreated proxy the enrollments, tokens and run declarations it held. Returns (restored, failed).
 
-        An enrollment keeps the expiry it had; one already expired is dropped.
+        An enrollment keeps the expiry it had; one already expired is dropped. Every enrollment goes back before any
+        run, since a proxy takes a run only for an enrolled sandbox.
         """
         restored = failed = 0
         held = self._admin_state.get(name, {})
         now = time.monotonic()
-        for key, (path, port, body, expires) in list(held.items()):
+        entries = sorted(held.items(), key=lambda item: _REPLAY_ORDER.get(item[0].split(":", 1)[0], 3))
+        for key, (path, port, body, expires) in entries:
             if expires <= now:
                 del held[key]
                 continue
@@ -1137,7 +1200,8 @@ class ProxyManager:
                 "try:",
                 "    resp = urllib.request.urlopen(req, timeout=10)",
                 # Body first, marker last: the status is parsed from the final marker.
-                "    sys.stdout.write(resp.read(65536).decode('utf-8', 'replace'))",
+                # The whole answer: a meter's snapshot can be large, and a cut one would not parse.
+                "    sys.stdout.write(resp.read().decode('utf-8', 'replace'))",
                 "    sys.stdout.write(f'\\nHTTP_CODE={resp.status}')",
                 "except urllib.error.HTTPError as e:",
                 "    sys.stdout.write(f'HTTP_CODE={e.code}')",

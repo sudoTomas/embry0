@@ -193,6 +193,49 @@ chat-completions providers and grok's direct executor are then charged as
 above, an SDK run what its CLI reports). The records need the sandbox images
 rebuilt (`docs/ops/deploy.md`).
 
+### Metering at the proxies
+
+A run whose provider's calls all pass a model proxy is charged what that proxy
+counted, not what its sandbox reported: an xAI run through the `xai-proxy`
+(the SuperGrok account, or an API key the proxy holds) and a local model's run
+through the `local-llm-proxy`. Each proxy reads the usage of every answer it
+forwards (`embry0/execution/proxy/metering.py`); the orchestrator declares each
+run to the proxies its sandbox is enrolled with just before the run starts and
+ends it there after, so the calls count under the run, never under a run the
+sandbox names (`embry0/execution/run_meter.py`). It reads every proxy's tallies
+every 5 seconds into `run_meter`, and once more before the proxies stop.
+
+The charge is the run's provider record's rates, from the run's start, on the
+proxy's count (`embry0/agents/run_charge.py`):
+
+| The proxy's tally of the run | Charged |
+|---|---|
+| whole: declared, its end read, one proxy process all along | the proxy's count (`source: proxy`) |
+| not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
+| the run's provider is carried by no metering proxy (Anthropic, a chat-completions provider) | the sandbox's figure, as above (`sandbox`) |
+| the record has no rates | the sandbox's figure (`sandbox_unpriced`) |
+
+A call still in flight when a tally was last read is charged its ceiling, as
+the proxy reported it: the request's size as input and its output limit as
+output. A proxy process that went away mid-run leaves its last read in
+`run_meter` with its calls in flight, and the recreated proxy is given the run
+back after the sandbox's enrollment, under a new process (`boot_id`), so the
+run's calls are the two tallies summed and the charge is the larger figure.
+
+The trace keeps both figures: `metering` (the source, whether the tally was
+whole, the proxy's cost, the sandbox's, each proxy's processes, calls, calls
+estimated, calls charged their ceiling and tokens by model) and
+`sandbox_cost_usd`; `cost_usd` and the token columns are the charge. When the
+two figures differ by more than 10% and $0.05, the orchestrator logs
+`run_meter_figures_disagree` and counts it
+(`embry0_run_meter_disagreements_total`). Three alerts watch it
+(`infra/prometheus/run-meter.rules.yml`, `docs/ops/metrics.md`):
+`Embry0RunMeterUnderCounted` (a sandbox reported more than its proxy counted),
+`Embry0MeterReadsFailing` (a proxy's tallies not read for 2 minutes) and
+`Embry0MeterCallsOutsideRuns` (calls from a sandbox with no declared run; they
+are kept in `run_meter` and charged to no job). The proxies still forward a
+call from a sandbox with no declared run (`METER_REQUIRE_RUN` is not set).
+
 ### Changing the catalogue
 
 The shipped catalogue moves with each release. A deployment's changes are an

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from collections.abc import Mapping
@@ -25,9 +26,11 @@ from embry0.agents.fallback import describe as describe_fallback
 from embry0.agents.model_policy import build_model_policy, resolve_tier_models
 from embry0.agents.providers import price_usage
 from embry0.agents.resolver import _chosen_for_job, resolve_agent_invocation
+from embry0.agents.run_charge import Charge, charge_run
 from embry0.agents.session import AgentSession
 from embry0.execution import events
 from embry0.execution.auth_provider import AuthConfigError
+from embry0.execution.run_meter import RunMeter
 from embry0.execution.skill_actions import count_action
 from embry0.orchestration.budget import (
     BudgetCheckResult,
@@ -154,6 +157,49 @@ def _crashed_trace_fields(exc: BaseException, error_code: str | None) -> dict[st
         "error_code": error_code,
         "stderr_tail": None,
     }
+
+
+def _charged_fields(charge: Charge) -> dict[str, Any]:
+    """finish() fields of a run's charge (``embry0.agents.run_charge``): what it costs and how that was reached."""
+    return {
+        "cost_usd": charge.cost_usd,
+        "input_tokens": charge.input_tokens,
+        "output_tokens": charge.output_tokens,
+        "cache_read_tokens": charge.cache_read_tokens,
+        "cache_creation_tokens": charge.cache_creation_tokens,
+        "metering": charge.metering,
+        "sandbox_cost_usd": charge.sandbox_cost_usd,
+    }
+
+
+async def _end_metering(run_meter: Any, window: Any) -> Any:
+    """The metering proxies' account of the run, ended there; None when it was not metered or could not be ended."""
+    if run_meter is None or window is None:
+        return None
+    try:
+        return await run_meter.end(window)
+    except Exception:  # noqa: BLE001 — the run is charged its sandbox's figure, as before metering
+        logger.warning("run_meter_end_failed", run_id=window.run_id, exc_info=True)
+        return None
+
+
+#: Metering ends of cancelled runs still on their way (a reference keeps each task alive until it is done).
+_BACKGROUND_ENDS: set[asyncio.Task[Any]] = set()
+
+
+def _end_in_background(run_meter: Any, window: Any) -> None:
+    task = asyncio.ensure_future(_end_metering(run_meter, window))
+    _BACKGROUND_ENDS.add(task)
+    task.add_done_callback(_BACKGROUND_ENDS.discard)
+
+
+def _charge(
+    run_meter: Any, metering: Any, invocation: Any, *, cost_usd: float, tokens: tuple[int, int, int, int]
+) -> Charge:
+    charge = charge_run(metering, invocation.provider_record, sandbox_cost_usd=cost_usd, sandbox_tokens=tokens)
+    if run_meter is not None:
+        run_meter.charged(charge, run_id=invocation.run_id)
+    return charge
 
 
 def _str_or_none(value: Any) -> str | None:
@@ -1165,6 +1211,28 @@ async def run_agent_node(
             if on_event is not None:
                 on_event(event)
 
+        # Metering at the proxies: the run is declared on the metering proxies its
+        # sandbox is enrolled with, so the calls they forward count under it, and
+        # ended after the exec, whatever its outcome (embry0.execution.run_meter).
+        run_meter = getattr(agent_runner, "run_meter", None)
+        if not isinstance(run_meter, RunMeter):
+            run_meter = None  # a runner without a meter, or a test double whose every attribute is a mock
+        meter_window: Any = None
+        metering: Any = None
+        if run_meter is not None and container:
+            try:
+                meter_window = await run_meter.begin(container, run_id, trace_job_id or None)
+            except Exception:  # noqa: BLE001 — the run goes ahead, charged its sandbox's figure
+                logger.warning("run_meter_begin_failed", run_id=run_id, exc_info=True)
+
+        def _crash_charge(exc: BaseException, error_code: str | None) -> dict[str, Any]:
+            fields = _crashed_trace_fields(exc, error_code)
+            if run_meter is None:
+                return fields
+            # A crashed exec reports nothing; the proxies' count of its calls is charged.
+            charge = _charge(run_meter, metering, invocation, cost_usd=0.0, tokens=(0, 0, 0, 0))
+            return {**fields, **_charged_fields(charge)}
+
         try:
             # Production path: docker-exec the sandbox runner with the serialized
             # invocation; the in-container SdkAgentExecutor handles the actual
@@ -1177,18 +1245,44 @@ async def run_agent_node(
                 resume_session=resume_session,
             )
         except AuthConfigError as exc:
-            await _finish_trace(**_crashed_trace_fields(exc, exc.error_code.value))
+            metering = await _end_metering(run_meter, meter_window)
+            await _finish_trace(**_crash_charge(exc, exc.error_code.value))
             return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
         except Exception as exc:
             # The row says running until told otherwise; a crashed exec must not
             # leave it that way.
-            await _finish_trace(**_crashed_trace_fields(exc, None))
+            metering = await _end_metering(run_meter, meter_window)
+            await _finish_trace(**_crash_charge(exc, None))
             raise
+        except BaseException:
+            # Cancelled: the run is ended on the proxies without waiting, so its declaration does not linger.
+            if meter_window is not None:
+                _end_in_background(run_meter, meter_window)
+            raise
+        metering = await _end_metering(run_meter, meter_window)
     finally:
         if lease_id is not None and local_slots is not None:
             await local_slots.release(lease_id)
 
     result = _priced_from_the_catalog(result, invocation, agent_type)
+    charged_fields: dict[str, Any] = {}
+    if run_meter is not None:
+        charge = _charge(
+            run_meter,
+            metering,
+            invocation,
+            cost_usd=result.cost_usd,
+            tokens=(result.input_tokens, result.output_tokens, result.cache_read_tokens, result.cache_creation_tokens),
+        )
+        charged_fields = _charged_fields(charge)
+        result = replace(
+            result,
+            cost_usd=charge.cost_usd,
+            input_tokens=charge.input_tokens,
+            output_tokens=charge.output_tokens,
+            cache_read_tokens=charge.cache_read_tokens,
+            cache_creation_tokens=charge.cache_creation_tokens,
+        )
 
     output_entry = AgentOutputEntry(
         agent_type=result.agent_type,
@@ -1240,6 +1334,9 @@ async def run_agent_node(
         # The tail is already redacted and capped by AgentRunner.
         error_code=_str_or_none(getattr(result, "error_code", None)) if result.is_error else None,
         stderr_tail=_str_or_none(getattr(result, "stderr_tail", None)) if result.is_error else None,
+        # How the charge was reached, and the sandbox's own figure; kept off a run with no meter, so a traces
+        # repository without the columns still works.
+        **{k: charged_fields[k] for k in ("metering", "sandbox_cost_usd") if k in charged_fields},
     )
 
     new_total = state.get("total_cost_usd", 0.0) + result.cost_usd
