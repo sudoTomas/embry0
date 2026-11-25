@@ -818,7 +818,19 @@ and forwards that sandbox to that server and nowhere else:
 No egress exception is declared for a server's machine, so a sandbox cannot
 reach anything else on it. A job on the custom provider does not start
 without the proxy, or on a credential that names no server; a resumed job's
-sandbox is enrolled again with the server its credential names then. Calls the
+sandbox is enrolled again with the server its credential names then. A paused
+job whose sandbox an older release created with the custom provider's key or a
+server's address in its env is not resumed: its egress is closed and the resume
+fails with `ERR_SANDBOX_ROUTE_RETIRED`; dispatch it again.
+
+**Which hosts may be a server.** Never this machine (`localhost`, a loopback
+address, `0.0.0.0`) or the link-local range, where a cloud's metadata service
+answers (169.254.0.0/16, fe80::/10): a credential naming one is refused when it
+is written or imported, a job on it does not start, no background call goes
+there, and the proxy refuses to be enrolled with one.
+Every other host is trusted, the operator's own network included, because only
+a deployment admin writes a custom credential's address (an admin key with no
+repository allowlist, or the environment). Calls the
 orchestrator makes itself (proposal and job briefs, the Slop-O-Meter's
 judgments; see [Background models](#background-models)) reach the same server
 directly, with the same address and key.
@@ -826,9 +838,10 @@ directly, with the same address and key.
 **At startup** each stored custom credential that is not disabled is probed
 once (`GET <base_url>/models` with its key), and one that would not work is
 named in the log, `custom_credential_check_failed` with a `reason`:
-`no_server`, `unreachable`, `key_refused` (the server refused its key: a
-placeholder on a server that checks one), `unexpected_answer` or
-`unreadable`. The check only logs.
+`no_server`, `refused_host` (this machine or link-local, below; not probed),
+`unreachable`, `key_refused` (the server refused its key: a placeholder on a
+server that checks one), `unexpected_answer` or `unreadable`. The check only
+logs.
 
 **`LOCAL_LLM_UPSTREAM` and `LOCAL_LLM_API_KEY` route nothing.** Before ADR
 0032 they sent every custom run in a sandbox to one root with one key,

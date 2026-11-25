@@ -234,11 +234,22 @@ async def _llm_entries(
         if fallback is None:
             continue
         metadata = env_fallback_metadata(provider.name, env)
+        refused = _refused_address(metadata["base_url"]) if "base_url" in metadata else None
+        if refused is not None:
+            report.skipped.append(f"{provider.name}/api-key: its base URL may not be a model server: {refused}")
+            continue
         host = base_url_host(metadata["base_url"]) if "base_url" in metadata else default_host(provider.name)
         out.append((provider.name, "api-key", "llm_api_key", host, fallback[1], 0, metadata))
     if upstream and not any(provider.name == "custom" for provider in enabled_openai_compatible()):
         report.skipped.append("custom/api-key: LOCAL_LLM_UPSTREAM is set but the catalogue has the custom provider off")
     return out
+
+
+def _refused_address(url: str) -> str | None:
+    """Why the server ``url`` names may not be a model server (this machine, link-local), or None."""
+    from embry0.execution.proxy.local_llm_proxy import refused_server_host
+
+    return refused_server_host(urlparse(url).hostname)
 
 
 def _local_upstream_entry(
@@ -251,6 +262,10 @@ def _local_upstream_entry(
     host = base_url_host(upstream)
     if not upstream.startswith(("http://", "https://")) or not host:
         report.skipped.append("custom/api-key: LOCAL_LLM_UPSTREAM is not an http(s) URL with a host")
+        return None
+    refused = _refused_address(upstream)
+    if refused is not None:
+        report.skipped.append(f"custom/api-key: LOCAL_LLM_UPSTREAM may not be a model server: {refused}")
         return None
     key = (
         str(getattr(config, "local_llm_api_key", "") or "").strip()

@@ -181,6 +181,15 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
     root = str(cred.metadata.get("base_url") or provider.openai_base_url or "").rstrip("/")
     if not root or not cred.secret:
         return None
+    from urllib.parse import urlsplit
+
+    from embry0.execution.proxy.local_llm_proxy import refused_server_host
+
+    refused = refused_server_host(urlsplit(root).hostname)
+    if refused is not None:
+        # ADR 0032: a credential written before the check may still name one; no call goes there.
+        logger.warning("background_model_refused_server", feature=feature, model=model, reason=refused)
+        return None
     local = provider.name == "custom"
     return Endpoint(
         model=model,

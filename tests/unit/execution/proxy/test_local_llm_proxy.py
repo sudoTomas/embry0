@@ -19,6 +19,18 @@ _SERVER_KEY = "server-key-the-sandbox-never-sees"
 _API_ROOT = "/v1/"
 
 
+@pytest.fixture(autouse=True)
+def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake model servers here listen on 127.0.0.1, which no real enrollment may name (ADR 0032): these tests
+    let that one address through, and every other refused host stays refused
+    (tests/unit/execution/proxy/test_model_server_hosts.py refuses 127.0.0.1 itself)."""
+    refused = getattr(local_llm_proxy, "refused_server_host", None)
+    if refused is not None:
+        monkeypatch.setattr(
+            local_llm_proxy, "refused_server_host", lambda host: None if host == "127.0.0.1" else refused(host)
+        )
+
+
 @pytest.fixture
 def make_upstream(aiohttp_server) -> Any:
     """A factory of fake model servers recording the requests the proxy may send them.
@@ -114,6 +126,12 @@ def test_the_admin_token_and_a_positive_cap_must_be_set():
         {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1?x=1", "api_key": ""},
         {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1", "api_key": "k\r\nX-Evil: 1"},
         {"credential_id": 7, "upstream": "http://10.0.0.5/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://127.0.0.2:8000/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://[::1]:8000/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://localhost:8000/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://169.254.169.254/latest", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://[fe80::1]:8000/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://0.0.0.0:8000/v1", "api_key": ""},
     ],
     ids=[
         "none",
@@ -126,6 +144,12 @@ def test_the_admin_token_and_a_positive_cap_must_be_set():
         "query",
         "header-break",
         "bad-id",
+        "loopback",
+        "loopback-v6",
+        "localhost",
+        "metadata-service",
+        "link-local-v6",
+        "unspecified",
     ],
 )
 async def test_an_enrollment_without_a_valid_server_is_refused(aiohttp_client, server):

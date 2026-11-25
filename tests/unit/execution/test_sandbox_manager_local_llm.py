@@ -4,6 +4,7 @@ Every sandbox on the custom provider reaches its credential's server through the
 alone (ADR 0032); there is no route around it.
 """
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -124,6 +125,16 @@ async def test_a_custom_credential_naming_no_server_does_not_start() -> None:
     assert not mgr._docker.build_run_cmd.called, "a container was started for a credential with no server"
 
 
+@pytest.mark.parametrize("root", ["http://127.0.0.1:11434/v1", "http://169.254.169.254/v1", "http://localhost/v1"])
+async def test_a_custom_credential_naming_this_machine_or_link_local_does_not_start(root: str) -> None:
+    """The credential may come from the environment (CUSTOM_LLM_BASE_URL), which no API check saw."""
+    mgr, _, pm = _proxied_manager({"custom": _key("custom", "k", {"base_url": root})})
+    refused = await _refused(mgr)
+    assert refused is not None, f"a custom job started on a credential naming {root}"
+    assert "does not reach" in str(refused) and refused.error_code == ErrorCode.CREDENTIAL_UNAVAILABLE, refused
+    assert not mgr._docker.build_run_cmd.called, "a container was started for a server embry0 does not reach"
+
+
 async def test_a_sandbox_without_the_custom_provider_is_not_enrolled_with_the_proxy() -> None:
     mgr, _, pm = _proxied_manager({"deepseek": _key("deepseek", "s")})
     await mgr.create("job-1", repo="acme/widgets", llm_providers=["deepseek"])
@@ -228,9 +239,96 @@ async def test_reenroll_takes_the_server_the_credential_names_now_over_the_one_i
     )
 
 
+@pytest.mark.parametrize(
+    "env_names",
+    ["PATH\nEMBRY0_LLM_CUSTOM_API_KEY\nEMBRY0_LLM_CUSTOM_BASE_URL\n", "PATH\nEMBRY0_LLM_CUSTOM_BASE_URL\n"],
+    ids=["key-and-address", "address-alone"],
+)
+@pytest.mark.parametrize("networks", ["sandbox-restricted\nsandbox-internet\n", "sandbox-restricted\n"])
+async def test_a_sandbox_with_the_retired_direct_route_is_closed_and_refused(env_names: str, networks: str) -> None:
+    """An older release put the custom provider's key and server address in the env, and the server's host in the
+    egress exceptions. Such a sandbox is not resumed: its egress is closed to every private address, then the
+    resume fails, telling the person to dispatch the job again."""
+    docker, _calls = reenroll._docker(env_names=env_names, networks=networks)
+    pm = reenroll._proxy()
+    pm.local_llm_proxy_url = _PROXY
+    pm.internet_proxies = lambda: ["git-proxy"]
+    mgr = reenroll._manager(docker, pm)
+    mgr._runtime.attach_policy = AsyncMock()  # type: ignore[method-assign]
+    try:
+        await mgr.reenroll(
+            "cid-1", job_id="job-1", repo="acme/widgets", forge="github", xai_credential_id=None, context_scope=None
+        )
+    except SandboxInitError as exc:
+        refused: SandboxInitError | None = exc
+    else:
+        refused = None
+    assert refused is not None, "a sandbox with the custom provider's key or address in its env was resumed"
+    route_retired = getattr(ErrorCode, "SANDBOX_ROUTE_RETIRED", None)
+    assert route_retired is not None and refused.error_code == route_retired, refused
+    assert "dispatch the job again" in str(refused), refused
+    assert not isinstance(refused, SandboxReenrollError), (
+        "the job was left paused, to be refused again at every resume, instead of failing"
+    )
+    pm.enroll_sandbox.assert_not_awaited()
+    if "sandbox-internet" in networks:
+        mgr._runtime.attach_policy.assert_awaited_once_with(
+            "cid-1", allowed_destinations=[], reachable_containers=["git-proxy"]
+        )
+    else:
+        mgr._runtime.attach_policy.assert_not_awaited()
+
+
+async def test_a_sandbox_from_the_proxied_route_is_resumed_and_its_policy_left_alone() -> None:
+    """A sandbox the older release created through LOCAL_LLM_UPSTREAM has the proxy as its address and no key: it
+    resumes, its own declared egress targets kept."""
+    docker, _calls = reenroll._docker(
+        env_names="PATH\nEMBRY0_LLM_CUSTOM_BASE_URL\nEMBRY0_LLM_CUSTOM_VIA_PROXY\n", networks="sandbox-internet\n"
+    )
+    pm = reenroll._proxy()
+    pm.local_llm_proxy_url = _PROXY
+    mgr = reenroll._manager(docker, pm)
+    mgr._runtime.attach_policy = AsyncMock()  # type: ignore[method-assign]
+    mgr._credential_resolver.resolve_llm_for_job = AsyncMock(return_value={"custom": _CUSTOM})
+    await _reenroll(mgr, custom_credential_id="cred-custom")
+    pm.enroll_sandbox.assert_awaited_once()
+    mgr._runtime.attach_policy.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", ["env", "egress"])
+async def test_a_retired_route_that_cannot_be_checked_or_closed_leaves_the_job_paused(failure: str) -> None:
+    env_names: Any = RuntimeError("daemon restarting") if failure == "env" else "EMBRY0_LLM_CUSTOM_API_KEY\n"
+    docker, _calls = reenroll._docker(env_names=env_names, networks="sandbox-internet\n")
+    pm = reenroll._proxy()
+    mgr = reenroll._manager(docker, pm)
+    mgr._runtime.attach_policy = AsyncMock(side_effect=RuntimeError("iptables busy"))  # type: ignore[method-assign]
+    try:
+        await mgr.reenroll(
+            "cid-1", job_id="job-1", repo="acme/widgets", forge="github", xai_credential_id=None, context_scope=None
+        )
+    except SandboxReenrollError:
+        paused = True
+    else:
+        paused = False
+    assert paused, f"a sandbox whose route could not be {'checked' if failure == 'env' else 'closed'} was resumed"
+    pm.enroll_sandbox.assert_not_awaited()
+
+
 async def test_reenroll_without_a_resolver_uses_the_credential_it_created_the_sandbox_with() -> None:
     mgr, pm, _calls = _reenrolling({})
     mgr._credential_resolver = None
     mgr._llm_credentials["cid-1"] = {"custom": _CUSTOM}
     await _reenroll(mgr, custom_credential_id="cred-custom")
     assert pm.enroll_sandbox.await_args.kwargs.get("local_llm") == _ITS_SERVER
+
+
+def test_only_the_env_s_names_leave_the_daemon() -> None:
+    """The check reads which variables a sandbox has, never their values: the custom key among them."""
+    from embry0.execution.docker_client import DockerClient
+
+    build = getattr(DockerClient(), "build_inspect_env_names_cmd", None)
+    assert build is not None, "nothing reads which variables a sandbox's env has without their values"
+    cmd = build("cid-1")
+    template = cmd[cmd.index("--format") + 1]
+    assert template == '{{range .Config.Env}}{{println (index (split . "=") 0)}}{{end}}', template
+    assert cmd[-1] == "cid-1"

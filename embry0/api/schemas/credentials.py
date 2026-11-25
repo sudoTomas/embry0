@@ -34,7 +34,8 @@ def _custom_base_url(metadata: dict[str, Any]) -> str:
     """The custom provider's API root (``metadata.base_url``), validated and without a trailing slash.
 
     http is allowed: a model server on the operator's network rarely has a certificate.
-    No userinfo, query or fragment — the URL is stored in the clear and injected as is.
+    No userinfo, query or fragment — the URL is stored in the clear and injected as is. Not this
+    machine or a link-local address (ADR 0032): every other host is the admin's to trust.
     """
     unknown = sorted(set(metadata) - {"base_url"})
     if unknown:
@@ -47,6 +48,11 @@ def _custom_base_url(metadata: dict[str, Any]) -> str:
         raise ValueError("metadata.base_url must be an http(s) URL with a host, e.g. http://10.0.0.5:11434/v1")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("metadata.base_url must not carry credentials, a query or a fragment")
+    from embry0.execution.proxy.local_llm_proxy import refused_server_host
+
+    refused = refused_server_host(parsed.hostname)
+    if refused is not None:
+        raise ValueError(f"metadata.base_url may not be a model server: {refused}")
     return raw.strip().rstrip("/")
 
 

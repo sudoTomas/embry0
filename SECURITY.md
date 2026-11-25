@@ -60,7 +60,7 @@ Target-repository code is an asset too. Agents work on it only inside a sandbox,
 | `github-proxy`, `gitlab-proxy` | the forge token | read calls on the job's repository |
 | `xai-proxy` | the xAI subscription token | grok model calls |
 | `context-proxy` | a service-scoped orchestrator API key | log queries, for jobs enrolled for them (opt-in) |
-| `local-llm-proxy` | each enrolled sandbox's model server key, if its server checks one | `POST /v1/chat/completions` and `GET /v1/models` on the one server the sandbox's custom credential names, for jobs that resolved the custom provider (ADR 0032) |
+| `local-llm-proxy` | each enrolled sandbox's model server key, if its server checks one | `POST /v1/chat/completions` and `GET /v1/models` on the one server the sandbox's custom credential names, for jobs that resolved the custom provider; never this machine or a link-local address, any other host a deployment admin's to trust (ADR 0032) |
 | `auth-proxy` | an Anthropic API key | nothing: only with `AUTH_PROXY_ENABLED`, and no sandbox uses it |
 | `minio-proxy`, `presign-proxy` | no credential | QA artifact uploads and presigned-URL refreshes |
 

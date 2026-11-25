@@ -15,6 +15,7 @@ work now is named in the log, ``custom_credential_check_failed`` with a
 ``reason``:
 
 - ``no_server``: its metadata names no address;
+- ``refused_host``: its address is this machine or link-local, which no job reaches (and which is not probed);
 - ``unreachable``: nothing answers at its address;
 - ``key_refused``: the server refused its key (401 or 403), which is what a
   placeholder key comes to on a server that checks one;
@@ -32,9 +33,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 import structlog
 
+from embry0.execution.proxy.local_llm_proxy import refused_server_host
 from embry0.services.provider_probe import (
     STATUS_ENTITLEMENT_REFUSED,
     STATUS_ERROR,
@@ -104,6 +107,10 @@ async def check_custom_servers(credentials: Any, secrets: Any, *, probe: Probe |
         if not base_url:
             logger.warning("custom_credential_check_failed", reason="no_server", detail="no base_url", **fields)
             return credential_id, "no_server"
+        refused = refused_server_host(urlsplit(base_url).hostname)
+        if refused is not None:
+            logger.warning("custom_credential_check_failed", reason="refused_host", detail=refused, **fields)
+            return credential_id, "refused_host"
         async with gate:
             try:
                 stored = await credentials.get(credential_id)

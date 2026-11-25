@@ -36,6 +36,7 @@ _BY_CODE: dict[str, str] = {
     ErrorCode.RESUME_LIMIT: "embry0 restarted several times while the job was running, so it was not resumed again",
     ErrorCode.SANDBOX_INIT: "the sandbox for the job could not be set up",
     ErrorCode.SANDBOX_GONE: "the paused job's sandbox no longer exists; run the job again",
+    ErrorCode.SANDBOX_ROUTE_RETIRED: "the paused job's sandbox reaches its model server a way embry0 retired; run the job again",
     ErrorCode.SANDBOX_IMAGE_STALE: "the sandbox image is out of date and has to be rebuilt by an operator",
     ErrorCode.SANDBOX_EXEC_STALLED: "the sandbox did not start the agent",
     ErrorCode.SANDBOX_RESULT_REFUSED: "an agent's result could not be confirmed as its own, so the job stopped rather than use it",

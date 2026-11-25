@@ -53,7 +53,14 @@ class Calls(list):
         ]
 
 
-def _docker(running: str | Exception = "true") -> tuple[MagicMock, Calls]:
+def _docker(
+    running: str | Exception = "true",
+    *,
+    env_names: str | Exception = "PATH\nHOME\n",
+    networks: str = "sandbox-restricted\n",
+) -> tuple[MagicMock, Calls]:
+    """A daemon whose inspects answer ``running``, the names of the sandbox's env (``env_names``) and its
+    ``networks``."""
     calls = Calls()
     docker = MagicMock()
     docker.build_exec_cmd = lambda container, cmd, **kw: [
@@ -63,6 +70,8 @@ def _docker(running: str | Exception = "true") -> tuple[MagicMock, Calls]:
         *cmd,
     ]
     docker.build_inspect_running_cmd = lambda container: ["inspect-running", container]
+    docker.build_inspect_env_names_cmd = lambda container: ["inspect-env-names", container]
+    docker.build_inspect_networks_cmd = lambda container: ["inspect-networks", container]
 
     async def run_cmd(cmd, timeout=60, stdin_data=None, **_kw):
         calls.append(list(cmd))
@@ -71,6 +80,12 @@ def _docker(running: str | Exception = "true") -> tuple[MagicMock, Calls]:
             if isinstance(running, Exception):
                 raise running
             return running
+        if cmd and cmd[0] == "inspect-env-names":
+            if isinstance(env_names, Exception):
+                raise env_names
+            return env_names
+        if cmd and cmd[0] == "inspect-networks":
+            return networks
         return ""
 
     docker.run_cmd = run_cmd

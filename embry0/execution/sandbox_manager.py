@@ -488,6 +488,16 @@ class SandboxManager:
                 f"the custom credential '{cred.label}' names no server: its metadata has no base_url",
                 error_code=ErrorCode.CREDENTIAL_UNAVAILABLE,
             )
+        from urllib.parse import urlsplit
+
+        from embry0.execution.proxy.local_llm_proxy import refused_server_host
+
+        refused = refused_server_host(urlsplit(root).hostname)
+        if refused is not None:
+            raise SandboxInitError(
+                f"the custom credential '{cred.label}' names a server embry0 does not reach: {refused}",
+                error_code=ErrorCode.CREDENTIAL_UNAVAILABLE,
+            )
         return Upstream(credential_id=cred.id or "", root=root, api_key=cred.secret)
 
     async def _install_ca_bundle(self, container_id: str) -> None:
@@ -1068,6 +1078,10 @@ class SandboxManager:
                 error_code=ErrorCode.SANDBOX_INIT,
             ) from exc
 
+        # ADR 0032: a sandbox from before may reach the custom provider's server directly, with its key in the env and
+        # an egress exception for the server's host. It is not resumed so.
+        await self._refuse_a_retired_route(container)
+
         proxy = self._proxy_manager
         local_server = await self._reenroll_local_server(container, repo, job_id, custom_credential_id)
         try:
@@ -1156,6 +1170,60 @@ class SandboxManager:
             timeout=10,
             stdin_data=sandbox_token.encode(),
         )
+
+    async def _refuse_a_retired_route(self, container: str) -> None:
+        """Refuse a resumed sandbox whose env still carries the custom provider's key, or a server's address
+        instead of the local-llm-proxy's: an older release put them there, and a container's env cannot change
+        (ADR 0032). The job is dispatched again rather than run with them. Only the variables' names are read.
+
+        That release declared the server's host as an egress exception for exactly such a sandbox (the key went
+        into the env whenever the proxy did not stand between), so before refusing, its egress policy is attached
+        again with no exception at all: until the failed resume frees the sandbox, it reaches no private address.
+        Every other resumed sandbox keeps the policy it has, its own declared targets with it."""
+        from embry0.agents.providers import provider_named
+        from embry0.sandbox.local_llm_token import LOCAL_LLM_PROXY_FLAG
+
+        custom = provider_named("custom")
+        key_env = custom.sandbox_key_env if custom is not None else "EMBRY0_LLM_CUSTOM_API_KEY"
+        url_env = custom.sandbox_base_url_env if custom is not None else "EMBRY0_LLM_CUSTOM_BASE_URL"
+        try:
+            names = set(
+                str(await self._docker.run_cmd(self._docker.build_inspect_env_names_cmd(container), timeout=10)).split()
+            )
+        except (RuntimeError, TimeoutError) as exc:
+            raise SandboxReenrollError(
+                f"sandbox {container} could not be re-enrolled: its env could not be read: {exc}",
+                error_code=ErrorCode.SANDBOX_INIT,
+            ) from exc
+        if key_env in names or (url_env in names and LOCAL_LLM_PROXY_FLAG not in names):
+            await self._close_egress(container)
+            raise SandboxInitError(
+                f"sandbox {container} was created with the custom provider's key or server address in its env, "
+                "which ADR 0032 retired; it is not resumed with them: dispatch the job again",
+                error_code=ErrorCode.SANDBOX_ROUTE_RETIRED,
+            )
+
+    async def _close_egress(self, container: str) -> None:
+        """Attach ``container``'s egress policy again with no declared exception, when it is on
+        ``sandbox-internet``: public egress and the proxies only. Raises :class:`SandboxReenrollError` when the rules
+        cannot be written."""
+        try:
+            networks = await self._docker.run_cmd(self._docker.build_inspect_networks_cmd(container), timeout=10)
+            if "sandbox-internet" not in str(networks).split():
+                return
+            internet_proxies = getattr(self._proxy_manager, "internet_proxies", None)
+            await self._runtime.attach_policy(
+                container,
+                allowed_destinations=[],
+                reachable_containers=list(internet_proxies()) if callable(internet_proxies) else [],
+            )
+        except Exception as exc:  # noqa: BLE001 — the job stays paused, its sandbox still refused at the next try
+            raise SandboxReenrollError(
+                f"sandbox {container} could not be refused cleanly: its egress rules could not be closed: {exc}",
+                error_code=ErrorCode.SANDBOX_INIT,
+            ) from exc
+        self._egress_enforced.add(container)
+        logger.warning("sandbox_retired_route_egress_closed", container=container)
 
     async def _reenroll_local_server(
         self, container: str, repo: str | None, job_id: str, credential_id: str | None

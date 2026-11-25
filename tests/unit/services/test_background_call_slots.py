@@ -213,3 +213,10 @@ async def test_a_local_endpoint_names_the_server_its_credential_is(
         f"a call on the custom provider must hold a slot of its credential's server: {endpoint}"
     )
     assert endpoint.root == base_url.rstrip("/"), f"a background call reaches its credential's own address: {endpoint}"
+
+
+@pytest.mark.parametrize("base_url", ["http://169.254.169.254/v1", "http://127.0.0.1:8000/v1"])
+async def test_no_background_call_goes_to_this_machine_or_link_local(base_url: str) -> None:
+    """A custom credential written before the check (ADR 0032) may still name one: no call is made there."""
+    endpoint = await resolve_endpoint(LOCAL, Resolver("cred-local", base_url), "acme/widgets")
+    assert endpoint is None, f"a background call would go to {base_url}, with the credential's key: {endpoint}"

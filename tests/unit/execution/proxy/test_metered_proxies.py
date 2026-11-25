@@ -18,6 +18,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
+from embry0.execution.proxy import local_llm_proxy
 from embry0.execution.proxy.local_llm_proxy import create_local_llm_proxy_app
 from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
 from tests.fixtures.recording_upstream import is_test_request
@@ -317,6 +318,18 @@ async def model_server(aiohttp_server) -> Any:
     server.seen = seen
     server.answers = answers
     return server
+
+
+@pytest.fixture(autouse=True)
+def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake model servers here listen on 127.0.0.1, which no real enrollment may name (ADR 0032): the local model's tests here
+    let that one address through, and every other refused host stays refused
+    (tests/unit/execution/proxy/test_model_server_hosts.py refuses 127.0.0.1 itself)."""
+    refused = getattr(local_llm_proxy, "refused_server_host", None)
+    if refused is not None:
+        monkeypatch.setattr(
+            local_llm_proxy, "refused_server_host", lambda host: None if host == "127.0.0.1" else refused(host)
+        )
 
 
 async def _local(aiohttp_client: Any, server: Any, **kw: Any) -> TestClient:

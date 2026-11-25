@@ -65,6 +65,19 @@ def _row(cid: str, base_url: str | None, *, secret: str = SECRET, **extra: Any) 
     }
 
 
+@pytest.fixture(autouse=True)
+def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake model servers here listen on 127.0.0.1, which no stored credential may name (ADR 0032): these tests
+    let that one address through, and every other refused host stays refused."""
+    import embry0.services.local_model_servers as servers_module
+
+    refused = getattr(servers_module, "refused_server_host", None)
+    if refused is not None:
+        monkeypatch.setattr(
+            servers_module, "refused_server_host", lambda host: None if host == "127.0.0.1" else refused(host)
+        )
+
+
 @pytest.fixture
 async def servers(aiohttp_server) -> Any:
     """Model servers answering ``GET /v1/models``: one that works, one that checks a key, one with no such path."""
@@ -95,6 +108,7 @@ async def test_each_stored_custom_credential_is_named_by_what_would_fail(servers
         _row("cred-dead", servers["dead"]),
         _row("cred-wrong-path", servers["wrong_path"]),
         _row("cred-nowhere", None),
+        _row("cred-metadata", "http://169.254.169.254/v1"),
         _row("cred-broken", servers["ok"], secret="broken"),
     ]
     rows[-1]["secret_ciphertext"] = "enc:broken"
@@ -102,6 +116,7 @@ async def test_each_stored_custom_credential_is_named_by_what_would_fail(servers
     with capture_logs() as logs:
         found = await check_custom_servers(credentials, Secrets())
     assert "cred-nowhere" not in credentials.fetched, "a secret was read for a credential that names no server"
+    assert "cred-metadata" not in credentials.fetched, "a link-local server was probed, with its key"
     assert found == {
         "cred-ok": "ok",
         "cred-keyed": "ok",
@@ -109,6 +124,7 @@ async def test_each_stored_custom_credential_is_named_by_what_would_fail(servers
         "cred-dead": "unreachable",
         "cred-wrong-path": "unexpected_answer",
         "cred-nowhere": "no_server",
+        "cred-metadata": "refused_host",
         "cred-broken": "unreadable",
     }, f"each credential's verdict: {found}"
     warned = {e["credential_id"]: e["reason"] for e in logs if e["event"] == "custom_credential_check_failed"}

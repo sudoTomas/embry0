@@ -27,6 +27,7 @@ provider, so a sandbox with no local model has no bearer this proxy accepts.
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -89,6 +90,33 @@ class Upstream:
 UPSTREAM_BY_SANDBOX: web.AppKey[dict[str, Upstream]] = web.AppKey("upstream_by_sandbox")
 
 
+def refused_server_host(host: str | None) -> str | None:
+    """Why ``host`` may not be a model server, or None when it may.
+
+    Refused: this machine (``localhost``, a loopback address, or the unspecified address that reaches it) and the
+    link-local range, where a cloud's metadata service answers (169.254.169.254). Every other host is trusted, since
+    only a deployment admin writes a custom credential's address. A name other than ``localhost`` is not resolved
+    here: the orchestrator sends an http server's name as the address it resolves to, and that address is checked
+    again where the proxy takes it.
+    """
+    name = (host or "").strip().strip("[]").rstrip(".").lower()
+    if name == "localhost" or name.endswith(".localhost"):
+        return f"{host} is this machine"
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if address.is_loopback:
+        return f"{host} is this machine (a loopback address)"
+    if address.is_unspecified:
+        return f"{host} is this machine (the unspecified address)"
+    if address.is_link_local:
+        return f"{host} is link-local, where a cloud's metadata service answers"
+    return None
+
+
 def parse_upstream(value: Any) -> Upstream:
     """The enroll body's ``local_llm`` object, checked; :class:`EnrollRejected` for anything else. A root is an
     http(s) URL with a host and nothing past its path, kept without its trailing slash."""
@@ -109,6 +137,9 @@ def parse_upstream(value: Any) -> Upstream:
         or parts.fragment
     ):
         raise EnrollRejected("local_llm.upstream must be an http(s) URL with a host and no credentials or query")
+    refused = refused_server_host(parts.hostname)
+    if refused is not None:
+        raise EnrollRejected(f"local_llm.upstream may not be a model server: {refused}")
     if not isinstance(api_key, str) or len(api_key) > _MAX_KEY or any(c in api_key for c in "\r\n"):
         raise EnrollRejected("local_llm.api_key must be a string of one line")
     return Upstream(credential_id=credential_id, root=root.rstrip("/"), api_key=api_key)

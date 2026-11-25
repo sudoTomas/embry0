@@ -157,6 +157,28 @@ async def test_an_upstream_that_is_no_http_url_is_not_imported(db_with_migration
     )
 
 
+@pytest.mark.parametrize("upstream", ["http://127.0.0.1:8000/v1", "http://169.254.169.254/v1", "http://localhost/v1"])
+async def test_an_upstream_on_this_machine_or_link_local_is_not_imported(
+    db_with_migrations: DatabasePool, upstream: str
+) -> None:
+    repo = CredentialsRepository(db_with_migrations)
+    report = await _import(repo, _config(upstream=upstream))
+    assert await repo.find_by_label("custom", "api-key") is None, f"{upstream!r} was imported as a model server"
+    assert any(
+        line.startswith("custom/api-key: LOCAL_LLM_UPSTREAM may not be a model server") for line in report.skipped
+    ), f"the report must say why nothing was imported: {report.as_dict()}"
+
+
+async def test_a_custom_base_url_on_link_local_is_not_imported(db_with_migrations: DatabasePool) -> None:
+    repo = CredentialsRepository(db_with_migrations)
+    env = {"CUSTOM_LLM_API_KEY": "k", "CUSTOM_LLM_BASE_URL": "http://169.254.169.254/v1"}
+    report = await _import(repo, SimpleNamespace(gitlab_url=""), env)
+    assert await repo.find_by_label("custom", "api-key") is None, "a link-local CUSTOM_LLM_BASE_URL was imported"
+    assert any(line.startswith("custom/api-key: its base URL may not be a model server") for line in report.skipped), (
+        f"the report must say why nothing was imported: {report.as_dict()}"
+    )
+
+
 async def test_with_the_custom_provider_off_nothing_is_imported_and_the_report_says_why(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:

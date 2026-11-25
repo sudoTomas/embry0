@@ -35,6 +35,7 @@ class ErrorCode(StrEnum):
     SANDBOX_GONE = (
         "ERR_SANDBOX_GONE"  # a paused job's sandbox container no longer exists or is stopped; dispatch the job again
     )
+    SANDBOX_ROUTE_RETIRED = "ERR_SANDBOX_ROUTE_RETIRED"  # a paused job's sandbox was created with the custom provider's key or server address in its env, the route ADR 0032 retired; it is not resumed with them: dispatch the job again
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
     DOCKER_OUTPUT_TOO_LARGE = "ERR_DOCKER_OUTPUT_TOO_LARGE"  # a docker command printed more than its stdout cap and was stopped (embry0/execution/docker_client.py)
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
@@ -185,6 +186,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.WORKFLOW_UNKNOWN: _C.CONFIG,
     ErrorCode.SANDBOX_INIT: _C.INFRA,
     ErrorCode.SANDBOX_GONE: _C.INFRA,
+    ErrorCode.SANDBOX_ROUTE_RETIRED: _C.INFRA,
     ErrorCode.DOCKER_TIMEOUT: _C.INFRA,
     ErrorCode.DOCKER_OUTPUT_TOO_LARGE: _C.INFRA,
     ErrorCode.MAX_AGENT_QUESTIONS: _C.AGENT,

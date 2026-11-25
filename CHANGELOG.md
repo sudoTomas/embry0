@@ -103,7 +103,11 @@ describes what embry0 does rather than listing changes.
   for each stored custom credential whose server cannot be reached or refuses
   its key, and `settings_env_retired` while either variable is set
   ([docs/providers.md](docs/providers.md#local-models)). The proxy image must
-  be rebuilt.
+  be rebuilt. A paused custom job whose sandbox was created with the key or
+  the server's address in its env is not resumed
+  (`ERR_SANDBOX_ROUTE_RETIRED`): dispatch it again. A custom credential may
+  not name this machine or a link-local address; one stored that way is
+  refused when a job uses it.
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

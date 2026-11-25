@@ -70,6 +70,11 @@ async def test_a_provider_that_is_not_enabled_is_refused(client: AsyncClient) ->
         (_body(provider="custom", metadata={"base_url": "ftp://host/v1"}), "http(s) URL"),
         (_body(provider="custom", metadata={"base_url": "http://user:pw@host/v1"}), "must not carry credentials"),
         (_body(provider="custom", metadata={"base_url": "http://h/v1", "model": "x"}), "takes only 'base_url'"),
+        # ADR 0032: this machine and the link-local range are never a model server.
+        (_body(provider="custom", metadata={"base_url": "http://169.254.169.254/v1"}), "may not be a model server"),
+        (_body(provider="custom", metadata={"base_url": "http://127.0.0.1:11434/v1"}), "may not be a model server"),
+        (_body(provider="custom", metadata={"base_url": "http://localhost:11434/v1"}), "may not be a model server"),
+        (_body(provider="custom", metadata={"base_url": "http://[fe80::1]:8000/v1"}), "may not be a model server"),
         (_body(metadata={"base_url": "http://h/v1"}), "only accepted for tailnet_api_key and custom"),
     ],
 )
