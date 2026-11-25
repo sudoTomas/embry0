@@ -410,3 +410,36 @@ def test_a_forked_child_reports_in_a_private_directory_of_the_guard_s_own() -> N
         assert children.parent.stat().st_mode & 0o777 == 0o700, oct(children.parent.stat().st_mode)
         assert str(os.getpid()) not in str(children), children
     assert not children.parent.exists(), "the guard's directory outlived it"
+
+
+@pytest.mark.parametrize("how", ["connect", "connect_ex", "create_connection", "httpx"])
+def test_a_refused_connect_leaves_no_socket_open(how: str) -> None:
+    """``socket.create_connection`` (and httpx's sync transport over it) closes its socket only on an ``OSError``,
+    which a refusal is not: the refused socket, never connected, would be left for the collector, and the unit
+    suite's ``ResourceWarning`` (#708) would blame whatever test it was collected in."""
+    import gc
+    import warnings
+
+    guard_mod = _guard()
+    with warnings.catch_warnings(record=True) as caught, guard_mod.refusing_network(set()):
+        warnings.simplefilter("always", ResourceWarning)
+        sock = socket.socket()
+        try:
+            if how == "connect":
+                sock.connect(FAR)
+            elif how == "connect_ex":
+                sock.connect_ex(FAR)
+            elif how == "create_connection":
+                socket.create_connection(FAR, timeout=1)
+            else:
+                httpx.get(f"http://{FAR[0]}:{FAR[1]}/", timeout=1)
+        except guard_mod.NetworkUseRefused:
+            pass
+        if how in ("connect", "connect_ex"):
+            assert sock.fileno() == -1, "the refused socket must be closed"
+        else:
+            sock.close()
+        del sock
+        gc.collect()
+    leaked = [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)]
+    assert leaked == [], f"a refused connect left a socket open: {leaked}"
