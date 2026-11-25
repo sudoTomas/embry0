@@ -486,7 +486,7 @@ Who embry0 asks and names as an owner, whether or not they sign in (#179, [the d
 - `GET /api/v1/people/suggestions`: who could be added, since embry0 adds nobody by itself: `users`, each user who signs in with no person (`{"user_id", "email", "name", "github_login"}`), and `owners`, each owner login embry0 keeps (a repository's `owners` preference, an area's owners) that no person holds, with the repositories that name it. An owner read from `CODEOWNERS` is not listed.
 - `GET /api/v1/people/{id}`: one person; the `ETag` is their `updated_at`.
 - `POST /api/v1/people` (201): add a person, `name` and any other field, and `identities`.
-- `PATCH /api/v1/people/{id}`: change the fields given (`null` clears an optional one); with `identities`, make them exactly the person's. `If-Match` with an `ETag` a read answered refuses a change someone made in between (409).
+- `PATCH /api/v1/people/{id}`: change the fields given (`null` clears an optional one); with `identities`, make them exactly the person's. `If-Match` with the `ETag` a read answered is required (428 without it, 412 for one that names no version), and a change someone made in between is refused (409), so an identity added or a user linked since is never undone unseen.
 - `DELETE /api/v1/people/{id}`: remove the person and their identities; a user they were linked to keeps their GitHub login.
 - `POST /api/v1/people/{id}/identities` (`{"kind", "value"}`) and `DELETE /api/v1/people/{id}/identities/{kind}/{value}`: give or take one identity.
 

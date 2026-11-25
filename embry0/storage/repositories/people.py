@@ -89,6 +89,24 @@ class PersonChanged(Exception):
         self.updated_at = updated_at
 
 
+#: The advisory lock a GitHub login is taken under: ``f"{GITHUB_LOGIN_LOCK}:{login.lower()}"``.
+GITHUB_LOGIN_LOCK = "github_login"
+
+
+async def lock_github_logins(conn: Any, logins: Iterable[str]) -> None:
+    """Hold each login's advisory lock for the transaction, in one order (#691 review).
+
+    A write that gives a person a GitHub identity reads ``users`` for the
+    login, and one that sets a user's login reads ``person_identities``: each
+    checks the other's table, so two at once could each see the login free
+    and both take it. Both take the login's lock before they check, so the
+    second waits for the first and then sees what it wrote. Taken sorted, so
+    two writes of several logins never wait on each other in a circle.
+    """
+    for login in sorted({login.lower() for login in logins if login}):
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"{GITHUB_LOGIN_LOCK}:{login}")
+
+
 async def _check_login_free(conn: Any, user_id: str | None, login: str) -> None:
     """A GitHub login another user signs in as is not another person's to hold (#672 review): the person linked to
     that user may hold it, nobody else. Without this, a person could hold it, and the next fall back of their own
@@ -288,6 +306,7 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
+                await lock_github_logins(conn, (value for kind, value in checked if kind == "github"))
                 await conn.execute(
                     "INSERT INTO people (id, name, email, user_id, timezone, hours, weekdays, disabled, created_by) "
                     "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
@@ -350,6 +369,7 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
+                await lock_github_logins(conn, (value for kind, value in wanted or () if kind == "github"))
                 before = await conn.fetchrow(f"SELECT {_COLUMNS} FROM people WHERE id = $1 FOR UPDATE", person_id)
                 if before is None:
                     return None
@@ -466,6 +486,8 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
+                if kind == "github":
+                    await lock_github_logins(conn, (value,))
                 holder = await conn.fetchrow("SELECT user_id FROM people WHERE id = $1 FOR UPDATE", person_id)
                 if holder is None:
                     return None

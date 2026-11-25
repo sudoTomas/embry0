@@ -149,18 +149,22 @@ class UsersRepository:
         For one release (#179), the person linked to the user, if any, gets the login as a ``github`` identity in
         place of the one it replaces, in the same transaction, audited as ``actor``'s
         (:func:`embry0.storage.repositories.people.follow_user_login`). A login another person holds as an
-        identity raises a unique violation, as one another user holds does.
+        identity raises :class:`~embry0.storage.repositories.people.PersonConflict`, checked under the login's
+        lock (``lock_github_logins``); one another user holds raises a unique violation.
         """
         from embry0.storage.repositories.people import (
             PersonConflict,
             Written,
             append_audit_file,
             follow_user_login,
+            lock_github_logins,
         )
 
         written: Written = []
         async with self._db.transaction() as conn:
             if login:
+                # Under the login's lock, as a person's GitHub identity is given (#691 review): one of two at once wins.
+                await lock_github_logins(conn, (login,))
                 # A login another person holds as an identity is theirs (#672 review), as one another user has is.
                 held = await conn.fetchval(
                     "SELECT 1 FROM person_identities i JOIN people p ON p.id = i.person_id "

@@ -934,6 +934,10 @@ async def test_people_set_asks_for_confirmation_then_adds_or_changes_guarded(mon
     assert hasattr(server, "people_set"), "there are no people tools"
     refused = await server.people_set(fields={"name": "Ada"})
     assert refused["error"] == "confirmation_required" and calls == []
+    blind = await server.people_set(person_id="per-1", fields={"hours": None}, confirm=True)
+    assert blind.get("error") == "expected_updated_at_required" and calls == [], (
+        f"a change made without the version it read would overwrite what changed since (#691 review): {blind}"
+    )
     await server.people_set(fields={"name": "Ada"}, identities=[{"kind": "github", "value": "ada"}], confirm=True)
     await server.people_set(person_id="per-1", fields={"hours": None}, expected_updated_at="v1", confirm=True)
     await server.people_get()

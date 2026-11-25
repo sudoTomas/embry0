@@ -280,3 +280,39 @@ async def test_the_login_routes_refuse_what_github_refuses_and_a_person_error_is
         monkeypatch.setattr(app.state.users_repo, "set_github_login", refuses)
         refused = await call(app, "PUT", f"/api/v1/users/{linked}/github-login", MASTER, {"login": "ada"})
         assert refused.status_code == 422, f"a person's refusal is the caller's 422, not a 500: {refused.text}"
+
+
+async def test_a_login_is_taken_under_its_lock_by_a_person_s_write_and_a_user_s(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """#691 review: a person's GitHub identity and a user's login each check the other's table, so two writes at once
+    could both see a login free. Both wait for the login's lock, so the second sees what the first wrote."""
+    import asyncio
+
+    from embry0.storage.repositories import people as people_module
+
+    db = db_with_migrations
+    people, users = PeopleRepository(db), UsersRepository(db)
+    user = await _user(db, "ada@example.com")
+    bo = await people.create({"name": "Bo"}, actor="t")
+    dy = await people.create({"name": "Dy"}, actor="t")
+    lock = getattr(people_module, "GITHUB_LOGIN_LOCK", None)
+    assert lock is not None, "a GitHub login is taken under no lock"
+    async with db.transaction() as conn:
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"{lock}:race-x")
+        writes = {
+            "a user's login": asyncio.create_task(users.set_github_login(user, "Race-X", actor="t")),
+            "a person's identity": asyncio.create_task(people.add_identity(bo.id, "github", "RACE-x", actor="t")),
+            "a new person's identity": asyncio.create_task(
+                people.create({"name": "Cy"}, identities=[("github", "race-x")], actor="t")
+            ),
+            "a person's identities made": asyncio.create_task(
+                people.update(dy.id, {}, identities=[("github", "race-X")], actor="t", expect_updated_at=dy.updated_at)
+            ),
+        }
+        await asyncio.sleep(0.5)
+        running = sorted(name for name, task in writes.items() if task.done())
+        assert running == [], f"written without waiting for the login's lock: {running}"
+    outcomes = await asyncio.gather(*writes.values(), return_exceptions=True)
+    won = [name for name, outcome in zip(writes, outcomes, strict=True) if not isinstance(outcome, Exception)]
+    assert len(won) == 1, f"one write takes the login, the others are refused: {dict(zip(writes, outcomes))}"

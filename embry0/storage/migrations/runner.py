@@ -47,8 +47,8 @@ logger = structlog.get_logger(__name__)
 # with hashtextextended: `qa_image_tags:<repo>`, `org_needs:<owner>`,
 # `standards:<owner>:<kind>`, `org_discovery:<owner>`,
 # `credential_bindings:<scope_kind>:<scope_value>`,
-# `settings_documents:<scope>`, `asks:hand_out`, `local_model_slots` and
-# `progression_rollup`.
+# `settings_documents:<scope>`, `asks:hand_out`, `local_model_slots`,
+# `progression_rollup` and `github_login:<login>`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica

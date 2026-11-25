@@ -4,7 +4,8 @@
     GET    /people/suggestions                        who could be added: users with no person, owner logins nobody holds
     GET    /people/{person_id}                        one person, with an ETag of the version read
     POST   /people                                    add a person, with their identities (admin)
-    PATCH  /people/{person_id}                        change their fields, and with "identities" make those theirs (admin)
+    PATCH  /people/{person_id}                        change their fields, and with "identities" make those theirs
+                                                      (admin; If-Match required)
     DELETE /people/{person_id}                        remove them and their identities (admin)
     POST   /people/{person_id}/identities             give them an identity (admin)
     DELETE /people/{person_id}/identities/{kind}/{value}  take one from them (admin)
@@ -14,11 +15,12 @@ with a repository allowlist reads nobody and writes nothing
 (``embry0.api.deployment_reads``). A write with problems is refused with one
 422 naming every problem by where it is, never repeating a value
 (``embry0.services.people.check_write``); a value another person or user
-holds is a 409 naming the field. ``PATCH`` takes ``If-Match`` with the
-``ETag`` a read answered (the person's ``updated_at``), so a change someone
-made in between is refused (409) rather than overwritten: ``embry0 people
-apply`` sends it for each person it changes. Every write is audited
-(``person.*``) by the repository.
+holds is a 409 naming the field. ``PATCH`` requires ``If-Match`` with the
+``ETag`` a read answered (the person's ``updated_at``; 428 without it), so a
+change someone made in between is refused (409) rather than overwritten,
+identities added since included: ``embry0 people apply`` sends the version
+each entry was exported with. Every write is audited (``person.*``) by the
+repository.
 """
 
 from __future__ import annotations
@@ -81,10 +83,14 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="no such person")
 
 
-def _if_match(value: str | None) -> datetime | None:
-    """The version ``If-Match`` names; None without one. A value that names no version is a 412: it can match none."""
-    if value is None:
-        return None
+def _if_match(value: str | None) -> datetime:
+    """The version ``If-Match`` names. Without one, 428: a change made blind would overwrite whatever changed since,
+    identities added since included. A value that names no version is a 412: it can match none."""
+    if value is None or not value.strip():
+        raise HTTPException(
+            status_code=428,
+            detail="a change names the version it was read at: send If-Match with the ETag a read of the person answered",
+        )
     try:
         return datetime.fromisoformat(value.strip().strip('"'))
     except ValueError:
@@ -146,7 +152,8 @@ async def change_person(
     if_match: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Change the fields given (``null`` clears an optional one); with ``identities``, make them exactly the person's.
-    ``If-Match`` with the ``ETag`` a read answered refuses a change someone made in between (409)."""
+    ``If-Match``, the ``ETag`` a read answered, is required (428 without it), and a change someone made in between
+    is refused (409)."""
     expected = _if_match(if_match)
     fields, identities = _split(payload)
     try:

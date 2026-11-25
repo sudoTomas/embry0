@@ -90,6 +90,12 @@ async def test_an_admin_adds_reads_changes_and_removes_a_person(people_app: tupl
     )
     stale = await _call(app, "PATCH", f"{PEOPLE}/{ada['id']}", MASTER, {"hours": None}, if_match=etag)
     assert stale.status_code == 409 and "read it again" in stale.json()["detail"], stale.text
+    blind = await _call(app, "PATCH", f"{PEOPLE}/{ada['id']}", MASTER, {"identities": []})
+    assert blind.status_code == 428 and "If-Match" in blind.json()["detail"], (
+        f"a change without the version it read would take the identities given since (#691 review): {blind.text}"
+    )
+    kept = (await _call(app, "GET", f"{PEOPLE}/{ada['id']}", MASTER)).json()
+    assert kept["identities"] == [{"kind": "slack", "value": "U024BE7LH"}], "the refused change changed nothing"
 
     given = await _call(app, "POST", f"{PEOPLE}/{ada['id']}/identities", MASTER, {"kind": "gitlab", "value": "ada"})
     assert given.status_code == 200 and {"kind": "gitlab", "value": "ada"} in given.json()["identities"]
@@ -152,6 +158,7 @@ async def test_a_value_someone_else_holds_is_a_409(people_app: tuple[Any, Any]) 
         f"{PEOPLE}/{first.json()['id']}",
         MASTER,
         {"identities": [{"kind": "github", "value": "Cy-Login"}]},
+        if_match=first.headers["etag"],
     )
     assert made_theirs.status_code == 409 and "github login" in made_theirs.json()["detail"], (
         f"another user's login was made a person's identities: {made_theirs.text}"

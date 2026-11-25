@@ -26,9 +26,12 @@ writes it::
 the fields it gives (``null`` clears an optional one), and with
 ``identities`` the person's identities made exactly those. Nothing is
 deleted: a person left out of the file stays, and removing one is the API's
-``DELETE /people/{id}``. Each change sends the ``updated_at`` the entry was
-exported with as ``If-Match``, so a person someone changed since is refused
-(409) rather than overwritten; export again and redo the change. ``check``
+``DELETE /people/{id}``. An entry with an ``id`` must carry the
+``updated_at`` it was exported with, which each change sends as
+``If-Match``, so a person someone changed since is refused (409) rather than
+overwritten, identities added since included; export again and redo the
+change. ``apply`` stops at the first refusal and says which entries it
+applied before it and which it did not. ``check``
 runs offline with the very checks a write meets, and prints every problem
 as ``where: message``, never the value. Writing people needs an admin key
 without a repository allowlist.
@@ -121,8 +124,16 @@ def _checked(entries: list[Any]) -> list[tuple[dict[str, Any], dict[str, Any], l
             if person_id in ids:
                 problems.append(problem_line(["people", i, "id"], "the same person twice"))
             ids.add(person_id)
-        if entry.get("updated_at") is not None and not isinstance(entry.get("updated_at"), str):
+        exported = entry.get("updated_at")
+        if exported is not None and not isinstance(exported, str):
             problems.append(problem_line(["people", i, "updated_at"], "the time export wrote, as text"))
+        elif person_id is not None and not (exported or "").strip():
+            problems.append(
+                problem_line(
+                    ["people", i, "updated_at"],
+                    "a change names the version it was exported with: export again, or copy the person's updated_at",
+                )
+            )
         fields = {key: value for key, value in entry.items() if key not in _SPECIAL}
         try:
             values, identities = check_write(fields, entry.get("identities"), creating=person_id is None)
@@ -209,6 +220,10 @@ def _plan(
         if current is None:
             missing.append(problem_line(["people", i, "id"], "no person has this id: leave it out to add one"))
             continue
+        exported = entry.get("updated_at")
+        if not isinstance(exported, str) or not exported.strip():
+            missing.append(problem_line(["people", i, "updated_at"], "a change names the version it was exported with"))
+            continue
         fields = sorted(key for key, value in values.items() if current.get(key) != value)
         added = removed = set[tuple[str, str]]()
         if identities is not None:
@@ -224,7 +239,7 @@ def _plan(
                     "added": sorted(added),
                     "removed": sorted(removed),
                     "body": body,
-                    "if_match": entry.get("updated_at") or current.get("updated_at"),
+                    "if_match": exported,
                 }
             )
     if missing:
@@ -283,16 +298,32 @@ def _apply(args: argparse.Namespace, client: httpx.Client) -> int:
     if not _confirmed(args, f"apply these {len(plan)} change(s)?"):
         _err("nothing written")
         return REFUSED
-    for step in plan:
-        if "add" in step:
-            made = _json(_send(client, "POST", "/api/v1/people", json=step["body"]))
-            print(f"added {made.get('name')} ({made.get('id')})")
-        else:
-            headers = {"If-Match": f'"{step["if_match"]}"'} if step["if_match"] else {}
-            path = "/api/v1/people/" + quote(step["change"], safe="")
-            _send(client, "PATCH", path, json=step["body"], headers=headers)
-            print(f"changed {step['name']} ({step['change']})")
+    done: list[str] = []
+    for n, step in enumerate(plan):
+        try:
+            if "add" in step:
+                made = _json(_send(client, "POST", "/api/v1/people", json=step["body"]))
+                print(f"added {made.get('name')} ({made.get('id')})")
+            else:
+                path = "/api/v1/people/" + quote(step["change"], safe="")
+                _send(client, "PATCH", path, json=step["body"], headers={"If-Match": f'"{step["if_match"]}"'})
+                print(f"changed {step['name']} ({step['change']})")
+        except _Exit:
+            _stopped(done, plan[n:])
+            raise
+        done.append(_named(step))
     return OK
+
+
+def _named(step: dict[str, Any]) -> str:
+    return f"+ {step['add']}" if "add" in step else f"~ {step['name']} ({step['change']})"
+
+
+def _stopped(done: list[str], left: list[dict[str, Any]]) -> None:
+    """What a refusal partway through ``apply`` left: the changes made before it, and the ones not made."""
+    _err(f"stopped at {_named(left[0])}: {len(done)} of {len(done) + len(left)} change(s) applied")
+    _err(f"applied: {', '.join(done) if done else 'none'}")
+    _err(f"not applied: {', '.join(_named(step) for step in left)}")
 
 
 def export_document(people: list[dict[str, Any]]) -> str:

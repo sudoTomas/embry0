@@ -1,6 +1,7 @@
 """Hand-offs (spec 2026-10-27): send a decision to a teammate, who then decides it.
 
-- ``GET /people``: who a decision can be sent to (the people who sign in).
+- ``GET /handoffs/people``: who a decision can be sent to (the users who sign in;
+  ``/people`` is the people directory since #179).
 - ``PUT /me/github-login``: the GitHub login a person is named by, which links
   them to the quests they own (an admin names someone else's with
   ``PUT /users/{id}/github-login``, in the admin-only users router).
