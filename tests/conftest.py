@@ -1,6 +1,7 @@
 """Shared test fixtures."""
 
 import asyncio
+import gc
 import os
 import socket
 from collections.abc import AsyncIterator, Generator, Iterator
@@ -30,11 +31,18 @@ _WORKER_DATABASE = pytest.StashKey[str]()
 
 #: Python ignores ``ResourceWarning`` by default, so an unclosed session, socket, file or event loop
 #: would never reach ``--fail-on-warnings``. pytest_sessionstart adds this to pytest's own
-#: ``filterwarnings``, after the configuration file's lines, so it is in force from collection to the
-#: session's end, in each test and in every pytest-xdist worker (not while conftests are imported).
-#: It is not set in ``pyproject.toml``, whose pytest table is pinned to keys that cannot hide a
-#: warning (tests/unit/test_ci_workflow.py); a ``filterwarnings`` mark on a test still outranks it.
+#: ``filterwarnings``, after the configuration file's lines, in every pytest-xdist worker. It is in
+#: force wherever pytest records warnings: collection, each test (its setup, call and teardown) and
+#: the session's finish; not while conftests are imported, nor at the interpreter's exit, where an
+#: object still alive is never reported. So the collector runs in the last test's teardown, and a
+#: leak held in a reference cycle is reported there rather than lost. It is not set in
+#: ``pyproject.toml``, whose pytest table is pinned to keys that cannot hide a warning
+#: (tests/unit/test_ci_workflow.py); a ``filterwarnings`` mark on a test still outranks it.
 RESOURCE_WARNINGS = "always::ResourceWarning"
+
+#: The warning filters pytest applies to every test, as the session started: its ``filterwarnings`` and
+#: the command line's ``-W``. A test that adds to either would silence warnings for every test after it.
+_FILTERS = pytest.StashKey[tuple[list[str], list[str] | None]]()
 
 
 def _workers(config: pytest.Config) -> int | None:
@@ -92,8 +100,42 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Turn ``ResourceWarning`` on for the run (#708), before anything is collected."""
-    session.config.addinivalue_line("filterwarnings", RESOURCE_WARNINGS)
+    """Turn ``ResourceWarning`` on for the run (#708), before anything is collected, and keep the filters every
+    test runs with, to tell a test that changes them."""
+    config = session.config
+    config.addinivalue_line("filterwarnings", RESOURCE_WARNINGS)
+    config.stash[_FILTERS] = _filters_now(config)
+
+
+def _filters_now(config: pytest.Config) -> tuple[list[str], list[str] | None]:
+    cmdline = getattr(config.known_args_namespace, "pythonwarnings", None)
+    return list(config.getini("filterwarnings")), None if cmdline is None else list(cmdline)
+
+
+@pytest.hookimpl(specname="pytest_runtest_teardown", trylast=True)
+def pytest_runtest_teardown_keeps_the_warning_filters(item: pytest.Item, nextitem: pytest.Item | None) -> None:
+    """A test that changed the warning filters every later test runs with (``pytestconfig.addinivalue_line(
+    "filterwarnings", ...)``, the command line's ``-W`` list) fails, and they are put back; a ``filterwarnings``
+    mark, which holds for its own test, is the way. After the last test, the collector runs, so a leak held in a
+    reference cycle is reported, and under a test, rather than lost when the process ends. Named ``pytest_*``,
+    since pytest registers no other name, beside the ``pytest_runtest_teardown`` below."""
+    config = item.config
+    if nextitem is None:
+        gc.collect()
+    kept = config.stash.get(_FILTERS, None)
+    if kept is None:
+        return
+    now = _filters_now(config)
+    if now == kept:
+        return
+    ini, cmdline = kept
+    config.getini("filterwarnings")[:] = ini
+    config.known_args_namespace.pythonwarnings = None if cmdline is None else list(cmdline)
+    pytest.fail(
+        f"{item.nodeid} changed the warning filters every later test runs with (filterwarnings {now[0]!r}, -W "
+        f"{now[1]!r}); they are put back. Mark the test @pytest.mark.filterwarnings(...) instead (#708)",
+        pytrace=False,
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:

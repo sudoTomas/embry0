@@ -139,3 +139,42 @@ def test_a_test_may_still_say_why_it_leaves_a_resource_open(tmp_path: Path) -> N
     out = done.stdout + done.stderr
     assert done.returncode == pytest.ExitCode.OK, out
     assert "1 passed in" in out, out
+
+
+@pytest.mark.parametrize(
+    "silence",
+    [
+        'pytestconfig.addinivalue_line("filterwarnings", "ignore::ResourceWarning")',
+        'pytestconfig.known_args_namespace.pythonwarnings = ["ignore::ResourceWarning"]',
+    ],
+    ids=["filterwarnings", "-W"],
+)
+def test_a_test_that_silences_warnings_for_later_tests_fails_and_they_are_put_back(
+    tmp_path: Path, silence: str
+) -> None:
+    """A test could add a filter every later test in its process runs with; it fails, naming the change, and the
+    next test's leak is still counted."""
+    done = _pytest_of(
+        tmp_path,
+        f"import socket\n\n\ndef test_a_silences(pytestconfig):\n    {silence}\n\n\n"
+        "def test_b_leaks():\n    socket.socket()\n",
+        "-p",
+        "no:randomly",
+    )
+    out = done.stdout + done.stderr
+    assert "test_probe.py::test_a_silences changed the warning filters every later test runs with" in out, (
+        f"a test that silences warnings for every later test must fail:\n{out}"
+    )
+    assert "1 warning" in out and "ResourceWarning" in out, f"the next test's leak must still be counted:\n{out}"
+    assert done.returncode == pytest.ExitCode.TESTS_FAILED, out
+
+
+def test_a_leak_held_in_a_reference_cycle_by_the_last_test_is_reported(tmp_path: Path) -> None:
+    """Only the collector frees what a cycle holds; the process would end first, and the warning go unseen."""
+    done = _pytest_of(
+        tmp_path,
+        "def test_leaks_in_a_cycle():\n    held = {'file': open(__file__)}\n    held['self'] = held\n",
+    )
+    out = done.stdout + done.stderr
+    assert done.returncode == pytest.ExitCode.TESTS_FAILED, f"a leak in a cycle must fail the run:\n{out}"
+    assert "1 passed, 1 warning" in out and "ResourceWarning" in out, out
