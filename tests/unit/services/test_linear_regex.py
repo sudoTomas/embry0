@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from embry0.services.log_signatures import MASKED_TEXT_MAX_CHARS
-from tests.fixtures.cpu_cost import cost, cpu_seconds, same
+from tests.fixtures.cpu_cost import cost, relative_cost, same
 
 
 def _engine() -> ModuleType:
@@ -375,25 +375,27 @@ _REFERENCE = re.compile(r"[a-z]")
 COST = 400.0
 
 
-def _cpu_seconds(work: Callable[[str], object], line: str, times: int) -> float:
-    """The least, over three runs, of this thread's CPU time for ``work(line)`` run ``times`` times, the garbage
-    collector held: the work's own cost. The host's other processes take the CPU, not this thread's clock, and a
-    collection of the whole process's heap is not the pattern's work."""
-    return min(cpu_seconds(lambda: work(line), times=times) for _ in range(3))
+def _repeated(work: Callable[[str], object], text: str, times: int) -> Callable[[], None]:
+    def run() -> None:
+        for _ in range(times):
+            work(text)
+
+    return run
 
 
 def _growth(work: Callable[[str], object], line: str) -> float:
     """What ``work`` costs on ``line`` over what it costs on :data:`LONGER` lines of its first ``len(line) / LONGER``
     characters, the same characters in all: about 1 when its time is linear in the line, about :data:`LONGER` when
-    quadratic. Both times are taken on the same thread, so the speed of the host divides out."""
+    quadratic. The two are read in turns on this thread's CPU clock, the least of each taken
+    (``tests/fixtures/cpu_cost.py``), so the host's speed, and load that comes and goes, divide out (#679)."""
     short = line[: len(line) // LONGER]
-    return _cpu_seconds(work, line, 1) / _cpu_seconds(work, short, LONGER)
+    return relative_cost(same(lambda: work(line)), same(_repeated(work, short, LONGER)))
 
 
 def _cost(work: Callable[[str], object], line: str) -> float:
-    """What ``work`` costs on ``line`` over :data:`_REFERENCE`'s pass over it, both on the same thread: how much work
-    it does, whatever the speed of the host."""
-    return _cpu_seconds(work, line, 1) / _cpu_seconds(functools.partial(_REFERENCE.sub, "<m>"), line, 1)
+    """What ``work`` costs on ``line`` over :data:`_REFERENCE`'s pass over it, the two read in turns on this thread:
+    how much work it does, whatever the speed and load of the host (#679)."""
+    return relative_cost(same(lambda: work(line)), same(lambda: _REFERENCE.sub("<m>", line)))
 
 
 def _lines() -> list[str]:
@@ -504,3 +506,32 @@ def test_a_search_of_a_text_a_backtracking_pattern_almost_matches_takes_linear_t
     assert compiled.search(line) is False
     measured = cost(same(lambda: compiled.search(line)), [line])
     assert measured < BACKTRACKING_COST, f"the search cost {measured:.0f} passes of re, at most {BACKTRACKING_COST:.0f}"
+
+
+def test_the_growth_and_cost_checks_read_their_two_sides_in_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#679: a clock charging each side the same, under a load that leaves once the second side is first read. Read
+    in turns, both sides have a quiet reading and the ratio is exactly 1; read in separate stretches it was 2."""
+    from tests.fixtures import cpu_cost
+
+    line = "a" * (LONGER * 64)
+    read: list[str] = []
+    quiet: list[bool] = []
+
+    def work(text: str) -> None:
+        read.append(text)
+
+    def charged(run: Callable[[], object], *, times: int = 1) -> float:
+        before = len(read)
+        for _ in range(times):
+            run()
+        texts = read[before:]
+        second = not texts or len(texts[0]) < len(line)  # the reference reads nothing of ours; a short line
+        if second:
+            quiet.append(True)
+        chars = sum(len(text) for text in texts) or len(line)
+        return chars * (1 if quiet else 2)
+
+    monkeypatch.setattr(cpu_cost, "cpu_seconds", charged)
+    assert _growth(work, line) == 1.0, "load that left before the short lines were read was taken for growth"
+    quiet.clear()
+    assert _cost(work, line) == 1.0, "load that left before the reference was read was taken for cost"

@@ -191,22 +191,82 @@ def test_a_mask_python_re_backtracks_on_masks_a_long_line_in_linear_time(pattern
     assert isinstance(json.loads(done.stdout), str), done.stdout
 
 
-async def _tick_cpu_seconds(settings: dict[str, Any], lines: list[str]) -> float:
-    """The least, over three ticks of a fresh watcher, of this thread's CPU time for the tick (the event loop runs on
-    it, and nothing else is scheduled), the garbage collector held: the tick's own work, whatever the host's load."""
-    best = math.inf
+async def _one_tick(settings: dict[str, Any], lines: list[str]) -> float:
+    """This thread's CPU time for one tick of a fresh watcher (the event loop runs on it, and nothing else is
+    scheduled), the garbage collector held: the tick's own work. A tick the clock reads as no time is refused
+    (``ClockTooCoarse``, the fixture's own refusal), never read as free: a ratio over it would pass measuring nothing."""
+    from tests.fixtures.cpu_cost import read_seconds
+
+    svc = _watcher(settings, lines=lines)
+    collecting = gc.isenabled()
+    gc.disable()
+    try:
+        started = time.thread_time()
+        await _tick_clusters(svc)
+        return read_seconds(time.thread_time() - started, "a tick")
+    finally:
+        if collecting:
+            gc.enable()
+
+
+async def _tick_ratio(over: dict[str, Any], under: dict[str, Any], lines: list[str]) -> float:
+    """What a tick with ``over``'s settings costs over a tick with ``under``'s, on the same lines: the least of three
+    of each, read in turns, so load that comes and goes falls on both alike (#679, tests/fixtures/cpu_cost.py)."""
+    least = {"over": math.inf, "under": math.inf}
     for _ in range(3):
-        svc = _watcher(settings, lines=lines)
-        collecting = gc.isenabled()
-        gc.disable()
-        try:
-            started = time.thread_time()
-            await _tick_clusters(svc)
-            best = min(best, time.thread_time() - started)
-        finally:
-            if collecting:
-                gc.enable()
-    return best
+        least["over"] = min(least["over"], await _one_tick(over, lines))
+        least["under"] = min(least["under"], await _one_tick(under, lines))
+    return least["over"] / least["under"]
+
+
+@pytest.mark.asyncio
+async def test_the_tick_ratio_reads_its_two_ticks_in_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#679: a clock charging each tick the same, under a load that leaves once the plain tick is first read. Read in
+    turns, both ticks have a quiet reading and the ratio is exactly 1; read in separate stretches it was 2."""
+    import sys
+
+    module = sys.modules[__name__]
+    now = [0.0]
+    quiet: list[bool] = []
+
+    async def tick(svc: Any) -> list[Any]:
+        if svc is _PLAIN:
+            quiet.append(True)
+        now[0] += 1 if quiet else 2
+        return []
+
+    monkeypatch.setattr(module, "_watcher", lambda settings, **_kw: settings)
+    monkeypatch.setattr(module, "_tick_clusters", tick)
+    monkeypatch.setattr(time, "thread_time", lambda: now[0])
+    measured = await _tick_ratio(_BACKTRACKS, _PLAIN, ["x"])
+    assert measured == 1.0, f"load that left before the plain tick was read was taken for its cost: {measured}"
+
+
+@pytest.mark.asyncio
+async def test_a_tick_the_clock_reads_as_no_time_is_refused_not_read_as_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#685 review: on a clock coarser than a tick, the tick backtracking on its mask read 0 s, the ratio 0, and the
+    bound passed measuring nothing. The tick's reading goes through the fixture's refusal of a zero."""
+    import sys
+
+    from tests.fixtures.cpu_cost import ClockTooCoarse
+
+    module = sys.modules[__name__]
+    now = [0.0]
+
+    async def tick(svc: Any) -> list[Any]:
+        if svc is _PLAIN:
+            now[0] += 0.0156  # the plain tick reads one step of a coarse clock; the backtracking one reads none
+        return []
+
+    monkeypatch.setattr(module, "_watcher", lambda settings, **_kw: settings)
+    monkeypatch.setattr(module, "_tick_clusters", tick)
+    monkeypatch.setattr(time, "thread_time", lambda: now[0])
+    try:
+        ratio = await _tick_ratio(_BACKTRACKS, _PLAIN, ["x"])
+    except ClockTooCoarse as refused:
+        assert "a tick read 0 s" in str(refused), str(refused)
+    else:
+        pytest.fail(f"a tick the clock read as no time made the ratio {ratio}, which passes measuring nothing")
 
 
 #: How many times a tick whose mask Python's re backtracks on may cost a tick whose mask it does not, on the same
@@ -225,7 +285,7 @@ async def test_a_tick_on_a_stack_whose_mask_python_re_backtracks_on_takes_no_lon
     lines = [f"WARN {'a' * 26}! retry {n}" for n in range(3)]
     clusters = await _tick_clusters(_watcher(_BACKTRACKS, lines=lines))
     assert len(clusters) == 1, [c.template for c in clusters]
-    measured = await _tick_cpu_seconds(_BACKTRACKS, lines) / await _tick_cpu_seconds(_PLAIN, lines)
+    measured = await _tick_ratio(_BACKTRACKS, _PLAIN, lines)
     assert measured < TICK_COST, (
         f"one tick over {len(lines)} lines with the mask (a+)+$ cost {measured:.1f} ticks with a plain one"
     )
@@ -238,7 +298,7 @@ async def test_the_tick_bound_tells_python_s_re_from_the_engine(monkeypatch: pyt
 
     monkeypatch.setattr(log_signatures, "compile_linear", re.compile)
     lines = [f"WARN {'a' * 20}! retry {n}" for n in range(3)]
-    measured = await _tick_cpu_seconds(_BACKTRACKS, lines) / await _tick_cpu_seconds(_PLAIN, lines)
+    measured = await _tick_ratio(_BACKTRACKS, _PLAIN, lines)
     assert measured > TICK_COST, f"with Python's re the tick cost {measured:.1f} plain ones, within the bound"
 
 
