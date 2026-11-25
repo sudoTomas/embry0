@@ -66,8 +66,8 @@ def renames() -> Iterator[dict[str, str]]:
 
 async def _deployment(db: DatabasePool, tmp_path: Path) -> tuple[Any, SettingsStore, list[datetime], Audit]:
     """An existing deployment as the upgrade to explicit enrollment left it: three of its repositories enrolled in
-    their own layers (acme/old-name's under the slug ``REPO_RENAMES`` maps it to), with what the meter kept of
-    four repositories."""
+    their own layers (acme/old-name's under the slug ``REPO_RENAMES`` maps it to) and the import marked in the
+    deployment's ledger, with what the meter kept of four repositories."""
     scope, exits = _modules()
     for repo in ("acme/old-name", "acme/a", "acme/via-org", "acme/hidden"):
         await db.execute(
@@ -81,6 +81,8 @@ async def _deployment(db: DatabasePool, tmp_path: Path) -> tuple[Any, SettingsSt
             {"background": {"scout": True, "slop_meter": True}},
             Scope.repository(repo),
         )
+    async with store.edit(actor="embry0", source="bootstrap") as draft:
+        draft.mark_bootstrapped(["background.scout", "background.slop_meter"])
     meter = SlopMeterRepository(db)
     mirror = GitMirror(tmp_path / "slop-meter")
     for repo in ("acme/old-name", "acme/a", "acme/via-org", "acme/hidden"):
