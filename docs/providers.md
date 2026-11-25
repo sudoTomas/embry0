@@ -365,7 +365,7 @@ providers:
 
 | Route | Who | What |
 |---|---|---|
-| `GET /api/v1/config/providers/catalog` | any key | the overlay as written (`yaml_text`) and its values, its `generation` (also the `ETag`), who changed it last, `catalogue` (the shipped one with the overlay merged in, what every job runs on), and `refused` (below); `?format=yaml` answers the overlay alone |
+| `GET /api/v1/config/providers/catalog` | any key | the overlay as written (`yaml_text`) and its values, its `generation` (also the `ETag`), who changed it last, `catalogue` (the shipped one with the overlay merged in, what every job runs on), `shipped` (the shipped one alone, which the overlay changes), and `refused` (below); `?format=yaml` answers the overlay alone |
 | `GET /api/v1/config/providers/catalog/shipped` | any key | the shipped catalogue, as YAML |
 | `PUT /api/v1/config/providers/catalog` | admin, no repository allowlist | replace the overlay with the body (`Content-Type: application/yaml`); `?dry_run=true` stores nothing and answers the diff; `If-Match: "<generation>"` refuses a write over a newer one (409); `?reason=` is recorded |
 | `GET /api/v1/config/providers/catalog/revisions[/{id}]` | any key | its changes, newest first, or one with its text before and after |
@@ -374,6 +374,19 @@ providers:
 The MCP tools are `provider_catalogue_get`, `provider_catalogue_set` (whole
 text, `expected_generation`, `dry_run`, `confirm=true`),
 `provider_catalogue_revisions` and `provider_catalogue_undo`.
+
+**On the dashboard**, the LLM Providers page's **Provider catalogue** card
+shows every provider embry0 ships and its models, each marked shipped,
+changed, yours or taken out. An admin turns a provider on or off (an Agent SDK
+provider is always on), changes a model's price, makes it free or chat-only,
+adds one, takes a shipped one out, or puts one back as embry0 ships it; a
+model with dated prices is edited under **Advanced**, the overlay's YAML,
+where comments are kept. Either way **Review changes** first asks the server
+what the save would change (the dry run's diff, or every problem it would
+refuse), and **Save** stores exactly what was reviewed, refused with 409 if
+the catalogue changed since the page read it. A save from the form writes the
+overlay again from its values, so a comment in the stored text is not kept:
+the review says so.
 
 A `from` day is stored as its ISO text and read back as a day, so a dated
 price written in one process is in force, dated, in every other.

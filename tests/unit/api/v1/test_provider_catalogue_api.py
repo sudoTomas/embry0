@@ -76,6 +76,20 @@ async def test_a_read_answers_what_another_process_wrote(client: AsyncClient) ->
     assert body["catalogue"]["providers"]["deepseek"]["enabled"] is True, "the catalogue in force was not the stored"
 
 
+async def test_a_read_carries_the_shipped_catalogue_beside_the_one_in_force(client: AsyncClient) -> None:
+    """A client tells what the overlay changes, and puts a field back, from the catalogue embry0 ships (#173, the
+    Providers page)."""
+    from embry0.services.provider_catalogue_store import CatalogueStore
+
+    await CatalogueStore(_db(client)).save(DEEPSEEK_CHEAP, actor="ops@example.com")
+    body = (await client.get(CATALOG)).json()
+    assert "shipped" in body, "a read must carry the shipped catalogue"
+    assert body["shipped"]["providers"]["deepseek"]["enabled"] is False
+    assert body["catalogue"]["providers"]["deepseek"]["enabled"] is True
+    shipped_flash = body["shipped"]["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"]
+    assert shipped_flash != body["catalogue"]["providers"]["deepseek"]["models"]["deepseek-flash"]["prices"]
+
+
 async def test_a_read_says_how_much_of_the_stored_overlay_is_in_force(client: AsyncClient) -> None:
     """An overlay an earlier release stored names a provider this one does not ship: the rest is in force."""
     await _db(client).execute(

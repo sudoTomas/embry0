@@ -1,0 +1,126 @@
+{
+  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other.",
+  "cases": [
+    {
+      "name": "nothing: the shipped catalogue",
+      "overlay": {},
+      "yaml": ""
+    },
+    {
+      "name": "a provider on, a shipped model re-priced",
+      "overlay": {
+        "providers": {
+          "deepseek": {
+            "enabled": true,
+            "models": {
+              "deepseek-flash": {
+                "prices": [
+                  {
+                    "in": 0.15,
+                    "out": 0.6
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  deepseek:\n    enabled: true\n    models:\n      deepseek-flash:\n        prices:\n          - {in: 0.15, out: 0.6}\n"
+    },
+    {
+      "name": "a custom model, free and chat-only, its id quoted",
+      "overlay": {
+        "providers": {
+          "custom": {
+            "enabled": true,
+            "models": {
+              "custom/qwen3:32b": {
+                "free": true,
+                "chat_only": true
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  custom:\n    enabled: true\n    models:\n      \"custom/qwen3:32b\":\n        free: true\n        chat_only: true\n"
+    },
+    {
+      "name": "a model added with whole-dollar and dated prices",
+      "overlay": {
+        "providers": {
+          "openai": {
+            "enabled": true,
+            "models": {
+              "gpt-new": {
+                "prices": [
+                  {
+                    "in": 1,
+                    "out": 2
+                  },
+                  {
+                    "from": "2026-12-01",
+                    "in": 2,
+                    "out": 4
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  openai:\n    enabled: true\n    models:\n      gpt-new:\n        prices:\n          - {in: 1.0, out: 2.0}\n          - {from: 2026-12-01, in: 2.0, out: 4.0}\n"
+    },
+    {
+      "name": "request extras, nested",
+      "overlay": {
+        "providers": {
+          "custom": {
+            "models": {
+              "custom/local": {
+                "free": true,
+                "request_extras": {
+                  "chat_template_kwargs": {
+                    "enable_thinking": false
+                  },
+                  "temperature": 0.2
+                }
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        request_extras: {\"chat_template_kwargs\":{\"enable_thinking\":false},\"temperature\":0.2}\n"
+    },
+    {
+      "name": "a shipped model taken out",
+      "overlay": {
+        "providers": {
+          "deepseek": {
+            "models": {
+              "deepseek-flash": null
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  deepseek:\n    models:\n      deepseek-flash: null\n"
+    },
+    {
+      "name": "the version, factors and a default price",
+      "overlay": {
+        "version": 1,
+        "providers": {
+          "custom": {
+            "factors": {
+              "turns": 2.0
+            },
+            "default_price": {
+              "in": 0.0,
+              "out": 0.0
+            }
+          }
+        }
+      },
+      "yaml": "version: 1\nproviders:\n  custom:\n    factors:\n      turns: 2.0\n    default_price:\n      in: 0.0\n      out: 0.0\n"
+    }
+  ]
+}

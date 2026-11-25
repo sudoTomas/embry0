@@ -15,7 +15,7 @@ from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 
-from embry0.agents.catalogue import CatalogueInvalid
+from embry0.agents.catalogue import CatalogueInvalid, seed
 from embry0.api.actor_visibility import deployment_actor_shown
 from embry0.api.deps import request_actor, require_admin
 from embry0.api.document_requests import if_match_versions, read_capped_body
@@ -112,7 +112,9 @@ async def get_provider_catalogue(
     release takes, the parts it refuses named in ``refused`` (a release that
     took out a model or a provider the overlay names, at the start); or
     ``earlier``, the overlay of ``in_force_generation``, when a later one this
-    release refuses part of was written while the process ran. A price left out
+    release refuses part of was written while the process ran. ``shipped``
+    is the catalogue this release ships, so a client can tell what the
+    overlay changes and put a field back. A price left out
     leaves what it priced unpriced (``withheld`` in ``refused``). ``notes``
     names each model a release dropped that the overlay keeps as the
     deployment's own, at its own prices. ``?format=yaml`` answers the
@@ -132,6 +134,7 @@ async def get_provider_catalogue(
         "updated_by": shown(stored.updated_by) if stored.updated_by else stored.updated_by,
         "updated_at": stored.updated_at.isoformat() if stored.updated_at is not None else None,
         "catalogue": installed.document.model_dump(mode="json", by_alias=True),
+        "shipped": seed().document.model_dump(mode="json", by_alias=True),
         "in_force": store.in_force,
         "in_force_generation": store.in_force_generation,
         "refused": [problem.to_dict() for problem in store.refused],
