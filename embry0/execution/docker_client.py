@@ -9,11 +9,15 @@ import contextlib
 import json
 import os
 import signal
+from collections.abc import Collection
 from typing import Any, cast
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+#: pkill's exit when no process matched: nothing to stop. It prints nothing (``run_cmd``'s ``quiet_exits``).
+PKILL_NOTHING_MATCHED = 1
 
 # Every container embry0 starts on the sandbox daemon carries these, so the
 # daemon's objects can be told apart by label, not by name alone (#268).
@@ -593,6 +597,7 @@ class DockerClient:
         *,
         log_context: dict[str, Any] | None = None,
         expected_failure: bool = False,
+        quiet_exits: Collection[int] = (),
         stdin_data: bytes | None = None,
         max_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
         keep_tail: bool = False,
@@ -628,6 +633,12 @@ class DockerClient:
         ``expected_failure`` logs a non-zero exit at debug instead of error, for
         probes whose "no" is an answer rather than a fault (``image inspect`` of
         an image the daemon has not pulled yet, #655). It still raises.
+
+        ``quiet_exits`` are the command's own "nothing to do" exits: a non-zero
+        exit with one of these codes and no output at all is logged at debug,
+        and still raises. ``pkill`` exits 1, silently, when no process
+        matched. Docker's own failures carry a message (``No such container``,
+        the daemon unreachable), so they stay errors whatever their code.
 
         ``stdin_data`` is written to the command's stdin (a ``docker exec -i``):
         the way to hand a sandbox a secret without putting it on a command line.
@@ -677,7 +688,8 @@ class DockerClient:
                 err = f"(stderr empty; stdout tail) {tail}" if tail else f"exit code {proc.returncode}"
             failure: dict[str, Any] = dict(context)
             failure.update(cmd=scrubbed, stderr=err[:2000], returncode=proc.returncode)
-            if expected_failure:
+            nothing_to_do = proc.returncode in quiet_exits and not stdout.strip() and not stderr.strip()
+            if expected_failure or nothing_to_do:
                 logger.debug("docker_cmd_failed", **failure)
             else:
                 logger.error("docker_cmd_failed", **failure)

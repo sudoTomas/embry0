@@ -26,7 +26,7 @@ from embry0.cache.volume_ownership import (
     volume_labels,
 )
 from embry0.execution.auth_provider import env_name_refusal, env_override_refusal, shown_env_key
-from embry0.execution.docker_client import DockerClient
+from embry0.execution.docker_client import PKILL_NOTHING_MATCHED, DockerClient
 from embry0.execution.image_registry import qualify_image
 from embry0.execution.profile_isolation import profile_isolation_problems
 from embry0.execution.runtime import AgentRuntime, DockerRuntime
@@ -1414,11 +1414,14 @@ class SandboxManager:
         that stops mid-turn leaves the agent working, and spending, on its own
         (#307). A drain calls this on the jobs it stopped, and a resume after
         a restart calls it before running the agent again, so two never share
-        one workspace. pkill exits 1 when nothing matched: False, not an error.
+        one workspace. pkill exits 1 when nothing matched: False, not an error,
+        and logged at debug (a runner that already exited is the usual case).
         """
         try:
             await self._docker.run_cmd(
-                self._docker.build_exec_cmd(container, ["pkill", "-f", "embry0.sandbox.runner"]), timeout=10
+                self._docker.build_exec_cmd(container, ["pkill", "-f", "embry0.sandbox.runner"]),
+                timeout=10,
+                quiet_exits=(PKILL_NOTHING_MATCHED,),
             )
         except RuntimeError:
             return False
