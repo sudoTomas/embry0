@@ -111,6 +111,22 @@ async def _person(request: Request, who: str) -> dict[str, Any]:
     }
 
 
+def hands_out(request: Request) -> bool:
+    """Whether a plain ``GET /asks/due`` from this caller hands the page out (leases it): the assistant's propose key,
+    an operator or admin key or session, and the master key. Any other caller, a read key or a merge key, reads the
+    page as ``?peek=1`` does, so it cannot hold asks away from the assistant for ``asks.lease_minutes``."""
+    from embry0.api.deps import TIER_PROPOSE
+
+    principal = getattr(request.state, "principal", None)
+    if principal is not None:
+        return principal.kind == "master" or principal.tier in (TIER_OPERATOR, TIER_ADMIN, TIER_PROPOSE)
+    session = getattr(request.state, "session", None)
+    if session is not None:
+        return session.tier in (TIER_OPERATOR, TIER_ADMIN)
+    # No identity reached the handler: only AUTH_DEV_MODE lets that through, with full access.
+    return bool(getattr(request.app.state.config, "auth_dev_mode", False))
+
+
 async def open_decisions(app: Any) -> list[dict[str, Any]]:
     """Every open decision, worst first, whatever any caller's key may read: what the ask loop reads
     every tick and the feed on every request.
@@ -141,7 +157,7 @@ async def asks_due(
         default=False,
         description=(
             "Return the page without handing it out: nothing is leased, and its first sends are not stamped, "
-            "so no expiry starts"
+            "so no expiry starts. A caller that does not hand asks out (a read or merge key) always reads so"
         ),
     ),
 ) -> dict[str, Any]:
@@ -194,7 +210,7 @@ async def asks_due(
         page[:] = release(live, order, now, policy, shown)[:limit]
         return [(str(ask["id"]), reminder) for ask, reminder in page]
 
-    if peek:
+    if peek or not hands_out(request):
         pick(await asks.live())
     else:
         lease = timedelta(minutes=section.deployment().lease_minutes)
