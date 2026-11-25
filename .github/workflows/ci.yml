@@ -59,17 +59,26 @@ jobs:
       - name: Verify app imports
         run: uv run --no-sync python -c "from embry0.api.app import create_app; print('OK')"
 
+      # The tests that guard this workflow and the split itself, whole, here:
+      # they need no database, and in the parts they would run only in the
+      # one their files hash to, so a part cut from the matrix could take
+      # them with it.
+      - name: The workflow's own guards
+        run: >-
+          uv run --no-sync pytest -q -p no:cacheprovider tests/unit/test_ci_workflow.py
+          tests/unit/test_fail_on_warnings.py tests/unit/test_test_shards.py
+
   # The unit suite in two parts, on two runners at once (#695). On a hosted
   # runner (four vCPUs) the suite is bound by the processor: four workers on
   # one runner took 17 to 29 minutes, and turning the Postgres service's
   # durability off saved nothing (an A/B run: 26:52 against 26:56). Each part
-  # is a hash of the test file's path (tests/fixtures/shards.py), about half
-  # of the suite's time.
+  # is a hash of the test file's path (tests/fixtures/shards.py); measured on
+  # CI, they hold about 58% and 42% of the suite's time.
   backend-tests:
     name: Backend tests (${{ matrix.shard }} of 2)
     runs-on: ubuntu-latest
-    # A part takes about half of the 17 to 29 minutes the whole suite took on
-    # one runner; 45 leaves room for the slowest runner and the suite's growth.
+    # The larger part takes about 58% of the 17 to 29 minutes the whole suite
+    # took on one runner; 45 leaves room for the slowest runner and growth.
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -133,9 +142,12 @@ jobs:
         env:
           LINT: ${{ needs.backend-lint.result }}
           TESTS: ${{ needs.backend-tests.result }}
+        # One check a line: the step's shell (bash -e) stops at the first that
+        # fails, whatever follows it (tests/unit/test_ci_workflow.py runs it).
         run: |
           echo "lint: $LINT; unit tests: $TESTS"
-          test "$LINT" = success && test "$TESTS" = success
+          test "$LINT" = success
+          test "$TESTS" = success
 
   build-images:
     name: Docker image builds

@@ -37,7 +37,10 @@ CI runs the unit suite in two parts on two runners at once
 (`--shard 1/2` and `--shard 2/2`, by a hash of each test file's path; #695)
 and reports both, with the lint, as the one required check
 `Backend Lint & Test`. Locally, the command above runs the whole suite; to
-run one part as CI does, add `--shard 1/2` (or `2/2`).
+run one part as CI does, add `--shard 1/2` (or `2/2`). Two parts run at once
+need a database each, as two runs of any kind do: give each its own
+`TEST_DATABASE_URL` database name (above), or the fixtures of one empty the
+other's tables.
 
 Integration tests that need something the run lacks skip, and say why:
 `requires_minio` and `requires_dind` tests without a reachable

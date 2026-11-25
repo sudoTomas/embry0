@@ -47,6 +47,17 @@ def test_each_of_two_parts_holds_about_half_of_the_suite() -> None:
     assert 0.4 < first / len(FILES) < 0.6, f"part 1 of 2 holds {first} of {len(FILES)} test files"
 
 
+def test_a_file_s_part_is_read_from_its_path_from_the_repository_root() -> None:
+    """Two runners check the repository out in different places: a file's part must not depend on where."""
+    elsewhere = Path("/elsewhere/checkout")
+    moved = [elsewhere / path.relative_to(ROOT) for path in FILES]
+    for parts in (2, 3):
+        for part in range(1, parts + 1):
+            here = in_shard(FILES, ROOT, part, parts)
+            assert here == in_shard(moved, elsewhere, part, parts), "a file's part changed with the checkout's place"
+            assert here == [shard_of(path.relative_to(ROOT).as_posix(), parts) == part for path in FILES]
+
+
 def test_a_file_s_part_is_the_same_in_every_process() -> None:
     """pytest-xdist's workers must collect alike, and two runners must agree: no per-process hash seed."""
     path = "tests/unit/test_ci_workflow.py"

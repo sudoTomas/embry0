@@ -1,3 +1,6 @@
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from embry0.storage.database import DatabasePool
@@ -11,11 +14,30 @@ async def test_migrations_list_is_ordered():
     assert versions == list(range(1, len(MIGRATIONS) + 1))
 
 
+class _Item:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.keywords: dict[str, object] = {}
+        self.markers: list[object] = []
+
+    def add_marker(self, marker: object) -> None:
+        self.markers.append(marker)
+
+
 def test_every_migration_test_gets_a_schema_migrated_from_empty(request: pytest.FixtureRequest) -> None:
     """tests/conftest.py marks every test of a test_migration* module changes_schema: db_with_migrations
     drops its schema and migrates it, and the next test's too, because a migration test may leave the
-    schema in a state the reset's digest does not see (tests/fixtures/postgres.py). Every such test this
-    run collected is checked, this one included."""
+    schema in a state the reset's digest does not see (tests/fixtures/postgres.py). Every such module on
+    disk is checked, through the hook that marks them, whichever part of the suite (--shard) this run is;
+    and every one this run collected, this one included."""
+    from tests import conftest
+
+    modules = sorted((Path(__file__).resolve().parents[2]).rglob("test_migration*.py"))
+    assert Path(__file__).resolve() in modules, "the modules on disk were not found"
+    items = [_Item(path) for path in modules]
+    conftest.pytest_collection_modifyitems(SimpleNamespace(option=SimpleNamespace(shard=None)), items)
+    on_disk = [str(item.path) for item in items if "changes_schema" not in item.markers]
+    assert not on_disk, f"test_migration* modules whose tests would get a reset database: {on_disk[:10]}"
     collected = [item for item in request.session.items if item.path.name.startswith("test_migration")]
     assert request.node in collected
     unmarked = [item.nodeid for item in collected if item.get_closest_marker("changes_schema") is None]

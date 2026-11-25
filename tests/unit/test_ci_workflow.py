@@ -5,7 +5,9 @@ GitHub-hosted runners only, a read-only token, actions pinned to a commit,
 nothing pushed, and the one secret read only where a run has secrets.
 """
 
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -97,19 +99,82 @@ def test_only_the_denylist_step_reads_a_secret_and_only_with_secrets():
     assert "scripts/check_denylist.py --public" in check["run"], check["run"]
 
 
-def test_the_required_backend_check_passes_only_when_the_lint_and_every_part_of_the_suite_did():
+_RESULTS = ("success", "failure", "cancelled", "skipped")
+#: The jobs behind the required "Backend Lint & Test": the lint, the parts of the unit suite, and the gate.
+_BACKEND_JOBS = ("backend-lint", "backend-tests", "backend")
+#: The tests that guard this workflow and the split; the lint job runs them whole (#695).
+_GUARDS = ("tests/unit/test_ci_workflow.py", "tests/unit/test_fail_on_warnings.py", "tests/unit/test_test_shards.py")
+
+
+def _gate() -> dict[str, Any]:
+    (gate,) = [job for job in _jobs().values() if job.get("name") == "Backend Lint & Test"]
+    return gate
+
+
+def test_the_required_backend_check_waits_for_the_lint_and_every_part_and_runs_whatever_they_did():
     """The main branch requires "Backend Lint & Test" (#695 split the suite behind it). A required check that is
-    skipped counts as passed, so the gate runs whatever its needs did, and fails unless each succeeded."""
-    jobs = _jobs()
-    (gate,) = [job for job in jobs.values() if job.get("name") == "Backend Lint & Test"]
+    skipped counts as passed, so the gate runs whatever its needs did."""
+    gate = _gate()
     needs = gate.get("needs") or []
     assert set(needs) == {"backend-lint", "backend-tests"}, f"the required check does not wait for both: {needs}"
     assert gate.get("if") == "always()", "a gate skipped after a failed need would pass the required check"
-    script = "\n".join(str(step.get("run", "")) for step in gate["steps"])
-    env = {k: v for step in gate["steps"] for k, v in (step.get("env") or {}).items()}
-    for need in needs:
+
+
+def test_the_gate_passes_only_when_the_lint_and_the_tests_both_succeeded():
+    """The gate's script, run as the runner runs it (bash -e -o pipefail), for every pair of results its needs can
+    have: only success and success pass. Its text is not enough: a line after the checks, or `|| true`, would let a
+    failure pass while reading the same."""
+    (step,) = _gate()["steps"]
+    assert "shell" not in step, "the gate's step must run in the runner's default shell, bash -e -o pipefail"
+    env = step.get("env") or {}
+    by_need = {}
+    for need in ("backend-lint", "backend-tests"):
         (var,) = [k for k, v in env.items() if v == f"${{{{ needs.{need}.result }}}}"]
-        assert f'test "${var}" = success' in script, f"the gate does not fail on {need}'s result"
+        by_need[need] = var
+    for lint in _RESULTS:
+        for tests in _RESULTS:
+            done = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+                env={
+                    "PATH": os.environ.get("PATH", ""),
+                    by_need["backend-lint"]: lint,
+                    by_need["backend-tests"]: tests,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            passed = done.returncode == 0
+            assert passed is (lint == tests == "success"), (
+                f"the gate {'passes' if passed else 'fails'} when the lint is {lint} and the tests are {tests}"
+            )
+
+
+def test_nothing_in_the_backend_jobs_lets_a_failure_pass_or_a_part_go_unrun():
+    """No matrix include or exclude (a part left out), no `if:` but the gate's always() (a step or a job skipped),
+    and no continue-on-error (a failure that does not fail)."""
+    jobs = _jobs()
+    for name in _BACKEND_JOBS:
+        job = jobs[name]
+        matrix = (job.get("strategy") or {}).get("matrix") or {}
+        assert not {"include", "exclude"} & set(matrix), f"{name}'s matrix includes or excludes a leg: {matrix}"
+        assert "continue-on-error" not in job, f"{name} may fail without failing"
+        if name != "backend":
+            assert "if" not in job, f"{name} runs only {job['if']!r}"
+        for step in job.get("steps", []):
+            assert "if" not in step and "continue-on-error" not in step, (
+                f"a step of {name} may not run, or not fail: {step}"
+            )
+
+
+def test_the_lint_job_runs_the_workflow_s_own_guards_whole():
+    """In the parts they would run only in the one their files hash to: a part cut from the matrix takes them."""
+    runs = [str(step.get("run", "")) for step in _jobs()["backend-lint"]["steps"]]
+    (guard,) = [run for run in runs if "pytest" in run]
+    for path in _GUARDS:
+        assert path in guard.split(), f"the lint job does not run {path}"
+        assert (WORKFLOW.parents[2] / path).is_file(), f"{path} is gone"
+    assert "--shard" not in guard, "the guards run in part"
 
 
 def test_the_unit_suite_runs_every_part_of_itself():
