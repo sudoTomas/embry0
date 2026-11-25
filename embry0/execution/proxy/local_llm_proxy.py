@@ -21,6 +21,14 @@ git-proxy scopes an enrolment to one repository:
 - every chat completion is metered (``metering``): its tokens count toward the
   run the orchestrator declared for the sandbox.
 
+The other chat-completions providers (OpenAI, OpenRouter, Google, Groq,
+DeepSeek) take the same route: an enrollment may name, under
+``provider_servers``, the server a sandbox reaches each of them through (the
+job's credential for it: its id, API root and key), and the sandbox reaches it
+at ``/p/<provider>/v1/chat/completions`` and ``/p/<provider>/v1/models``, with
+the same checks. ``/p/custom/v1/...`` is the custom server's path too. A
+provider the sandbox's enrollment does not name is refused.
+
 The orchestrator enrolls only the sandboxes of jobs that resolved the custom
 provider, so a sandbox with no local model has no bearer this proxy accepts.
 """
@@ -28,7 +36,8 @@ provider, so a sandbox with no local model has no bearer this proxy accepts.
 from __future__ import annotations
 
 import ipaddress
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -68,6 +77,15 @@ _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
 #: The enroll body's field naming the sandbox's server, and the field the answer confirms it under.
 LOCAL_LLM_FIELD = "local_llm"
+#: The enroll body's field naming, per chat-completions provider other than custom, the server the sandbox reaches it
+#: through; the answer confirms each under the same field, without its key.
+PROVIDER_SERVERS_FIELD = "provider_servers"
+#: The provider ``local_llm`` serves.
+CUSTOM_PROVIDER = "custom"
+#: A provider's name, in a path and in ``provider_servers``.
+_PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+#: The most providers one enrollment may name.
+_MAX_PROVIDERS = 16
 #: The longest API root and key an enrollment may name.
 _MAX_ROOT = 2048
 _MAX_KEY = 8192
@@ -92,18 +110,21 @@ class Upstream:
 # This proxy's own state keys; those several proxies share are in ``app_keys``.
 #: Per enrolled sandbox: the server it reaches.
 UPSTREAM_BY_SANDBOX: web.AppKey[dict[str, Upstream]] = web.AppKey("upstream_by_sandbox")
+#: Per enrolled sandbox: the server of each other chat-completions provider it was enrolled for.
+SERVERS_BY_SANDBOX: web.AppKey[dict[str, dict[str, Upstream]]] = web.AppKey("servers_by_sandbox")
 
 
-def parse_upstream(value: Any) -> Upstream:
-    """The enroll body's ``local_llm`` object, checked; :class:`EnrollRejected` for anything else. A root is an
-    http(s) URL with a host and nothing past its path, kept without its trailing slash."""
+def parse_upstream(value: Any, named: str = LOCAL_LLM_FIELD) -> Upstream:
+    """The enroll body's ``local_llm`` object (or one provider's, named ``named`` in the messages), checked;
+    :class:`EnrollRejected` for anything else. A root is an http(s) URL with a host and nothing past its path, kept
+    without its trailing slash."""
     if not isinstance(value, dict):
-        raise EnrollRejected("local_llm must be an object naming the sandbox's model server")
+        raise EnrollRejected(f"{named} must be an object naming the sandbox's model server")
     credential_id, root, api_key = value.get("credential_id", ""), value.get("upstream"), value.get("api_key", "")
     if not isinstance(credential_id, str) or len(credential_id) > _MAX_CREDENTIAL_ID:
-        raise EnrollRejected("local_llm.credential_id must be a string")
+        raise EnrollRejected(f"{named}.credential_id must be a string")
     if not isinstance(root, str) or not root or len(root) > _MAX_ROOT:
-        raise EnrollRejected("local_llm.upstream must be the server's API root")
+        raise EnrollRejected(f"{named}.upstream must be the server's API root")
     parts = urlsplit(root)
     if (
         parts.scheme not in ("http", "https")
@@ -113,38 +134,80 @@ def parse_upstream(value: Any) -> Upstream:
         or parts.query
         or parts.fragment
     ):
-        raise EnrollRejected("local_llm.upstream must be an http(s) URL with a host and no credentials or query")
+        raise EnrollRejected(f"{named}.upstream must be an http(s) URL with a host and no credentials or query")
     refused = refused_server_host(parts.hostname)
     if refused is not None:
-        raise EnrollRejected(f"local_llm.upstream may not be a model server: {refused}")
+        raise EnrollRejected(f"{named}.upstream may not be a model server: {refused}")
     address = value.get("address")
     try:
         pinned = ipaddress.ip_address(address) if isinstance(address, str) else None
     except ValueError:
         pinned = None
     if pinned is None:
-        raise EnrollRejected("local_llm.address must be the address the server resolved to, as an IP address")
+        raise EnrollRejected(f"{named}.address must be the address the server resolved to, as an IP address")
     refused = refused_address(pinned)
     if refused is not None:
-        raise EnrollRejected(f"local_llm.address may not be a model server's: {refused}")
+        raise EnrollRejected(f"{named}.address may not be a model server's: {refused}")
     if not isinstance(api_key, str) or len(api_key) > _MAX_KEY or any(c in api_key for c in "\r\n"):
-        raise EnrollRejected("local_llm.api_key must be a string of one line")
+        raise EnrollRejected(f"{named}.api_key must be a string of one line")
     return Upstream(credential_id=credential_id, root=root.rstrip("/"), api_key=api_key, address=str(pinned))
 
 
+def parse_provider_servers(value: Any) -> dict[str, Upstream]:
+    """The enroll body's ``provider_servers`` map, checked: each key a provider's name other than custom (whose
+    server is ``local_llm``), each value a server as :func:`parse_upstream` reads it."""
+    if not isinstance(value, dict) or len(value) > _MAX_PROVIDERS:
+        raise EnrollRejected(f"{PROVIDER_SERVERS_FIELD} must map at most {_MAX_PROVIDERS} providers to their servers")
+    servers: dict[str, Upstream] = {}
+    for provider, server in value.items():
+        if not isinstance(provider, str) or not _PROVIDER_RE.fullmatch(provider):
+            raise EnrollRejected(f"{PROVIDER_SERVERS_FIELD} names a provider that is not one")
+        if provider == CUSTOM_PROVIDER:
+            raise EnrollRejected(f"the custom provider's server is {LOCAL_LLM_FIELD}, not {PROVIDER_SERVERS_FIELD}")
+        servers[provider] = parse_upstream(server, f"{PROVIDER_SERVERS_FIELD}.{provider}")
+    return servers
+
+
+@dataclass(frozen=True)
+class Servers:
+    """What one enrollment names: the custom server, and each other provider's."""
+
+    local: Upstream | None = None
+    providers: dict[str, Upstream] = field(default_factory=dict)
+
+
 class _UpstreamEnroll:
-    """Every enrollment names its sandbox's server (``local_llm``), and the answer confirms which one."""
+    """Every enrollment names its sandbox's servers (``local_llm``, ``provider_servers``, or both), and the answer
+    confirms which. An enrollment again replaces both: a server it no longer names is gone."""
 
-    def parse(self, app: web.Application, body: dict[str, Any]) -> Upstream:
-        if LOCAL_LLM_FIELD not in body:
-            raise EnrollRejected("an enrollment names the sandbox's model server (local_llm)")
-        return parse_upstream(body[LOCAL_LLM_FIELD])
+    def parse(self, app: web.Application, body: dict[str, Any]) -> Servers:
+        if LOCAL_LLM_FIELD not in body and PROVIDER_SERVERS_FIELD not in body:
+            raise EnrollRejected("an enrollment names the sandbox's model server (local_llm or provider_servers)")
+        local = parse_upstream(body[LOCAL_LLM_FIELD]) if LOCAL_LLM_FIELD in body else None
+        providers = parse_provider_servers(body[PROVIDER_SERVERS_FIELD]) if PROVIDER_SERVERS_FIELD in body else {}
+        if local is None and not providers:
+            raise EnrollRejected(f"{PROVIDER_SERVERS_FIELD} names no provider")
+        return Servers(local, providers)
 
-    def apply(self, app: web.Application, sandbox_id: str, parsed: Upstream) -> dict[str, Any]:
-        app[UPSTREAM_BY_SANDBOX][sandbox_id] = parsed
-        return {
-            LOCAL_LLM_FIELD: {"credential_id": parsed.credential_id, "upstream": parsed.root, "address": parsed.address}
-        }
+    def apply(self, app: web.Application, sandbox_id: str, parsed: Servers) -> dict[str, Any]:
+        # An enrollment again ends the sandbox's earlier one first (``on_unenroll``, :func:`_forget`), so a server
+        # this one does not name is already gone.
+        answer: dict[str, Any] = {}
+        if parsed.local is not None:
+            app[UPSTREAM_BY_SANDBOX][sandbox_id] = parsed.local
+            answer[LOCAL_LLM_FIELD] = _confirmed(parsed.local)
+        if parsed.providers:
+            app[SERVERS_BY_SANDBOX][sandbox_id] = dict(parsed.providers)
+            answer[PROVIDER_SERVERS_FIELD] = {
+                provider: _confirmed(server) for provider, server in parsed.providers.items()
+            }
+        return answer
+
+
+def _confirmed(server: Upstream) -> dict[str, str]:
+    """What the answer confirms of a server: which credential, its root and the address calls connect to; never its
+    key."""
+    return {"credential_id": server.credential_id, "upstream": server.root, "address": server.address}
 
 
 def create_local_llm_proxy_app(
@@ -159,6 +222,7 @@ def create_local_llm_proxy_app(
         raise ValueError("MAX_REQUEST_BYTES must be positive")
     app = web.Application(client_max_size=max_request_bytes)
     app[UPSTREAM_BY_SANDBOX] = {}
+    app[SERVERS_BY_SANDBOX] = {}
     register_admin_routes(
         app, proxy_name=PROXY_NAME, admin_token=admin_token, on_unenroll=_forget, enroll_extension=_UpstreamEnroll()
     )
@@ -167,12 +231,14 @@ def create_local_llm_proxy_app(
     app.on_cleanup.append(_on_cleanup)
     app.router.add_get("/health", _health_handler)
     app.router.add_route("*", "/v1/{path:.*}", _proxy_handler)
+    app.router.add_route("*", "/p/{provider}/v1/{path:.*}", _provider_handler)
     return app
 
 
 def _forget(app: web.Application, sandbox_id: str) -> None:
     """An enrollment ended: drop its server, and end its tallies (they stay for the orchestrator to read)."""
     app[UPSTREAM_BY_SANDBOX].pop(sandbox_id, None)
+    app[SERVERS_BY_SANDBOX].pop(sandbox_id, None)
     app[METER].sandbox_gone(sandbox_id)
 
 
@@ -200,6 +266,25 @@ def _upstream_headers(request: web.Request, server: Upstream) -> dict[str, str]:
 
 
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
+    """``/v1/...``: the custom server's path for the images that read its root from their env."""
+    return await _serve(request, CUSTOM_PROVIDER, path_per_provider=False)
+
+
+async def _provider_handler(request: web.Request) -> web.StreamResponse:
+    """``/p/<provider>/v1/...``: the path of each chat-completions provider."""
+    provider = request.match_info.get("provider", "")
+    if not _PROVIDER_RE.fullmatch(provider):
+        return web.json_response({"error": "not_found"}, status=404)
+    return await _serve(request, provider, path_per_provider=True)
+
+
+def _server_for(app: web.Application, sandbox_id: str, provider: str) -> Upstream | None:
+    if provider == CUSTOM_PROVIDER:
+        return app[UPSTREAM_BY_SANDBOX].get(sandbox_id)
+    return app[SERVERS_BY_SANDBOX].get(sandbox_id, {}).get(provider)
+
+
+async def _serve(request: web.Request, provider: str, *, path_per_provider: bool) -> web.StreamResponse:
     path = request.match_info.get("path", "").strip("/")
     method = _ROUTES.get(path)
     if method is None:
@@ -210,8 +295,12 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if sandbox_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    upstream = request.app[UPSTREAM_BY_SANDBOX].get(sandbox_id)
+    upstream = _server_for(request.app, sandbox_id, provider)
     if upstream is None:
+        if path_per_provider:
+            # Only the providers the sandbox's job resolved a credential for: anything else is refused.
+            logger.warning("local_llm_proxy_provider_not_enrolled", sandbox_id=sandbox_id, provider=provider)
+            return openai_error("provider_not_enrolled", f"this sandbox is not enrolled for {provider}", 403)
         logger.error("local_llm_proxy_no_server", sandbox_id=sandbox_id)
         return openai_error("no_server", "no model server is enrolled for this sandbox", 503)
 
@@ -242,6 +331,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     logger.info(
         "local_llm_proxy_forward",
         sandbox_id=sandbox_id,
+        provider=provider,
         credential_id=upstream.credential_id,
         path=path,
         bytes=len(body),
@@ -290,11 +380,11 @@ async def _forward(
             await response.write_eof()
             return response
     except httpx.ConnectError:
-        return web.json_response({"error": "the local model server is unreachable"}, status=502)
+        return web.json_response({"error": "the model server is unreachable"}, status=502)
     except httpx.TimeoutException:
         if metered is not None:
             metered.lost()
-        return web.json_response({"error": "the local model server timed out"}, status=504)
+        return web.json_response({"error": "the model server timed out"}, status=504)
     except BaseException:
         if metered is not None:
             metered.lost()
