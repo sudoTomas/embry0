@@ -23,6 +23,7 @@ from tests.fixtures.postgres import (
     start_clean,
     worker_database_url,
 )
+from tests.fixtures.shards import in_shard, parse_shard
 
 #: The database this pytest-xdist worker created for itself, which it drops when it ends.
 _WORKER_DATABASE = pytest.StashKey[str]()
@@ -43,11 +44,22 @@ def _workers(config: pytest.Config) -> int | None:
     return sum(int(spec.split("*", 1)[0]) if "*" in spec else 1 for spec in specs)
 
 
+def _shard(config: pytest.Config) -> str | None:
+    """``--shard``'s value, None without it; read off ``config.option``, as a test's stand-in config has it."""
+    return getattr(getattr(config, "option", None), "shard", None)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--fail-on-warnings",
         action="store_true",
         help="fail a run whose tests passed but warned (CI runs the unit suite with it: it has no warnings, #336)",
+    )
+    parser.addoption(
+        "--shard",
+        default=None,
+        metavar="K/N",
+        help="run only part K of N parts of the collected tests, by test file (CI runs the unit suite in two, #695)",
     )
 
 
@@ -80,6 +92,12 @@ def pytest_configure(config: pytest.Config) -> None:
     A worker is known by the ``workerinput`` xdist gives it, not by ``PYTEST_XDIST_WORKER``: a
     pytest a test starts inherits that variable without being a worker.
     """
+    shard = _shard(config)
+    if shard is not None:
+        try:
+            parse_shard(shard)
+        except ValueError as exc:
+            raise pytest.UsageError(str(exc)) from exc
     url = os.environ.get("TEST_DATABASE_URL")
     workers = _workers(config)
     if workers is not None:
@@ -125,10 +143,17 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip MinIO-tagged tests when no MinIO endpoint is reachable.
+    """Keep only this run's part of the tests under ``--shard K/N`` (the others are deselected).
+    Skip MinIO-tagged tests when no MinIO endpoint is reachable.
     Skip DinD-tagged tests when no DinD endpoint is reachable.
     Mark every test of a ``test_migration*`` module ``changes_schema``.
     """
+    shard = _shard(config)
+    if shard is not None:
+        part, parts = parse_shard(shard)
+        kept = in_shard([item.path for item in items], config.rootpath, part, parts)
+        config.hook.pytest_deselected(items=[item for item, keep in zip(items, kept, strict=True) if not keep])
+        items[:] = [item for item, keep in zip(items, kept, strict=True) if keep]
     for item in items:
         # A migration test may run a migration again, roll the ledger back or alter what a migration
         # made: its database is dropped and migrated, and so is the next test's (tests/fixtures/postgres.py).

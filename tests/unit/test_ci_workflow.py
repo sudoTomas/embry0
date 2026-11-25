@@ -95,3 +95,30 @@ def test_only_the_denylist_step_reads_a_secret_and_only_with_secrets():
     assert "continue-on-error" not in check and "|| true" not in check["run"], "exit 2 must fail the step"
     # The whole tracked tree, not DEFAULT_SCOPE: the public repository is this tree.
     assert "scripts/check_denylist.py --public" in check["run"], check["run"]
+
+
+def test_the_required_backend_check_passes_only_when_the_lint_and_every_part_of_the_suite_did():
+    """The main branch requires "Backend Lint & Test" (#695 split the suite behind it). A required check that is
+    skipped counts as passed, so the gate runs whatever its needs did, and fails unless each succeeded."""
+    jobs = _jobs()
+    (gate,) = [job for job in jobs.values() if job.get("name") == "Backend Lint & Test"]
+    needs = gate.get("needs") or []
+    assert set(needs) == {"backend-lint", "backend-tests"}, f"the required check does not wait for both: {needs}"
+    assert gate.get("if") == "always()", "a gate skipped after a failed need would pass the required check"
+    script = "\n".join(str(step.get("run", "")) for step in gate["steps"])
+    env = {k: v for step in gate["steps"] for k, v in (step.get("env") or {}).items()}
+    for need in needs:
+        (var,) = [k for k, v in env.items() if v == f"${{{{ needs.{need}.result }}}}"]
+        assert f'test "${var}" = success' in script, f"the gate does not fail on {need}'s result"
+
+
+def test_the_unit_suite_runs_every_part_of_itself():
+    """Each part is the file's hash modulo N (tests/fixtures/shards.py): the matrix must run 1 to N, or a part
+    of the suite never runs and nothing fails."""
+    tests = _jobs().get("backend-tests")
+    assert tests is not None, "no job runs the unit suite in parts"
+    shards = tests["strategy"]["matrix"]["shard"]
+    (run,) = [str(step["run"]) for step in tests["steps"] if "pytest tests/unit/" in str(step.get("run", ""))]
+    found = re.search(r"--shard \$\{\{ matrix\.shard \}\}/(\d+)", run)
+    assert found is not None, f"the unit suite does not run its matrix's part: {run}"
+    assert sorted(shards) == list(range(1, int(found.group(1)) + 1)), f"parts run {shards} of {found.group(1)}"

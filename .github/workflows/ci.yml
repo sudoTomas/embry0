@@ -34,12 +34,47 @@ env:
   UV_VERSION: "0.13.6"
 
 jobs:
-  backend:
-    name: Backend Lint & Test
+  backend-lint:
+    name: Backend lint
     runs-on: ubuntu-latest
-    # The unit suite takes 8 to 15 minutes in four workers, depending on the
-    # runner (#260); a serial run took 33-49. 30 leaves room for a slow one.
-    timeout-minutes: 30
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Ruff check
+        run: uv run --no-sync ruff check .
+
+      - name: Ruff format check
+        run: uv run --no-sync ruff format --check .
+
+      - name: Verify app imports
+        run: uv run --no-sync python -c "from embry0.api.app import create_app; print('OK')"
+
+  # The unit suite in two parts, on two runners at once (#695). On a hosted
+  # runner (four vCPUs) the suite is bound by the processor: four workers on
+  # one runner took 17 to 29 minutes, and turning the Postgres service's
+  # durability off saved nothing (an A/B run: 26:52 against 26:56). Each part
+  # is a hash of the test file's path (tests/fixtures/shards.py), about half
+  # of the suite's time.
+  backend-tests:
+    name: Backend tests (${{ matrix.shard }} of 2)
+    runs-on: ubuntu-latest
+    # A part takes about half of the 17 to 29 minutes the whole suite took on
+    # one runner; 45 leaves room for the slowest runner and the suite's growth.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     services:
       postgres:
         image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
@@ -72,23 +107,35 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --extra dev
 
-      - name: Ruff check
-        run: uv run --no-sync ruff check .
-
-      - name: Ruff format check
-        run: uv run --no-sync ruff format --check .
-
-      - name: Verify app imports
-        run: uv run --no-sync python -c "from embry0.api.app import create_app; print('OK')"
-
       # Four workers, one per vCPU of a hosted runner. Each runs on a database
       # of its own, created next to TEST_DATABASE_URL's (tests/conftest.py).
       # The four share one Postgres: on a slow runner the heaviest tests took
       # 30 s, against 12-29 s serially, so a test may take 60 s, not 30.
       # --fail-on-warnings (tests/conftest.py): the suite has no warnings, so a
       # new one fails the run and is named in its warnings summary (#336).
+      # --durations: the slowest tests, so the next slow-down shows in the log.
       - name: Run unit tests
-        run: uv run --no-sync pytest tests/unit/ -n 4 -v --tb=short --timeout=60 --fail-on-warnings
+        run: >-
+          uv run --no-sync pytest tests/unit/ --shard ${{ matrix.shard }}/2 -n 4 -v --tb=short --timeout=60
+          --fail-on-warnings --durations=25
+
+  # The check the main branch requires: the lint and every part of the suite
+  # passed. It runs whatever they did (always()), since a required check that
+  # is skipped would count as passed.
+  backend:
+    name: Backend Lint & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [backend-lint, backend-tests]
+    if: always()
+    steps:
+      - name: The lint and every part of the unit suite passed
+        env:
+          LINT: ${{ needs.backend-lint.result }}
+          TESTS: ${{ needs.backend-tests.result }}
+        run: |
+          echo "lint: $LINT; unit tests: $TESTS"
+          test "$LINT" = success && test "$TESTS" = success
 
   build-images:
     name: Docker image builds

@@ -33,6 +33,12 @@ Then the Postgres the suites connect to:
 The last gate runs the alert rules in `infra/prometheus/` against their
 `promtool` tests; it prints `SUCCESS` and exits 0 on a pass.
 
+CI runs the unit suite in two parts on two runners at once
+(`--shard 1/2` and `--shard 2/2`, by a hash of each test file's path; #695)
+and reports both, with the lint, as the one required check
+`Backend Lint & Test`. Locally, the command above runs the whole suite; to
+run one part as CI does, add `--shard 1/2` (or `2/2`).
+
 Integration tests that need something the run lacks skip, and say why:
 `requires_minio` and `requires_dind` tests without a reachable
 `MINIO_ENDPOINT` or `DIND_ENDPOINT`, the isolation tests without
