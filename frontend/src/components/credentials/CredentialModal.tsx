@@ -11,7 +11,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { createFocusTrap } from "@/lib/focus-trap";
 import { ENABLE_ROUTE, isLlmProvider, llmProviderStates, type LlmProviderName } from "@/lib/llmProviders";
 import { providerLabel } from "@/lib/status";
-import type { Credential, CredentialCreate, CredentialProvider } from "@/lib/types/credentials";
+import type { Credential, CredentialCreate } from "@/lib/types/credentials";
 
 /** Same vocabulary as embry0/api/schemas/credentials.py `_LABEL` (1–64). */
 const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -46,9 +46,9 @@ export interface CredentialModalProps {
   /** The device-login poll creates the row. The page refetches when it finishes. */
   onDeviceLoginDone?(): void;
   gitlabHost: string | null;
-  /** GET /config/models providers: the LLM providers this deployment enables.
-   * Undefined until it answers, when the backend decides on save. */
-  catalogProviders?: readonly { name: string }[];
+  /** GET /config/providers/catalog: every provider of the provider catalogue, with whether it is enabled. The
+   * LLM providers the form offers. Undefined until it answers, when the backend decides on save. */
+  catalogueProviders?: readonly { name: string; enabled: boolean }[];
 }
 
 /**
@@ -156,7 +156,7 @@ export function CredentialModal({
   onClose,
   onDeviceLoginDone,
   gitlabHost,
-  catalogProviders,
+  catalogueProviders,
 }: CredentialModalProps) {
   const isRotate = modeSpec.mode === "rotate";
   const containerRef = useRef<HTMLDivElement>(null);
@@ -166,7 +166,7 @@ export function CredentialModal({
   onDeviceLoginDoneRef.current = onDeviceLoginDone;
 
   const [accountKind, setAccountKind] = useState<AccountKind>("forge_token");
-  const [provider, setProvider] = useState<Extract<CredentialProvider, "github" | "gitlab">>("github");
+  const [provider, setProvider] = useState<"github" | "gitlab">("github");
   const [llmProvider, setLlmProvider] = useState<LlmProviderName>("anthropic");
   const [baseUrl, setBaseUrl] = useState("");
   const [deviceLogin, setDeviceLogin] = useState<DeviceLoginView | null>(null);
@@ -181,7 +181,7 @@ export function CredentialModal({
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  const llmStates = llmProviderStates(catalogProviders);
+  const llmStates = llmProviderStates(catalogueProviders);
   const notEnabled = llmStates.filter((entry) => entry.state === "not_enabled").map((entry) => entry.name);
   // The device login creates an xAI llm_oauth account (POST /credentials/xai/device-login),
   // so it is offered only while the form is making an xAI account.

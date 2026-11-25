@@ -87,6 +87,17 @@ export interface ProviderLastProbe {
   checked_at: string;
 }
 
+/**
+ * A provider of the provider catalogue in force (GET /config/providers/catalog's
+ * `catalogue.providers`, in its order): the catalogue, not the dashboard, names
+ * the LLM providers, so one a release or the deployment adds is listed here.
+ */
+export interface CatalogueProvider {
+  name: string;
+  /** Whether this deployment turned it on: a credential of a provider not enabled is refused. */
+  enabled: boolean;
+}
+
 export interface ModelsCatalog {
   heavy: string;
   medium: string;

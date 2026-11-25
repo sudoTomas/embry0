@@ -1,6 +1,7 @@
 import type { LlmProviderName } from "../llmProviders";
 
 export type CredentialKind = "forge_token" | "llm_oauth" | "llm_api_key" | "ssh_key" | "tailnet_api_key";
+/** github, gitlab, ssh or tailscale, or an LLM provider: any the provider catalogue names (#173). */
 export type CredentialProvider = "github" | "gitlab" | "ssh" | "tailscale" | LlmProviderName;
 export type CredentialStatus = "ok" | "disabled" | "quarantined";
 export type BindingRole = "forge" | "llm" | "deploy" | "tailnet";

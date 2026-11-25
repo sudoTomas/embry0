@@ -21,9 +21,9 @@ vi.mock("@/hooks/useCredentials", () => ({
   useScopedBindings: () => ({ data: [], isLoading: false }),
   useSetScopedBindings: () => ({ mutate: vi.fn(), isPending: false }),
 }));
-let catalogProviders: { name: string }[] | undefined;
+let catalogueProviders: { name: string; enabled: boolean }[] | undefined;
 vi.mock("@/hooks/useProvider", () => ({
-  useModelsCatalog: () => ({ data: catalogProviders ? { providers: catalogProviders } : undefined }),
+  useCatalogueProviders: () => ({ data: catalogueProviders }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { CredentialsPage } from "../CredentialsPage";
@@ -35,7 +35,7 @@ function renderPage() {
 const asTier = (tier: string) => useAuthStore.setState({ status: "authenticated", authMode: "session", user: { email: "u@example.com", name: "U", tier }, ssoEnabled: true, apiKeyLogin: true });
 
 describe("CredentialsPage", () => {
-  beforeEach(() => { mockCreate.mockReset(); mockImport.mockReset(); catalogProviders = undefined; });
+  beforeEach(() => { mockCreate.mockReset(); mockImport.mockReset(); catalogueProviders = undefined; });
 
   it("renders read-only for operator tier", () => {
     asTier("operator"); renderPage();
@@ -54,9 +54,9 @@ describe("CredentialsPage", () => {
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ label: "bob", secret: "ghp_abcdefghijklmnop" }));
   });
 
-  it("offers the LLM providers this deployment's catalog enables", async () => {
+  it("offers the LLM providers this deployment's catalogue enables", async () => {
     asTier("admin"); mockCreate.mockResolvedValue(creds[0]); const user = userEvent.setup();
-    catalogProviders = [{ name: "anthropic" }, { name: "xai" }, { name: "groq" }];
+    catalogueProviders = ["anthropic", "xai", "openai", "groq"].map((name) => ({ name, enabled: name !== "openai" }));
     renderPage();
     await user.click(screen.getByRole("button", { name: /add credential/i }));
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");

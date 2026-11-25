@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/Label";
 import { Select } from "@/components/ui/Select";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useCredentials, useRepoCredentials, useSetRepoCredentials } from "@/hooks/useCredentials";
-import { useModelsCatalog } from "@/hooks/useProvider";
+import { useCatalogueProviders, useModelsCatalog } from "@/hooks/useProvider";
 import { ENABLE_ROUTE, llmProviderStates, usableLlmProviders, type LlmProviderName } from "@/lib/llmProviders";
 import type { Binding, BindingInput, RepoCredentials } from "@/lib/types/credentials";
 import { providerLabel } from "@/lib/status";
@@ -27,8 +27,10 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
   const repoQuery = useRepoCredentials(repo);
   const credentialsQuery = useCredentials();
   const setRepoCredentials = useSetRepoCredentials();
-  // The providers page's catalog: a row per provider this deployment enables.
+  // The providers page's catalog: which enabled provider has an account somewhere.
   const catalog = useModelsCatalog();
+  // The provider catalogue: every LLM provider, with whether it is enabled.
+  const catalogue = useCatalogueProviders();
   // The select is controlled by the server. Keep a local choice until that
   // query refetches, and drop it if the write fails.
   const [draft, setDraft] = useState<string | null>(null);
@@ -159,9 +161,10 @@ export function RepoAccountsSection({ repo, forge }: { repo: string; forge: Forg
   }
 
   const llm = repoQuery.data?.effective?.llm;
-  const llmStates = llmProviderStates(catalog.data?.providers);
+  const llmStates = llmProviderStates(catalogue.data);
   // A row only for a provider this repository can use; the rest are counted.
   const llmRows = usableLlmProviders(
+    catalogue.data,
     catalog.data?.providers,
     bindings.map((binding) => ({ role: binding.role, provider: providerOf(binding) })),
     llm,

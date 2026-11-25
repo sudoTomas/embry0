@@ -10,6 +10,8 @@ const mockSet = vi.fn();
 let repoCreds: unknown;
 let credentialRows: Array<Record<string, unknown>>;
 let catalogProviders: { name: string; available?: boolean }[] | undefined;
+/** Whether GET /config/providers/catalog has answered. */
+let catalogueAnswered = true;
 
 const forgeRows = () => [
   {
@@ -33,6 +35,14 @@ vi.mock("@/hooks/useCredentials", () => ({
 
 vi.mock("@/hooks/useProvider", () => ({
   useModelsCatalog: () => ({ data: catalogProviders ? { providers: catalogProviders } : undefined }),
+  // The provider catalogue (GET /config/providers/catalog): the shipped providers, Anthropic and xAI enabled, and
+  // each one GET /config/models offers.
+  useCatalogueProviders: () => ({
+    data: !catalogueAnswered ? undefined : ALL_PROVIDERS.map((name) => ({
+      name,
+      enabled: name === "anthropic" || name === "xai" || (catalogProviders ?? []).some((p) => p.name === name),
+    })),
+  }),
 }));
 
 function renderSection(repo: string, forge: "github" | "gitlab") {
@@ -82,6 +92,7 @@ describe("RepoAccountsSection", () => {
     repoCreds = undefined;
     credentialRows = forgeRows();
     catalogProviders = undefined;
+    catalogueAnswered = true;
     asTier("operator");
   });
 
@@ -376,12 +387,20 @@ describe("RepoAccountsSection", () => {
     expect(screen.queryByText("Trace")).toBeNull();
   });
 
-  it("shows Anthropic and xAI only, and claims nothing, before the catalog answers", () => {
+  it("keeps a row for each enabled provider, and counts none unused, before availability is known", () => {
     repoCreds = { repo: "acme/widgets", bindings: [], effective: { forge: { error: "x" } } };
     renderSection("acme/widgets", "github");
     expect(screen.getByTestId("llm-anthropic")).toBeInTheDocument();
     expect(screen.getByTestId("llm-xai")).toBeInTheDocument();
     expect(screen.queryByTestId("llm-openai")).toBeNull();
+    expect(screen.queryByTestId("llm-unused")).toBeNull();
+  });
+
+  it("claims nothing before the provider catalogue answers, which names the providers", () => {
+    catalogueAnswered = false;
+    repoCreds = { repo: "acme/widgets", bindings: [], effective: { forge: { error: "x" } } };
+    renderSection("acme/widgets", "github");
+    expect(screen.queryByTestId("llm-anthropic")).toBeNull();
     expect(screen.queryByTestId("llm-not-enabled")).toBeNull();
     expect(screen.queryByTestId("llm-unused")).toBeNull();
   });

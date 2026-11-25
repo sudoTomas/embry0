@@ -4,6 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialModal } from "../CredentialModal";
 
+/** The shipped catalogue's providers in its order (GET /config/providers/catalog), these enabled. */
+const SHIPPED = ["anthropic", "xai", "openai", "openrouter", "google", "groq", "deepseek", "custom"];
+function catalogue(...enabled: string[]) {
+  return SHIPPED.map((name) => ({ name, enabled: ["anthropic", "xai", ...enabled].includes(name) }));
+}
+
 const { startXaiDeviceLogin, pollXaiDeviceLogin } = vi.hoisted(() => ({
   startXaiDeviceLogin: vi.fn(),
   pollXaiDeviceLogin: vi.fn(),
@@ -26,7 +32,7 @@ describe("CredentialModal", () => {
 
   it("blocks a blank secret with an inline error, no submit", async () => {
     const onSubmit = vi.fn(); const user = userEvent.setup();
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     await user.type(screen.getByLabelText(/label/i), "alice");
     await user.click(screen.getByRole("button", { name: /create/i }));
     expect(screen.getByRole("alert")).toHaveTextContent(/secret/i);
@@ -36,7 +42,7 @@ describe("CredentialModal", () => {
   it("clears the secret field after a failed submit", async () => {
     const onSubmit = vi.fn().mockRejectedValue({ response: { status: 409, data: { detail: "a github credential labelled 'alice' already exists" } } });
     const user = userEvent.setup();
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     await user.type(screen.getByLabelText(/label/i), "alice");
     await user.type(screen.getByLabelText(/^secret/i), "ghp_abcdefghijklmnop");
     await user.click(screen.getByRole("button", { name: /create/i }));
@@ -45,14 +51,14 @@ describe("CredentialModal", () => {
   });
 
   it("gitlab option is disabled without a configured host", () => {
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     expect(screen.getByRole("option", { name: /gitlab/i })).toBeDisabled();
   });
 
   it("submits an Anthropic API key as an anthropic llm_api_key", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
     expect(screen.getByLabelText(/^provider/i)).toHaveValue("anthropic");
     await user.type(screen.getByLabelText(/label/i), "claude-default");
@@ -66,7 +72,7 @@ describe("CredentialModal", () => {
     });
   });
 
-  it("offers every LLM provider by its maker's name and says which are not enabled", async () => {
+  it("offers every provider of the catalogue by its maker's name, a new one too, and says which are not enabled", async () => {
     const user = userEvent.setup();
     render(
       <CredentialModal
@@ -74,7 +80,7 @@ describe("CredentialModal", () => {
         onSubmit={vi.fn()}
         onClose={vi.fn()}
         gitlabHost={null}
-        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "openai" }, { name: "custom" }]}
+        catalogueProviders={[...catalogue("openai", "custom"), { name: "mistral", enabled: true }]}
       />,
     );
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
@@ -89,6 +95,7 @@ describe("CredentialModal", () => {
       "Groq (not enabled)",
       "DeepSeek (not enabled)",
       "Custom",
+      "Mistral",
     ]);
     expect(options.filter((o) => (o as HTMLOptionElement).disabled).map((o) => (o as HTMLOptionElement).value)).toEqual([
       "openrouter",
@@ -110,7 +117,7 @@ describe("CredentialModal", () => {
         onSubmit={onSubmit}
         onClose={vi.fn()}
         gitlabHost={null}
-        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "deepseek" }]}
+        catalogueProviders={catalogue("deepseek")}
       />,
     );
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
@@ -135,7 +142,7 @@ describe("CredentialModal", () => {
         onSubmit={onSubmit}
         onClose={vi.fn()}
         gitlabHost={null}
-        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "custom" }]}
+        catalogueProviders={catalogue("custom")}
       />,
     );
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
@@ -163,7 +170,7 @@ describe("CredentialModal", () => {
         onSubmit={onSubmit}
         onClose={vi.fn()}
         gitlabHost={null}
-        catalogProviders={[{ name: "anthropic" }, { name: "xai" }, { name: "custom" }]}
+        catalogueProviders={catalogue("custom")}
       />,
     );
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
@@ -182,13 +189,16 @@ describe("CredentialModal", () => {
     const onSubmit = vi.fn();
     const user = userEvent.setup();
     const props = { modeSpec: { mode: "create" } as const, onSubmit, onClose: vi.fn(), gitlabHost: null };
-    const { rerender } = render(<CredentialModal {...props} />);
+    const every = SHIPPED.map((name) => ({ name, enabled: true }));
+    const { rerender } = render(<CredentialModal {...props} catalogueProviders={every} />);
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
-    // Before the catalog answers the family is offered and the backend decides.
     expect(screen.getByRole("option", { name: "OpenAI" })).toBeEnabled();
     expect(screen.queryByText(/not enabled in this deployment/i)).toBeNull();
     await user.selectOptions(screen.getByLabelText(/^provider/i), "openai");
-    rerender(<CredentialModal {...props} catalogProviders={[{ name: "anthropic" }, { name: "xai" }]} />);
+    // The catalogue turned it off meanwhile (another tab, the API): the form says so instead of sending it.
+    rerender(
+      <CredentialModal {...props} catalogueProviders={every.map((p) => ({ ...p, enabled: p.name !== "openai" }))} />,
+    );
     await user.type(screen.getByLabelText(/label/i), "api-key");
     await user.type(screen.getByLabelText(/^secret/i), "sk-placeholder");
     await user.click(screen.getByRole("button", { name: /^create$/i }));
@@ -198,7 +208,7 @@ describe("CredentialModal", () => {
 
   it("offers xAI sign-in only for an xAI account, the one kind it creates", async () => {
     const user = userEvent.setup();
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     const signIn = () => screen.queryByRole("button", { name: /sign in with xai/i });
     expect(signIn(), "forge token").toBeNull();
     await user.selectOptions(screen.getByLabelText(/^kind/i), "claude_oauth");
@@ -222,7 +232,7 @@ describe("CredentialModal", () => {
       interval: 5,
     });
     const user = userEvent.setup();
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     await user.selectOptions(screen.getByLabelText(/^kind/i), "llm_api_key");
     await user.selectOptions(screen.getByLabelText(/^provider/i), "xai");
     await user.type(screen.getByLabelText(/label/i), "grok-default");
@@ -246,7 +256,7 @@ describe("CredentialModal", () => {
       .mockResolvedValueOnce({ status: "pending" })
       .mockResolvedValueOnce({ status: "done", credential: { id: "cred-00000000000b" } });
     const onSubmit = vi.fn();
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={onSubmit} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     fireEvent.change(screen.getByLabelText(/^kind/i), { target: { value: "llm_api_key" } });
     fireEvent.change(screen.getByLabelText(/^provider/i), { target: { value: "xai" } });
     fireEvent.change(screen.getByLabelText(/label/i), { target: { value: "grok-default" } });
@@ -284,7 +294,7 @@ describe("CredentialModal", () => {
   });
 
   it("keeps the dialog inside a short screen and scrolls it inside itself", () => {
-    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} />);
+    render(<CredentialModal modeSpec={{ mode: "create" }} onSubmit={vi.fn()} onClose={vi.fn()} gitlabHost={null} catalogueProviders={catalogue()} />);
     const dialog = screen.getByRole("dialog", { name: "Create credential" });
     // jsdom has no layout, so this pins the classes: the backdrop keeps a 16px
     // gutter, and the dialog is no taller than the space inside it and scrolls

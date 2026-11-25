@@ -1,4 +1,8 @@
-"""Migration 103 — credentials.provider takes the OpenAI-compatible LLM providers."""
+"""Migration 103 — credentials.provider takes the OpenAI-compatible LLM providers.
+
+Since migration 158 the table names no LLM provider (#173): what an LLM credential's provider may be is the
+provider catalogue's, and tests/unit/storage/test_migration_158.py holds the table to it.
+"""
 
 import asyncpg
 import pytest
@@ -6,7 +10,6 @@ import pytest
 from embry0.agents.providers import OPENAI_COMPATIBLE
 from embry0.storage.database import DatabasePool
 from embry0.storage.migrations.runner import MIGRATIONS
-from embry0.storage.repositories.credentials import PROVIDERS
 
 
 def test_migration_103_present_and_gapless() -> None:
@@ -15,12 +18,10 @@ def test_migration_103_present_and_gapless() -> None:
     assert versions == list(range(1, len(versions) + 1))
 
 
-def test_the_check_names_every_provider_the_repository_accepts() -> None:
+def test_the_check_named_every_shipped_openai_compatible_provider() -> None:
     sql = next(sql for v, _, sql in MIGRATIONS if v == 103)
-    missing = [p for p in PROVIDERS if f"'{p}'" not in sql]
-    assert missing == [], f"the repository accepts providers the table would refuse: {missing}"
-    family = [p.name for p in OPENAI_COMPATIBLE if p.name not in PROVIDERS]
-    assert family == [], f"OpenAI-compatible providers the repository refuses: {family}"
+    missing = [p.name for p in OPENAI_COMPATIBLE if f"'{p.name}'" not in sql]
+    assert missing == [], f"migration 103 left out OpenAI-compatible providers: {missing}"
 
 
 async def _insert(db: DatabasePool, provider: str) -> None:
@@ -41,6 +42,6 @@ async def test_an_openai_compatible_key_is_stored(db_with_migrations: DatabasePo
 
 
 @pytest.mark.requires_postgres
-async def test_an_unknown_provider_is_still_refused(db_with_migrations: DatabasePool) -> None:
+async def test_an_llm_key_under_a_forge_s_name_is_still_refused(db_with_migrations: DatabasePool) -> None:
     with pytest.raises(asyncpg.CheckViolationError):
-        await _insert(db_with_migrations, "mistral")
+        await _insert(db_with_migrations, "github")

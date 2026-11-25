@@ -1,18 +1,13 @@
-// The LLM providers the credential screens offer, pinned to the backend's own
-// lists: a provider added there fails here instead of going missing from the
-// dashboard, and one removed there is not offered and then refused on save.
+// The LLM providers the credential screens offer come from the provider
+// catalogue (GET /config/providers/catalog), not from a list here (#173): a
+// provider a release or the deployment adds is offered with no dashboard
+// change. What the dashboard still knows is pinned to the backend's.
 import { describe, expect, it } from "vitest";
 import catalogueApiPy from "../../../../embry0/api/v1/provider_catalogue.py?raw";
-import catalogYaml from "../../../../embry0/agents/providers.yaml?raw";
-import registryPy from "../../../../embry0/services/credentials/providers.py?raw";
+import repositoryPy from "../../../../embry0/storage/repositories/credentials.py?raw";
 import schemaPy from "../../../../embry0/api/schemas/credentials.py?raw";
-import {
-  ALWAYS_ON_LLM_PROVIDERS,
-  ENABLE_ROUTE,
-  LLM_PROVIDERS,
-  OPENAI_COMPATIBLE_PROVIDERS,
-  llmProviderStates,
-} from "../llmProviders";
+import * as llmProviders from "../llmProviders";
+import { ENABLE_ROUTE, NOT_LLM_PROVIDERS, isLlmProvider, llmProviderStates, usableLlmProviders } from "../llmProviders";
 
 function capture(source: string, pattern: RegExp, what: string): string {
   const found = pattern.exec(source)?.[1];
@@ -20,42 +15,25 @@ function capture(source: string, pattern: RegExp, what: string): string {
   return found;
 }
 
-/** Providers POST /credentials takes that are not LLM providers. */
-const NOT_LLM = ["github", "gitlab", "tailscale"];
-
-describe("LLM providers match the backend", () => {
-  it("lists every deployment's providers as the registry's LLM_PROVIDERS", () => {
-    const body = capture(
-      registryPy,
-      /^LLM_PROVIDERS: dict\[str, LlmProvider\] = \{\n([\s\S]*?)\n\}/m,
-      "LLM_PROVIDERS in embry0/services/credentials/providers.py",
+describe("the providers the dashboard knows match the backend's", () => {
+  it("names the providers that are not LLM providers as the backend does", () => {
+    const tuple = capture(
+      repositoryPy,
+      /^NOT_LLM_PROVIDERS = \(([^)]*)\)/m,
+      "NOT_LLM_PROVIDERS in embry0/storage/repositories/credentials.py",
     );
-    expect([...ALWAYS_ON_LLM_PROVIDERS]).toEqual([...body.matchAll(/^\s+"([a-z]+)":/gm)].map((m) => m[1]));
+    expect([...NOT_LLM_PROVIDERS]).toEqual([...tuple.matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
   });
 
-  it("lists the OpenAI-compatible family in the catalog's order", () => {
-    // The shipped provider catalogue (embry0/agents/providers.yaml): its chat-completions providers, in order.
-    const names: string[] = [];
-    let provider: string | null = null;
-    for (const line of catalogYaml.split("\n")) {
-      provider = /^ {2}([a-z][a-z0-9_-]*):\s*$/.exec(line)?.[1] ?? (/^\S/.test(line) ? null : provider);
-      if (provider !== null && /^ {4}runtime: chat_completions\s*$/.test(line)) names.push(provider);
-    }
-    expect(names.length, "no chat-completions provider found in embry0/agents/providers.yaml").toBeGreaterThan(0);
-    expect([...OPENAI_COMPATIBLE_PROVIDERS]).toEqual(names);
-  });
-
-  it("offers exactly the LLM providers POST /credentials accepts", () => {
-    const literal = capture(
-      schemaPy,
-      /class CredentialCreate\(BaseModel\):[\s\S]*?provider: Literal\[([\s\S]*?)\]/,
-      "CredentialCreate.provider in embry0/api/schemas/credentials.py",
+  it("keeps no list of the LLM providers: the catalogue is the list", () => {
+    const lists = Object.entries(llmProviders).filter(
+      ([name, value]) => Array.isArray(value) && name !== "NOT_LLM_PROVIDERS",
     );
-    const accepted = [...literal.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
-    expect([...LLM_PROVIDERS].sort()).toEqual(accepted.filter((name) => !NOT_LLM.includes(name)).sort());
+    expect(lists.map(([name]) => name)).toEqual([]);
+    expect(schemaPy).not.toMatch(/provider: Literal\[/);
   });
 
-  it("names the route that turns the family on", () => {
+  it("names the route that turns a provider on", () => {
     const path = capture(
       catalogueApiPy,
       /^@router\.put\("([^"]+)"/m,
@@ -72,26 +50,63 @@ describe("LLM providers match the backend", () => {
 });
 
 describe("llmProviderStates", () => {
-  const states = (catalog: { name: string }[] | undefined) =>
-    Object.fromEntries(llmProviderStates(catalog).map(({ name, state }) => [name, state]));
+  const states = (catalogue: { name: string; enabled: boolean }[] | undefined) =>
+    llmProviderStates(catalogue).map(({ name, state }) => `${name}:${state}`);
 
-  it("enables a family member the catalog lists and names the rest not enabled", () => {
-    expect(states([{ name: "anthropic" }, { name: "xai" }, { name: "openai" }])).toEqual({
-      anthropic: "enabled",
-      xai: "enabled",
-      openai: "enabled",
-      openrouter: "not_enabled",
-      google: "not_enabled",
-      groq: "not_enabled",
-      deepseek: "not_enabled",
-      custom: "not_enabled",
-    });
+  it("lists each provider of the catalogue in its order, a new one too", () => {
+    expect(
+      states([
+        { name: "anthropic", enabled: true },
+        { name: "openai", enabled: false },
+        { name: "mistral", enabled: true },
+      ]),
+    ).toEqual(["anthropic:enabled", "openai:not_enabled", "mistral:enabled"]);
   });
 
-  it("claims nothing about the family before the catalog answers", () => {
-    const before = states(undefined);
-    expect(before.anthropic).toBe("enabled");
-    expect(before.xai).toBe("enabled");
-    for (const name of OPENAI_COMPATIBLE_PROVIDERS) expect(before[name]).toBe("unknown");
+  it("claims nothing before the catalogue answers", () => {
+    expect(states(undefined)).toEqual([]);
+  });
+});
+
+describe("isLlmProvider", () => {
+  it("takes any provider but the forges', SSH's and the tailnet's", () => {
+    expect(["anthropic", "mistral", "custom"].map(isLlmProvider)).toEqual([true, true, true]);
+    expect(["github", "gitlab", "ssh", "tailscale"].map(isLlmProvider)).toEqual([false, false, false, false]);
+  });
+});
+
+describe("usableLlmProviders", () => {
+  const catalogue = [
+    { name: "anthropic", enabled: true },
+    { name: "xai", enabled: true },
+    { name: "mistral", enabled: true },
+    { name: "groq", enabled: false },
+  ];
+
+  it("gives a row to each enabled provider with an account somewhere", () => {
+    const offered = [
+      { name: "anthropic", available: true },
+      { name: "xai", available: false },
+      { name: "mistral", available: true },
+    ];
+    expect(usableLlmProviders(catalogue, offered, [], undefined)).toEqual(["anthropic", "mistral"]);
+  });
+
+  it("keeps every enabled provider before availability is known", () => {
+    expect(usableLlmProviders(catalogue, undefined, [], undefined)).toEqual(["anthropic", "xai", "mistral"]);
+  });
+
+  it("never hides a provider the repository is bound to or resolves, even one the catalogue no longer lists", () => {
+    const rows = usableLlmProviders(
+      catalogue,
+      [{ name: "anthropic", available: true }],
+      [
+        { role: "llm", provider: "groq" },
+        { role: "llm", provider: "retired" },
+        { role: "forge", provider: "github" },
+      ],
+      { xai: { id: "c1" } },
+    );
+    expect(rows).toEqual(["anthropic", "xai", "groq", "retired"]);
   });
 });

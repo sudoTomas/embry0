@@ -4,6 +4,7 @@ import {
   updateProviderConfig,
   testProviderConnection,
   fetchModelsCatalog,
+  fetchCatalogueProviders,
   testCatalogProvider,
   fetchProviderUsage,
   refreshOpenRouterCatalog,
@@ -43,6 +44,11 @@ export function modelsCatalogQuery() {
 
 export function useModelsCatalog() {
   return useQuery(modelsCatalogQuery());
+}
+
+/** The provider catalogue's providers, enabled or not: the LLM providers a credential can be for. */
+export function useCatalogueProviders() {
+  return useQuery({ queryKey: ["config", "providers", "catalog", "providers"], queryFn: fetchCatalogueProviders });
 }
 
 export function useTestCatalogProvider() {

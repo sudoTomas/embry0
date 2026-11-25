@@ -414,15 +414,19 @@ repository binding would get (the global pool, then the env); OpenRouter's
 `/models` answers without a key, so for it the test calls `/key`. The
 outcome is the provider's `last_probe`, read back from the audit log like
 every other provider's. The dashboard's create-credential dialog
-(Credentials, **Add credential**, kind **LLM API key**) offers every provider,
-and for `custom` asks for the base URL; a provider this deployment has not
-enabled is listed as not enabled and cannot be picked. A repository's
-**LLM accounts** card binds an account at repo scope. It has a row for
-each enabled provider the catalog marks available, and for any provider
-the repository is bound to or resolves an account for, so neither is
-hidden. It counts the other enabled providers in one line and names the
-ones that are not enabled. Until the catalog answers it shows Anthropic
-and xAI.
+(Credentials, **Add credential**, kind **LLM API key**) offers every provider
+of the provider catalogue (`GET /api/v1/config/providers/catalog`, in its
+order), and for `custom` asks for the base URL; a provider this deployment
+has not enabled is listed as not enabled and cannot be picked. The catalogue
+names the LLM providers, so one a release adds is offered with no change to
+the dashboard, the credential API or the database: `POST /credentials`
+checks an `llm_*` credential's provider against the catalogue in force. A
+repository's **LLM accounts** card binds an account at repo scope. It has a
+row for each enabled provider the catalog marks available, and for any
+provider the repository is bound to or resolves an account for, even one
+the catalogue no longer lists, so neither is hidden. It counts the other
+enabled providers in one line and names the ones that are not enabled.
+Until the provider catalogue answers it shows none.
 
 The sandbox receives the key as `EMBRY0_LLM_<PROVIDER>_API_KEY`
 (`EMBRY0_LLM_OPENAI_API_KEY`, …, `EMBRY0_LLM_CUSTOM_API_KEY`) and a custom

@@ -107,7 +107,7 @@ Every problem the release finds is attributed to its part, the parts are left ou
 **Raised, not only logged.** Each refused part is named by `GET /config/providers/catalog` (`refused`, with `in_force`: `whole`, `in_part` or `earlier`, and `in_force_generation`), logged (`provider_catalogue_refused`), audited once a generation in each process (`provider_catalogue.refused`), and counted by the gauge `embry0_provider_catalogue_refused_parts`. The gauge is seeded 0 when the process starts, so the shipped rule `Embry0ProviderCatalogueRefused` (`infra/prometheus/provider-catalogue.rules.yml`, `(max(...) or vector(0)) > 0` for 5 minutes) has a series to read from the first scrape; its `promtool` tests show it quiet at 0, firing at 2, firing on one process of two, and clearing once fixed.
 
 
-The modules that still import a shipped constant read only what an overlay cannot change: a provider's name, address, prefixes or probe path (`provider_probe`, `metrics/labels`, the credential schema's list of the family), or run in the sandbox (`agents/executor`, PR 3). The sandbox reads no table once each invocation carries its provider record (PR 3).
+The modules that still import a shipped constant read only what an overlay cannot change: a provider's name, address, prefixes or probe path (`provider_probe`, `metrics/labels`), or run in the sandbox (`agents/executor`, PR 3). The sandbox reads no table once each invocation carries its provider record (PR 3).
 
 ## Pricing a run (PR 3)
 
@@ -143,6 +143,8 @@ Each PR is reviewed and merged before the next.
 
    Built ("Pricing a run" below): `ProviderRecord` (`embry0/agents/invocation.py`), resolved by `providers.provider_record` in the resolver, sent as the runner config's `provider_record` beside `pricing_usd_per_mtok` (for images that predate records), and kept on the trace as `traces.pricing` (migration 155).
 4. **Credentials.** The LLM names leave `credentials_provider_check`; a credential's provider is checked against the catalogue; the frontend reads the list from the API.
+
+   Built: migration 158 holds `credentials.provider` to the other kinds' four providers (`github`, `gitlab`, `ssh`, `tailscale`) and, for an `llm_*` credential, to the catalogue's rule for a provider's name and none of those four (`credentials.known_provider` says the same). `CredentialCreate.provider` takes any name by that rule and checks it against the catalogue in force: a provider the catalogue lists but does not enable is refused saying where to turn it on, one it does not list is refused, and a chat-completions provider takes an API key only (by its `runtime`, not the shipped family). The dashboard reads the providers from `GET /config/providers/catalog` (`catalogue.providers`, in its order, with `enabled`); the only list it keeps is the four providers that are not LLM providers, pinned to the backend's.
 5. **`custom` defaults** with the one-time import of what a deployment relied on; the local-only request fields move to per-model `request_extras`.
 6. **The Providers page** edits the catalogue (models, prices, enabled, where each field comes from) with a preview, and the docs.
 7. **The spent-account wait** (`account_wait` in the settings document).
