@@ -179,9 +179,14 @@ class RunMeter:
                 continue
             tallies = [t for t in meter["tallies"] if isinstance(t, dict)]
             await self._keep(proxy, meter["boot_id"], tallies)
-            self._metrics.meter_read(proxy, _unattributed_requests(tallies))
+            stale = meter.get("stale_refused")
+            self._metrics.meter_read(
+                proxy,
+                _unattributed_requests(tallies),
+                stale if isinstance(stale, int) and not isinstance(stale, bool) else 0,
+            )
         for proxy in self._proxies.metered_proxies():
-            # After the reads: a read sent long enough after a given-up replay is what ends that mode.
+            # After the reads: a read the proxy answers is what sends a given-up replay's remainder.
             self._metrics.meter_replay_abandoned(proxy, self._proxies.replay_abandoned(proxy))
         await self._prune_now_and_then()
 

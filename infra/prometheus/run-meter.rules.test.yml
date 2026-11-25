@@ -129,7 +129,7 @@ tests:
               proxy: xai-proxy
             exp_annotations:
               summary: "A metering proxy has not taken back its state"
-              description: "xai-proxy was recreated and the replay of its enrollments and runs was given up at a timeout; the proxy has not answered a request since (the orchestrator logs proxy_state_replay_abandoned). Sandboxes it was not given back are refused, and every run declared on it is charged as one whose tally is not whole (proxy_unordered / sandbox_unordered). docs/providers.md, \"Metering at the proxies\"."
+              description: "xai-proxy was recreated and the replay of its enrollments and runs was given up at a timeout; the proxy has not answered a request since (the orchestrator logs proxy_state_replay_abandoned), so the sandboxes it was not given back are refused. docs/providers.md, \"Metering at the proxies\"."
       - eval_time: 50m
         alertname: Embry0MeterReplayGivenUp
         exp_alerts: []

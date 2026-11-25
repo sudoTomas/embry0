@@ -17,6 +17,17 @@ centralizes that state and hardens it:
   itself: the orchestrator's requests come from the proxy's own loopback
   (``ProxyManager`` sends them with ``docker exec``) and are never refused for
   a sandbox's guesses.
+- **Ordered admin requests**: the orchestrator numbers each admin request
+  when it decides it (``seq``, growing across its process), and a replay to a
+  recreated proxy sends each held request with its own number again. A proxy
+  takes a request for a sandbox (an enrollment, its end, a change of its
+  push branches, a run declared or ended) or for a credential (a token pushed)
+  only when its number is newer than the last it took for that sandbox or
+  credential: a late request (a ``docker exec`` that ran after its client gave
+  up) or a replayed older one can then never undo a newer one, whatever the
+  timing. Refused with 409 (``stale_request``), logged and counted
+  (``AdminSequence.refused``). A request without a number (an orchestrator
+  that predates them) is taken as before.
 - **One lifecycle** (#536): a proxy's per-sandbox state beside the registry
   (a scope, a quota, a credential slot) is cleared by its ``on_unenroll``
   hook, which the registry runs whenever an enrollment ends: revoked,
@@ -35,6 +46,7 @@ import hmac
 import json
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -44,16 +56,21 @@ from aiohttp import web
 __all__ = [
     "ADMIN_GUARD",
     "ENROLLMENT",
+    "ADMIN_SEQUENCE",
     "AdminGuard",
+    "AdminSequence",
     "EnrollExtension",
     "EnrollRejected",
     "EnrollmentRegistry",
     "RegistryFullError",
     "check_bearer",
     "guard_admin",
+    "json_or_empty",
     "git_identity",
     "payload_token",
     "register_admin_routes",
+    "request_seq",
+    "stale_request",
     "sha256_hex",
 ]
 
@@ -212,6 +229,54 @@ class EnrollmentRegistry:
         return self._git_identity_by_id.get(sandbox_id)
 
 
+#: The most sandboxes and credentials whose last request number a proxy remembers: past it, the one written longest
+#: ago gives way. Far above what one proxy serves, and a late request arrives within seconds, not after so many.
+DEFAULT_MAX_SEQUENCE_KEYS = 10_000
+
+
+class AdminSequence:
+    """The newest request number a proxy took, by sandbox or credential (``sandbox:<id>``, ``token:<credential>``).
+
+    It outlives the enrollment it ordered: a late request for a sandbox enrolled and ended since is refused too.
+    """
+
+    def __init__(self, *, max_keys: int = DEFAULT_MAX_SEQUENCE_KEYS) -> None:
+        self._last: OrderedDict[str, int] = OrderedDict()
+        self._max_keys = max_keys
+        self.refused = 0
+
+    def newer(self, key: str, seq: int) -> bool:
+        last = self._last.get(key)
+        return last is None or seq > last
+
+    def take(self, key: str, seq: int) -> None:
+        """Record ``seq`` as the last taken for ``key``, once the request it numbers has been applied."""
+        self._last[key] = max(seq, self._last.get(key, seq))
+        self._last.move_to_end(key)
+        while len(self._last) > self._max_keys:
+            self._last.popitem(last=False)
+
+
+def request_seq(body: Any) -> int | None | web.Response:
+    """The request number a body carries; None when it carries none; a 400 when it is not a number."""
+    seq = body.get("seq") if isinstance(body, dict) else None
+    if seq is None:
+        return None
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 0:
+        return web.json_response({"error": "bad_request", "detail": "seq must be a non-negative integer"}, status=400)
+    return seq
+
+
+def stale_request(app: web.Application, proxy_name: str, key: str, seq: int | None) -> web.Response | None:
+    """The 409 for a request numbered ``seq`` that is not newer than the last taken for ``key``; None to go ahead."""
+    sequence = app[ADMIN_SEQUENCE]
+    if seq is None or sequence.newer(key, seq):
+        return None
+    sequence.refused += 1
+    logger.warning(f"{proxy_name}_stale_admin_request", key=key, seq=seq)
+    return web.json_response({"error": "stale_request"}, status=409)
+
+
 class AdminGuard:
     """X-Admin-Token check with failed-attempt backoff, per source address.
 
@@ -276,9 +341,10 @@ class EnrollExtension(Protocol):
         """Store ``parsed`` for the now-enrolled sandbox; return response fields."""
 
 
-#: Where every proxy keeps its enrollments and its admin gate (``register_admin_routes``).
+#: Where every proxy keeps its enrollments, its admin gate and its admin requests' order (``register_admin_routes``).
 ENROLLMENT = web.AppKey("enrollment", EnrollmentRegistry)
 ADMIN_GUARD = web.AppKey("admin_guard", AdminGuard)
+ADMIN_SEQUENCE = web.AppKey("admin_sequence", AdminSequence)
 
 
 def guard_admin(request: web.Request, proxy_name: str) -> web.Response | None:
@@ -326,6 +392,7 @@ def register_admin_routes(
         on_unenroll=None if on_unenroll is None else functools.partial(on_unenroll, app)
     )
     app[ADMIN_GUARD] = AdminGuard(admin_token)
+    app[ADMIN_SEQUENCE] = AdminSequence()
 
     async def _enroll_handler(request: web.Request) -> web.Response:
         denied = guard_admin(request, proxy_name)
@@ -343,6 +410,9 @@ def register_admin_routes(
             return web.json_response({"error": "bad_request"}, status=400)
         if not _SANDBOX_ID_RE.fullmatch(sandbox_id):
             return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(body)
+        if isinstance(seq, web.Response):
+            return seq
         ttl_raw = body.get("ttl_seconds")
         ttl_seconds: float | None = None
         if ttl_raw is not None:
@@ -359,6 +429,9 @@ def register_admin_routes(
             except EnrollRejected as exc:
                 logger.warning(f"{proxy_name}_enrollment_rejected", sandbox_id=sandbox_id, reason=str(exc))
                 return web.json_response({"error": "bad_request", "detail": str(exc)}, status=400)
+        stale = stale_request(request.app, proxy_name, f"sandbox:{sandbox_id}", seq)
+        if stale is not None:
+            return stale
         registry = request.app[ENROLLMENT]
         try:
             registry.enroll(
@@ -372,7 +445,11 @@ def register_admin_routes(
         except RegistryFullError:
             logger.error(f"{proxy_name}_enrollment_registry_full", sandbox_id=sandbox_id)
             return web.json_response({"error": "registry_full"}, status=429)
+        if seq is not None:
+            request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
         response: dict[str, Any] = {"status": "enrolled"}
+        if seq is not None:
+            response["seq"] = seq
         if enroll_extension is not None:
             response.update(enroll_extension.apply(request.app, sandbox_id, extra))
         logger.info(f"{proxy_name}_sandbox_enrolled", sandbox_id=sandbox_id)
@@ -385,13 +462,31 @@ def register_admin_routes(
         sandbox_id = request.match_info["sandbox_id"]
         if not _SANDBOX_ID_RE.fullmatch(sandbox_id):
             return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(await json_or_empty(request))
+        if isinstance(seq, web.Response):
+            return seq
+        stale = stale_request(request.app, proxy_name, f"sandbox:{sandbox_id}", seq)
+        if stale is not None:
+            return stale
         registry = request.app[ENROLLMENT]
         registry.unenroll(sandbox_id)  # runs on_unenroll when there was an enrollment
+        if seq is not None:
+            request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
         logger.info(f"{proxy_name}_sandbox_unenrolled", sandbox_id=sandbox_id)
-        return web.json_response({"status": "unenrolled"})
+        return web.json_response({"status": "unenrolled", **({"seq": seq} if seq is not None else {})})
 
     app.router.add_post("/admin/enroll", _enroll_handler)
     app.router.add_delete("/admin/enroll/{sandbox_id}", _unenroll_handler)
+
+
+async def json_or_empty(request: web.Request) -> Any:
+    """A request's JSON body, or {} when it has none (a DELETE from an orchestrator that sends none)."""
+    if not request.can_read_body:
+        return {}
+    try:
+        return await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return {}
 
 
 def check_bearer(request: web.Request, proxy_name: str) -> str | None:

@@ -93,7 +93,8 @@ class _Proxies:
 
     async def read_meter(self, proxy: str) -> dict[str, Any]:
         self._maybe_fail(proxy, "read")
-        return {"boot_id": self.boot[proxy], "tallies": list(self.tallies[proxy].values())}
+        stale = getattr(self, "stale", {}).get(proxy, 0)
+        return {"boot_id": self.boot[proxy], "tallies": list(self.tallies[proxy].values()), "stale_refused": stale}
 
 
 def _meter(proxies: _Proxies, repo: _Repo | None = None) -> tuple[RunMeter, CollectorRegistry]:
@@ -278,3 +279,13 @@ async def test_the_replay_mode_is_a_gauge_seeded_0() -> None:
     proxies.abandoned = set()  # type: ignore[attr-defined]
     await meter.poll_once()
     assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "xai-proxy"}) == 0
+
+
+async def test_the_stale_requests_a_proxy_refused_are_a_gauge_seeded_0() -> None:
+    proxies = _Proxies({})
+    meter, registry = _meter(proxies, _Repo())
+    meter._metrics.meter_proxies(proxies.metered_proxies())
+    assert sample(registry, "embry0_proxy_stale_admin_requests", {"proxy": "xai-proxy"}) == 0
+    proxies.stale = {"xai-proxy": 3}  # type: ignore[attr-defined]
+    await meter.poll_once()
+    assert sample(registry, "embry0_proxy_stale_admin_requests", {"proxy": "xai-proxy"}) == 3

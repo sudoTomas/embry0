@@ -46,7 +46,14 @@ from typing import Any, Literal
 import structlog
 from aiohttp import web
 
-from embry0.execution.proxy.enrollment import ENROLLMENT, guard_admin
+from embry0.execution.proxy.enrollment import (
+    ADMIN_SEQUENCE,
+    ENROLLMENT,
+    guard_admin,
+    json_or_empty,
+    request_seq,
+    stale_request,
+)
 from embry0.execution.proxy.model_request import anthropic_error
 
 __all__ = [
@@ -625,6 +632,11 @@ class Meter:
         if run_id is not None and run_id in self._runs and self._runs[run_id].ended is None:
             self._runs[run_id].ended = self._now()
 
+    def sandbox_of(self, run_id: str) -> str | None:
+        """The sandbox ``run_id`` was declared for, while its tally is held."""
+        tally = self._runs.get(run_id)
+        return tally.sandbox_id if tally is not None else None
+
     def end(self, run_id: str) -> dict[str, Any] | None:
         """End ``run_id`` and hand back its last snapshot; the tally is then dropped. None when it is not held."""
         tally = self._runs.pop(run_id, None)
@@ -770,8 +782,14 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "bad_request"}, status=400)
         if job_id is not None and not isinstance(job_id, str):
             return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(body)
+        if isinstance(seq, web.Response):
+            return seq
         if sandbox_id not in request.app[ENROLLMENT]:
             return web.json_response({"error": "not_enrolled"}, status=404)
+        stale = stale_request(request.app, proxy_name, f"sandbox:{sandbox_id}", seq)
+        if stale is not None:
+            return stale
         try:
             meter.declare(sandbox_id, run_id, job_id or None)
         except TalliesFullError:
@@ -779,8 +797,14 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "meter_full"}, status=429)
         except ValueError:
             return web.json_response({"error": "run_conflict"}, status=409)
+        if seq is not None:
+            request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
         logger.info(f"{proxy_name}_run_declared", sandbox_id=sandbox_id, run_id=run_id)
-        return web.json_response({"status": "declared", "boot_id": meter.boot_id})
+        # The number echoed says this proxy orders admin requests (an older image does not).
+        answer: dict[str, Any] = {"status": "declared", "boot_id": meter.boot_id}
+        if seq is not None:
+            answer["seq"] = seq
+        return web.json_response(answer)
 
     async def _end(request: web.Request) -> web.Response:
         denied = guard_admin(request, proxy_name)
@@ -789,9 +813,20 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         run_id = request.match_info["run_id"]
         if not _RUN_ID_RE.fullmatch(run_id):
             return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(await json_or_empty(request))
+        if isinstance(seq, web.Response):
+            return seq
+        sandbox_id = meter.sandbox_of(run_id)
+        if sandbox_id is None:
+            return web.json_response({"error": "unknown_run", "boot_id": meter.boot_id}, status=404)
+        stale = stale_request(request.app, proxy_name, f"sandbox:{sandbox_id}", seq)
+        if stale is not None:
+            return stale
         snapshot = meter.end(run_id)
         if snapshot is None:
             return web.json_response({"error": "unknown_run", "boot_id": meter.boot_id}, status=404)
+        if seq is not None:
+            request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
         logger.info(f"{proxy_name}_run_ended", run_id=run_id)
         return web.json_response({"boot_id": meter.boot_id, "tally": snapshot})
 
@@ -799,7 +834,8 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         denied = guard_admin(request, proxy_name)
         if denied is not None:
             return denied
-        return web.json_response(meter.snapshot())
+        # How many admin requests this proxy refused as older than the last it took (enrollment.AdminSequence).
+        return web.json_response({**meter.snapshot(), "stale_refused": request.app[ADMIN_SEQUENCE].refused})
 
     app.router.add_post("/admin/runs", _declare)
     app.router.add_delete("/admin/runs/{run_id}", _end)

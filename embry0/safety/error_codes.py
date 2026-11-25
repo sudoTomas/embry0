@@ -346,6 +346,11 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.execution.docker_client:ExecStdinTimeoutError", ErrorCode.SANDBOX_EXEC_STALLED),
     ("embry0.execution.tls:CABundleError", ErrorCode.SANDBOX_INIT),
     ("embry0.execution.proxy.enrollment:RegistryFullError", ErrorCode.PROXY_ENROLLMENT),
+    # A proxy refused an admin request as older than the last it took for the
+    # sandbox or credential. The manager absorbs it where it can arise (an end,
+    # an unenroll, a replayed entry); if it reaches a job row, it reads as the
+    # proxy refusing the sandbox.
+    ("embry0.execution.proxy.manager:StaleAdminRequest", ErrorCode.PROXY_ENROLLMENT),
     ("embry0.execution.auth_provider:AuthConfigError", ErrorCode.INVALID_CONFIG),
     ("embry0.agents.context_fit:ContextWindowExceeded", ErrorCode.CONTEXT_WINDOW_EXCEEDED),
     ("embry0.execution.xai_credential:XaiCredentialError", ErrorCode.AUTH_REJECTED),

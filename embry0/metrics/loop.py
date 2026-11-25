@@ -393,8 +393,15 @@ class LoopMetrics:
         )
         self._meter_replay_abandoned = Gauge(
             "embry0_meter_replay_abandoned",
-            "1 while a metering proxy's last replay was given up and a request of it may still reach the proxy: every "
-            "run declared there meanwhile is charged as one whose tally is not whole; 0 otherwise.",
+            "1 while a metering proxy's last replay was given up and what it did not send waits for the proxy to answer "
+            "(the sandboxes it did not reach are refused meanwhile); 0 otherwise.",
+            ["proxy"],
+            registry=r,
+        )
+        self._proxy_stale_requests = Gauge(
+            "embry0_proxy_stale_admin_requests",
+            "Admin requests a metering proxy refused as older than the last it took for the same sandbox or credential "
+            "(a late or replayed request), since that proxy process started, as of the last read.",
             ["proxy"],
             registry=r,
         )
@@ -623,14 +630,16 @@ class LoopMetrics:
             self._meter_last_read.labels(proxy=proxy).set(0)
             self._meter_unattributed.labels(proxy=proxy).set(0)
             self._meter_replay_abandoned.labels(proxy=proxy).set(0)
+            self._proxy_stale_requests.labels(proxy=proxy).set(0)
             for call in METER_CALLS:
                 self._meter_admin_failures.labels(proxy=proxy, call=call.value)
 
     @_never_raises
-    def meter_read(self, proxy: str, unattributed_requests: int) -> None:
+    def meter_read(self, proxy: str, unattributed_requests: int, stale_refused: int = 0) -> None:
         """A metering proxy's tallies were read."""
         self._meter_last_read.labels(proxy=proxy).set(time.time())
         self._meter_unattributed.labels(proxy=proxy).set(unattributed_requests)
+        self._proxy_stale_requests.labels(proxy=proxy).set(stale_refused)
 
     @_never_raises
     def meter_replay_abandoned(self, proxy: str, abandoned: bool) -> None:

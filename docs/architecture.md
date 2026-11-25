@@ -782,7 +782,10 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > `xai_proxy_path_refused`). The orchestrator declares each run to the metering proxies its sandbox is
 > enrolled with, reads their tallies every 5 seconds into `run_meter` and charges an xAI or local model's run
 > from them ([Metering at the proxies](providers.md#metering-at-the-proxies)); a recreated proxy is given
-> its runs back after the enrollments.
+> its runs back after the enrollments. Every admin request (an enrollment, its end, a change of push branches,
+> a run declared or ended, a token pushed) carries a number the orchestrator assigns when it decides it, and a
+> proxy refuses (409, `stale_request`) one not newer than the last it took for that sandbox or credential, so
+> a late or replayed older request never undoes a newer one (`execution/proxy/enrollment.py`).
 
 **Where the forge tokens come from.** Accounts, bindings, the env fallback, the importer and the use ledger are described in [`docs/credentials.md`](credentials.md). The proxies never read the registry: `ProxyManager.enroll_sandbox(forge=…)` receives the token `CredentialResolver.resolve_forge` chose for the job's repo, so rotating or rebinding a credential takes effect for the next sandbox without restarting anything.
 

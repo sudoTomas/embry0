@@ -39,7 +39,7 @@ from urllib.parse import urlsplit
 import structlog
 from aiohttp import web
 
-from embry0.execution.proxy.enrollment import EnrollRejected, guard_admin
+from embry0.execution.proxy.enrollment import ADMIN_SEQUENCE, EnrollRejected, guard_admin, request_seq, stale_request
 from embry0.execution.proxy.forge_scope import SCOPE_FIELD, normalize_gitlab_project, parse_allowed_repos
 from embry0.git_refs import valid_ref
 
@@ -303,6 +303,12 @@ class GitScope:
                 branches = parse_push_branches(body.get(PUSH_BRANCHES_FIELD))
             except EnrollRejected as exc:
                 return web.json_response({"error": "bad_request", "detail": str(exc)}, status=400)
+            seq = request_seq(body)
+            if isinstance(seq, web.Response):
+                return seq
+            stale = stale_request(request.app, self._proxy_name, f"sandbox:{sandbox_id}", seq)
+            if stale is not None:
+                return stale
             grants = request.app[GIT_GRANT_BY_ID]
             grant = grants.get(sandbox_id)
             if grant is None:
@@ -310,6 +316,8 @@ class GitScope:
             if not grant.push:
                 return web.json_response({"error": "push_not_allowed"}, status=409)
             grants[sandbox_id] = replace(grant, push_branches=branches)
+            if seq is not None:
+                request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
             logger.info(
                 f"{self._proxy_name}_push_branches_replaced",
                 sandbox_id=sandbox_id,

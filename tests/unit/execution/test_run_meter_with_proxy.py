@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -45,7 +46,7 @@ class _LocalExec:
 
 
 @pytest.fixture
-async def proxy(aiohttp_server, monkeypatch) -> Any:
+async def proxy(aiohttp_server, monkeypatch) -> AsyncIterator[Any]:
     server = await aiohttp_server(create_xai_proxy_app(ADMIN))
     monkeypatch.setitem(manager_module.METERED_PROXIES, "xai-proxy", (server.port, "xai"))
     monkeypatch.setitem(manager_module.METERED_PROXIES, "local-llm-proxy", (1, "custom"))
@@ -65,7 +66,9 @@ async def proxy(aiohttp_server, monkeypatch) -> Any:
     upstream = _Upstream()
     route_upstream(server.app, upstream)
     server.mgr, server.upstream = mgr, upstream
-    return server
+    yield server
+    # What a given-up replay left to send goes in the background: done before the proxy closes.
+    await asyncio.gather(*getattr(mgr, "_remainder_tasks", ()), return_exceptions=True)
 
 
 def _record() -> ProviderRecord:
@@ -351,10 +354,10 @@ async def _slow_replay(mgr: Any) -> asyncio.Task[None]:
     return asyncio.create_task(_release_later())
 
 
-async def test_a_declaration_waits_for_a_replay_no_longer_than_the_bound_and_its_run_is_charged_at_least_its_sandbox_s(
-    proxy: Any, monkeypatch: Any
-) -> None:
-    monkeypatch.setattr(manager_module, "REPLAY_WAIT_SECONDS", 0.2, raising=False)
+async def test_a_declaration_waits_for_a_replay_no_longer_than_the_bound(proxy: Any, monkeypatch: Any) -> None:
+    """Metering never holds a run up for long; ordering does not need the wait (the proxy orders by number), so the run
+    is charged its own call."""
+    monkeypatch.setattr(manager_module, "REPLAY_WAIT_SECONDS", 0.2)
     mgr = proxy.mgr
     meter = RunMeter(mgr, _Repo())
     slow = await _slow_replay(mgr)
@@ -362,18 +365,14 @@ async def test_a_declaration_waits_for_a_replay_no_longer_than_the_bound_and_its
         started = asyncio.get_running_loop().time()
         window = await meter.begin("sbx-1", "run-1", "job-1")
         assert asyncio.get_running_loop().time() - started < 5, "the run waited for the replay without bound"
-        assert window.declared, "the run was not declared once the wait ran out"
         await _sandbox_call(proxy)
         started = asyncio.get_running_loop().time()
         metering = await meter.end(window)
         assert asyncio.get_running_loop().time() - started < 5, "the end waited for the replay without bound"
     finally:
         slow.cancel()
-    cost = (1000 * 2.0 + 100 * 6.0 + 400 * 2.0 * 0.25) / 1e6
-    charge = charge_run(metering, _record(), sandbox_cost_usd=cost * 3, sandbox_tokens=(3000, 300, 1200, 0))
-    assert charge.metering["gap"] is True, "a run declared out of order was taken as whole"
-    assert charge.cost_usd >= cost * 3, "charged less than its sandbox reported"
-    assert not mgr.declared_unordered("xai-proxy", "run-1"), "the mark outlived the run"
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert (charge.source, charge.cost_usd) == ("proxy", pytest.approx(ONE_CALL))
 
 
 async def test_a_run_across_an_abandoned_replay_is_charged_at_least_its_sandbox_s(
@@ -418,9 +417,12 @@ def _lands_late(real_once: Any, box: dict[str, Any], match: Any) -> Any:
     async def _once(**kw: Any) -> dict[str, Any]:
         if match(kw) and "late" not in box:
 
-            async def _deliver() -> None:
+            async def _deliver() -> Any:
                 await asyncio.sleep(0.5)
-                await real_once(**kw)
+                try:
+                    return await real_once(**kw)
+                except Exception as exc:  # noqa: BLE001 — what the proxy answered the late request is the result
+                    return exc
 
             box["late"] = asyncio.create_task(_deliver())
             raise TimeoutError("docker command timed out after 15s")
@@ -429,11 +431,12 @@ def _lands_late(real_once: Any, box: dict[str, Any], match: Any) -> Any:
     return _once
 
 
-async def test_a_run_declared_after_an_abandoned_replay_is_not_taken_as_whole(
+async def test_a_given_up_run_declaration_that_lands_late_is_refused(
     proxy: Any, aiohttp_server: Any, monkeypatch: Any
 ) -> None:
-    """The review's late run: the replay gave up on run A's declaration, which still reached the proxy, after the
-    sandbox's next run B was declared, and took the sandbox. B is charged at least what its sandbox reported."""
+    """The review's late run, with no window to rely on: run A's replayed declaration reaches the proxy after the
+    sandbox's next run B was declared, and after the replay's remainder went too. Older than B's, it is refused: B
+    keeps the sandbox and is charged its own call."""
     mgr = proxy.mgr
     meter = RunMeter(mgr, _Repo())
     await meter.begin("sbx-1", "run-A", "job-1")
@@ -446,18 +449,19 @@ async def test_a_run_declared_after_an_abandoned_replay_is_not_taken_as_whole(
     await mgr._replay("xai-proxy")
     mgr._exec_admin_once = real_once  # type: ignore[method-assign]
     window_b = await meter.begin("sbx-1", "run-B", "job-1")
-    await box["late"]
+    await asyncio.gather(*getattr(mgr, "_remainder_tasks", ()))
+    assert not isinstance(await box["late"], dict), "the late, older declaration was taken"
+    assert new.app[METER]._current["sbx-1"] == "run-B"
     await _call_to(new)
     charge = charge_run(await meter.end(window_b), _record(), sandbox_cost_usd=ONE_CALL, sandbox_tokens=(1, 1, 0, 0))
-    assert charge.metering["gap"] is True, "a run declared after a given-up replay was taken as whole"
-    assert charge.cost_usd >= ONE_CALL, f"B was charged {charge.cost_usd}, less than its sandbox reported"
+    assert (charge.source, charge.cost_usd) == ("proxy", pytest.approx(ONE_CALL)), "B was not charged its own call"
 
 
-async def test_a_given_up_enrollment_that_lands_after_the_sandbox_s_next_run_leaves_that_run_not_whole(
+async def test_a_given_up_enrollment_that_lands_late_is_refused(
     proxy: Any, aiohttp_server: Any, monkeypatch: Any
 ) -> None:
-    """The review's abandoned case: the replay gave up on the enrollment; the sandbox was enrolled again and its next
-    run declared; the old enrollment then landed and ended that run on the proxy."""
+    """The review's abandoned case: the sandbox enrolled again and declared its next run; the replay's older
+    enrollment then reached the proxy. Refused: the run keeps the sandbox and is charged its own call."""
     mgr = proxy.mgr
     meter = RunMeter(mgr, _Repo())
     new = await _recreated(aiohttp_server, proxy, monkeypatch)
@@ -473,25 +477,91 @@ async def test_a_given_up_enrollment_that_lands_after_the_sandbox_s_next_run_lea
     ):
         await mgr._exec_admin_request(container="xai-proxy", method="POST", path=path, port=port, body=body)
     window_b = await meter.begin("sbx-1", "run-B", "job-1")
-    await box["late"]
+    assert not isinstance(await box["late"], dict), "the late, older enrollment was taken"
     await _call_to(new)
     charge = charge_run(await meter.end(window_b), _record(), sandbox_cost_usd=ONE_CALL, sandbox_tokens=(1, 1, 0, 0))
-    assert charge.metering["gap"] is True, "a run declared after a given-up replay was taken as whole"
-    assert charge.cost_usd >= ONE_CALL
+    assert (charge.source, charge.cost_usd) == ("proxy", pytest.approx(ONE_CALL))
 
 
-async def test_a_completed_replay_makes_the_proxy_s_runs_whole_again(proxy: Any) -> None:
+async def test_a_replayed_older_enrollment_never_replaces_a_newer_one(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """The review's NIT 2: the remainder sends the sandbox's older enrollment while the sandbox enrolls again with a
+    new bearer, and the newer one lands first. The older is refused, so the sandbox's current bearer is not refused."""
     mgr = proxy.mgr
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/enroll")
+    port = manager_module.METERED_PROXIES["xai-proxy"][0]
+    newer = "sandbox-bearer-token-NEWER-at-least-32-chars"
+    real_once = mgr._exec_admin_once
+    box: dict[str, Any] = {}
 
-    async def _hung(**kw: Any) -> dict[str, Any]:
+    async def _newer_lands_first(**kw: Any) -> dict[str, Any]:
+        if kw["path"] == "/admin/enroll" and kw["body"].get("sandbox_token") == TOKEN and "newer" not in box:
+            box["newer"] = True
+            await mgr._exec_admin_request(
+                container="xai-proxy",
+                method="POST",
+                path="/admin/enroll",
+                port=port,
+                body={"sandbox_id": "sbx-1", "sandbox_token": newer},
+            )
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _newer_lands_first  # type: ignore[method-assign]
+    restored, failed = await mgr._send_held("xai-proxy", mgr._replay_remainder["xai-proxy"])
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    assert failed == 0, "a held request a newer one superseded was counted as failed"
+    assert not mgr.replay_abandoned("xai-proxy")
+    import aiohttp
+
+    new.upstream.answers.append(_Answer((ANSWERS / "anthropic-message.json").read_bytes()))
+    async with aiohttp.ClientSession() as session:
+        body = {"model": "grok-4.7", "max_tokens": 10, "messages": []}
+        async with session.post(
+            new.make_url("/v1/messages"), json=body, headers={"Authorization": f"Bearer {newer}"}
+        ) as r:
+            assert r.status == 200, f"the sandbox's newer bearer was refused ({r.status}): the older enrollment won"
+
+
+async def test_a_given_up_replay_s_remainder_goes_in_the_background_once_the_proxy_answers(
+    proxy: Any, monkeypatch: Any
+) -> None:
+    """A proxy that answers nothing keeps it waiting; the first answer sends it, without holding that request up, and
+    a declaration meanwhile waits no longer than the bound. Then the mode ends."""
+    monkeypatch.setattr(manager_module, "REPLAY_WAIT_SECONDS", 0.2)
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/enroll")
+    assert mgr.replay_abandoned("xai-proxy")
+    real_once = mgr._exec_admin_once
+
+    async def _stuck(**kw: Any) -> dict[str, Any]:
         raise TimeoutError
 
-    real_once, mgr._exec_admin_once = mgr._exec_admin_once, _hung  # type: ignore[method-assign]
-    await mgr._replay("xai-proxy")
+    mgr._exec_admin_once = _stuck  # type: ignore[method-assign]
+    with pytest.raises(TimeoutError):
+        await mgr.read_meter("xai-proxy")
+    assert mgr.replay_abandoned("xai-proxy") and not getattr(mgr, "_remainder_tasks", ()), (
+        "a proxy that answered nothing was sent it"
+    )
+
+    async def _slow_enroll(**kw: Any) -> dict[str, Any]:
+        if kw["path"] == "/admin/enroll":
+            await asyncio.sleep(1.0)
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _slow_enroll  # type: ignore[method-assign]
+    started = asyncio.get_running_loop().time()
+    await mgr.read_meter("xai-proxy")
+    assert asyncio.get_running_loop().time() - started < 0.8, "the answering request waited for the remainder"
+    started = asyncio.get_running_loop().time()
+    window = await meter.begin("sbx-1", "run-1", "job-1")
+    assert asyncio.get_running_loop().time() - started < 0.8, "a declaration waited out the remainder"
+    await asyncio.gather(*getattr(mgr, "_remainder_tasks", ()))
     mgr._exec_admin_once = real_once  # type: ignore[method-assign]
-    assert await mgr._after_replay("xai-proxy") is False, "a proxy whose replay was given up counts as waited out"
-    await mgr._replay("xai-proxy")
-    assert await mgr._after_replay("xai-proxy") is True, "a completed replay left the proxy's runs not whole"
+    assert not mgr.replay_abandoned("xai-proxy"), "the mode outlasted the remainder"
+    await meter.end(window)
 
 
 async def test_a_declaration_that_fails_leaves_no_mark(proxy: Any, monkeypatch: Any) -> None:
@@ -532,21 +602,28 @@ async def _give_up_replay(mgr: Any, match: Any = lambda kw: True) -> list[str]:
     return sent
 
 
-async def test_runs_declared_out_of_order_are_told_from_runs_whose_tally_was_lost(proxy: Any) -> None:
-    """While a given-up replay may still land, a healthy run is charged ``*_unordered``; a run whose end is lost is a
-    gap like any other, and its trace says which."""
+async def test_a_run_on_a_proxy_that_does_not_order_requests_is_told_from_a_lost_tally(proxy: Any) -> None:
+    """A proxy image that predates ordered requests does not echo the declaration's number: its runs there are charged
+    ``*_unordered``, apart from a run whose end is lost (``*_gap``)."""
     mgr = proxy.mgr
     meter = RunMeter(mgr, _Repo())
-    await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/token")
-    assert mgr.replay_abandoned("xai-proxy")
-    healthy = await meter.begin("sbx-1", "run-1", "job-1")
+    real_once = mgr._exec_admin_once
+
+    async def _older_image(**kw: Any) -> dict[str, Any]:
+        answer = await real_once(**kw)
+        return {k: v for k, v in answer.items() if k != "seq"}
+
+    mgr._exec_admin_once = _older_image  # type: ignore[method-assign]
+    window = await meter.begin("sbx-1", "run-1", "job-1")
     await _sandbox_call(proxy)
-    metering = await meter.end(healthy)
-    assert (metering.unordered, metering.unreached) == (("xai-proxy",), ()), "an ordered failure was recorded"
+    metering = await meter.end(window)
+    assert (metering.unordered, metering.unreached) == (("xai-proxy",), ())
     charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
     assert charge.source == "proxy_unordered" and charge.metering["unordered"] == ["xai-proxy"]
-    lost = await meter.begin("sbx-1", "run-2", "job-1")
-    real_once = mgr._exec_admin_once
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    ordered = await meter.begin("sbx-1", "run-2", "job-1")
+    assert (await meter.end(ordered)).unordered == (), "a run on a proxy that echoes its number was unordered"
+    lost = await meter.begin("sbx-1", "run-3", "job-1")
 
     async def _end_lost(**kw: Any) -> dict[str, Any]:
         if kw["method"] == "DELETE":
@@ -561,45 +638,15 @@ async def test_runs_declared_out_of_order_are_told_from_runs_whose_tally_was_los
     assert charge.source == "sandbox_gap" and charge.metering["unreached"] == ["xai-proxy"]
 
 
-async def test_the_mode_ends_with_the_first_answer_to_a_request_sent_late_enough(proxy: Any, monkeypatch: Any) -> None:
-    """A request of the given-up replay can arrive no later than LATE_REQUEST_SECONDS after it; an answer to one sent
-    after that means nothing of the replay is on its way. A proxy that does not answer stays in the mode."""
-    monkeypatch.setattr(manager_module, "LATE_REQUEST_SECONDS", 0.3, raising=False)
-    mgr = proxy.mgr
-    await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/token")
-    await mgr.read_meter("xai-proxy")
-    assert mgr.replay_abandoned("xai-proxy"), "the mode ended before a late request could no longer arrive"
-    await asyncio.sleep(0.35)
-    real_once = mgr._exec_admin_once
-
-    async def _stuck(**kw: Any) -> dict[str, Any]:
-        raise TimeoutError
-
-    mgr._exec_admin_once = _stuck  # type: ignore[method-assign]
-    with pytest.raises(TimeoutError):
-        await mgr.read_meter("xai-proxy")
-    assert mgr.replay_abandoned("xai-proxy"), "a proxy that answered nothing left the mode"
-    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
-    await mgr.read_meter("xai-proxy")
-    assert not mgr.replay_abandoned("xai-proxy"), "the mode outlasted every late request"
-    assert await mgr._after_replay("xai-proxy") is True
-
-
-async def test_what_a_given_up_replay_did_not_send_is_sent_when_the_mode_ends(
+async def test_what_a_given_up_replay_did_not_send_is_sent_when_the_proxy_answers(
     proxy: Any, aiohttp_server: Any, monkeypatch: Any
 ) -> None:
     """Else the sandboxes it did not reach are refused until they enroll again or the proxy is recreated. What was
     done since (a token pushed again) is not sent a second time."""
-    monkeypatch.setattr(manager_module, "LATE_REQUEST_SECONDS", 0.2, raising=False)
     mgr = proxy.mgr
     await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
     new = await _recreated(aiohttp_server, proxy, monkeypatch)
     assert await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/enroll") == ["/admin/enroll"]
-    port = manager_module.METERED_PROXIES["xai-proxy"][0]
-    await mgr._exec_admin_request(
-        container="xai-proxy", method="POST", path="/admin/token", port=port, body={"access_token": "at-2"}
-    )
-    await asyncio.sleep(0.25)
     sent: list[str] = []
     real_once = mgr._exec_admin_once
 
@@ -608,10 +655,181 @@ async def test_what_a_given_up_replay_did_not_send_is_sent_when_the_mode_ends(
         return await real_once(**kw)
 
     mgr._exec_admin_once = _recording  # type: ignore[method-assign]
-    await mgr.read_meter("xai-proxy")
+    port = manager_module.METERED_PROXIES["xai-proxy"][0]
+    await mgr._exec_admin_request(
+        container="xai-proxy", method="POST", path="/admin/token", port=port, body={"access_token": "at-2"}
+    )
+    await asyncio.gather(*getattr(mgr, "_remainder_tasks", ()))
     mgr._exec_admin_once = real_once  # type: ignore[method-assign]
-    assert sent == ["GET /admin/meter", "POST /admin/enroll", "POST /admin/runs"], sent
+    assert sent == ["POST /admin/token", "POST /admin/enroll", "POST /admin/runs"], sent
     assert not mgr.replay_abandoned("xai-proxy")
     assert new.app[METER]._current["sbx-1"] == "run-1", "the sandbox's run was not given back"
     await _call_to(new)
     assert new.app[METER].snapshot()["tallies"][0]["models"], "the sandbox's call was refused"
+
+
+async def test_each_admin_request_is_numbered_newer_and_a_replay_sends_its_own_number(proxy: Any) -> None:
+    import time
+
+    mgr = proxy.mgr
+    before = time.time_ns()
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
+    held = mgr._admin_state["xai-proxy"]
+    numbers = [held["enroll:sbx-1"][2]["seq"], held["token:"][2]["seq"], held["run:run-1"][2]["seq"]]
+    assert numbers == sorted(numbers) and len(set(numbers)) == 3, f"not newer each time: {numbers}"
+    assert numbers[-1] >= before, "a later process's numbers would not be newer than an earlier one's"
+    sent: dict[str, int] = {}
+
+    async def _record(**kw: Any) -> dict[str, Any]:
+        sent[kw["path"]] = kw["body"]["seq"]
+        return {}
+
+    real_once, mgr._exec_admin_once = mgr._exec_admin_once, _record  # type: ignore[method-assign]
+    await mgr._replay("xai-proxy")
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    assert sent == {"/admin/enroll": numbers[0], "/admin/token": numbers[1], "/admin/runs": numbers[2]}, sent
+    assert "seq" not in ((await mgr.read_meter("xai-proxy")) or {}).get("tallies", [{}])[0], "a read was numbered"
+
+
+async def test_only_a_stale_refusal_is_a_stale_request(proxy: Any) -> None:
+    from embry0.execution.proxy.manager import StaleAdminRequest
+
+    mgr = proxy.mgr
+    port = proxy.port
+    with pytest.raises(StaleAdminRequest):
+        await mgr._exec_admin_once(
+            container="xai-proxy",
+            method="POST",
+            path="/admin/enroll",
+            port=port,
+            body={"sandbox_id": "sbx-1", "sandbox_token": TOKEN, "seq": 1},
+        )
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
+    await mgr._exec_admin_request(
+        container="xai-proxy",
+        method="POST",
+        path="/admin/enroll",
+        port=port,
+        body={"sandbox_id": "sbx-2", "sandbox_token": "another-bearer-token-at-least-32-chars"},
+    )
+    with pytest.raises(RuntimeError) as conflict:
+        await mgr.declare_run("xai-proxy", "sbx-2", "run-1")  # a run that belongs to another sandbox: 409, not stale
+    assert not isinstance(conflict.value, StaleAdminRequest)
+
+
+async def test_an_unenroll_or_end_a_newer_request_superseded_stops_there(proxy: Any) -> None:
+    from embry0.execution.proxy.manager import StaleAdminRequest
+
+    mgr = proxy.mgr
+    mgr.git_proxy_url = ""
+    calls: list[str] = []
+
+    async def _superseded(**kw: Any) -> dict[str, Any]:
+        calls.append(kw["path"])
+        raise StaleAdminRequest("refused as older than the last it took")
+
+    real, mgr._exec_admin_request = mgr._exec_admin_request, _superseded  # type: ignore[method-assign]
+    await mgr.unenroll_sandbox("sbx-1")
+    assert calls == ["/admin/enroll/sbx-1"], f"a superseded unenroll was retried: {calls}"
+    assert await mgr.end_run("xai-proxy", "run-1") is None, "a superseded end was not taken as no final tally"
+    mgr._exec_admin_request = real  # type: ignore[method-assign]
+
+
+async def test_a_declaration_is_never_held_by_a_slow_remainder(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """The review's probe: a long remainder going out while a run is declared. The declaration waits no longer than
+    the bound, and its own answer does not make it wait for the remainder either."""
+    monkeypatch.setattr(manager_module, "LATE_REQUEST_SECONDS", 0.0, raising=False)  # the window an earlier design had
+    monkeypatch.setattr(manager_module, "REPLAY_WAIT_SECONDS", 0.3)
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    for n in range(4):
+        mgr._remember("xai-proxy", "POST", "/admin/enroll", 1, {"sandbox_id": f"sbx-{n + 2}", "sandbox_token": TOKEN})
+    await _recreated(aiohttp_server, proxy, monkeypatch)
+    await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/enroll" and kw["body"]["sandbox_id"] == "sbx-2")
+    real_once = mgr._exec_admin_once
+
+    async def _slow_enroll(**kw: Any) -> dict[str, Any]:
+        if kw["path"] == "/admin/enroll":
+            await asyncio.sleep(1.0)
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _slow_enroll  # type: ignore[method-assign]
+    clearing = asyncio.create_task(mgr.read_meter("xai-proxy"))
+    await asyncio.sleep(0.1)
+    started = asyncio.get_running_loop().time()
+    await meter.begin("sbx-1", "run-B", "job-1")
+    took = asyncio.get_running_loop().time() - started
+    await clearing
+    await asyncio.gather(*getattr(mgr, "_remainder_tasks", ()))
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    assert took < 1.5, f"the declaration took {took:.1f}s while the remainder went out"
+
+
+async def test_one_proxy_s_remainder_never_holds_another_s(proxy: Any) -> None:
+    mgr = proxy.mgr
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    async def _send_remainder(name: str) -> None:
+        started.append(name)
+        await gate.wait()
+
+    mgr._send_remainder = _send_remainder  # type: ignore[method-assign]
+    mgr._replay_abandoned.update({"xai-proxy", "local-llm-proxy"})
+    mgr._resume_replay_soon("xai-proxy")
+    mgr._resume_replay_soon("xai-proxy")
+    mgr._resume_replay_soon("local-llm-proxy")
+    await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(*getattr(mgr, "_remainder_tasks", ()))
+    mgr._replay_abandoned.clear()
+    assert sorted(started) == ["local-llm-proxy", "xai-proxy"], f"remainders started: {started}"
+
+
+async def test_every_request_that_changes_a_proxy_s_state_is_numbered(proxy: Any) -> None:
+    """A request without a number is taken unordered: every one the orchestrator sends that changes what a proxy holds
+    carries one, a read does not."""
+    mgr = proxy.mgr
+    mgr.git_proxy_url = ""
+    sent: list[tuple[str, str, Any]] = []
+    real_once = mgr._exec_admin_once
+
+    async def _recording(**kw: Any) -> dict[str, Any]:
+        sent.append((kw["method"], kw["path"], (kw["body"] or {}).get("seq")))
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _recording  # type: ignore[method-assign]
+    await mgr._exec_admin_request(  # as push_xai_token sends it (to the proxy's fixed port)
+        container="xai-proxy",
+        method="POST",
+        path="/admin/token",
+        port=proxy.port,
+        body={"credential_id": "cred-1", "access_token": "at-2"},
+    )
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
+    await mgr.read_meter("xai-proxy")
+    await mgr.end_run("xai-proxy", "run-1")
+    await mgr.unenroll_sandbox("sbx-1")
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    unnumbered = [(m, p) for m, p, seq in sent if m != "GET" and not isinstance(seq, int)]
+    assert not unnumbered, f"sent without a number: {unnumbered}"
+    assert [m for m, _, seq in sent if m == "GET" and seq is not None] == [], "a read was numbered"
+    assert {m for m, _, _ in sent} == {"POST", "GET", "DELETE"}, sent
+    assert manager_module._ordered("PUT", "/admin/git-push-branches/sbx-1"), "a change of push branches is unordered"
+
+
+async def test_a_remainder_is_not_queued_behind_a_replay_under_way(proxy: Any) -> None:
+    """A request answered while a replay holds the lock starts nothing: were that replay to give up, a queued remainder
+    would go at once to a proxy that has just stopped answering."""
+    mgr = proxy.mgr
+    lock = mgr._replay_locks.setdefault("xai-proxy", asyncio.Lock())
+    await lock.acquire()
+    mgr._replay_abandoned.add("xai-proxy")
+    try:
+        await mgr.read_meter("xai-proxy")
+        assert not mgr._remainder_tasks, "a remainder was queued behind the replay under way"
+    finally:
+        lock.release()
+        mgr._replay_abandoned.discard("xai-proxy")

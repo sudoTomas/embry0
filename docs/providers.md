@@ -212,7 +212,7 @@ proxy's count (`embry0/agents/run_charge.py`):
 |---|---|
 | whole: declared, its end read, one proxy process all along | the proxy's count (`source: proxy`) |
 | not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
-| complete, but declared out of order (see below) | the larger of the two (`proxy_unordered` or `sandbox_unordered`) |
+| complete, but declared on a proxy image that does not order requests (see below) | the larger of the two (`proxy_unordered` or `sandbox_unordered`) |
 | the run's provider is carried by no metering proxy (Anthropic, a chat-completions provider) | the sandbox's figure, as above (`sandbox`) |
 | the record has no rates | the sandbox's figure (`sandbox_unpriced`) |
 
@@ -227,20 +227,28 @@ output. A proxy process that went away mid-run leaves its last read in
 `run_meter` with its calls in flight, and the recreated proxy is given the run
 back after the sandbox's enrollment, under a new process (`boot_id`), so the
 run's calls are the two tallies summed and the charge is the larger figure.
+**Every admin request is ordered.** The orchestrator numbers each request it
+sends a proxy (an enrollment, its end, a change of push branches, a run
+declared or ended, a token pushed) when it decides it, and a replay sends each
+held request with its own number again. A proxy takes a request only when its
+number is newer than the last it took for the same sandbox (or credential, for
+a token); an older one is refused (409, `stale_request`), logged and counted
+(`embry0_proxy_stale_admin_requests`). So a request that reaches the proxy
+late (a `docker exec` that ran after its client gave up) or a replayed older
+one can never take a sandbox from a newer run or enrollment, however late.
+
 Metering never holds a run up for long: a replay that times out is given up
-at once (the next recreation gives the proxy everything again), and a run's
-declaration or end waits at most 30 seconds for a replay before it goes
-ahead, the run then charged as one whose tally is not whole. A request of a
-given-up replay may still reach the proxy for 30 seconds (it runs there as a
-10-second request inside a `docker exec` killed at 15), so until the proxy
-answers a request sent after that, every run declared on it is charged that
-way too: `unordered` on its trace, apart from a run whose tally was lost
-(`unreached`). The first such answer, from the next 5-second read, ends the
-mode and sends the proxy what the replay did not: each entry still held as it
-was, so what a sandbox did since (enrolled again, began or ended a run)
-stands. `embry0_meter_replay_abandoned` is 1 while a proxy is in the mode, and
-`Embry0MeterReplayGivenUp` fires when it stays 15 minutes (the proxy is not
-answering).
+at once, and a run's declaration or end waits at most 30 seconds for a replay
+before it goes ahead (the wait only spares it finding the sandbox not yet
+enrolled again, which would leave its tally not whole). What a given-up replay
+did not send is sent in the background once the proxy answers again, each
+entry only if still held as it was, so what a sandbox did since (enrolled
+again, began or ended a run) stands. `embry0_meter_replay_abandoned` is 1 while
+it waits, and `Embry0MeterReplayGivenUp` fires when it waits 15 minutes (the
+proxy is not answering). A proxy image that predates ordered requests does not
+echo a declaration's number, and a run declared on it is charged as one whose
+tally is not whole (`unordered` on its trace, `proxy_unordered` or
+`sandbox_unordered`), apart from a run whose tally was lost (`unreached`).
 
 The trace keeps both figures: `metering` (the source, whether the tally was
 whole, the proxy's cost, the sandbox's, each proxy's processes, calls, calls
