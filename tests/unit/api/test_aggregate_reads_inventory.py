@@ -44,7 +44,7 @@ import pytest
 from fastapi import APIRouter, FastAPI, Request
 
 from embry0.storage.database import DatabasePool
-from tests.fixtures.aggregate_reads import Deployment, aggregate_reads_app, forget_caches, job_id
+from tests.fixtures.aggregate_reads import PERSON_ID, Deployment, aggregate_reads_app, forget_caches, job_id
 from tests.fixtures.job_reads import APP, JOB, deliverable_id
 from tests.fixtures.repository_reads import HOST
 from tests.fixtures.repository_writes import COVERED, UNCOVERED, call
@@ -150,6 +150,7 @@ OTHER_STAGES: dict[str, str] = {
 ROUTE_PARAMS: dict[str, dict[str, str]] = {
     "/api/v1/config/providers/{provider_name}/usage": {"provider_name": "openrouter"},
     "/api/v1/hosts/{host_id}": {"host_id": HOST},
+    "/api/v1/people/{person_id}": {"person_id": PERSON_ID},
 }
 
 #: The queries each route is also read with: ``{job}`` is a job of the covered repository, ``{other}`` one that does

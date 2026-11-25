@@ -89,6 +89,8 @@ _OWNER_WHOLE = "an owner the key does not cover as a whole reads as one nobody r
 READ_ROUTES: dict[str, str] = {
     # A repository: a repository the key does not cover answers as one nobody registered, nothing stored for it.
     "/api/v1/repos": "lists the repositories the key covers, narrowed in the query",
+    # #179: the owner logins repositories name, among who could be added as a person; people are the deployment's.
+    "/api/v1/people/suggestions": "a key with an allowlist reads nobody to add, its own repositories' owners included",
     "/api/v1/repos/{full_repo:repo}": f"{_UNREGISTERED} (404)",
     "/api/v1/repos/{full_repo:repo}/-": "the same handler",
     "/api/v1/repos/{full_repo:repo}/-/": "the same handler",

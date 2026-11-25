@@ -857,6 +857,11 @@ async def _init_app_state(
     app.state.users_repo = UsersRepository(
         db, audit_log_path=users_audit_log if isinstance(users_audit_log, str | pathlib.Path) else None
     )
+    from embry0.storage.repositories.people import PeopleRepository
+
+    app.state.people_repo = PeopleRepository(
+        db, audit_log_path=users_audit_log if isinstance(users_audit_log, str | pathlib.Path) else None
+    )
     app.state.api_keys_repo = ApiKeysRepository(db)
     app.state.audit_repo = AuditRepository(db)
     app.state.deliverables_repo = DeliverablesRepository(db)
@@ -3218,6 +3223,7 @@ def _register_routers(app: FastAPI) -> None:
         org_actions,
         org_needs,
         organizations,
+        people,
         pipeline_templates,
         progression,
         progression_pack,
@@ -3331,6 +3337,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(knowledge_maps.router, prefix="/api/v1", tags=["knowledge-maps"], dependencies=auth_deps)
     # Hand-offs (spec 2026-10-27): a decision sent to a teammate; who signs in, and their GitHub login.
     app.include_router(handoffs.router, prefix="/api/v1", tags=["handoffs"], dependencies=auth_deps)
+    app.include_router(people.router, prefix="/api/v1", tags=["people"], dependencies=auth_deps)
     # Asks (spec 2026-10-27): the feed a chat assistant sends decisions from, and its answers.
     app.include_router(asks.router, prefix="/api/v1", tags=["asks"], dependencies=auth_deps)
     # Run with (spec 2026-10-25): the keys a dashboard action may run a job with.

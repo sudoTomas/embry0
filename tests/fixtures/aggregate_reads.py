@@ -75,6 +75,9 @@ from tests.fixtures.repository_writes import (
     seed,
 )
 
+#: A person (#179): the deployment's, so a key with an allowlist reads none, before or after another repository's work.
+PERSON_ID = "per-00000000agg1"
+
 #: What everything planted for each repository carries.
 MARK = {COVERED: "widget-total", UNCOVERED: "gizmo-total"}
 #: What each repository's planted jobs cost, apiece: different, so a sum shows whose jobs it adds.
@@ -420,6 +423,7 @@ async def aggregate_reads_app(db: DatabasePool, monkeypatch: pytest.MonkeyPatch)
         await db.execute(
             "INSERT INTO hosts (id, name, address, transport) VALUES ($1, 'shared-1', '10.0.0.1', 'ssh')", HOST
         )
+        await db.execute("INSERT INTO people (id, name) VALUES ($1, 'Agg')", PERSON_ID)
         await db.execute(
             "INSERT INTO agent_definitions (type, description, model) VALUES ($1, 'plans', 'claude-test')", ONLY_AGENT
         )

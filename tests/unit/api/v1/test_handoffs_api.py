@@ -141,7 +141,7 @@ async def call(app: Any, method: str, url: str, **kw: Any) -> Any:
 
 @pytest.mark.asyncio
 async def test_the_people_a_decision_can_go_to_sign_in_or_have_a_github_login(app: Any) -> None:
-    people = (await call(app, "GET", "/api/v1/people")).json()["people"]
+    people = (await call(app, "GET", "/api/v1/handoffs/people")).json()["people"]
     assert [p["email"] for p in people] == [ME, "bo@example.com", "cy@example.com"], "not a guest with neither"
     assert people[1] == {"id": "u2", "email": "bo@example.com", "name": "Bo", "github_login": "bo", "tier": "operator"}
 

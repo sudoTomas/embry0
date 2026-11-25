@@ -17,7 +17,7 @@ Destructive or mutating-sensitive tools (``job_cancel``, ``job_resume``,
 ``settings_set``, ``settings_set_keys``, ``settings_undo``,
 ``provider_catalogue_set``, ``provider_catalogue_undo``, ``proposal_accept``,
 ``proposal_decline``, ``proposal_snooze``, ``areas_set``, ``areas_map``,
-``areas_proposal_decide``, ``areas_undo``) require
+``areas_proposal_decide``, ``areas_undo``, ``people_set``) require
 ``confirm=true``; without it they return an instructive refusal instead of
 acting. ``progression_pack_set``, ``settings_set``, ``settings_set_keys``,
 ``provider_catalogue_set`` and ``areas_set`` with ``dry_run=true`` store
@@ -1697,6 +1697,54 @@ async def qa_config_set(repo: str, yaml_text: str, confirm: bool = False) -> dic
     if not confirm:
         return _confirmation_refusal("qa_config_set", f"replace the stored QA config for {repo!r}")
     return await _get_client().qa_config_set(repo, yaml_text)
+
+
+@_tool
+async def people_get(person_id: str = "", include_disabled: bool = False) -> dict[str, Any]:
+    """The deployment's people: every person by name (``people``), or with ``person_id`` that one. A person is
+    ``{id, name, email, user_id, timezone, hours, weekdays, disabled, identities, updated_at}``; ``identities`` are
+    ``{kind, value}``, a login on a forge (github, gitlab) or a handle in a chat (telegram, slack, teams, discord),
+    and ``updated_at`` is what people_set takes as ``expected_updated_at``. Needs an operate or admin key; a key with a
+    repository allowlist reads nobody (an unknown person is a 404)."""
+    if person_id:
+        return await _get_client().person_get(person_id)
+    return await _get_client().people_list(include_disabled=include_disabled)
+
+
+@_tool
+async def people_set(
+    person_id: str = "",
+    fields: dict[str, Any] | None = None,
+    identities: list[dict[str, Any]] | None = None,
+    expected_updated_at: str = "",
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Add a person (no ``person_id``) or change one. ``fields`` are any of ``name`` (required to add), ``email``,
+    ``user_id`` (the users id they sign in as), ``timezone``, ``hours`` ("09-17"), ``weekdays`` ("mon-fri") and
+    ``disabled``; null clears an optional one, and a field left out is left as it is. ``identities``, a list of
+    ``{kind, value}``, makes them exactly the person's; left out, they are not touched. A change needs
+    ``expected_updated_at``, the ``updated_at`` people_get returned, so a change someone made in between (an identity
+    added, a user linked) is refused (409) rather than overwritten; read the person again first. A write with
+    problems is refused with a 422 naming every one by where it is, never its value; a value another person or user
+    holds is a 409. Nothing here deletes a person. Needs an admin key without a repository allowlist. Requires
+    confirm=true."""
+    body: dict[str, Any] = dict(fields or {})
+    if identities is not None:
+        body["identities"] = identities
+    if person_id and not expected_updated_at.strip():
+        return {
+            "error": "expected_updated_at_required",
+            "message": (
+                f"Refused to change the person {person_id!r} blind: pass expected_updated_at, the updated_at "
+                "people_get returned for them, so a change made since is refused instead of overwritten."
+            ),
+        }
+    if not confirm:
+        what = f"change the person {person_id!r}" if person_id else "add a person"
+        return _confirmation_refusal("people_set", what)
+    if person_id:
+        return await _get_client().person_change(person_id, body, expected_updated_at=expected_updated_at)
+    return await _get_client().person_add(body)
 
 
 @_tool

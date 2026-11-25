@@ -81,6 +81,44 @@ def _conflict(exc: asyncpg.UniqueViolationError) -> PersonConflict:
 _NO_USER = PersonInvalid("user_id", "no such user")
 
 
+class PersonChanged(Exception):
+    """The person changed since the version a write expected: ``updated_at`` is the one stored now."""
+
+    def __init__(self, updated_at: datetime) -> None:
+        super().__init__(f"the person changed at {updated_at.isoformat()}")
+        self.updated_at = updated_at
+
+
+#: The advisory lock a GitHub login is taken under: ``f"{GITHUB_LOGIN_LOCK}:{login.lower()}"``.
+GITHUB_LOGIN_LOCK = "github_login"
+
+
+async def lock_github_logins(conn: Any, logins: Iterable[str]) -> None:
+    """Hold each login's advisory lock for the transaction, in one order (#691 review).
+
+    A write that gives a person a GitHub identity reads ``users`` for the
+    login, and one that sets a user's login reads ``person_identities``: each
+    checks the other's table, so two at once could each see the login free
+    and both take it. Both take the login's lock before they check, so the
+    second waits for the first and then sees what it wrote. Taken sorted, so
+    two writes of several logins never wait on each other in a circle.
+    """
+    for login in sorted({login.lower() for login in logins if login}):
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"{GITHUB_LOGIN_LOCK}:{login}")
+
+
+async def _check_login_free(conn: Any, user_id: str | None, login: str) -> None:
+    """A GitHub login another user signs in as is not another person's to hold (#672 review): the person linked to
+    that user may hold it, nobody else. Without this, a person could hold it, and the next fall back of their own
+    user's login would find it taken. Called after the identity's insert, in its transaction: a value another person
+    holds is refused as that ``identity`` first, and this refusal rolls the insert back."""
+    other = await conn.fetchval(
+        "SELECT id FROM users WHERE LOWER(github_login) = LOWER($1) AND id IS DISTINCT FROM $2", login, user_id
+    )
+    if other is not None:
+        raise PersonConflict("github login")
+
+
 #: The audit events a transaction wrote, to append to the audit file once it commits.
 Written = list[tuple[AuditAction, str, dict[str, Any]]]
 
@@ -268,6 +306,7 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
+                await lock_github_logins(conn, (value for kind, value in checked if kind == "github"))
                 await conn.execute(
                     "INSERT INTO people (id, name, email, user_id, timezone, hours, weekdays, disabled, created_by) "
                     "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
@@ -288,6 +327,8 @@ class PeopleRepository:
                         kind,
                         value,
                     )
+                    if kind == "github":
+                        await _check_login_free(conn, values.get("user_id"), value)
                 await sync_user_login(conn, person_id)
                 await _audit(
                     conn,
@@ -309,25 +350,37 @@ class PeopleRepository:
         assert person is not None
         return person
 
-    async def update(self, person_id: str, fields: Mapping[str, Any], *, actor: str) -> Person | None:
+    async def update(
+        self,
+        person_id: str,
+        fields: Mapping[str, Any],
+        *,
+        actor: str,
+        identities: Iterable[tuple[str, str]] | None = None,
+        expect_updated_at: datetime | None = None,
+    ) -> Person | None:
         """``fields`` written on the person (``None`` clears an optional one), audited as ``person.updated`` with
-        each field's value before and after. None when there is no such person; a write that changes nothing writes
-        no audit row."""
+        each field's value before and after; and with ``identities``, the person's identities made exactly those,
+        each one taken or given audited as ``person.identity.removed`` or ``person.identity.added``. None when there
+        is no such person; :class:`PersonChanged` when ``expect_updated_at`` is not the version stored. A write that
+        changes nothing writes no audit row."""
         values = check_fields(fields)
+        wanted = None if identities is None else [check_identity(kind, value) for kind, value in identities]
         written: Written = []
         try:
             async with self._db.transaction() as conn:
+                await lock_github_logins(conn, (value for kind, value in wanted or () if kind == "github"))
                 before = await conn.fetchrow(f"SELECT {_COLUMNS} FROM people WHERE id = $1 FOR UPDATE", person_id)
                 if before is None:
                     return None
+                if expect_updated_at is not None and before["updated_at"] != expect_updated_at:
+                    raise PersonChanged(before["updated_at"])
                 changed = {key: value for key, value in values.items() if before[key] != value}
                 if changed:
                     sets = ", ".join(f"{key} = ${i}" for i, key in enumerate(changed, start=2))
                     await conn.execute(
                         f"UPDATE people SET {sets}, updated_at = now() WHERE id = $1", person_id, *changed.values()
                     )
-                    if "user_id" in changed:
-                        await sync_user_login(conn, person_id)
                     await _audit(
                         conn,
                         "person.updated",
@@ -338,6 +391,11 @@ class PeopleRepository:
                         },
                         into=written,
                     )
+                moved = await self._replace_identities(
+                    conn, person_id, wanted, values.get("user_id", before["user_id"]), actor=actor, into=written
+                )
+                if "user_id" in changed or moved:
+                    await sync_user_login(conn, person_id)
                 person = await _one(conn, person_id)
         except asyncpg.UniqueViolationError as exc:
             raise _conflict(exc) from None
@@ -345,6 +403,57 @@ class PeopleRepository:
             raise _NO_USER from None
         append_audit_file(written, self._audit_log_path)
         return person
+
+    @staticmethod
+    async def _replace_identities(
+        conn: Any,
+        person_id: str,
+        wanted: list[tuple[str, str]] | None,
+        user_id: str | None,
+        *,
+        actor: str,
+        into: Written,
+    ) -> bool:
+        """Make the person's identities exactly ``wanted`` (nothing when None); whether a GitHub one changed."""
+        if wanted is None:
+            return False
+        rows = await conn.fetch("SELECT kind, value FROM person_identities WHERE person_id = $1", person_id)
+        held = {(row["kind"], row["value"].lower()): row["value"] for row in rows}
+        want = {(kind, value.lower()): value for kind, value in wanted}
+        github = False
+        for key in sorted(set(held) - set(want)):
+            await conn.execute(
+                "DELETE FROM person_identities WHERE person_id = $1 AND kind = $2 AND LOWER(value) = $3",
+                person_id,
+                key[0],
+                key[1],
+            )
+            github = github or key[0] == "github"
+            await _audit(
+                conn,
+                "person.identity.removed",
+                actor=actor,
+                details={"person_id": person_id, "kind": key[0], "value": held[key]},
+                into=into,
+            )
+        for key in [key for key in want if key not in held]:
+            kind, value = key[0], want[key]
+            await conn.execute(
+                "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, $2, $3)", person_id, kind, value
+            )
+            if kind == "github":
+                await _check_login_free(conn, user_id, value)
+                github = True
+            await _audit(
+                conn,
+                "person.identity.added",
+                actor=actor,
+                details={"person_id": person_id, "kind": kind, "value": value},
+                into=into,
+            )
+        if set(held) != set(want):
+            await conn.execute("UPDATE people SET updated_at = now() WHERE id = $1", person_id)
+        return github
 
     async def delete(self, person_id: str, *, actor: str) -> bool:
         """Delete the person and their identities, audited as ``person.deleted``. False when there is none. A user
@@ -377,11 +486,16 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
-                if await conn.fetchval("SELECT 1 FROM people WHERE id = $1 FOR UPDATE", person_id) is None:
+                if kind == "github":
+                    await lock_github_logins(conn, (value,))
+                holder = await conn.fetchrow("SELECT user_id FROM people WHERE id = $1 FOR UPDATE", person_id)
+                if holder is None:
                     return None
                 await conn.execute(
                     "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, $2, $3)", person_id, kind, value
                 )
+                if kind == "github":
+                    await _check_login_free(conn, holder["user_id"], value)
                 await conn.execute("UPDATE people SET updated_at = now() WHERE id = $1", person_id)
                 if kind == "github":
                     await sync_user_login(conn, person_id)
@@ -432,3 +546,42 @@ class PeopleRepository:
             raise _conflict(exc) from None
         append_audit_file(written, self._audit_log_path)
         return person
+
+    async def suggestions(self) -> dict[str, list[dict[str, Any]]]:
+        """Who could be added as a person (D6: embry0 adds nobody by itself): each user who signs in, not disabled,
+        that no person is linked to; and each owner login embry0 keeps (a repository's ``owners`` preference, an
+        area's owners) that no person holds as a ``github`` identity, with the repositories that name it. A
+        ``CODEOWNERS`` owner is read from the forge and is not listed."""
+        async with self._db.transaction() as conn:
+            users = await conn.fetch(
+                "SELECT u.id, u.email, u.name, u.github_login FROM users u "
+                "WHERE NOT u.disabled AND NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id = u.id) "
+                "ORDER BY LOWER(COALESCE(NULLIF(u.name, ''), u.email)), u.id"
+            )
+            owners = await conn.fetch(
+                """
+                SELECT LOWER(o.login) AS login, array_agg(DISTINCT o.repo) AS repos
+                  FROM (
+                      SELECT rp.repo, jsonb_array_elements_text(rp.owners) AS login
+                        FROM repo_preferences rp WHERE jsonb_typeof(rp.owners) = 'array'
+                      UNION ALL
+                      SELECT ra.repo, jsonb_array_elements_text(a -> 'owners') AS login
+                        FROM repo_areas ra, jsonb_array_elements(
+                            CASE WHEN jsonb_typeof(ra.data -> 'areas') = 'array' THEN ra.data -> 'areas' ELSE '[]' END
+                        ) a
+                       WHERE jsonb_typeof(a -> 'owners') = 'array'
+                  ) o
+                 WHERE o.login <> '' AND NOT EXISTS (
+                     SELECT 1 FROM person_identities i WHERE i.kind = 'github' AND LOWER(i.value) = LOWER(o.login)
+                 )
+                 GROUP BY LOWER(o.login)
+                 ORDER BY LOWER(o.login)
+                """
+            )
+        return {
+            "users": [
+                {"user_id": r["id"], "email": r["email"], "name": r["name"], "github_login": r["github_login"]}
+                for r in users
+            ],
+            "owners": [{"login": r["login"], "repos": sorted(r["repos"])} for r in owners],
+        }

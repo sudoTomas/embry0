@@ -56,6 +56,7 @@ from tests.fixtures.deployment_reads import (
     GLOBAL_SECRET,
     OWN,
     PERSON,
+    PERSON_ID,
     Deployment,
     deployment_reads_app,
     forget_caches,
@@ -70,7 +71,10 @@ _RUNS_ON = "what every repository's jobs run on, its own among them"
 #: Every GET route that reads one of the deployment's own records, and what it answers a key with an allowlist.
 EMPTY: dict[str, str] = {
     "/api/v1/users": "the people who sign in: none",
-    "/api/v1/people": "who a decision can be sent to: nobody",
+    "/api/v1/handoffs/people": "who a decision can be sent to: nobody",
+    "/api/v1/people": "every person: nobody",
+    "/api/v1/people/suggestions": "who could be added as a person: nobody",
+    "/api/v1/people/{person_id}": "a person: none (404)",
     "/api/v1/config/providers/{provider_name}/usage": "the provider's spend: not_configured, asked of nobody",
     "/api/v1/admin/retention/preview": "what the sweeps would remove: nothing, each at the days it runs at, unread",
     "/api/v1/config/integrations": "the trigger labels, and every other field as a deployment that set none",
@@ -89,6 +93,11 @@ SHARED: dict[str, dict[str, str]] = {
         for path in ("/api/v1/agents", "/api/v1/agents/{agent_type}")
     },
     "/api/v1/pipelines/templates": {"*": f"the pipeline templates: {_RUNS_ON}"},
+    "/api/v1/people/suggestions": {
+        "body.owners": "the owner logins repositories name, which are the repositories' records, not the "
+        "deployment's: a deployment with none of its own still lists them, and a key with an allowlist reads "
+        "nobody here (#179)",
+    },
     "/api/v1/sandbox-profiles": {"*": f"the sandbox profiles: {_RUNS_ON}"},
     "/api/v1/skills/inline": {"*": f"the skills: {_RUNS_ON}"},
     "/api/v1/config/context": {"*": f"the global agent context: {_RUNS_ON}"},
@@ -225,6 +234,7 @@ def named(values: Mapping[str, Mapping[str, str]]) -> dict[str, str]:
         "provider_name": "openrouter",
         "key": GLOBAL_SECRET,
         "app": "web",
+        "person_id": PERSON_ID,
     }
 
 

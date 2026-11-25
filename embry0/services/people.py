@@ -139,3 +139,63 @@ def _working_time(field: str, value: str) -> str:
         return check_timezone(value.strip())
     except ValueError as exc:
         raise PersonInvalid(field, str(exc)) from None
+
+
+#: Where a problem is, as a 422's ``loc`` gives it: a field, or ``("identities", i, "kind" | "value")``.
+Loc = tuple[str | int, ...]
+
+
+class PeopleInvalid(ValueError):
+    """Every problem a write has, each ``(loc, message)``; no message repeats a value."""
+
+    def __init__(self, problems: list[tuple[Loc, str]]) -> None:
+        super().__init__("; ".join(f"{'.'.join(map(str, loc))}: {message}" for loc, message in problems))
+        self.problems = problems
+
+
+def check_write(
+    fields: Any, identities: Any = None, *, creating: bool = False
+) -> tuple[dict[str, Any], list[tuple[str, str]] | None]:
+    """A write of a person, every problem at once (:class:`PeopleInvalid`): ``fields`` checked as
+    :func:`check_fields` checks each (a person needs a ``name`` when ``creating``), and ``identities``, when given, a
+    list of ``{kind, value}``, each checked by :func:`check_identity` and none twice. Answers the fields and the
+    identities as stored, or None for identities not given."""
+    problems: list[tuple[Loc, str]] = []
+    out: dict[str, Any] = {}
+    if not isinstance(fields, Mapping):
+        raise PeopleInvalid([((), "a person is an object of fields")])
+    for field in sorted(set(fields) - set(FIELDS)):
+        problems.append(((field,), "not a field of a person"))
+    for field in FIELDS:
+        if field not in fields:
+            continue
+        try:
+            out.update(check_fields({field: fields[field]}))
+        except PersonInvalid as exc:
+            problems.append(((field,), exc.problem))
+    if creating and "name" not in fields:
+        problems.append((("name",), "give a name"))
+    checked: list[tuple[str, str]] | None = None
+    if identities is not None:
+        checked = []
+        if not isinstance(identities, list):
+            problems.append((("identities",), "a list of {kind, value}"))
+        else:
+            seen: set[tuple[str, str]] = set()
+            for i, entry in enumerate(identities):
+                if not isinstance(entry, Mapping) or set(entry) - {"kind", "value"}:
+                    problems.append((("identities", i), "an identity is {kind, value}"))
+                    continue
+                try:
+                    kind, value = check_identity(entry.get("kind"), entry.get("value"))
+                except PersonInvalid as exc:
+                    problems.append((("identities", i, exc.field), exc.problem))
+                    continue
+                if (kind, value.lower()) in seen:
+                    problems.append((("identities", i), "the same identity twice"))
+                    continue
+                seen.add((kind, value.lower()))
+                checked.append((kind, value))
+    if problems:
+        raise PeopleInvalid(problems)
+    return out, checked

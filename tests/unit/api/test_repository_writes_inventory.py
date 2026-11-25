@@ -62,11 +62,13 @@ NOT_A_REPOSITORYS: dict[str, str] = {
     "version": "a version of the progression pack, the deployment's",
     "source_id": "a skill source, the deployment's",
     "user_id": "a person",
+    "person_id": "a person of the people directory, the deployment's (#179)",
 }
 
 #: Routes whose parameter of a shared name names something of no one repository here.
 NOT_A_REPOSITORYS_AT: dict[str, str] = {
     "/api/v1/sandbox-profiles/{name}": "a sandbox profile, the deployment's",
+    "/api/v1/people/{person_id}/identities/{kind}/{value}": "an identity of a person, the deployment's (#179)",
     "/api/v1/sandbox-profiles/{name}/reset": "a sandbox profile, the deployment's",
     "/api/v1/skills/inline/{name}": "an inline skill, the deployment's",
     "/api/v1/config/settings/revisions/{revision_id}/undo": (

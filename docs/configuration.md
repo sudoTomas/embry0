@@ -753,3 +753,14 @@ embry0 areas export acme/widgets -o areas.yaml # The stored document, comments i
 ```
 
 Exit codes as for `embry0 settings`. A repository is `group/name` or `group/subgroup/name`; anything else is a usage error (2) before anything is sent. The repository carries no file for its areas; this keeps them in a file of your own. See [areas.md](areas.md).
+
+### The deployment's people (`embry0 people`)
+
+```bash
+embry0 people check people.yaml               # Validate offline, every problem by where; exit 1 on one
+embry0 people diff people.yaml                # What applying it would add and change (writes nothing)
+embry0 people apply people.yaml               # Show the diff, then add and change (--yes without a terminal)
+embry0 people export -o people.yaml           # Every person, ready to edit and apply
+```
+
+The file is a list under `people`, each entry a person as `export` writes it (`id`, `updated_at`, the fields and `identities`). `apply` adds each entry without an `id` and changes each with one: the fields it gives, and with `identities` the person's identities made exactly those. It deletes nobody: a person left out of the file stays, and removing one is `DELETE /api/v1/people/{id}`. An entry with an `id` must carry the `updated_at` it was exported with (`check` names each one without), which each change sends as `If-Match`, so a person someone changed since is refused (exit 3): export again and redo it. `apply` stops at the first refusal and says which changes it made before it and which it did not. Writing needs an admin key without a repository allowlist. The MCP tools are `people_get` and `people_set` (confirm=true to write; a change needs `expected_updated_at`, the `updated_at` `people_get` answered). See [the API](api.md#people).

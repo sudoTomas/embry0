@@ -270,6 +270,14 @@ EXPECTED_PARAMETERS: dict[str, list[str]] = {
         "owner: string",
         "settings: object|null = null",
     ],
+    "people_get": ["include_disabled: boolean = false", 'person_id: string = ""'],
+    "people_set": [
+        "confirm: boolean = false",
+        'expected_updated_at: string = ""',
+        "fields: object|null = null",
+        "identities: array|null = null",
+        'person_id: string = ""',
+    ],
     "progression_pack_get": [],
     "progression_pack_reset": ["confirm: boolean = false"],
     "progression_pack_set": [
@@ -421,6 +429,7 @@ async def test_every_confirm_gated_tool_defaults_to_refusing():
         "areas_proposal_decide",
         "areas_set",
         "areas_undo",
+        "people_set",
         "case_accept",
         "case_close",
         "context_audit_run",
