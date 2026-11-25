@@ -711,7 +711,7 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 | git-proxy | 9101 | git smart HTTP (clone, fetch, push) for the job's repository only; push only with `git_push`, to `git_push_branches` only | `Authorization: Basic` on the upstream request (per-owner PAT routing) |
 | github-proxy | 9103 | GitHub REST API — read calls on the job's repository only (per-enrollment scope), strict forward-header allowlist | `Authorization: Bearer` header |
 | gitlab-proxy | 9105 | GitLab REST v4 API — read calls on the job's project only (per-enrollment scope), strict forward-header allowlist (#166) | `PRIVATE-TOKEN` (PAT) or `Authorization: Bearer` (OAuth2) |
-| xai-proxy | 9106 | grok models on `api.x.ai` (EMB-45) | Rotating SuperGrok access token (pushed via `/admin/token`) |
+| xai-proxy | 9106 | grok models on `api.x.ai` (EMB-45): reads, `/v1/messages` (and its `count_tokens`) and `/v1/chat/completions`, each call metered | Rotating SuperGrok access token (pushed via `/admin/token`) |
 | context-proxy | 9107 | Watcher and developer log drill-down → orchestrator `GET /api/v1/logs/query` (allowlist of exact names or glob patterns for per-release names such as blue/green slots, a pattern admitting plain names only + per-sandbox scope + clamps + per-job quota; every result redacted, #294) | Orchestrator API key (service-scoped) |
 | embry0 API Proxy | 9102 (deferred) | embry0 internal API (per-job) | Scoped to current issue/job |
 | minio-proxy | 9100 (DinD-side) | QA agent → MinIO PUT/GET via DNS-resolvable name | None — only forwards to host MinIO |
@@ -756,6 +756,28 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > the bearer. A container that is gone or stopped fails the resume with
 > `ERR_SANDBOX_GONE` (#475). One that exists but cannot be enrolled (a proxy
 > restarting) leaves the job as it was, paused with its sandbox, to resume again.
+>
+> **Model calls are metered at the proxy.** The xai- and local-llm-proxy read
+> each answer's usage as it streams through (`execution/proxy/metering.py`):
+> Anthropic's Messages format, which xAI's compat endpoint also speaks, and
+> OpenAI's chat completions, as JSON or as server-sent events. A chat
+> completion that streams goes upstream with `stream_options.include_usage`,
+> without which its answer carries no usage. The tokens count under the run
+> the orchestrator declared for the sandbox (`POST /admin/runs`, ended by
+> `DELETE /admin/runs/{run_id}`, which answers its tally); a sandbox never
+> names its own run. `GET /admin/meter` answers every tally the proxy holds,
+> cumulative, with the proxy's boot id and each call still in flight at its
+> ceiling, so a reader that loses the proxy can still charge those. With
+> `METER_REQUIRE_RUN` a call from a sandbox with no declared run is refused
+> (403); without it, the call counts in that sandbox's unattributed tally.
+> Counting fails toward more, never less: an answer whose usage cannot be read
+> is charged an estimate from its bytes (two bytes a token, above what the
+> providers count for ordinary text), one lost after the request went upstream
+> is charged its ceiling (the request's size as input, its output limit as
+> output), and only an error answer is charged nothing. The xai-proxy forwards
+> no billed call it cannot meter: anything but a read, `/v1/messages`,
+> `/v1/messages/count_tokens` and `/v1/chat/completions` is refused (404,
+> `xai_proxy_path_refused`). The orchestrator does not read the meter yet.
 
 **Where the forge tokens come from.** Accounts, bindings, the env fallback, the importer and the use ledger are described in [`docs/credentials.md`](credentials.md). The proxies never read the registry: `ProxyManager.enroll_sandbox(forge=…)` receives the token `CredentialResolver.resolve_forge` chose for the job's repo, so rotating or rebinding a credential takes effect for the next sandbox without restarting anything.
 

@@ -34,16 +34,14 @@ async def read_body(request: web.Request, proxy_name: str) -> bytes | web.Respon
             content_length=request.content_length,
             max_request_bytes=limit,
         )
-        return web.json_response(
-            {
-                "type": "error",
-                "error": {
-                    "type": "request_too_large",
-                    "message": (
-                        f"request_too_large: the request is over the {limit}-byte cap of embry0's {proxy_name} "
-                        "(MODEL_PROXY_MAX_REQUEST_BYTES); the conversation outgrew what can be sent"
-                    ),
-                },
-            },
-            status=413,
+        return anthropic_error(
+            "request_too_large",
+            f"request_too_large: the request is over the {limit}-byte cap of embry0's {proxy_name} "
+            "(MODEL_PROXY_MAX_REQUEST_BYTES); the conversation outgrew what can be sent",
+            413,
         )
+
+
+def anthropic_error(error_type: str, message: str, status: int) -> web.Response:
+    """An answer in the Anthropic API's error shape, which the agent SDK and the CLI read."""
+    return web.json_response({"type": "error", "error": {"type": error_type, "message": message}}, status=status)

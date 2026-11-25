@@ -12,7 +12,9 @@ one upstream, the API root the operator configured (``LOCAL_LLM_UPSTREAM``):
 - only from an enrolled sandbox: the per-sandbox bearer is checked and
   stripped, and the upstream's own key (``LOCAL_LLM_API_KEY``, when the server
   checks one) is added here, so it never enters a sandbox;
-- a request body over ``MAX_REQUEST_BYTES`` is refused with 413.
+- a request body over ``MAX_REQUEST_BYTES`` is refused with 413;
+- every chat completion is metered (``metering``): its tokens count toward the
+  run the orchestrator declared for the sandbox.
 
 The orchestrator enrolls only the sandboxes of jobs that resolved the custom
 provider, so a sandbox with no local model has no bearer this proxy accepts.
@@ -28,6 +30,15 @@ from aiohttp import web
 
 from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import check_bearer, register_admin_routes
+from embry0.execution.proxy.metering import (
+    METER,
+    Metered,
+    NoRunError,
+    TalliesFullError,
+    no_run_answer,
+    read_call,
+    register_meter_routes,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -56,8 +67,10 @@ def create_local_llm_proxy_app(
     *,
     upstream_api_key: str = "",
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
+    require_run: bool = False,
 ) -> web.Application:
-    """The proxy app forwarding to ``upstream_url``, an API root such as ``http://host:port/v1``."""
+    """The proxy app forwarding to ``upstream_url``, an API root such as ``http://host:port/v1``. With
+    ``require_run`` a call from a sandbox with no declared run is refused."""
     if not upstream_url.startswith(("http://", "https://")):
         raise ValueError("UPSTREAM_URL must be an http(s) URL")
     if max_request_bytes <= 0:
@@ -68,12 +81,18 @@ def create_local_llm_proxy_app(
     app[UPSTREAM_ROOT] = upstream_url.rstrip("/")
     app[UPSTREAM_API_KEY] = upstream_api_key
     app[MAX_REQUEST_BYTES] = max_request_bytes
-    register_admin_routes(app, proxy_name=PROXY_NAME, admin_token=admin_token)
+    register_admin_routes(app, proxy_name=PROXY_NAME, admin_token=admin_token, on_unenroll=_end_tallies)
+    register_meter_routes(app, proxy_name=PROXY_NAME, require_run=require_run)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     app.router.add_get("/health", _health_handler)
     app.router.add_route("*", "/v1/{path:.*}", _proxy_handler)
     return app
+
+
+def _end_tallies(app: web.Application, sandbox_id: str) -> None:
+    """An enrollment ended: its tallies end, and stay for the orchestrator to read."""
+    app[METER].sandbox_gone(sandbox_id)
 
 
 async def _on_startup(app: web.Application) -> None:
@@ -121,11 +140,44 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         if len(body) > limit:
             return _too_large(sandbox_id, len(body), limit)
 
+    metered: Metered | None = None
+    if method == "POST":
+        call = read_call("openai_chat", body)
+        body = call.body
+        try:
+            metered = request.app[METER].open(sandbox_id, call)
+        except NoRunError:
+            logger.warning("local_llm_proxy_call_without_run", sandbox_id=sandbox_id)
+            return no_run_answer("openai_chat")
+        except TalliesFullError:
+            logger.error("local_llm_proxy_meter_full", sandbox_id=sandbox_id)
+            return web.json_response({"error": "meter_full"}, status=503)
+
     client: httpx.AsyncClient = request.app[HTTP_CLIENT]
     url = f"{request.app[UPSTREAM_ROOT]}/{path}"
     logger.info("local_llm_proxy_forward", sandbox_id=sandbox_id, path=path, bytes=len(body))
     try:
+        return await _forward(request, client, method, url, body, sandbox_id, metered)
+    finally:
+        if metered is not None:
+            metered.close()
+
+
+async def _forward(
+    request: web.Request,
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    body: bytes,
+    sandbox_id: str,
+    metered: Metered | None,
+) -> web.StreamResponse:
+    """Send the call upstream and stream its answer back through the meter. A call whose answer never came back
+    after it was sent is charged its ceiling; one that never connected costs nothing."""
+    try:
         async with client.stream(method, url, headers=_upstream_headers(request), content=body or None) as upstream:
+            if metered is not None:
+                metered.answer(upstream.status_code, upstream.headers.get("content-type"))
             response = web.StreamResponse(status=upstream.status_code)
             for name in _FORWARDED_RESPONSE_HEADERS:
                 if name in upstream.headers:
@@ -133,6 +185,8 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             await response.prepare(request)
             try:
                 async for chunk in upstream.aiter_bytes():
+                    if metered is not None:
+                        metered.feed(chunk)
                     await response.write(chunk)
             except httpx.TransportError as exc:
                 logger.warning("local_llm_proxy_stream_truncated", sandbox_id=sandbox_id, error=str(exc))
@@ -141,7 +195,13 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     except httpx.ConnectError:
         return web.json_response({"error": "the local model server is unreachable"}, status=502)
     except httpx.TimeoutException:
+        if metered is not None:
+            metered.lost()
         return web.json_response({"error": "the local model server timed out"}, status=504)
+    except BaseException:
+        if metered is not None:
+            metered.lost()
+        raise
 
 
 def _too_large(sandbox_id: str, size: Any, limit: int) -> web.Response:

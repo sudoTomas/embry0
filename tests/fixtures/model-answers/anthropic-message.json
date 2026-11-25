@@ -1,0 +1,1 @@
+{"id": "msg_fake_002", "type": "message", "role": "assistant", "model": "grok-4.7", "content": [{"type": "text", "text": "All done."}], "stop_reason": "end_turn", "stop_sequence": null, "usage": {"input_tokens": 2000, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 500, "output_tokens": 300}}

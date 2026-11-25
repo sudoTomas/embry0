@@ -28,12 +28,28 @@ from aiohttp import web
 
 from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, guard_admin, register_admin_routes
+from embry0.execution.proxy.metering import (
+    METER,
+    Metered,
+    NoRunError,
+    TalliesFullError,
+    Wire,
+    no_run_answer,
+    read_call,
+    register_meter_routes,
+)
 from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES, read_body
 from embry0.safety.xai_denials import XaiDenial, classify_xai_denial
 
 logger = structlog.get_logger(__name__)
 
 XAI_API_BASE = "https://api.x.ai"
+
+#: The billed paths under ``/v1`` the proxy forwards, each metered in its wire format. Any other call that is not a
+#: read is refused: an answer the meter cannot read would be spent and never counted.
+METERED_PATHS: dict[str, Wire] = {"messages": "anthropic", "chat/completions": "openai_chat"}
+#: Calls that are not reads and bill nothing.
+UNBILLED_PATHS = frozenset({"messages/count_tokens"})
 
 
 def _normalize_tool_schemas(body: bytes) -> bytes:
@@ -107,11 +123,15 @@ class _XaiCredentialEnroll:
         return {}
 
 
-def _forget_xai_credential(app: web.Application, sandbox_id: str) -> None:
+def _forget_sandbox(app: web.Application, sandbox_id: str) -> None:
+    """An enrollment ended: drop its credential, and end its tallies (they stay for the orchestrator to read)."""
     app[XAI_CREDENTIAL_BY_SANDBOX].pop(sandbox_id, None)
+    app[METER].sandbox_gone(sandbox_id)
 
 
-def create_xai_proxy_app(admin_token: str, *, max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES) -> web.Application:
+def create_xai_proxy_app(
+    admin_token: str, *, max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES, require_run: bool = False
+) -> web.Application:
     """Create the xAI proxy ASGI app.
 
     Args:
@@ -120,7 +140,9 @@ def create_xai_proxy_app(admin_token: str, *, max_request_bytes: int = DEFAULT_M
     The access token is NOT passed here — it is pushed at runtime via ``/admin/token`` and
     refreshed by the orchestrator. The proxy starts un-provisioned and returns 503 until the
     first token push. ``max_request_bytes`` is the largest request body it forwards
-    (``model_request``): a long agent conversation is megabytes of JSON.
+    (``model_request``): a long agent conversation is megabytes of JSON. Every call it
+    forwards is metered (``metering``); with ``require_run`` a call from a sandbox with no
+    declared run is refused.
     """
     if max_request_bytes <= 0:
         raise ValueError("MAX_REQUEST_BYTES must be positive")
@@ -139,8 +161,9 @@ def create_xai_proxy_app(admin_token: str, *, max_request_bytes: int = DEFAULT_M
         proxy_name="xai_proxy",
         admin_token=admin_token,
         enroll_extension=_XaiCredentialEnroll(),
-        on_unenroll=_forget_xai_credential,
+        on_unenroll=_forget_sandbox,
     )
+    register_meter_routes(app, proxy_name="xai_proxy", require_run=require_run)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     app.router.add_get("/health", _health_handler)
@@ -250,6 +273,11 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             logger.warning("xai_proxy_not_provisioned", sandbox_id=sandbox_id)
             return web.json_response({"error": "xai proxy not yet provisioned"}, status=503)
 
+    route = request.match_info.get("path", "").strip("/")
+    wire = METERED_PATHS.get(route)
+    if wire is None and request.method not in ("GET", "HEAD") and route not in UNBILLED_PATHS:
+        logger.warning("xai_proxy_path_refused", sandbox_id=sandbox_id, method=request.method, path=route)
+        return web.json_response({"error": "not_found"}, status=404)
     path = "/" + request.match_info.get("path", "")
     upstream_url = f"{XAI_API_BASE}/v1{path}"
 
@@ -277,17 +305,50 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     body = await read_body(request, "xai-proxy")
     if isinstance(body, web.Response):
         return body
+    sent = body
     if body:
-        normalized = _normalize_tool_schemas(body)
-        if normalized is not body:
-            body = normalized
-            # Length changed — let httpx recompute from the new content.
-            headers.pop("Content-Length", None)
-            headers.pop("content-length", None)
+        body = _normalize_tool_schemas(body)
+    metered: Metered | None = None
+    if wire is not None:
+        call = read_call(wire, body)
+        body = call.body
+        try:
+            metered = request.app[METER].open(sandbox_id, call)
+        except NoRunError:
+            logger.warning("xai_proxy_call_without_run", sandbox_id=sandbox_id, path=route)
+            return no_run_answer(wire)
+        except TalliesFullError:
+            logger.error("xai_proxy_meter_full", sandbox_id=sandbox_id)
+            return web.json_response({"error": "meter_full"}, status=503)
+    if body is not sent:
+        # Length changed — let httpx recompute from the new content.
+        headers.pop("Content-Length", None)
+        headers.pop("content-length", None)
     client: httpx.AsyncClient = request.app[HTTP_CLIENT]
 
     logger.info("xai_credentials_used", sandbox_id=sandbox_id)
 
+    try:
+        return await _forward(request, client, upstream_url, headers, body, credential_id, metered)
+    finally:
+        if metered is not None:
+            metered.close()
+
+
+async def _forward(
+    request: web.Request,
+    client: httpx.AsyncClient,
+    upstream_url: str,
+    headers: dict[str, str],
+    body: bytes,
+    credential_id: str | None,
+    metered: Metered | None,
+) -> web.StreamResponse:
+    """Send the call upstream and stream its answer back, through the meter when the call is metered.
+
+    A call whose answer never came back after it was sent (a timeout, the handler cancelled, an error past the
+    connect) is charged its ceiling; one that never connected costs nothing.
+    """
     try:
         async with client.stream(
             method=request.method,
@@ -295,6 +356,8 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             headers=headers,
             content=body,
         ) as upstream_resp:
+            if metered is not None:
+                metered.answer(upstream_resp.status_code, upstream_resp.headers.get("content-type"))
             if credential_id and upstream_resp.status_code in (401, 429):
                 bucket = request.app[UPSTREAM_COUNTS].setdefault(credential_id, {"401": 0, "429": 0})
                 bucket[str(upstream_resp.status_code)] += 1
@@ -307,6 +370,8 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             await response.prepare(request)
             try:
                 async for chunk in upstream_resp.aiter_bytes():
+                    if metered is not None:
+                        metered.feed(chunk)
                     await response.write(chunk)
             except httpx.TransportError as exc:
                 logger.warning("xai_proxy_stream_truncated", error=str(exc))
@@ -315,4 +380,10 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     except httpx.ConnectError:
         return web.json_response({"error": "Failed to connect to upstream API"}, status=502)
     except httpx.TimeoutException:
+        if metered is not None:
+            metered.lost()
         return web.json_response({"error": "Upstream API timeout"}, status=504)
+    except BaseException:
+        if metered is not None:
+            metered.lost()
+        raise

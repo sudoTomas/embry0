@@ -1,0 +1,14 @@
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "gpt-5", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}], "usage": null}
+
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "gpt-5", "choices": [{"index": 0, "delta": {"content": "Reading the file."}, "finish_reason": null}], "usage": null}
+
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "gpt-5", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "Read", "arguments": ""}}]}, "finish_reason": null}], "usage": null}
+
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "gpt-5", "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{\"file_path\": \"/workspace/x.txt\"}"}}]}, "finish_reason": null}], "usage": null}
+
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "gpt-5", "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}], "usage": null}
+
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "gpt-5", "choices": [], "usage": {"prompt_tokens": 2400, "completion_tokens": 64, "total_tokens": 2464, "prompt_tokens_details": {"cached_tokens": 1024}, "completion_tokens_details": {"reasoning_tokens": 20}}}
+
+data: [DONE]
+
