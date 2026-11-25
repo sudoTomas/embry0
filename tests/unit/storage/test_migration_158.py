@@ -38,10 +38,8 @@ def _known_provider(kind: str, provider: str) -> bool:
     return bool(known(kind, provider))
 
 
-def test_the_provider_check_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_157.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must free credentials.provider from a list"
+def test_the_provider_check_migration_is_listed_once() -> None:
+    """The last-entry assertion moved to tests/unit/storage/test_migration_159.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

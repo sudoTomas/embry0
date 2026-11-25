@@ -5064,6 +5064,18 @@ deliverable under an "Assumptions" heading.$seed$
         );
         """,
     ),
+    (
+        159,
+        "local_model_leases.server: a lease's server is its custom credential's, never one upstream's (ADR 0032)",
+        # ADR 0032: every sandbox reaches its own credential's server through the
+        # local-llm-proxy, so LOCAL_LLM_UPSTREAM no longer puts every custom run
+        # on one server. Migration 157's comment still named that server; a
+        # lease taken under it before the deploy frees itself by its expiry.
+        """
+        COMMENT ON COLUMN local_model_leases.server IS
+            'the server the lease holds a slot of: a custom credential id, env (the environment''s credential), or '''' (not told); env:LOCAL_LLM_UPSTREAM only on a lease taken before ADR 0032, which frees itself by its expiry';
+        """,
+    ),
 ]
 
 
