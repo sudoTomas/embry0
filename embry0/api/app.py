@@ -2936,11 +2936,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(scout_task)
     scout_task.add_done_callback(app.state.background_tasks.discard)
 
-    # #175: no code reads a repository's old areas file any more. A deployment that upgraded past the release
-    # that imported them is told which repositories were never read, at error level and in the audit log.
+    # #175: no code reads a repository's old areas file any more. A deployment that upgraded past the builds
+    # that imported them is told which repositories were never read, at error level and in the audit log. In the
+    # background, its queries capped: a lock on the ledger delays the warning, never the start.
     from embry0.services.areas_import_check import warn_if_areas_never_imported
 
-    await warn_if_areas_never_imported(db, audit_log_path=config.audit_log_path)
+    areas_import_check_task = asyncio.create_task(
+        warn_if_areas_never_imported(db, audit_log_path=config.audit_log_path)
+    )
+    app.state.areas_import_check = areas_import_check_task
+    app.state.background_tasks.add(areas_import_check_task)
+    areas_import_check_task.add_done_callback(app.state.background_tasks.discard)
 
     # Asks (spec 2026-10-27, decisions): keeps one ask per person a decision
     # waits on, for a chat assistant to send. The loop always runs and reads

@@ -111,12 +111,15 @@ describes what embry0 does rather than listing changes.
   set by hand since in the deployment's document or an organization's layer,
   and the meter removes nothing until `background.slop_meter` is set there
   ([docs/configuration.md](docs/configuration.md#variables-no-longer-read)).
-- **A repository's old areas file is no longer read.** The release that moved
-  a repository's areas into embry0 (migration 145) imported each registered
-  repository's `.embry0/areas.yml` once; that import is gone, and embry0 reads
-  no configuration of its own from a repository. A deployment that has not
-  started a release carrying it must start one once before this one, or write
-  or map those repositories' areas. Until then, startup logs
-  `areas_import_skipped` at error level with how many registered repositories
-  without areas were never read, and writes `repo.areas_import_skipped`. The
-  file may be deleted ([docs/areas.md](docs/areas.md#the-old-file)).
+- **A repository's old areas file is no longer read.** The builds that moved
+  a repository's areas into embry0 (migration 145), every build of main from
+  commit `45d07a6f` (#458) to the commit before pull request #706, imported
+  each registered repository's `.embry0/areas.yml` once; that import is gone,
+  and embry0 reads no configuration of its own from a repository. A
+  deployment that has not started one of those builds must start one once
+  before this one, or write or map those repositories' areas; a repository
+  whose read failed 24 times needs its areas written or mapped. Until then,
+  startup logs `areas_import_skipped` at error level, counting the
+  repositories still due a read and those given up on, and writes
+  `repo.areas_import_skipped`. The file may be deleted
+  ([docs/areas.md](docs/areas.md#the-old-file)).

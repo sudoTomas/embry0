@@ -1,7 +1,11 @@
 """A repository's areas are read from embry0, never from the repository (spec 2026-11-10, #175).
 
-- No code names the old areas file but the one-time import (and the
-  migrations, which are history).
+- No code names the old areas file but the migrations, which are history,
+  in any form: pieced together, in a constant, URL-encoded as GitLab's files
+  API wants it. No code but the owners fallback takes anything from the
+  forge files helper, however it imports it, and the modules that read a
+  repository's files through a forge are a known few, each reading files the
+  repository keeps for itself.
 - Production gives every reader the store (the guardrail on arguments
   production cannot work without, #369): the leads, the scout, the
   Slop-O-Meter and the executor, through the real lifespan.
@@ -11,7 +15,7 @@
 
 from __future__ import annotations
 
-import ast
+import asyncio
 import pathlib
 from typing import Any
 
@@ -22,30 +26,75 @@ from tests.fixtures.repository_writes import COVERED, MASTER, call, repository_w
 from tests.unit.metrics.test_lifespan_wiring import booted, stub_container_runtime  # noqa: F401 - fixtures
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-#: The one module that may still name the old file: the migrations, which are history. The import is gone (#175).
-MAY_NAME_THE_FILE = {"embry0/storage/migrations/runner.py"}
+#: The migrations, which are history, may name the old file. The import is gone (#175).
+MIGRATIONS = "embry0/storage/migrations/runner.py"
+#: A module that may spell an areas file's name, with why: never the repository's.
+MAY_SPELL_AN_AREAS_FILE = {
+    MIGRATIONS: "history",
+    "embry0/cli/areas.py": "the operator's own file on disk, which the CLI checks, diffs and applies",
+}
+#: The forge APIs that read a repository's files: a file, a tree, a blob, a raw file or the whole archive.
+READS_FILES = (
+    "/contents",
+    "/repository/files",
+    "/repository/tree",
+    "/repository/blobs",
+    "/repository/archive",
+    "/git/trees",
+    "/git/blobs",
+    "raw.githubusercontent",
+    "/-/raw/",
+    "/zipball",
+    "/tarball",
+)
+#: Every module that reads a repository's files through a forge, and what it reads: files the repository keeps for
+#: itself, never embry0's configuration (#175). A new one is added here, with its reason, in review.
+KNOWN_READERS = {
+    "embry0/services/forge_files.py": "the helper: one file of the default branch (the owners fallback's CODEOWNERS)",
+    "embry0/api/v1/environment.py": "the repository's env templates, to detect the variables it needs",
+    "embry0/services/org_discovery.py": "what the repository holds (its listing, package.json, an env file)",
+    "embry0/services/context_audit.py": "the repository's tree of blob shas, for the context audit's fingerprint",
+}
+
+
+def _modules() -> list[tuple[str, pathlib.Path]]:
+    return sorted((str(path.relative_to(ROOT)), path) for path in (ROOT / "embry0").rglob("*.py"))
 
 
 def test_no_code_names_the_repository_s_old_areas_file() -> None:
-    named = sorted(
-        str(path.relative_to(ROOT))
-        for path in (ROOT / "embry0").rglob("*.py")
-        if ".embry0/areas" in path.read_text() and str(path.relative_to(ROOT)) not in MAY_NAME_THE_FILE
-    )
+    """In any form: spelled, pieced together, held in a constant, joined as a path or URL-encoded (GitLab's files
+    API reads ``.embry0%2Fareas.yml``)."""
+    from tests.fixtures.source_strings import spells
+
+    named = [name for name, path in _modules() if name != MIGRATIONS and spells(path.read_text(), ".embry0/areas")]
     assert named == [], f"code that names the repository's old areas file: {named}"
+    spelled = [
+        name for name, path in _modules() if name not in MAY_SPELL_AN_AREAS_FILE and spells(path.read_text(), "areas.y")
+    ]
+    assert spelled == [], f"code that spells an areas file's name: {spelled}"
 
 
-def test_a_repository_s_files_are_read_only_for_its_codeowners() -> None:
-    """embry0 reads no configuration of its own from a target repository (#175): the one reader of a repository's
-    files through the forge is the owners fallback, which reads CODEOWNERS with ``read_contents``."""
+def test_nothing_but_the_owners_fallback_takes_from_the_forge_files_helper() -> None:
+    """However it is imported: ``from … import``, the module itself, a relative import, or by name."""
+    from tests.fixtures.source_strings import imports_of
+
+    helper = "embry0/services/forge_files.py"
     readers = sorted(
-        (str(path.relative_to(ROOT)), alias.name)
-        for path in (ROOT / "embry0").rglob("*.py")
-        for node in ast.walk(ast.parse(path.read_text()))
-        if isinstance(node, ast.ImportFrom) and node.module == "embry0.services.forge_files"
-        for alias in node.names
+        (name, imported)
+        for name, path in _modules()
+        if name != helper
+        for imported in imports_of(path, ROOT, "embry0.services.forge_files")
     )
-    assert readers == [("embry0/api/v1/proposals.py", "read_contents")], f"what reads a repository's files: {readers}"
+    assert readers == [("embry0/api/v1/proposals.py", "read_contents")], f"what uses the forge files helper: {readers}"
+
+
+def test_a_repository_s_files_are_read_only_by_the_known_readers() -> None:
+    """embry0 reads no configuration of its own from a target repository (#175). What reads a repository's files
+    through a forge reads files the repository keeps for itself: :data:`KNOWN_READERS`, and nothing else."""
+    from tests.fixtures.source_strings import spells
+
+    readers = [name for name, path in _modules() if spells(path.read_text(), *READS_FILES)]
+    assert readers == sorted(KNOWN_READERS), f"what reads a repository's files through a forge: {readers}"
 
 
 @pytest.mark.requires_postgres
@@ -67,8 +116,8 @@ async def test_production_gives_every_reader_the_areas_embry0_keeps(booted: Any)
 async def test_the_start_names_the_repositories_whose_old_areas_file_was_never_read(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The lifespan runs the check (embry0.services.areas_import_check): a repository migration 145 listed and no
-    import ever read is logged at error level and audited."""
+    """The lifespan runs the check (embry0.services.areas_import_check), in the background: a repository migration
+    145 listed and no import ever read is logged at error level and audited."""
     from structlog.testing import capture_logs
 
     from embry0.api.app import create_app, lifespan
@@ -82,9 +131,43 @@ async def test_the_start_names_the_repositories_whose_old_areas_file_was_never_r
     app = create_app(_config(db_with_migrations))
     with capture_logs() as logs:
         async with lifespan(app):
-            pass
-    said = [(e["log_level"], e.get("repos")) for e in logs if e["event"] == "areas_import_skipped"]
+            check = getattr(app.state, "areas_import_check", None)
+            if check is not None:
+                await asyncio.wait_for(check, timeout=30)
+    said = [(e["log_level"], e.get("due_repos")) for e in logs if e["event"] == "areas_import_skipped"]
     assert said == [("error", ["acme/widgets"])], f"the start must name the repository never read: {said}"
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.usefixtures("stub_container_runtime")
+async def test_the_start_never_waits_on_the_check(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check held up (a lock on the ledger, a slow plan) holds up nothing else: the start goes on, and the check
+    is cancelled at shutdown."""
+    from embry0.api.app import create_app, lifespan
+    from tests.unit.api.test_settings_lifespan import _config
+
+    reached = asyncio.Event()
+
+    async def held(db: Any, **kwargs: Any) -> Any:
+        reached.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("embry0.services.areas_import_check.unread", held)
+    app = create_app(_config(db_with_migrations))
+    running = lifespan(app)
+    try:
+        await asyncio.wait_for(running.__aenter__(), timeout=60)
+    except TimeoutError:
+        pytest.fail("the start waited on the areas import check")
+    try:
+        await asyncio.wait_for(reached.wait(), timeout=10)
+        task = app.state.areas_import_check
+        assert not task.done(), "the check ended though its query never answered"
+    finally:
+        await running.__aexit__(None, None, None)
+    assert task.cancelled(), "the check outlived the shutdown"
 
 
 @pytest.mark.requires_postgres

@@ -64,6 +64,11 @@ A map that cannot start (no `map-areas` template, the executor down) changes not
 
 ## The old file
 
-Before embry0 kept a repository's areas, it read them from `.embry0/areas.yml` on the repository's default branch. The release that moved them into embry0 (migration 145) imported each registered repository's file once, in the background, and stored what embry0 had acted on; `imported` on a repository's areas says when. That import is gone: embry0 reads no configuration of its own from a repository. It never deleted the file, and you may delete it now.
+Before embry0 kept a repository's areas, it read them from `.embry0/areas.yml` on the repository's default branch. The builds that moved them into embry0 (migration 145), every build of main from commit `45d07a6f` (#458, 2026-11-12) to the commit before pull request #706, imported each registered repository's file once, in the background, and stored what embry0 had acted on; `imported` on a repository's areas says when. A read that failed was tried again at later starts, 24 times at most. That import is gone: embry0 reads no configuration of its own from a repository. It never deleted the file, and you may delete it now.
 
-A deployment that has not started a release carrying the import must start one once before this one, or write or map its repositories' areas. Until then, every start logs `areas_import_skipped` at error level, with how many registered repositories without areas were never read and the first 20 of them, and writes the audit row `repo.areas_import_skipped` (the count, on the deployment's audit). Writing or mapping a repository's areas, or removing it from the registry, takes it off the list.
+A deployment that upgrades past those builds without having started one keeps repositories whose file was never read, and every start then logs `areas_import_skipped` at error level and writes the audit row `repo.areas_import_skipped` (the counts, on the deployment's audit). The log line counts them in two groups, names the first 20 of each and gives each its fix:
+
+- **due** (`due`, `due_repos`): never read, or read and failed fewer than 24 times. Start one of those builds once, which reads them, then this one again; or write or map their areas.
+- **exhausted** (`exhausted`, `exhausted_repos`): read and failed 24 times, so no build reads them again. Write or map their areas.
+
+A repository is matched as the areas store matches it: whatever the case, and under an old or a new name (`REPO_RENAMES`). Writing or mapping a repository's areas, or removing it from the registry, takes it off the list. The check runs in the background, its queries stopped after 30 seconds, so a start never waits on it.
