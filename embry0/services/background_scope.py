@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from typing import Any, Final, Protocol
 
 from embry0.settings.layers import PerRepository
+from embry0.settings.scope import Scope
 from embry0.settings.sections.background import BACKGROUND, FEATURES, BackgroundSettings, Feature
 
 
@@ -46,13 +47,15 @@ class Enrollment:
 
     section: PerRepository[BackgroundSettings]
     #: The features that remove what they kept whose enrollment nothing has decided yet: the import that wrote it
-    #: never ran on this deployment and no document sets the key (``embry0.settings.upgrade_check``).
+    #: never ran on this deployment, nor did a start that found nothing to import, and neither the deployment's
+    #: document nor an organization's layer sets the key (``embry0.settings.upgrade_check``).
     undecided: frozenset[str] = frozenset()
 
     def prune_held(self, feature: str) -> bool:
         """Whether ``feature`` must keep what it kept of every repository for now: a deployment that skipped the
         release that enrolled what it read before reads nothing, and must not remove it all before an operator
-        enrolls (``background.<feature>`` set in any document)."""
+        decides (``background.<feature>`` set in the deployment's document or an organization's layer, which
+        only a key with no repository allowlist writes: a limited key's repository layer cannot lift it)."""
         return _feature(feature) in self.undecided
 
     def enrolled(self, feature: str, repo: str) -> bool:
@@ -84,9 +87,21 @@ class Enrollment:
 _PRUNING: Final[tuple[Feature, ...]] = ("slop_meter",)
 
 
-def _set_anywhere(snapshot: Any, feature: str) -> bool:
-    """Whether any document of ``snapshot``, the deployment's or a layer, sets ``background.<feature>``."""
-    documents = [getattr(snapshot, "data", None) or {}, *(getattr(snapshot, "layers", None) or {}).values()]
+def _organization(stored: str) -> bool:
+    """Whether the stored scope string ``stored`` is an organization's layer."""
+    try:
+        return Scope.parse(stored).layer == "organization"
+    except ValueError:
+        return False
+
+
+def _decided(snapshot: Any, feature: str) -> bool:
+    """Whether the deployment's document or an organization's layer of ``snapshot`` sets ``background.<feature>``:
+    the documents only a key with no repository allowlist writes. A repository's layer is not counted, since a
+    key limited to that repository writes it, and the meter's prune would remove every other repository."""
+    layers = getattr(snapshot, "layers", None) or {}
+    documents = [getattr(snapshot, "data", None) or {}]
+    documents += [values for stored, values in layers.items() if _organization(str(stored))]
     return any(feature in (doc.get(BACKGROUND.name) or {}) for doc in documents if isinstance(doc, Mapping))
 
 
@@ -96,7 +111,7 @@ def enrollment(snapshot: _Snapshot) -> Enrollment:
     undecided = frozenset(
         feature
         for feature in _PRUNING
-        if callable(imported) and not imported(f"{BACKGROUND.name}.{feature}") and not _set_anywhere(snapshot, feature)
+        if callable(imported) and not imported(f"{BACKGROUND.name}.{feature}") and not _decided(snapshot, feature)
     )
     return Enrollment(section=snapshot.scoped(BACKGROUND), undecided=undecided)
 

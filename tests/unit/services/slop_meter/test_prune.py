@@ -642,12 +642,15 @@ def _snapshot(
     deployment: dict[str, Any] = {"background": {"prune_after_days": grace_days}}
     if meter is not None:
         deployment["slop_meter"] = dict(meter)
+    # A deployment past the enrollment import, or one whose first start found nothing to import: its ledger has
+    # the mark, so the meter's prune is not held (:func:`_ledgered` builds one without it).
     rows: list[dict[str, Any]] = [
         {
             "scope": "deployment",
             "data": deployment,
             "generation": 1,
             "updated_at": None,
+            "bootstrapped_keys": ["background.slop_meter"],
         }
     ]
     rows += [
@@ -845,21 +848,27 @@ def _ledgered(layers: Mapping[str, Mapping[str, Any]], *marks: str) -> Any:
 
 async def test_a_deployment_that_skipped_the_enrollment_import_removes_nothing_until_one_is_enrolled() -> None:
     """Nothing enrolled and no import ever ran: the meter reads nothing, and must not remove all it kept a week
-    later. Once background.slop_meter is set in a document, what is out of scope goes after its week as always."""
+    later. A repository's layer, which a key limited to it writes, does not lift the hold; once an organization's
+    layer (or the deployment's document) sets background.slop_meter, what is out of scope goes after its week."""
     documents = Documents(_ledgered({}))
-    store, mirror, exits, clock = Kept(["acme/widgets"]), Mirror(), Exits(), [NOW]
-    loop = _meter(documents, store, mirror, ["acme/widgets"], exits=exits, clock=clock)
+    store, mirror, exits, clock = Kept(["acme/widgets", "globex/gizmos"]), Mirror(), Exits(), [NOW]
+    loop = _meter(documents, store, mirror, ["acme/widgets", "globex/gizmos"], exits=exits, clock=clock)
     with capture_logs() as logs:
         await loop.tick()
         clock[0] = NOW + timedelta(days=30)
         await loop.tick()
     assert store.forgotten == [] and mirror.removed == [] and exits.rows == {}, "the prune is held"
     assert [e["event"] for e in logs].count("slop_meter_prune_held") == 1, "said once"
-    documents.current = _ledgered({"repository:other/kit": {"slop_meter": True}})
+    documents.current = _ledgered({"repository:acme/widgets": {"slop_meter": False}})
     await loop.tick()
     clock[0] = NOW + timedelta(days=38)
     await loop.tick()
-    assert store.forgotten == ["acme/widgets"], "enrolled somewhere: the repository out of scope goes after its week"
+    assert store.forgotten == [] and exits.rows == {}, "a repository's layer decided for every other repository"
+    documents.current = _ledgered({"organization:acme": {"slop_meter": True}})
+    await loop.tick()
+    clock[0] = NOW + timedelta(days=46)
+    await loop.tick()
+    assert store.forgotten == ["globex/gizmos"], "an organization enrolled: what is out of scope goes after its week"
 
 
 async def test_a_held_prune_of_nothing_says_nothing() -> None:

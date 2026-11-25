@@ -491,7 +491,10 @@ class SlopMeterLoop:
                 self._prune_held_said = True
                 logger.warning(
                     "slop_meter_prune_held",
-                    hint="nothing is enrolled and no import ever ran: set background.slop_meter in a document",
+                    hint=(
+                        "nothing is enrolled and no import ever ran: set background.slop_meter in the deployment's "
+                        "document or an organization's layer"
+                    ),
                 )
             return None
         keep = read.enrollment.scope(SCOPE, registered.every)

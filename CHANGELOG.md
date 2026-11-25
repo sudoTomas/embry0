@@ -104,9 +104,10 @@ describes what embry0 does rather than listing changes.
   the scout and the Slop-O-Meter read before their enrollment was explicit, and
   leads running by default on a deployment that existed before. A deployment
   that has not started the last release carrying the imports (`main` just
-  before #168 retired them) must start it once before this one; otherwise its
-  caps read as the section's defaults, nothing is enrolled and leads are off. Startup logs `settings_upgrade_skipped` and writes
+  before #168 retired them) must start it once before this one; otherwise
+  its caps read as the section's defaults, nothing is enrolled and leads are
+  off. Startup logs `settings_upgrade_skipped` and writes
   `settings.upgrade.flagged` when it finds such state never imported and not
-  set by hand since, and the meter removes nothing until
-  `background.slop_meter` is set
+  set by hand since in the deployment's document or an organization's layer,
+  and the meter removes nothing until `background.slop_meter` is set there
   ([docs/configuration.md](docs/configuration.md#variables-no-longer-read)).
