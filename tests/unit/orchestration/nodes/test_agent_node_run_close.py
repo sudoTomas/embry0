@@ -248,34 +248,6 @@ async def test_a_cancel_while_the_run_is_ended_on_the_proxies_closes_its_trace()
     assert (closed["result"], closed["error_code"], closed["result_summary"]) == ("success", None, "done")
 
 
-async def test_a_cancel_while_the_local_slot_is_released_closes_the_trace(monkeypatch: Any) -> None:
-    """The exec returned; the cancel comes while the run's slot on the local model is given back."""
-    from tests.fixtures.provider_catalogue import enable_providers
-    from tests.unit.orchestration.nodes.test_agent_node_local_models import _LOCAL, _Slots
-    from tests.unit.orchestration.nodes.test_agent_node_local_models import _run as _run_local
-
-    enable_providers(monkeypatch, "custom")
-    entered = asyncio.Event()
-
-    class _SlowRelease(_Slots):
-        async def release(self, lease_id: str) -> None:
-            entered.set()
-            await asyncio.sleep(60)
-
-    traces = _Traces()
-    task = asyncio.create_task(
-        _run_local(slots=_SlowRelease(), state={"local_first_model": _LOCAL}, configurable={"traces_repo": traces})
-    )
-    await entered.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert traces.finished, "a cancel while the slot was given back left the trace running"
-    closed = traces.finished[0]
-    assert closed["metering"]["closed"]["cause"] == "cancelled"
-    assert (closed["result"], closed["error_code"]) == ("success", None), "a finished run was labelled interrupted"
-
-
 async def test_a_cancel_while_the_run_s_own_figures_are_written_does_not_lose_them() -> None:
     entered = asyncio.Event()
 

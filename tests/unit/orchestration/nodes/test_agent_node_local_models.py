@@ -320,3 +320,43 @@ async def test_a_credential_too_deep_to_read_fails_the_run_instead_of_sharing_a_
             configurable={"credential_resolver": _Resolver(error=StoredValueTooDeep("credentials"))},
         )
     assert slots.taken == [], "no slot was taken on a server read as unknown"
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_while_the_slot_is_released_closes_the_run_s_trace() -> None:
+    """#694: the exec returned, and the cancel comes while the run's slot on the local model is given back. The run's
+    trace is closed with its own outcome, not left running. Here, so it runs with this module's own setup of the local
+    model; it fails at once, rather than waiting out its timeout, if the run never takes a slot."""
+    entered = asyncio.Event()
+
+    class _SlowRelease(_Slots):
+        async def release(self, lease_id: str) -> None:
+            entered.set()
+            await asyncio.sleep(60)
+
+    class _ClosingTraces(_Traces):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed: list[dict[str, Any]] = []
+
+        async def close_running(self, trace_id: str, **fields: Any) -> bool:
+            self.closed.append(fields)
+            return True
+
+    traces = _ClosingTraces()
+    task = asyncio.create_task(
+        _run(slots=_SlowRelease(), state={"local_first_model": _LOCAL}, configurable={"traces_repo": traces})
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+    except TimeoutError:
+        task.cancel()
+        pytest.fail(
+            f"the run never gave a slot back (did it take one?): {await asyncio.gather(task, return_exceptions=True)}"
+        )
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert traces.closed, "a cancel while the slot was given back left the trace running"
+    assert traces.closed[0]["metering"]["closed"]["cause"] == "cancelled"
+    assert (traces.closed[0]["result"], traces.closed[0]["error_code"]) == ("success", None)
