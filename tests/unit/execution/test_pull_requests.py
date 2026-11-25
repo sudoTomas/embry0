@@ -199,3 +199,28 @@ async def test_the_pull_request_s_own_repository_in_another_case_is_not_a_fork()
     }
     pr = await _github(Forge(body=body)).read("acme/web", 7)
     assert pr is not None and not pr.from_fork
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("make", "url"),
+    [(_github, "https://api.github.com/repos/acme/web"), (_gitlab, f"{GITLAB_URL}/api/v4/projects/acme%2Fweb")],
+    ids=["github", "gitlab"],
+)
+async def test_the_default_branch_is_the_repository_s_own_read(make: Any, url: str) -> None:
+    forge = Forge(body={"default_branch": "trunk"})
+    assert await make(forge).default_branch("acme/web") == "trunk"
+    assert forge.requests == [("GET", url, None)]
+    assert await make(Forge(status=404, body={"message": "no"})).default_branch("acme/web") is None
+    assert await make(Forge(body={"default_branch": ""})).default_branch("acme/web") is None
+
+
+@pytest.mark.asyncio
+async def test_github_s_pull_request_read_names_the_default_branch() -> None:
+    body = {
+        "state": "open",
+        "head": {"ref": "fix", "repo": {"full_name": "acme/web"}},
+        "base": {"ref": "trunk", "repo": {"full_name": "acme/web", "default_branch": "trunk"}},
+    }
+    pr = await _github(Forge(body=body)).read("acme/web", 7)
+    assert pr is not None and pr.default_branch == "trunk"

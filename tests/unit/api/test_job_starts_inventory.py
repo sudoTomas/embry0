@@ -151,10 +151,11 @@ SITES: dict[str, str] = {
     "embry0.api.v1.issues:_resume_pipeline": "walked: answering an issue's question",
     "embry0.api.v1.job_review:run_again": "walked: running a job again",
     "embry0.api.v1.knowledge_maps:_start_analysis": "walked: sending a map's part",
-    "embry0.api.v1.leads:_start_review": "walked: accepting a review lead",
     "embry0.api.v1.standards:start_standard_audit": "walked: a standard's audit",
     "embry0.services.area_map:start_map_areas_job": "walked: mapping a repository's areas",
-    "embry0.services.comment_dispatch:CommentDispatchService.start_followup": "walked: sending a job back",
+    "embry0.services.comment_dispatch:CommentDispatchService.start_followup": (
+        "walked: sending a job back, and accepting a review lead"
+    ),
     "embry0.services.context_audit:start_context_audit_job": "walked: running an owner's context audit",
     f"{EXECUTOR}:IssueExecutor.execute": "walked: every issue's job (create, triage, answers, proposals, cases)",
     f"{EXECUTOR}:IssueExecutor.start_job": "walked: POST /jobs with the qa pipeline",
@@ -587,8 +588,11 @@ async def _crossed_case(app: FastAPI, db: DatabasePool) -> Mapping[str, str]:
 
 
 async def _review_lead(app: FastAPI, db: DatabasePool) -> Mapping[str, str]:
-    """A review lead of the other repository: threads on its pull request nobody answered."""
+    """A review lead of the other repository: threads on its pull request nobody answered. It is followed up as a
+    send-back is, through comment dispatch."""
     from embry0.services.leads import Lead
+
+    await _dispatch(app, db)
     from embry0.storage.repositories.leads import LeadsRepository
 
     await LeadsRepository(db).upsert(
@@ -701,7 +705,9 @@ class _PullRequests:
     async def __call__(self, repo: str, number: int, forge: str = "github") -> Any:
         from embry0.execution.pull_requests import PullRequest
 
-        return PullRequest(number, "open", f"fix-{number}", f"https://github.com/{repo}/pull/{number}", False)
+        return PullRequest(
+            number, "open", f"fix-{number}", f"https://github.com/{repo}/pull/{number}", False, default_branch="main"
+        )
 
 
 async def _dispatch(app: FastAPI, _db: DatabasePool) -> None:
@@ -993,9 +999,7 @@ STARTS: dict[tuple[str, str, str], frozenset[str]] = {
     ("POST", "/api/v1/proposals/{proposal_id}/accept", "an issue"): frozenset({_EXECUTE}),
     ("POST", "/api/v1/proposals/{proposal_id}/accept", "a finding's case"): frozenset({_EXECUTE}),
     ("POST", "/api/v1/proposals/{proposal_id}/accept", "a ci lead"): frozenset({_EXECUTE}),
-    ("POST", "/api/v1/proposals/{proposal_id}/accept", "a review lead"): frozenset(
-        {"embry0.api.v1.leads:_start_review"}
-    ),
+    ("POST", "/api/v1/proposals/{proposal_id}/accept", "a review lead"): _SEND_BACK,
     ("POST", "/api/v1/asks/answer", ""): frozenset({_EXECUTE}),
     ("POST", "/api/v1/orgs/{owner}/actions", ""): frozenset({_ONBOARD}),
     ("POST", "/api/v1/orgs/{owner}/context-audit/run", ""): frozenset(

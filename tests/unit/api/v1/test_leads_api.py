@@ -13,11 +13,18 @@ from httpx import ASGITransport, AsyncClient
 
 from embry0.api.v1 import leads as leads_api
 from embry0.api.v1 import proposals as proposals_api
+from embry0.execution.pull_requests import PullRequest
+from embry0.services.comment_dispatch import CommentDispatchService
 from embry0.services.proposals import Decision
 from tests.fixtures.leads import MemorySettings
 
 T0 = datetime(2026, 10, 25, 12, tzinfo=UTC)
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+
+
+def _pull_request(head_ref: str = "feat/export", *, from_fork: bool = False) -> PullRequest:
+    """The review lead's pull request as the forge reads it now: open, on ``head_ref``, the default branch main."""
+    return PullRequest(42, "open", head_ref, "https://github.com/acme/web/pull/42", from_fork, default_branch="main")
 
 
 def _row(kind: str, lead_id: str, **over: Any) -> dict[str, Any]:
@@ -110,6 +117,15 @@ def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     st.jobs_repo = MagicMock()
     st.jobs_repo.create = AsyncMock(return_value="job-review")
     st.jobs_repo.update = AsyncMock()
+    st.jobs_repo.find_by_pr_url = AsyncMock(return_value=[])
+    # A review lead starts as a tagged comment does: the pull request is read again (here, as the forge answers).
+    st.comment_dispatch = CommentDispatchService(
+        config=SimpleNamespace(github_token=""),
+        jobs_repo=st.jobs_repo,
+        agent_sessions_repo=MagicMock(get=AsyncMock(return_value=None)),
+        executor=st.issue_executor,
+    )
+    st.comment_dispatch._fetch_pr = AsyncMock(return_value=_pull_request())
     st.github_issues_client = SimpleNamespace(
         get_issue=AsyncMock(
             return_value={"state": "open", "title": "Export fails", "body": "b", "html_url": "u", "labels": []}
@@ -169,8 +185,30 @@ async def test_a_yes_to_a_review_lead_follows_up_on_the_pull_request_branch(app:
     created = app.state.jobs_repo.create.await_args.kwargs
     assert created["pipeline_template"] == "pr-followup" and created["dispatched_by"] == "octo"
     assert created["context"] == {"type": "git", "repo": "acme/web", "ref": "feat/export"}
-    app.state.jobs_repo.update.assert_awaited_once_with("job-review", pr_url="https://forge/x")
+    app.state.jobs_repo.update.assert_awaited_once_with("job-review", pr_url="https://github.com/acme/web/pull/42")
     assert app.state.issue_executor.submit_job.call_args.kwargs["kind"] == "lead"
+    assert app.state.comment_dispatch._fetch_pr.await_args.args == ("acme/web", 42, "github")
+
+
+@pytest.mark.parametrize(
+    ("read", "reason"),
+    [
+        (_pull_request("main"), "pr head is default branch"),
+        (_pull_request(from_fork=True), "pr from fork"),
+        (None, "pr fetch failed"),
+    ],
+    ids=["head-is-default-branch", "fork", "unread"],
+)
+async def test_a_review_lead_follows_up_only_where_a_tagged_comment_would(
+    app: FastAPI, read: PullRequest | None, reason: str
+) -> None:
+    """The branch the lead stored is not trusted: the pull request is read again, and one whose head is the default
+    branch (a release pull request from main, say), a fork's, or one that cannot be read gets no job."""
+    app.state.comment_dispatch._fetch_pr = AsyncMock(return_value=read)
+    async with await _client(app) as client:
+        response = await client.post("/api/v1/proposals/review:1/accept", json={"by": "octo"}, headers=HEADERS)
+    assert (response.status_code, response.json()["detail"]) == (409, f"not followed up: {reason}"), response.text
+    app.state.jobs_repo.create.assert_not_awaited()
 
 
 @pytest.mark.parametrize("name", ["embry0:scout", " Embry0:watcher"])

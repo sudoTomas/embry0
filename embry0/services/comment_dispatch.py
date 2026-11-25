@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from collections import deque
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -105,7 +106,11 @@ class CommentDispatchService:
                 http_client=self._http,
                 credential_resolver=self._credential_resolver,
             )
-        return await pull_requests_for(forge, client).read(repo, number)
+        pulls = pull_requests_for(forge, client)
+        pr = await pulls.read(repo, number)
+        if pr is not None and pr.default_branch is None:
+            pr = replace(pr, default_branch=await pulls.default_branch(repo))
+        return pr
 
     async def _first_with_session(self, job_ids: list[str]) -> str | None:
         for job_id in job_ids:
@@ -196,6 +201,13 @@ class CommentDispatchService:
             # Its branch is another repository's: a follow-up here would work, and push, on this repository's branch
             # of the same name.
             return {"dispatched": False, "reason": "pr_from_fork"}
+        if pr.default_branch is None or pr.head_ref == pr.default_branch:
+            # A follow-up is granted a push to the pull request's branch: never the repository's default branch, and
+            # not when which branch that is could not be read.
+            return {
+                "dispatched": False,
+                "reason": "pr_head_is_default_branch" if pr.default_branch else "default_branch_unread",
+            }
         head_ref = pr.head_ref
         pr_url = pr.url
         if not head_ref:

@@ -39,7 +39,8 @@ def _recording_http(body):
 async def test_comment_dispatch_fetches_the_pr_with_the_registry_token():
     from embry0.services.comment_dispatch import CommentDispatchService
 
-    http, seen = _recording_http({"state": "open"})
+    # GitHub's pull request read names the default branch, so it is the one call.
+    http, seen = _recording_http({"state": "open", "base": {"repo": {"default_branch": "main"}}})
     resolver = _Resolver()
     svc = CommentDispatchService(
         config=SimpleNamespace(github_token=""),
