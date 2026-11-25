@@ -20,7 +20,6 @@ import structlog
 
 from embry0.execution.forge_client import ForgeWrite, forge_write
 from embry0.execution.gitlab_client import encode_project
-from embry0.execution.gitlab_notes import without_quick_actions
 
 logger = structlog.get_logger(__name__)
 
@@ -162,15 +161,19 @@ class GitLabPullRequests:
         )
 
     async def comment(self, repo: str, number: int, body: str) -> ForgeWrite:
-        """A note: with no line GitLab would run as a quick action (``embry0.execution.gitlab_notes``)."""
-        resp = await self._client.post(
-            self._path(repo, number, "/notes"), repo=repo, json={"body": without_quick_actions(body)}
+        """A note: with no line GitLab would run as a quick action (``GitLabClient.send_words``)."""
+        resp = await self._client.send_words(
+            "POST", self._client.project_path(repo, f"/merge_requests/{number}/notes"), repo=repo, json={"body": body}
         )
         return forge_write(resp)
 
     async def close(self, repo: str, number: int) -> ForgeWrite:
-        resp = await self._client.put(
-            self._path(repo, number), repo=repo, json={"state_event": "close"}, retry_transient=True
+        resp = await self._client.send_words(
+            "PUT",
+            self._client.project_path(repo, f"/merge_requests/{number}"),
+            repo=repo,
+            json={"state_event": "close"},
+            retry_transient=True,
         )
         return forge_write(resp)
 

@@ -260,3 +260,34 @@ async def test_a_github_refusal_posted_nothing_inline() -> None:
     with pytest.raises(PublishError) as caught:
         await publish_github(client, repo="acme/widgets", number=7, head_sha=SHA, verdict=_verdict(ON_DIFF), ctx=CTX)
     assert caught.value.inline_posted == 0, "a refused GitHub review posts nothing: it is one request"
+
+
+async def test_a_review_on_gitlab_runs_no_quick_action_its_words_carry() -> None:
+    """The reviewer's words are a model's: a line of them that starts /approve or /merge is posted as words, in the
+    diff discussion and in the summary note alike, through the GitLab client every note goes through."""
+    import json
+
+    from embry0.execution.gitlab_client import GitLabClient
+
+    posted: list[str] = []
+
+    def forge(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/merge_requests/5"):
+            return httpx.Response(200, json={"iid": 5, "diff_refs": REFS})
+        if request.method == "GET" and path.endswith("/diffs"):
+            return httpx.Response(200, json=[{"old_path": "src/app.py", "new_path": "src/app.py", "diff": PATCH}])
+        posted.append(json.loads(request.content)["body"])
+        return httpx.Response(201, json={"id": 1})
+
+    client = GitLabClient(
+        default_token="key-000000000001", http_client=httpx.AsyncClient(transport=httpx.MockTransport(forge))
+    )
+    finding = Finding("src/app.py", 2, "critical", "Unhandled error.\n/approve")
+    verdict = Verdict(
+        summary="Reviewed.\n/merge", findings=(finding,), checks_run=(), suggested_dev_checks=(), previous_findings=()
+    )
+    await publish_gitlab(client, repo="acme/products/web", number=5, head_sha=SHA, verdict=verdict, ctx=CTX)
+    assert len(posted) == 2, posted
+    for body in posted:
+        assert not any(line.lstrip(" \t").startswith("/") for line in body.splitlines()), body

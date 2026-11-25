@@ -162,7 +162,10 @@ async def ensure_mr_for_branch(
         # Safe to send again (#45): GitLab refuses a second open request for the same branches (the 409 below),
         # and the opener then finds the one the first request made. Sent once, a create GitLab made but answered
         # 502 would read as no merge request.
-        resp = await client.post(
+        # The description carries the developer's own summary: send_words keeps GitLab from running a quick action
+        # (/target_branch, /draft, /label) written in it.
+        resp = await client.send_words(
+            "POST",
             client.project_path(repo, "/merge_requests"),
             repo=repo,
             json={
@@ -239,7 +242,8 @@ async def _apply_mr_labels(
     if not isinstance(iid, int) or isinstance(iid, bool):
         return list(labels), "GitLab named no merge request number to put them on"
     try:
-        resp = await client.put(
+        resp = await client.send_words(
+            "PUT",
             client.project_path(repo, f"/merge_requests/{iid}"),
             repo=repo,
             json={"add_labels": ",".join(labels)},

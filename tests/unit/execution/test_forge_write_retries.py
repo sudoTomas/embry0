@@ -125,10 +125,14 @@ SAFE_TO_REPEAT = {
     ("embry0/execution/pull_requests.py", "/pulls/"): "a PATCH that closes the pull request",
     (
         "embry0/execution/pull_requests.py",
-        "self._path(repo, number)",
+        # The merge request itself, not a path under it such as its notes.
+        "/merge_requests/{number}')",
     ): "a PUT whose state_event closes the merge request",
     ("embry0/notifications/qa_comment.py", "/issues/comments/"): "a PATCH that sets the comment's body",
 }
+
+
+_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 
 
 def _opted_in() -> set[tuple[str, str]]:
@@ -140,7 +144,11 @@ def _opted_in() -> set[tuple[str, str]]:
                 continue
             if not any(k.arg == "retry_transient" and ast.unparse(k.value) == "True" for k in node.keywords):
                 continue
-            target = ast.unparse(node.args[0]) if node.args else ""
+            args = node.args
+            # ``request(method, path)`` and ``send_words(method, path)`` name the method first: the path is next.
+            if args and isinstance(args[0], ast.Constant) and str(args[0].value).upper() in _METHODS:
+                args = args[1:]
+            target = ast.unparse(args[0]) if args else ""
             key = next((key for key in SAFE_TO_REPEAT if key[0] == rel and key[1] in target), (rel, target))
             found.add(key)
     return found
