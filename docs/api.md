@@ -1861,6 +1861,8 @@ Every event carries `type` and `timestamp`; the orchestrator stamps `job_id` and
 
 The route closes with code 1000 after forwarding `job_finished`, or straight after the replay when the job is already finished (a terminal row, or one whose PR was since merged or closed): the stream is over and a client must not reconnect. A client keeps the highest `event_seq` it processed as its `?since_seq=` cursor for the next connect, and treats a live event whose `prev_seq` is greater than that cursor as a gap (this job had a persisted event the client never received) to fill from `GET /jobs/{id}/logs/events?since_seq=<cursor>` before applying it. A larger `event_seq` alone is not a gap: ids are `job_logs.id`, shared by every job.
 
+A run's `turn_start` is one model response: an Agent SDK response whose content blocks the CLI sends as several messages is one turn. Its `turn_usage` events add up to its responses' usage so far, each response's input once: each event carries what its message adds. The stream gives no response's final output count, so a running output total is a lower bound; the run's `cost_update` is its total and wins (#676).
+
 <!-- events:begin -->
 | Type | Required fields | Optional fields |
 |---|---|---|
