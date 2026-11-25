@@ -42,7 +42,7 @@ class Tree:
 
     def __init__(self, root: pathlib.Path) -> None:
         self.root = root
-        self._constants: dict[str, dict[str, str]] = {}
+        self._folders: dict[str, _Folder | None] = {}
         self._reading: set[str] = set()
 
     def file_of(self, dotted: str) -> pathlib.Path | None:
@@ -52,20 +52,32 @@ class Tree:
                 return candidate
         return None
 
-    def constants(self, dotted: str) -> dict[str, str]:
-        """The string constants the module ``dotted`` defines or imports, folded; {} for none, or one of a cycle."""
-        if dotted in self._constants:
-            return self._constants[dotted]
+    def folder(self, dotted: str) -> _Folder | None:
+        """What the module ``dotted`` defines or imports, folded; None for no module, or one of a cycle."""
+        if dotted in self._folders:
+            return self._folders[dotted]
         path = self.file_of(dotted)
         if path is None or dotted in self._reading:
-            return {}
+            return None
         self._reading.add(dotted)
         try:
-            constants = _Folder(ast.parse(path.read_text()), self, path).constants
+            folder = _Folder(ast.parse(path.read_text()), self, path)
         finally:
             self._reading.discard(dotted)
-        self._constants[dotted] = constants
-        return constants
+        self._folders[dotted] = folder
+        return folder
+
+    def constants(self, dotted: str) -> dict[str, str]:
+        """The string constants the module ``dotted`` defines or imports, folded; {} for none, or one of a cycle."""
+        folder = self.folder(dotted)
+        return folder.constants if folder is not None else {}
+
+
+def _member(constants: dict[str, str], parts: list[str]) -> str | None:
+    """A class's constant: ``NAME``, or an ``Enum`` member's ``NAME.value``."""
+    if len(parts) == 2 and parts[1] == "value":
+        parts = parts[:1]
+    return constants.get(parts[0]) if len(parts) == 1 else None
 
 
 def _resolved(node: ast.ImportFrom, path: pathlib.Path | None, root: pathlib.Path | None) -> str:
@@ -83,19 +95,36 @@ class _Folder:
         self.constants: dict[str, str] = {}
         #: Each name bound to a module of the checkout (``import a.b as m``, ``from a import b``): its dotted name.
         self.modules: dict[str, str] = {}
+        #: Each class's string constants, an ``Enum``'s members included: ``Class.NAME``, ``Kind.AREAS.value``.
+        self.classes: dict[str, dict[str, str]] = {}
         self._tree = modules
         if modules is not None:
             self._imports(tree, modules, path)
         for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                self.classes[node.name] = self._assigned(node.body, scope=dict(self.constants))
+            else:
+                self.constants.update(self._assigned([node], scope=self.constants))
+
+    def _assigned(self, body: list[ast.stmt], *, scope: dict[str, str]) -> dict[str, str]:
+        """The string constants ``body`` assigns, each folded with those before it in ``scope``."""
+        found: dict[str, str] = {}
+        for node in body:
             target, value = None, None
             if isinstance(node, ast.Assign) and len(node.targets) == 1:
                 target, value = node.targets[0], node.value
             elif isinstance(node, ast.AnnAssign):
                 target, value = node.target, node.value
             if isinstance(target, ast.Name) and value is not None:
-                folded = self.fold(value)
+                kept, self.constants = self.constants, scope
+                try:
+                    folded = self.fold(value)
+                finally:
+                    self.constants = kept
                 if folded is not None:
-                    self.constants[target.id] = folded
+                    found[target.id] = folded
+                    scope[target.id] = folded
+        return found
 
     def _imports(self, tree: ast.Module, modules: Tree, path: pathlib.Path | None) -> None:
         """The constants and modules this module imports from the checkout, wherever it imports them."""
@@ -109,26 +138,44 @@ class _Folder:
                         self.modules.setdefault(top, top)
             elif isinstance(node, ast.ImportFrom):
                 base = _resolved(node, path, modules.root)
+                source = modules.folder(base)
                 for alias in node.names:
                     bound = alias.asname or alias.name
-                    if modules.file_of(f"{base}.{alias.name}") is not None:
+                    if alias.name == "*":
+                        if source is not None:
+                            self.constants.update(source.constants)
+                            self.classes.update(source.classes)
+                    elif modules.file_of(f"{base}.{alias.name}") is not None:
                         self.modules[bound] = f"{base}.{alias.name}"
-                    else:
-                        value = modules.constants(base).get(alias.name)
-                        if value is not None:
-                            self.constants[bound] = value
+                    elif source is not None and alias.name in source.classes:
+                        self.classes[bound] = source.classes[alias.name]
+                    elif source is not None and alias.name in source.constants:
+                        self.constants[bound] = source.constants[alias.name]
 
     def _attribute(self, node: ast.Attribute) -> str | None:
-        """A constant reached through a module: ``m.NAME``, ``a.b.NAME``."""
+        """A constant reached through a class or a module: ``Class.NAME``, ``Kind.AREAS.value``, ``m.NAME``,
+        ``m.Class.NAME``, ``a.b.NAME``; ``os.sep`` is ``/``."""
         parts = [node.attr]
         value: ast.expr = node.value
         while isinstance(value, ast.Attribute):
             parts.insert(0, value.attr)
             value = value.value
-        if self._tree is None or not isinstance(value, ast.Name) or value.id not in self.modules:
+        if not isinstance(value, ast.Name):
             return None
-        dotted = ".".join([self.modules[value.id], *parts[:-1]])
-        return self._tree.constants(dotted).get(parts[-1])
+        if value.id in ("os", "posixpath") and parts == ["sep"]:
+            return "/"
+        if value.id in self.classes:
+            return _member(self.classes[value.id], parts)
+        if self._tree is None or value.id not in self.modules:
+            return None
+        for cut in range(len(parts) - 1, -1, -1):
+            folder = self._tree.folder(".".join([self.modules[value.id], *parts[:cut]]))
+            if folder is not None:
+                rest = parts[cut:]
+                if len(rest) == 1:
+                    return folder.constants.get(rest[0])
+                return _member(folder.classes[rest[0]], rest[1:]) if rest[0] in folder.classes else None
+        return None
 
     def fold(self, node: ast.expr) -> str | None:
         """The string ``node`` makes, with :data:`UNKNOWN` for each part that is not a constant; None when it makes

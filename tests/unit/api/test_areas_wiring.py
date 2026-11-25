@@ -80,9 +80,10 @@ def _modules() -> list[tuple[str, pathlib.Path]]:
 
 
 def test_no_code_names_the_repository_s_old_areas_file() -> None:
-    """In any form: spelled, pieced together, held in a constant, joined as a path or URL-encoded (GitLab's files
-    API reads ``.embry0%2Fareas.yml``)."""
-    from tests.fixtures.source_strings import Tree, spells
+    """In any form: spelled, pieced together, held in a constant (a module's, a class's, an ``Enum``'s, one imported
+    from another module), joined as a path or URL-encoded (GitLab's files API reads ``.embry0%2Fareas.yml``). And
+    no path under ``.embry0/`` is made from a part the code does not spell (a helper given the file's name)."""
+    from tests.fixtures.source_strings import UNKNOWN, Tree, spells
 
     tree = Tree(ROOT)
     named = [
@@ -91,6 +92,12 @@ def test_no_code_names_the_repository_s_old_areas_file() -> None:
         if name != MIGRATIONS and spells(path.read_text(), ".embry0/areas", tree=tree, path=path)
     ]
     assert named == [], f"code that names the repository's old areas file: {named}"
+    made = [
+        name
+        for name, path in _modules()
+        if name != MIGRATIONS and spells(path.read_text(), ".embry0/" + UNKNOWN, tree=tree, path=path)
+    ]
+    assert made == [], f"code that makes a path under .embry0/ from a part it does not spell: {made}"
     spelled = [
         name
         for name, path in _modules()

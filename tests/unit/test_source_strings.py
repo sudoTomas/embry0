@@ -31,6 +31,14 @@ _PATHS = {
     "URL-quoted": 'from urllib.parse import quote\npath = quote(".embry0/" + "areas.yml", safe="")\n',
     "formatted": 'path = "%s/areas.yml" % ".embry0"\n',
     "formatted with format()": 'path = "{}/{}".format(".embry0", "areas.yml")\n',
+    "class constants": 'class AreasFile:\n    FOLDER = ".embry0"\n    NAME = "areas"\n\n\npath = f"{AreasFile.FOLDER}/{AreasFile.NAME}.yml"\n',
+    "an Enum member's value": (
+        'from enum import Enum\n\n\nclass Kind(Enum):\n    AREAS = "areas"\n\n\npath = f".embry0/{Kind.AREAS.value}.yml"\n'
+    ),
+    "a class constant built from another": (
+        'class Paths:\n    FOLDER = ".embry0"\n    AREAS = FOLDER + "/areas.yml"\n\n\npath = Paths.AREAS\n'
+    ),
+    "joined with os.sep": 'import os\npath = ".embry0" + os.sep + "areas.yml"\n',
 }
 
 
@@ -106,6 +114,45 @@ def test_a_constant_imported_from_another_module_is_followed(tmp_path: pathlib.P
         'from embry0.services import names\npath = names.DIR + "/" + names.FILE\n',
         'import embry0.services.names as n\npath = n.DIR + "/" + n.FILE\n',
         'from .names import DIR as D, FILE as F\npath = D + "/" + F\n',
+    ):
+        reader = package / "reader.py"
+        reader.write_text(source)
+        assert helper.spells(source, ".embry0/areas", tree=tree, path=reader), f"missed: {source!r}"
+
+
+#: A path under the old configuration folder with a part the code makes when it runs: a helper that takes the file's
+#: name, a name read from somewhere. No constant spells the file, so it is refused for its folder (#175).
+_UNDER_THE_FOLDER = {
+    "a helper function": 'def config_path(name):\n    return ".embry0/" + name + ".yml"\n\n\npath = config_path("areas")\n',
+    "an f-string": 'def path_of(root, kind):\n    return f"{root}/.embry0/{kind}.yml"\n',
+    "a path join": 'from pathlib import Path\n\n\ndef path_of(kind):\n    return Path(".embry0") / kind\n',
+    "os.path.join": 'import os\n\n\ndef path_of(kind):\n    return os.path.join(".embry0", kind)\n',
+}
+
+
+@pytest.mark.parametrize("form", sorted(_UNDER_THE_FOLDER))
+def test_a_path_under_the_folder_with_a_part_made_at_run_time_is_seen(form: str) -> None:
+    helper = _helper()
+    assert helper.spells(_UNDER_THE_FOLDER[form], ".embry0/" + helper.UNKNOWN), f"a path {form} is missed"
+
+
+def test_a_class_and_everything_imported_with_a_star_are_followed(tmp_path: pathlib.Path) -> None:
+    helper = _helper()
+    package = tmp_path / "embry0" / "services"
+    package.mkdir(parents=True)
+    (tmp_path / "embry0" / "__init__.py").write_text("")
+    (package / "__init__.py").write_text("")
+    (package / "names.py").write_text(
+        'BASE = ".embry0"\n\n\nclass AreasFile:\n    FOLDER = BASE\n    NAME = "are" + "as"\n'
+    )
+    tree_of = getattr(helper, "Tree", None)
+    if tree_of is None:
+        pytest.fail("a constant imported from another module of the checkout must be followed there")
+    tree = tree_of(tmp_path)
+    for source in (
+        'from embry0.services.names import AreasFile\npath = f"{AreasFile.FOLDER}/{AreasFile.NAME}.yml"\n',
+        'from embry0.services import names\npath = f"{names.AreasFile.FOLDER}/{names.AreasFile.NAME}.yml"\n',
+        'from embry0.services.names import *  # noqa: F403\npath = f"{BASE}/{AreasFile.NAME}.yml"\n',
     ):
         reader = package / "reader.py"
         reader.write_text(source)
