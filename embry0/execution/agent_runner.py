@@ -61,8 +61,17 @@ RUNNER_INTERPRETER: Final = "/usr/local/bin/embry0-runner-python"
 RUNNER_COMMAND: tuple[str, ...] = (RUNNER_INTERPRETER, "-P", "-s", "-m", "embry0.sandbox.runner")
 #: The same runner on the image's own python: for an image built before it had the runner's interpreter.
 _PLAIN_RUNNER_COMMAND: tuple[str, ...] = ("python", *RUNNER_COMMAND[1:])
-#: What ``docker exec`` exits with when the program it is to start does not exist in the container.
-_EXEC_NOT_FOUND = 127
+#: What ``docker exec`` exits with when the program it is to start does not exist in the container: 126 from
+#: Docker 27 (the stack's DinD daemon), 127 from Docker 29. Either way the daemon writes why as the exec's one
+#: stdout line, ``OCI runtime exec failed: …`` ending in CRLF, and nothing on stderr: an exec whose start fails
+#: has its error written onto the attached output stream.
+_EXEC_COULD_NOT_START: Final = frozenset({126, 127})
+#: How the daemon begins that line.
+_OCI_EXEC_FAILED: Final = "OCI runtime exec failed"
+#: The part of it that names the runner's interpreter as the program that does not exist.
+_INTERPRETER_NOT_FOUND: Final = f"stat {RUNNER_INTERPRETER}: no such file or directory"
+#: The longest first stdout line an exec's facts keep: the daemon's line is about 200 characters.
+_FIRST_LINE_CHARS: Final = 1000
 SANDBOX_HOME = Path("/home/agent")
 #: The longest event type a dropped line's log names, cut there: the type is what a sandbox wrote.
 _DROPPED_TYPE_CHARS = 64
@@ -226,6 +235,23 @@ class _RunnerExit:
     exit_code: int | None = None
     stdout_lines: int = 0
     stderr: str = ""
+    #: How many stdout lines were events: the runner writes one from its first action.
+    events: int = 0
+    #: The first stdout line that was not an event, cut at :data:`_FIRST_LINE_CHARS`.
+    first_line: str = ""
+
+    def exec_failure(self) -> str | None:
+        """What the daemon said when ``docker exec`` could not start the program at all, or None.
+
+        Only an exit of 126 or 127 with nothing but the daemon's one line: not one event, and at most that line on
+        stdout (on stderr for a CLI that writes it there). The runner writes an event from its first action, and
+        never exits 126 or 127 itself, so nothing it does once started reads as this."""
+        if self.exit_code not in _EXEC_COULD_NOT_START or self.events or self.stdout_lines > 1:
+            return None
+        for said in (self.first_line, self.stderr.strip()):
+            if _OCI_EXEC_FAILED in said:
+                return said
+        return None
 
     def is_stale_runner_usage_error(self) -> bool:
         """True only for argparse's usage exit BEFORE any agent work: exit
@@ -234,9 +260,11 @@ class _RunnerExit:
         return self.exit_code == 2 and self.stdout_lines == 0 and _STALE_RUNNER_STDERR_MARKER in self.stderr
 
     def is_missing_runner_interpreter(self) -> bool:
-        """True only for an image without the runner's interpreter: ``docker exec`` could not start it (127),
-        naming it, and nothing ran, so the image is one built before it."""
-        return self.exit_code == _EXEC_NOT_FOUND and self.stdout_lines == 0 and RUNNER_INTERPRETER in self.stderr
+        """True only for an image without the runner's interpreter: ``docker exec`` could not start any program
+        (:meth:`exec_failure`) and the daemon says the interpreter's path does not exist, so nothing ran and the
+        image is one built before it."""
+        said = self.exec_failure()
+        return said is not None and _INTERPRETER_NOT_FOUND in said
 
     def is_unmarked_runner_usage_error(self) -> bool:
         """True only for argparse refusing ``--result-nonce`` BEFORE any agent work: an image's runner that takes
@@ -454,6 +482,8 @@ class AgentRunner:
             results = 0
             event_callback = on_event or (lambda _: None)
             line_count = 0
+            events = 0
+            first_line = ""
             dropped: dict[str, int] = {}
             buffered = 0
 
@@ -483,7 +513,9 @@ class AgentRunner:
                     line_count += 1
                     event = parse_event(line)
                     if event is None:
+                        first_line = first_line or line[:_FIRST_LINE_CHARS]
                         continue
+                    events += 1
                     if event.get("type") == "final_result":
                         # Counted: a run whose output holds more than one is refused below, whichever is the runner's.
                         results += 1
@@ -513,6 +545,11 @@ class AgentRunner:
             exit_facts.exit_code = proc.returncode
             exit_facts.stdout_lines = line_count
             exit_facts.stderr = stderr_text
+            exit_facts.events = events
+            exit_facts.first_line = first_line
+            # The daemon's own words when docker exec could not start the program; they arrive on stdout, where
+            # no non-event line is otherwise kept, so the failure below says them.
+            exec_failed = exit_facts.exec_failure()
 
             if idle_fired:
                 return AgentOutput(
@@ -571,6 +608,7 @@ class AgentRunner:
                     error_code=payload.get("error_code") or None,
                     result=redacted_log_field(str(payload.get("output") or ""), secrets),
                     diagnostic=redacted_log_field(str(payload.get("diagnostic") or ""), secrets),
+                    exec_failed=redact_secrets(exec_failed, secrets) if exec_failed else None,
                 )
 
             if final_result:
@@ -629,6 +667,16 @@ class AgentRunner:
                 return output
 
             trailing = redact_secrets(stderr_text.strip()[-1500:], secret_env_values())
+            if exec_failed is not None:
+                return AgentOutput(
+                    agent_type=config.get("agent_type", "unknown"),
+                    is_error=True,
+                    error_message=(
+                        f"The sandbox could not start the agent: docker exec exited {proc.returncode} before the "
+                        f"runner started; the daemon said: {redact_secrets(exec_failed, secret_env_values())}"
+                    ),
+                    error_code=ErrorCode.SANDBOX_AGENT_START_FAILED.value,
+                )
             if _is_start_crash(proc.returncode, line_count, stderr_text):
                 # #354: not "the agent returned nothing" — it never started.
                 return AgentOutput(

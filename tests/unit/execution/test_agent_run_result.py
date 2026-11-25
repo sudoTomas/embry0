@@ -13,11 +13,14 @@ counted as a stale image.
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog.testing
+import yaml
 
 from embry0.execution import agent_runner
 from embry0.execution.agent_runner import AgentRunner
@@ -34,11 +37,24 @@ _UNMARKED_USAGE = (
     b"                 [--session-id SESSION_ID]\n"
     b"runner.py: error: unrecognized arguments: --result-nonce\n"
 )
-#: What docker exec prints when the program it is to start is not in the image.
-_NO_INTERPRETER = (
-    b"OCI runtime exec failed: exec failed: unable to start container process: exec: "
-    b'"/usr/local/bin/embry0-runner-python": stat /usr/local/bin/embry0-runner-python: no such file or directory\n'
-)
+#: What the daemon says when the program docker exec is to start is not in the image, by Docker major version, with
+#: the exit docker exec gives: measured against docker:27-dind (27.5.1) and Docker 29.4 on an image without the
+#: interpreter. Both write it as the exec's one stdout line, ending in CRLF, and nothing on stderr.
+_NOT_FOUND_BY_DOCKER: dict[int, tuple[int, bytes]] = {
+    27: (
+        126,
+        b"OCI runtime exec failed: exec failed: unable to start container process: exec: "
+        b'"/usr/local/bin/embry0-runner-python": stat /usr/local/bin/embry0-runner-python: no such file or '
+        b"directory: unknown\r\n",
+    ),
+    29: (
+        127,
+        b"OCI runtime exec failed: exec failed: unable to start container process: exec: "
+        b'"/usr/local/bin/embry0-runner-python": stat /usr/local/bin/embry0-runner-python: no such file or '
+        b"directory\r\n",
+    ),
+}
+_NO_INTERPRETER = _NOT_FOUND_BY_DOCKER[29][1]
 
 
 class _Lines:
@@ -78,6 +94,14 @@ class _Proc:
 
 def _line(event: dict[str, Any]) -> bytes:
     return json.dumps(event).encode() + b"\n"
+
+
+def _said(lines: list[bytes], *, returncode: int, stderr: bytes = b"") -> Any:
+    """One exec's process whose stdout holds ``lines`` as written, none of them an event."""
+    proc = _Proc(list(lines), returncode=returncode, stderr=stderr)
+    proc.mark = False
+    proc.written_by_another = None
+    return proc
 
 
 def _proc(
@@ -261,10 +285,11 @@ async def test_the_runner_runs_on_its_execute_only_interpreter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_image_without_the_runner_s_interpreter_runs_it_on_its_own_python() -> None:
-    output, logs, runner, stale = await _run(
-        [_proc([], returncode=127, stderr=_NO_INTERPRETER), _proc([_STARTED, _FINAL])]
-    )
+@pytest.mark.parametrize("docker", sorted(_NOT_FOUND_BY_DOCKER), ids=lambda major: f"docker-{major}")
+async def test_an_image_without_the_runner_s_interpreter_runs_it_on_its_own_python(docker: int) -> None:
+    """As each Docker says it: the daemon's line on the exec's stdout, 126 from Docker 27 and 127 from Docker 29."""
+    code, line = _NOT_FOUND_BY_DOCKER[docker]
+    output, logs, runner, stale = await _run([_said([line], returncode=code), _proc([_STARTED, _FINAL])])
     calls = _calls(runner)
 
     assert len(calls) == 2, f"an image without the interpreter was not run again: {len(calls)} exec(s)"
@@ -277,10 +302,34 @@ async def test_an_image_without_the_runner_s_interpreter_runs_it_on_its_own_pyth
 
 
 @pytest.mark.asyncio
+async def test_a_cli_that_writes_the_daemon_s_line_on_stderr_is_read_there_too() -> None:
+    _, _, runner, stale = await _run([_said([], returncode=127, stderr=_NO_INTERPRETER), _proc([_STARTED, _FINAL])])
+
+    assert len(_calls(runner)) == 2 and stale == ["interpreter_missing"], stale
+
+
+def test_the_stack_s_dind_daemon_is_a_docker_whose_answer_is_covered() -> None:
+    """The exec the runner makes goes to the stack's DinD daemon: its Docker must be one whose missing-program
+    answer is measured above (and so covered), or the older-image retry may never fire, as on 27 before."""
+    compose = yaml.safe_load((Path(__file__).parents[3] / "infra" / "docker-compose.yml").read_text())
+    image = compose["services"]["dind"]["image"]
+    major = int(re.fullmatch(r"docker:(\d+)[.\w-]*-dind", image).group(1))  # type: ignore[union-attr]
+    assert major in _NOT_FOUND_BY_DOCKER, (
+        f"the DinD daemon is {image}: measure what its docker exec says of a missing program and add it"
+    )
+    covered = getattr(agent_runner, "_EXEC_COULD_NOT_START", frozenset())
+    assert _NOT_FOUND_BY_DOCKER[major][0] in covered, (
+        f"docker exec on {image} exits {_NOT_FOUND_BY_DOCKER[major][0]} for a missing program; the runner does not "
+        f"take that exit as one: {sorted(covered)}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_an_image_without_the_interpreter_or_the_mark_runs_on_its_python_unmarked() -> None:
+    code, line = _NOT_FOUND_BY_DOCKER[27]
     output, _, runner, stale = await _run(
         [
-            _proc([], returncode=127, stderr=_NO_INTERPRETER),
+            _said([line], returncode=code),
             _proc([], returncode=2, stderr=_UNMARKED_USAGE),
             _proc([_STARTED, _FINAL], mark=False),
         ]
@@ -291,19 +340,52 @@ async def test_an_image_without_the_interpreter_or_the_mark_runs_on_its_python_u
     assert output.output == "done" and stale == ["interpreter_missing", "result_unmarked"], (output, stale)
 
 
+_LINE_27 = _NOT_FOUND_BY_DOCKER[27][1]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "first",
     [
-        pytest.param({"events": [_STARTED], "returncode": 127, "stderr": _NO_INTERPRETER}, id="it-wrote-a-line"),
-        pytest.param({"events": [], "returncode": 127, "stderr": b"sh: 1: claude: not found\n"}, id="other-program"),
-        pytest.param({"events": [], "returncode": 126, "stderr": _NO_INTERPRETER}, id="not-exec-not-found"),
+        pytest.param(_proc([_STARTED], returncode=127, stderr=_NO_INTERPRETER), id="it-wrote-an-event"),
+        pytest.param(_said([_line(_STARTED), _LINE_27], returncode=126), id="an-event-then-the-line"),
+        pytest.param(_said([_LINE_27, b"more\n"], returncode=126), id="a-second-line"),
+        pytest.param(_said([_LINE_27], returncode=1), id="an-exit-the-daemon-does-not-give"),
+        pytest.param(_said([_LINE_27], returncode=0), id="no-failure"),
+        pytest.param(
+            _said([_LINE_27.replace(b"embry0-runner-python", b"claude")], returncode=126), id="another-program"
+        ),
+        pytest.param(
+            _said(
+                [b"ls: cannot stat /usr/local/bin/embry0-runner-python: no such file or directory\n"], returncode=127
+            ),
+            id="not-the-daemon-s-line",
+        ),
+        pytest.param(_said([], returncode=127, stderr=b"sh: 1: claude: not found\n"), id="other-program"),
     ],
 )
-async def test_the_interpreter_retry_cannot_fire_otherwise(first: dict[str, Any]) -> None:
-    _, _, runner, stale = await _run([_proc(**first), _proc([_STARTED, _FINAL])])
+async def test_the_interpreter_retry_cannot_fire_otherwise(first: Any) -> None:
+    _, _, runner, stale = await _run([first, _proc([_STARTED, _FINAL])])
 
     assert len(_calls(runner)) == 1 and stale == [], "the runner was run again on the image's python"
+
+
+@pytest.mark.asyncio
+async def test_an_exec_the_daemon_could_not_start_says_what_the_daemon_said() -> None:
+    """The daemon's line arrives on stdout, where no other non-event line is kept: the failure says it, and is a
+    start failure, not a run that returned nothing."""
+    python_missing = (
+        b"OCI runtime exec failed: exec failed: unable to start container process: exec: "
+        b'"python": executable file not found in $PATH: unknown\r\n'
+    )
+    code, line = _NOT_FOUND_BY_DOCKER[27]
+    output, logs, _, stale = await _run([_said([line], returncode=code), _said([python_missing], returncode=126)])
+
+    assert stale == ["interpreter_missing"], stale
+    assert output.error_code == "ERR_SANDBOX_AGENT_START_FAILED", output
+    assert 'exec: "python": executable file not found' in output.error_message, output.error_message
+    failed = [e for e in logs if e["event"] == "agent_runner_subprocess_failed"]
+    assert failed and all(e["exec_failed"] for e in failed), failed
 
 
 @pytest.mark.asyncio
