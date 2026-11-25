@@ -49,11 +49,27 @@ def llm_providers() -> dict[str, LlmProvider]:
     return table
 
 
+#: Where a provider is turned on: the provider catalogue's write (no restart).
+ENABLE_ROUTE = "PUT /api/v1/config/providers/catalog"
+
+
+def llm_provider_refusal(provider: str) -> str | None:
+    """Why this deployment takes no account of ``provider``; None when it takes one. A provider of the catalogue in
+    force that is not enabled is told where to turn it on; one the catalogue does not list says so."""
+    from embry0.agents.providers import provider_named
+
+    if provider in llm_providers():
+        return None
+    if provider_named(provider) is not None:
+        return f"provider {provider!r} is not enabled in this deployment: turn it on in the provider catalogue ({ENABLE_ROUTE})"
+    return f"provider {provider!r} is not in the provider catalogue"
+
+
 def default_host(provider: str) -> str:
     try:
         return llm_providers()[provider].host
     except KeyError:
-        raise ValueError(f"unknown llm provider {provider!r}") from None
+        raise ValueError(llm_provider_refusal(provider)) from None
 
 
 def base_url_host(base_url: str) -> str:
@@ -79,8 +95,9 @@ def env_fallback(
     catalog ``api_key_env``; the custom provider only together with its base URL
     (``env_fallback_metadata``).
     """
-    if provider not in llm_providers():
-        raise ValueError(f"unknown llm provider {provider!r}")
+    refusal = llm_provider_refusal(provider)
+    if refusal is not None:
+        raise ValueError(refusal)
     if provider == "anthropic" and getattr(config, "default_auth_mode", None) == "api_key":
         api_key = (environ.get("ANTHROPIC_API_KEY") or "").strip()
         return ("llm_api_key", api_key, "ANTHROPIC_API_KEY") if api_key else None

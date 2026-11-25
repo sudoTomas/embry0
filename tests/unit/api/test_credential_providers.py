@@ -78,3 +78,22 @@ def test_the_schema_names_no_llm_provider() -> None:
     /config/providers/catalog), which may hold one this release's code never named."""
     provider = CredentialCreate.model_json_schema()["properties"]["provider"]
     assert "enum" not in provider and "anthropic" not in str(provider), provider
+
+
+@pytest.mark.parametrize(
+    ("kind", "said"),
+    [
+        ("forge_token", "forge_token credentials must use provider github or gitlab"),
+        ("tailnet_api_key", "tailnet_api_key credentials use provider tailscale"),
+        ("llm_oauth", "takes an API key only"),
+    ],
+)
+def test_a_kind_the_provider_does_not_take_is_refused_for_its_kind_not_told_to_turn_it_on(
+    monkeypatch: pytest.MonkeyPatch, kind: str, said: str
+) -> None:
+    """Turning the provider on would not make the credential valid, so the hint would send the operator the wrong
+    way."""
+    _with_provider(monkeypatch, "mistral", enabled=False)
+    with pytest.raises(ValidationError) as refused:
+        _create(kind=kind, provider="mistral")
+    assert said in str(refused.value) and "turn it on" not in str(refused.value), str(refused.value)

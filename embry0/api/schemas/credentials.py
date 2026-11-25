@@ -80,31 +80,29 @@ class CredentialCreate(BaseModel):
     @model_validator(mode="after")
     def _kind_matches_provider(self) -> CredentialCreate:
         from embry0.agents.providers import provider_named
-        from embry0.services.credentials.providers import llm_providers
+        from embry0.services.credentials.providers import llm_provider_refusal, llm_providers
         from embry0.storage.repositories.credentials import NOT_LLM_PROVIDERS
 
         forge = self.provider in ("github", "gitlab")
         enabled = list(llm_providers())
         # A provider of the catalogue in force, enabled or not; the names that are not LLM providers are not in it.
         named = None if self.provider in NOT_LLM_PROVIDERS else provider_named(self.provider)
-        catalogued = named is not None
         # The chat-completions providers (the OpenAI-compatible family) take an API key only.
         family = named is not None and named.runtime == "chat_completions"
-        if catalogued and self.provider not in enabled:
-            raise ValueError(
-                f"provider {self.provider!r} is not enabled in this deployment: turn it on in the provider catalogue "
-                "(PUT /api/v1/config/providers/catalog)"
-            )
         if self.kind == "forge_token" and not forge:
             raise ValueError("forge_token credentials must use provider github or gitlab")
-        if self.kind in ("llm_oauth", "llm_api_key") and self.provider not in enabled:
-            names = ", ".join(enabled[:-1]) + f" or {enabled[-1]}"
-            raise ValueError(
-                f"{self.kind} credentials must use a provider of the provider catalogue this deployment enables: "
-                f"{names}"
-            )
-        if family and self.kind != "llm_api_key":
-            raise ValueError(f"{self.provider} credentials are llm_api_key: the provider takes an API key only")
+        if self.kind in ("llm_oauth", "llm_api_key"):
+            # The kind first: a provider is told to turn it on only for a kind it takes.
+            if family and self.kind != "llm_api_key":
+                raise ValueError(f"{self.provider} credentials are llm_api_key: the provider takes an API key only")
+            if named is not None and self.provider not in enabled:
+                raise ValueError(llm_provider_refusal(self.provider))
+            if self.provider not in enabled:
+                names = ", ".join(enabled[:-1]) + f" or {enabled[-1]}"
+                raise ValueError(
+                    f"{self.kind} credentials must use a provider of the provider catalogue this deployment "
+                    f"enables: {names}"
+                )
         if (self.kind == "tailnet_api_key") != (self.provider == "tailscale"):
             raise ValueError("tailnet_api_key credentials use provider tailscale, and tailscale takes no other kind")
         if self.kind == "tailnet_api_key":

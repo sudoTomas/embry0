@@ -937,3 +937,42 @@ async def test_put_null_clears_git_author_and_omission_keeps_it(client, app):
     body = r.json()
     assert (body["git_author_name"], body["git_author_email"]) == (None, None), f"author not cleared: {body}"
     assert body["label"] == "alice-2"
+
+
+@pytest.mark.parametrize(
+    ("enabled", "said"),
+    [
+        (False, "this credential cannot be verified: provider 'groq' is not enabled in this deployment: turn it on"),
+        (None, "this credential cannot be verified: provider 'groq' is not in the provider catalogue"),
+    ],
+    ids=["no longer enabled", "no longer listed"],
+)
+async def test_verifying_a_credential_the_catalogue_no_longer_takes_is_422_not_a_rejection(
+    client, app, monkeypatch: pytest.MonkeyPatch, enabled: bool | None, said: str
+) -> None:
+    """A credential stored while its provider was enabled outlives it: nothing to probe it with, and no answer from
+    the provider to call a rejection (#173)."""
+    from embry0.agents import catalogue
+
+    repo = app.state.credentials_repo
+    row = await repo.create(
+        kind="llm_api_key",
+        provider="groq",
+        host="api.groq.com",
+        label="groq-a",
+        secret_ciphertext="enc:gsk-placeholder",
+        masked_preview="gsk-••••",
+    )
+    raw = catalogue.seed().document.model_dump(mode="json", by_alias=True)
+    if enabled is None:
+        del raw["providers"]["groq"]
+    else:
+        raw["providers"]["groq"]["enabled"] = enabled
+    monkeypatch.setattr(
+        catalogue, "_installed", catalogue.Catalogue.build(type(catalogue.seed().document).model_validate(raw))
+    )
+    probe = AsyncMock()
+    with patch("embry0.services.provider_probe.probe_llm_secret", new=probe):
+        r = await client.post(f"/api/v1/credentials/{row['id']}/verify")
+    assert (r.status_code, said in r.json().get("detail", "")) == (422, True), r.text
+    assert probe.await_count == 0, "nothing is probed for a provider the catalogue does not take"

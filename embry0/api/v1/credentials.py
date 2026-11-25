@@ -807,6 +807,14 @@ async def verify_credential(credential_id: str, request: Request) -> CredentialO
         raise HTTPException(
             status_code=422, detail="only forge tokens and llm accounts can be verified in this release"
         )
+    if row["kind"] in ("llm_api_key", "llm_oauth"):
+        from embry0.services.credentials.providers import llm_provider_refusal
+
+        # A provider the catalogue no longer lists, or no longer enables: nothing to probe it with, and no answer
+        # from it to report as a rejection.
+        refusal = llm_provider_refusal(str(row["provider"]))
+        if refusal is not None:
+            raise HTTPException(status_code=422, detail=f"this credential cannot be verified: {refusal}")
     if row["provider"] == "xai" and row["kind"] == "llm_oauth":
         registry = getattr(request.app.state, "xai_refresher_registry", None)
         if registry is None:

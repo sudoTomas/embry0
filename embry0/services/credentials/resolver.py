@@ -27,6 +27,7 @@ from embry0.services.credentials.providers import (
     default_host,
     env_fallback,
     env_fallback_metadata,
+    llm_provider_refusal,
     llm_providers,
 )
 from embry0.storage.database import StoredValueTooDeep
@@ -680,8 +681,9 @@ class CredentialResolver:
         )
 
     def _check_llm_provider(self, provider: str) -> None:
-        if provider not in llm_providers():
-            raise ValueError(f"unknown llm provider {provider!r}")
+        refusal = llm_provider_refusal(provider)
+        if refusal is not None:
+            raise ValueError(refusal)
 
     async def _uses(self, job_id: str) -> list[dict[str, Any]]:
         try:
