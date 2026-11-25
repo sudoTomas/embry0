@@ -228,6 +228,9 @@ class ProxyManager:
         # a recreated proxy: proxy -> key -> (path, port, body, monotonic expiry).
         self._admin_state: dict[str, dict[str, tuple[str, int, dict[str, Any], float]]] = {}
         self._revive_locks: dict[str, asyncio.Lock] = {}
+        # Held while a recreated proxy is given its state back; a run's declaration or end waits for it, so it
+        # reaches the proxy after whatever the replay sends (two docker execs at once arrive in either order).
+        self._replay_locks: dict[str, asyncio.Lock] = {}
         self._on_recreated: Callable[[], Awaitable[None]] | None = None
         self.auth_proxy_url: str = ""
         self.xai_proxy_url: str = ""
@@ -1019,6 +1022,7 @@ class ProxyManager:
             k for k, (_, _, b, _) in held.items() if k.startswith("run:") and b.get("sandbox_id") == sandbox_id
         ]:
             del held[key]
+        await self._after_replay(proxy)
         response = await self._exec_admin_request(
             container=proxy, method="POST", path="/admin/runs", port=port, body=body
         )
@@ -1029,14 +1033,13 @@ class ProxyManager:
         when the proxy holds no such run (it was recreated and not given the run back). Raises RuntimeError when
         the proxy cannot be reached."""
         port = METERED_PROXIES[proxy][0]
-        try:
-            response = await self._exec_admin_request(
-                container=proxy, method="DELETE", path=f"/admin/runs/{run_id}", port=port, body=None, accept_404=True
-            )
-        finally:
-            # Ended, or as good as: an end whose answer was lost may have reached the proxy, and a run given back to
-            # a recreated proxy after its end would take the calls of the sandbox's next run.
-            self._admin_state.get(proxy, {}).pop(f"run:{run_id}", None)
+        # Ended, or as good as, from now: an end whose answer is lost may still reach the proxy, and a run given back
+        # to a recreated proxy after its end would take the calls of the sandbox's next run.
+        self._admin_state.get(proxy, {}).pop(f"run:{run_id}", None)
+        await self._after_replay(proxy)
+        response = await self._exec_admin_request(
+            container=proxy, method="DELETE", path=f"/admin/runs/{run_id}", port=port, body=None, accept_404=True
+        )
         if not isinstance(response.get("tally"), dict):
             return None
         return response
@@ -1050,6 +1053,13 @@ class ProxyManager:
         if not isinstance(response.get("boot_id"), str) or not isinstance(response.get("tallies"), list):
             raise RuntimeError(f"{proxy} answered its meter without a boot id or tallies")
         return response
+
+    async def _after_replay(self, proxy: str) -> None:
+        """Wait until no replay of ``proxy``'s state is under way: what the caller sends then lands after it."""
+        lock = self._replay_locks.get(proxy)
+        if lock is not None:
+            async with lock:
+                pass
 
     async def _exec_admin_request(
         self,
@@ -1148,6 +1158,10 @@ class ProxyManager:
         An enrollment keeps the expiry it had; one already expired is dropped. Every enrollment goes back before any
         run, since a proxy takes a run only for an enrolled sandbox.
         """
+        async with self._replay_locks.setdefault(name, asyncio.Lock()):
+            return await self._replay_held(name)
+
+    async def _replay_held(self, name: str) -> tuple[int, int]:
         restored = failed = 0
         held = self._admin_state.get(name, {})
         now = time.monotonic()

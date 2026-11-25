@@ -231,3 +231,82 @@ async def test_an_entry_dropped_while_a_replay_runs_is_not_sent(proxy: Any) -> N
     mgr._exec_admin_once = _drop_the_run_on_the_first_call  # type: ignore[method-assign]
     await mgr._replay("xai-proxy")
     assert "POST /admin/runs" not in sent, f"an ended run was replayed: {sent}"
+
+
+async def _recreated(aiohttp_server: Any, old: Any, monkeypatch: Any) -> Any:
+    """A fresh process of the same xai-proxy (a new boot, nothing enrolled), on which the manager's held state will
+    be replayed."""
+    server = await aiohttp_server(create_xai_proxy_app(ADMIN))
+    monkeypatch.setitem(manager_module.METERED_PROXIES, "xai-proxy", (server.port, "xai"))
+    held = old.mgr._admin_state["xai-proxy"]
+    for key, (path, _port, body, expires) in list(held.items()):
+        held[key] = (path, server.port, body, expires)
+    upstream = _Upstream()
+    route_upstream(server.app, upstream)
+    server.mgr, server.upstream = old.mgr, upstream
+    return server
+
+
+async def test_a_run_declared_while_a_replay_sends_the_last_one_lands_after_it(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """The review's reordering: the replay has checked run A is held and is sending it; the sandbox's next run B is
+    declared then. Two docker execs at once arrive in either order, so B waits for the replay: it lands after A, takes
+    the sandbox back, and is charged its own call."""
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    await meter.begin("sbx-1", "run-A", "job-1")  # A is still the sandbox's run (its end not yet attempted)
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    real_once = mgr._exec_admin_once
+    box: dict[str, Any] = {}
+
+    async def _b_declared_while_a_is_sent(**kw: Any) -> dict[str, Any]:
+        if kw["path"] == "/admin/runs" and (kw["body"] or {}).get("run_id") == "run-A" and "b" not in box:
+            box["b"] = asyncio.create_task(meter.begin("sbx-1", "run-B", "job-1"))
+            # Give B every chance to reach the proxy first; with nothing to wait for it would.
+            await asyncio.wait({box["b"]}, timeout=2.0)
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _b_declared_while_a_is_sent  # type: ignore[method-assign]
+    await mgr._replay("xai-proxy")
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    window_b = await box["b"]
+    assert new.app[METER]._current["sbx-1"] == "run-B", "the replayed run took the sandbox from the run after it"
+    new.upstream.answers.append(_Answer((ANSWERS / "anthropic-stream.sse").read_bytes(), content_type=_SSE))
+    import aiohttp
+
+    body = {"model": "grok-4.7", "max_tokens": 32000, "stream": True, "messages": []}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            new.make_url("/v1/messages"), json=body, headers={"Authorization": f"Bearer {TOKEN}"}
+        ) as r:
+            await r.read()
+    cost = (1000 * 2.0 + 100 * 6.0 + 400 * 2.0 * 0.25) / 1e6
+    charge = charge_run(await meter.end(window_b), _record(), sandbox_cost_usd=cost, sandbox_tokens=(1000, 100, 400, 0))
+    assert charge.cost_usd == pytest.approx(cost), f"B was charged {charge.cost_usd} ({charge.source})"
+
+
+async def test_a_run_ended_while_a_replay_sends_it_is_ended_after_it(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """A run's end that starts while the replay sends that run lands after it: the run is ended on the recreated
+    proxy and its final tally read, rather than the end finding nothing and the replay leaving the run declared."""
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    window_a = await meter.begin("sbx-1", "run-A", "job-1")
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    real_once = mgr._exec_admin_once
+    box: dict[str, Any] = {}
+
+    async def _a_ended_while_sent(**kw: Any) -> dict[str, Any]:
+        if kw["path"] == "/admin/runs" and (kw["body"] or {}).get("run_id") == "run-A" and "end" not in box:
+            box["end"] = asyncio.create_task(meter.end(window_a))
+            await asyncio.wait({box["end"]}, timeout=2.0)
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _a_ended_while_sent  # type: ignore[method-assign]
+    await mgr._replay("xai-proxy")
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    metering = await box["end"]
+    assert metering.unreached == (), "the end landed before the replayed declaration and found nothing"
+    assert "sbx-1" not in new.app[METER]._current, "the replay left the ended run declared"
