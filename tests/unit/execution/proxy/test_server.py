@@ -294,3 +294,16 @@ def test_build_app_context_registers_the_redaction_fields(monkeypatch):
     finally:
         redaction.register_redacted_fields([])
     assert out == f"phone={redaction.REDACTED}", out
+
+
+@pytest.mark.parametrize("proxy_type", ["xai", "local_llm"])
+@pytest.mark.parametrize(("setting", "required"), [("true", True), ("1", True), ("", False), ("no", False)])
+def test_a_metered_proxy_requires_a_run_when_told_to(monkeypatch, proxy_type, setting, required):
+    """METER_REQUIRE_RUN decides whether a model call from a sandbox with no declared run is refused."""
+    from embry0.execution.proxy.metering import METER
+
+    monkeypatch.setenv("PROXY_TYPE", proxy_type)
+    monkeypatch.setenv("PROXY_ADMIN_TOKEN", "test-admin-tok")
+    monkeypatch.setenv("UPSTREAM_URL", "http://127.0.0.1:1/v1")
+    monkeypatch.setenv("METER_REQUIRE_RUN", setting)
+    assert server.build_app_from_env()[METER].require_run is required

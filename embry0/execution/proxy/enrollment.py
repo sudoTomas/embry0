@@ -11,8 +11,12 @@ centralizes that state and hardens it:
   (or an orchestrator bug) cannot grow proxy memory without limit. Expired
   entries are purged before the cap is enforced.
 - **Admin-auth backoff**: repeated failed ``X-Admin-Token`` presentations
-  lock the admin endpoints for a cooldown window, throttling brute-force
-  attempts from inside the sandbox network.
+  from one address lock the admin endpoints for that address for a cooldown
+  window, throttling brute-force attempts from inside the sandbox network.
+  Each address is counted apart, so a sandbox that guesses locks out only
+  itself: the orchestrator's requests come from the proxy's own loopback
+  (``ProxyManager`` sends them with ``docker exec``) and are never refused for
+  a sandbox's guesses.
 - **One lifecycle** (#536): a proxy's per-sandbox state beside the registry
   (a scope, a quota, a credential slot) is cleared by its ``on_unenroll``
   hook, which the registry runs whenever an enrollment ends: revoked,
@@ -70,6 +74,8 @@ DEFAULT_MAX_ENTRIES = 500
 _ADMIN_MAX_FAILURES = 10
 _ADMIN_FAILURE_WINDOW_SECONDS = 60.0
 _ADMIN_LOCKOUT_SECONDS = 60.0
+# The most addresses whose failures are remembered at once: far above the sandboxes one proxy serves.
+_ADMIN_MAX_SOURCES = 1024
 
 
 def sha256_hex(s: str) -> str:
@@ -207,35 +213,52 @@ class EnrollmentRegistry:
 
 
 class AdminGuard:
-    """X-Admin-Token check with failed-attempt backoff.
+    """X-Admin-Token check with failed-attempt backoff, per source address.
 
-    After ``_ADMIN_MAX_FAILURES`` bad presentations inside the sliding window,
-    admin endpoints answer 429 for ``_ADMIN_LOCKOUT_SECONDS`` — bounding
-    brute-force throughput from anything that can reach the admin port.
+    After ``_ADMIN_MAX_FAILURES`` bad presentations from one address inside the
+    sliding window, the admin endpoints answer that address 429 for
+    ``_ADMIN_LOCKOUT_SECONDS``, its right token included, bounding brute-force
+    throughput from anything that can reach the admin port. Other addresses
+    are not affected: a sandbox cannot lock the orchestrator out.
     """
 
-    def __init__(self, admin_token: str, *, now: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self, admin_token: str, *, now: Callable[[], float] = time.time, max_sources: int = _ADMIN_MAX_SOURCES
+    ) -> None:
         if not admin_token:
             raise ValueError("admin_token is required (PROXY_ADMIN_TOKEN must be set)")
         self._token_hash = sha256_hex(admin_token)
         self._now = now
-        self._failures: list[float] = []
-        self._locked_until = 0.0
+        self._max_sources = max_sources
+        self._failures: dict[str, list[float]] = {}
+        self._locked_until: dict[str, float] = {}
 
-    def check(self, presented: str) -> str:
-        """Return ``"ok"``, ``"unauthorized"``, or ``"locked"``."""
+    def _forget_stale(self, now: float) -> None:
+        for source in [s for s, until in self._locked_until.items() if until <= now]:
+            del self._locked_until[source]
+        cutoff = now - _ADMIN_FAILURE_WINDOW_SECONDS
+        for source in [s for s, times in self._failures.items() if not times or times[-1] <= cutoff]:
+            del self._failures[source]
+
+    def check(self, presented: str, source: str = "") -> str:
+        """Return ``"ok"``, ``"unauthorized"``, or ``"locked"`` for ``presented`` from the address ``source``."""
         now = self._now()
-        if now < self._locked_until:
+        if now < self._locked_until.get(source, 0.0):
             return "locked"
         if presented and hmac.compare_digest(sha256_hex(presented), self._token_hash):
-            self._failures.clear()
+            self._failures.pop(source, None)
             return "ok"
-        self._failures = [t for t in self._failures if t > now - _ADMIN_FAILURE_WINDOW_SECONDS]
-        self._failures.append(now)
-        if len(self._failures) >= _ADMIN_MAX_FAILURES:
-            self._locked_until = now + _ADMIN_LOCKOUT_SECONDS
-            self._failures.clear()
+        self._forget_stale(now)
+        if source not in self._failures and len(self._failures) >= self._max_sources:
+            # Bounded: the address remembered longest gives way.
+            del self._failures[next(iter(self._failures))]
+        recent = [t for t in self._failures.get(source, []) if t > now - _ADMIN_FAILURE_WINDOW_SECONDS]
+        recent.append(now)
+        if len(recent) >= _ADMIN_MAX_FAILURES:
+            self._locked_until[source] = now + _ADMIN_LOCKOUT_SECONDS
+            self._failures.pop(source, None)
             return "locked"
+        self._failures[source] = recent
         return "unauthorized"
 
 
@@ -261,10 +284,11 @@ ADMIN_GUARD = web.AppKey("admin_guard", AdminGuard)
 def guard_admin(request: web.Request, proxy_name: str) -> web.Response | None:
     """Shared admin gate for aiohttp handlers; None means authorized."""
     guard = request.app[ADMIN_GUARD]
-    verdict = guard.check(request.headers.get("X-Admin-Token", ""))
+    source = request.remote or ""
+    verdict = guard.check(request.headers.get("X-Admin-Token", ""), source)
     if verdict == "ok":
         return None
-    logger.warning(f"{proxy_name}_unauthorized", path=request.path, admin=verdict)
+    logger.warning(f"{proxy_name}_unauthorized", path=request.path, admin=verdict, source=source)
     if verdict == "locked":
         return web.json_response(
             {"error": "too_many_failures"},

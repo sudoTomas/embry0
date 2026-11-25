@@ -1,0 +1,6 @@
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "llama-4", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "ok"}, "finish_reason": null}], "usage": null}
+
+data: {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "llama-4", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": null, "x_groq": {"id": "req_1", "usage": {"prompt_tokens": 900, "completion_tokens": 30, "total_tokens": 930}}}
+
+data: [DONE]
+
