@@ -6,12 +6,16 @@ one-draft rules are the database's.
 
 from __future__ import annotations
 
+import copy
+import json
+import sys
 import zoneinfo
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from structlog.testing import capture_logs
 
 from embry0.services.progression_pack import SCHEMA_VERSION, PackInvalid, default_text, pack_hash, parse_text
@@ -351,8 +355,6 @@ async def test_a_pack_with_no_upgrade_step_is_left_alone(
 
 
 def test_a_json_body_is_stored_as_the_yaml_it_dumps_to() -> None:
-    import json
-
     document = read_text(COPPER).document
     submitted = read_body(json.dumps(document).encode(), "application/json; charset=utf-8")
     assert submitted.hash == pack_hash(parse_text(COPPER))
@@ -374,6 +376,50 @@ def test_a_body_that_is_not_a_pack_is_refused_by_kind(body: bytes, content_type:
     with pytest.raises(PackInvalid) as refused:
         read_body(body, content_type)
     assert [p.type for p in refused.value.problems] == [kind], refused.value.problems
+
+
+_TOKEN = "PLACEHOLDERzz"
+_LONG = "9" * (sys.get_int_max_str_digits() + 1)
+
+
+def _put(data: dict[str, Any], *path: str, value: Any = _TOKEN) -> dict[str, Any]:
+    out = copy.deepcopy(data)
+    node = out
+    for part in path[:-1]:
+        node = node.setdefault(part, {})
+    node[path[-1]] = value
+    return out
+
+
+@pytest.mark.parametrize(
+    ("path", "content_type", "written", "loc", "kind"),
+    [
+        (("zzA", "title"), "application/yaml", _LONG, [], "number_too_long"),
+        (("zzA", "title"), "application/json", _LONG, [], "number_too_long"),
+        (("rates", "actions", "zzA", "xp"), "application/yaml", _LONG, ["rates", "actions"], "number_too_long"),
+        (("rates", "actions", "zzA", "xp"), "application/json", _LONG, ["rates", "actions"], "number_too_long"),
+        (("curve", "zzA", "k"), "application/yaml", _LONG, ["curve"], "number_too_long"),
+        (("curve", "zzA", "k"), "application/json", _LONG, ["curve"], "number_too_long"),
+        (("rates", "actions", "zzA", "xp"), "application/yaml", "!!int zzBAD", ["rates", "actions"], "invalid_number"),
+        (("rates", "actions", "zzA"), "application/yaml", "{b: 1, b: 2}", ["rates", "actions"], "duplicate_key"),
+    ],
+)
+def test_a_problem_of_the_text_under_a_written_key_is_placed_where_the_pack_s_own_words_end(
+    path: tuple[str, ...], content_type: str, written: str, loc: list[object], kind: str
+) -> None:
+    """A number too long or unreadable, or a key written twice, under a key the author wrote (one the pack does not
+    take, or one of a mapping whose keys the author names) is placed where the pack places its own problems, so
+    the place never repeats that key; YAML's line says where."""
+    data = _put(yaml.safe_load(DEFAULT), *path)
+    if content_type == "application/json":
+        body = json.dumps(data).replace(f'"{_TOKEN}"', written)
+    else:
+        body = yaml.safe_dump(data, sort_keys=False).replace(_TOKEN, written)
+    with pytest.raises(PackInvalid) as refused:
+        read_body(body.encode(), content_type)
+    found = [p.to_dict() for p in refused.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(loc, kind)], found
+    assert "zz" not in json.dumps(found), f"the problem repeats a key or value the author wrote: {found}"
 
 
 # ---- what Python accepts and the database does not ----

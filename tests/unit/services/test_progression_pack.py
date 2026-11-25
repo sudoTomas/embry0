@@ -567,9 +567,14 @@ def test_a_text_may_use_the_metric_s_own_parameters_never_the_keys_the_author_wr
         d["achievements"][3]["what_counts"] = "spent {nothing}"
         d["quests"][0].setdefault("params", {})["zzother"] = 2
         d["quests"][0]["reward"] = "a reward {nothing}"
+        d["diaries"]["tiers"][1]["tasks"][0]["params"]["zzdiary"] = 3
+        d["diaries"]["tiers"][1]["tasks"][0]["text"] = "Merge {nothing}"
 
     problems = _problems(_edit(change))
     assert "achievements[3].what_counts: names a value this text does not have; it may use {max_usd}" in problems, (
+        problems
+    )
+    assert "diaries.tiers[1].tasks[0].text: names a value this text does not have; it may use {count}" in problems, (
         problems
     )
     assert not any("zz" in problem for problem in problems), f"a problem repeats a key the author wrote: {problems}"

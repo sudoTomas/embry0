@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -141,6 +142,40 @@ def test_a_key_written_twice_is_placed_at_the_mapping_that_holds_it(text: str, l
     found = [p.to_dict() for p in raised.value.problems]
     assert [(p["loc"], p["type"]) for p in found] == [(loc, "duplicate_key")], found
     assert "zz-written-key" not in json.dumps(found), f"the problem repeats the key written: {found}"
+
+
+_LONG = "9" * (sys.get_int_max_str_digits() + 1)
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type", "loc", "kind"),
+    [
+        (f"zzA: {{name: {_LONG}}}\n", "application/yaml", [], "number_too_long"),
+        (f"zzA: [{{name: {_LONG}}}]\n", "application/yaml", [], "number_too_long"),
+        (f"areas:\n  - name: Web\n    zzA: {{k: {_LONG}}}\n", "application/yaml", ["areas", 0], "number_too_long"),
+        ("areas:\n  - name: Web\n    zzA: {k: !!int zzBAD}\n", "application/yaml", ["areas", 0], "invalid_number"),
+        ("areas:\n  - name: Web\n    zzA: {b: 1, b: 2}\n", "application/yaml", ["areas", 0], "duplicate_key"),
+        (
+            f"areas:\n  - name: Web\n    paths: [{{zzA: {_LONG}}}]\n",
+            "application/yaml",
+            ["areas", 0, "paths", 0],
+            "number_too_long",
+        ),
+        (f'{{"zzA": {{"name": {_LONG}}}}}', "application/json", [], "number_too_long"),
+        (f'{{"zzA": [{{"name": {_LONG}}}]}}', "application/json", [], "number_too_long"),
+        (f'{{"areas": [{{"name": "Web", "zzA": [{_LONG}]}}]}}', "application/json", ["areas", 0], "number_too_long"),
+    ],
+)
+def test_a_problem_of_the_text_under_a_written_key_is_placed_at_the_first_key_the_document_does_not_take(
+    body: str, content_type: str, loc: list[object], kind: str
+) -> None:
+    """A number too long or unreadable, or a key written twice, under a key the operator wrote is placed at the
+    mapping that holds that key, as an unknown key is, so the place never repeats it; YAML's line says where."""
+    with pytest.raises(DocumentInvalid) as raised:
+        parse_body(body.encode(), content_type)
+    found = [p.to_dict() for p in raised.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(loc, kind)], found
+    assert "zz" not in json.dumps(found), f"the problem repeats a key or value the operator wrote: {found}"
 
 
 def test_a_body_is_yaml_kept_as_written_or_json_with_no_text() -> None:

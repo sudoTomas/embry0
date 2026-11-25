@@ -31,6 +31,7 @@ import math
 import sys
 import types
 from bisect import bisect_right
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cache
@@ -44,7 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 
 from embry0.services import progression_templates as templates
 from embry0.services import progression_vocabulary as vocab
-from embry0.text_documents import structure_problems, yaml_problem_text
+from embry0.text_documents import StructureProblem, structure_problems, yaml_problem_text
 
 #: The schema version this release reads and writes.
 SCHEMA_VERSION = 1
@@ -290,7 +291,8 @@ class PackInvalid(ValueError):
     """The document is not a valid pack; ``problems`` says why, every one of them, each once. No place or message
     repeats a key, a tag or an alias name the author wrote: a key the pack does not take is placed at the mapping
     that holds it and said by the keys there, a key of a mapping whose keys the author names (``rates.actions``)
-    by that mapping, a key written twice by its lines, and a YAML message's quoted text by ``…``."""
+    by that mapping, a key written twice by its lines, a problem of the text's structure under a written key at
+    the mapping that holds that key (:func:`structure_placed`), and a YAML message's quoted text by ``…``."""
 
     def __init__(self, problems: list[Problem]) -> None:
         self.problems = list(dict.fromkeys(problems))
@@ -315,6 +317,13 @@ def _placed(model: type[BaseModel], loc: tuple[str | int, ...]) -> tuple[tuple[s
             # A mapping whose keys the author names (``rates.actions``, a parameter's values), or a value: cut here.
             return loc[:i], None
     return loc, None
+
+
+def structure_placed(found: Iterable[StructureProblem]) -> list[Problem]:
+    """Each problem of a text's structure (:mod:`embry0.text_documents`) placed as the pack places its own
+    (:func:`_placed`): cut at the first key the pack does not take, or a mapping whose keys the author names, so a
+    number under a written key, or a key written twice inside one, never repeats that key; its line says where."""
+    return [Problem(_placed(Pack, problem.loc)[0], problem.type, problem.msg) for problem in found]
 
 
 def _model_of(annotation: Any) -> Any:
@@ -387,7 +396,7 @@ def load_text(text: str) -> Any:
         root = yaml.compose(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
         structure = structure_problems(root, what="a content pack")
         if structure:
-            raise PackInvalid([Problem(p.loc, p.type, p.msg) for p in structure])
+            raise PackInvalid(structure_placed(structure))
         data = yaml.load(text, Loader=_NoAliasLoader)  # noqa: S506 - a SafeLoader subclass
     except yaml.YAMLError as exc:
         raise PackInvalid([_yaml_problem(exc)]) from None

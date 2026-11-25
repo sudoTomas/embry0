@@ -72,13 +72,42 @@ class Problem:
 class DocumentInvalid(ValueError):
     """The document has problems; ``problems`` lists every one, each once. No place or message repeats a key, a
     tag or an alias name the operator wrote: a key the document does not take is placed at the mapping that
-    holds it and said by the keys that mapping takes, a key written twice by its lines, and a YAML message's
+    holds it and said by the keys that mapping takes, a key written twice by its lines, a problem of the text's
+    structure under a written key at the mapping that holds that key (:func:`_placed`), and a YAML message's
     quoted text by ``…`` (:func:`embry0.text_documents.unquoted`)."""
 
     def __init__(self, problems: list[Problem]) -> None:
         said = list(dict.fromkeys(problems))
         super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in said))
         self.problems = said
+
+
+#: The document's own words at each place: a mapping of the keys it takes, a list's one entry (what each item is),
+#: or None for a value, which takes no key.
+_SHAPE: Final[Mapping[str, Any]] = {
+    "version": None,
+    "areas": [{"name": None, "paths": [None], "logs": [None], "owners": [None]}],
+}
+
+
+def _placed(loc: Loc) -> Loc:
+    """``loc`` cut at the first key the document does not take there, which the operator wrote: a problem of the
+    text's structure inside it (a number too long, a key written twice) is placed at the mapping that holds that
+    key, and its line says where, as an unknown key is."""
+    shape: Any = _SHAPE
+    for i, part in enumerate(loc):
+        if isinstance(shape, Mapping) and isinstance(part, str) and part in shape:
+            shape = shape[part]
+        elif isinstance(shape, list) and isinstance(part, int):
+            shape = shape[0]
+        else:
+            return loc[:i]
+    return loc
+
+
+def _structure(found: Iterable[Any]) -> list[Problem]:
+    """The problems of a text's structure (:mod:`embry0.text_documents`), each placed by :func:`_placed`."""
+    return [Problem(_placed(p.loc), p.type, p.msg) for p in found]
 
 
 class DocumentTooLarge(ValueError):
@@ -123,7 +152,7 @@ def load_yaml(text: str) -> Any:
         raise DocumentInvalid([_yaml_problem(exc)]) from None
     except RecursionError:
         raise DocumentInvalid([_TOO_DEEP]) from None
-    problems = [Problem(p.loc, p.type, p.msg) for p in structure_problems(root, what="an areas document")]
+    problems = _structure(structure_problems(root, what="an areas document"))
     if problems:
         raise DocumentInvalid(problems)
     try:
@@ -146,7 +175,7 @@ def _json(text: str) -> Any:
     except RecursionError:
         raise DocumentInvalid([_TOO_DEEP]) from None
     if too_long:
-        raise DocumentInvalid([Problem(p.loc, p.type, p.msg) for p in too_long])
+        raise DocumentInvalid(_structure(too_long))
     return values
 
 
