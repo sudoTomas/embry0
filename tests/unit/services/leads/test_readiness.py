@@ -24,7 +24,7 @@ import pytest
 
 from embry0.services.leads.readiness import Readiness
 from embry0.settings.sections.leads import LeadsSettings
-from tests.fixtures.cpu_cost import least_cpu_seconds, same
+from tests.fixtures.cpu_cost import relative_cost, same
 from tests.fixtures.leads import leads_policy
 
 #: Tickets of every kind the default vocabulary reads: (title, body, labels, estimate, priority).
@@ -446,7 +446,7 @@ LONG_BODY = "a " * 32_768
 
 
 def _against_one_phrase(many: Callable[[], object], one: Callable[[], object]) -> float:
-    return least_cpu_seconds(same(many)) / least_cpu_seconds(same(one))
+    return relative_cost(same(many), same(one))
 
 
 def test_no_phrase_makes_reading_a_long_ticket_slow() -> None:

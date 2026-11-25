@@ -23,7 +23,7 @@ import gc
 import math
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Final
 
 #: A linear pass in C: every character replaced, whatever it is, so its cost depends on the text's length only.
@@ -78,23 +78,9 @@ def _read(seconds: float, what: str) -> float:
     return seconds
 
 
-def least_cpu_seconds(prepare: Callable[[], Callable[[], object]], *, runs: int = 3) -> float:
-    """The least, over ``runs`` runs, of the CPU time of one call of the work ``prepare()`` returns.
-
-    ``prepare`` runs first each time, untimed: it builds what the work needs fresh (a compiled pattern a cache
-    would otherwise hold warm from the run before, with what it remembered of the text), so each run times the
-    work as its first call does it. A run the clock reads as no time is refused (:class:`ClockTooCoarse`).
-    """
-    best = math.inf
-    for _ in range(runs):
-        work = prepare()
-        best = min(best, _read(cpu_seconds(work), "the work"))
-    return best
-
-
-def reference_seconds(texts: Iterable[str], *, runs: int = 3) -> float:
-    """The least, over ``runs`` runs, of the CPU time of one pass of :data:`REFERENCE` over every text, each
-    replacing every character. A short text's pass is repeated until it runs long enough to read."""
+def _reference_pass(texts: Iterable[str]) -> tuple[Callable[[], None], int]:
+    """A pass of :data:`REFERENCE` over every text, each replacing every character, and how many times it runs in one
+    reading so the clock reads it well: a short text's pass is repeated until it runs long enough to read."""
     chunks = list(texts)
 
     def one_pass() -> None:
@@ -107,16 +93,59 @@ def reference_seconds(texts: Iterable[str], *, runs: int = 3) -> float:
     repetitions = 1
     while cpu_seconds(one_pass, times=repetitions) < at_least and repetitions < _MOST_REPETITIONS:
         repetitions *= 2
-    least = min(cpu_seconds(one_pass, times=repetitions) for _ in range(runs))
+    return one_pass, repetitions
+
+
+def _per_pass(least: float, repetitions: int) -> float:
     return _read(least, f"{repetitions} passes of the reference") / repetitions
+
+
+def reference_seconds(texts: Iterable[str], *, runs: int = 3) -> float:
+    """The least, over ``runs`` runs, of the CPU time of one pass of :data:`REFERENCE` over every text."""
+    one_pass, repetitions = _reference_pass(texts)
+    return _per_pass(min(cpu_seconds(one_pass, times=repetitions) for _ in range(runs)), repetitions)
+
+
+def _least_in_turns(readings: Sequence[Callable[[], float]], runs: int) -> list[float]:
+    """The least of each reading over ``runs`` runs, read in turns: each run takes every reading, one right after the
+    other, on this thread.
+
+    Load that comes and goes (a busy sibling hyperthread, another process taking turns on this CPU) slows a stretch
+    of runs. Minima taken over two separate stretches would weigh one reading in a quiet moment against the other in
+    a busy one, or the reverse, by twice and more (#666); taken in turns, a quiet moment that holds one holds the
+    other.
+    """
+    least = [math.inf] * len(readings)
+    for _ in range(runs):
+        for i, read in enumerate(readings):
+            least[i] = min(least[i], read())
+    return least
+
+
+def _one_call(prepare: Callable[[], Callable[[], object]]) -> Callable[[], float]:
+    """A reading of one call of the work ``prepare()`` returns. ``prepare`` runs first, untimed: it builds what the
+    work needs fresh (a compiled pattern a cache would otherwise hold warm from the run before, with what it
+    remembered of the text), so each run times the work as its first call does it. A call the clock reads as no time
+    is refused (:class:`ClockTooCoarse`)."""
+    return lambda: _read(cpu_seconds(prepare()), "the work")
 
 
 def cost(prepare: Callable[[], Callable[[], object]], texts: Iterable[str], *, runs: int = 3) -> float:
     """How many reference passes over ``texts`` (the characters the work reads) one call of the work costs: about
-    the same, whatever the host's speed and load, for the same work."""
-    chunks = list(texts)
-    reference = reference_seconds(chunks, runs=runs)
-    return least_cpu_seconds(prepare, runs=runs) / reference
+    the same, whatever the host's speed and load, for the same work. The reference and the work are read in turns,
+    ``runs`` times, and the least of each is taken."""
+    one_pass, repetitions = _reference_pass(texts)
+    reference, work = _least_in_turns([lambda: cpu_seconds(one_pass, times=repetitions), _one_call(prepare)], runs)
+    return work / _per_pass(reference, repetitions)
+
+
+def relative_cost(
+    prepare: Callable[[], Callable[[], object]], against: Callable[[], Callable[[], object]], *, runs: int = 3
+) -> float:
+    """How many times one call of the work ``against()`` returns one call of the work ``prepare()`` returns costs:
+    the two read in turns, ``runs`` times, and the least of each taken."""
+    work, other = _least_in_turns([_one_call(prepare), _one_call(against)], runs)
+    return work / other
 
 
 def same(work: Callable[[], object]) -> Callable[[], Callable[[], object]]:
