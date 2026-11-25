@@ -752,7 +752,8 @@ made with, so two credentials bound to different repositories are two
 servers, each with its own slots; the environment's credential
 (`CUSTOM_LLM_API_KEY`) is one more. While `LOCAL_LLM_UPSTREAM` is set, every
 agent run on the custom provider goes to that one root whatever its
-credential, so those runs all share its slots.
+credential, so every call on the custom provider shares its slots, a
+background call's included (below).
 
 Each run on the custom provider holds a slot of its server, a row in
 `local_model_leases`, from just before it starts until it ends, however it
@@ -769,9 +770,11 @@ call. It never waits: with every slot taken the call is not made
 (`background_model_busy` in the log). A brief writer's tick stops there and
 the next one tries again; the Slop-O-Meter scores the repository without
 that judgment, provisionally, as when the caps refuse one. Background work
-never crowds out the runs the server is for. Such a call reaches its credential's base URL itself; when
-that is the host and port of `LOCAL_LLM_UPSTREAM`, it shares the slots the
-agent runs there take.
+never crowds out the runs the server is for. While `LOCAL_LLM_UPSTREAM` is
+set it holds one of that upstream's slots, as the agent runs do, although it
+reaches its credential's base URL itself: one machine may go by several
+names (an address, a name, a trailing dot), so the name a call uses never
+gives it slots of its own.
 
 **Preferring the local model.** A background feature that prefers a model
 (the watcher's log analyses, scheduled context audits; see

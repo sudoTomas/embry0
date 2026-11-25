@@ -53,7 +53,7 @@ import httpx
 import structlog
 
 from embry0.orchestration.budget_gate import DispatchDecision
-from embry0.services.local_slots import CallSlots, call_server
+from embry0.services.local_slots import CallSlots, server_for
 from embry0.settings.sections.background_models import (
     BACKGROUND_MODELS,
     FEATURES,
@@ -167,8 +167,9 @@ async def resolve_endpoint(
 
     The key is the one a job of ``repo`` would get: the repository's binding,
     then its owner's, then the global pool, then the environment. A local
-    model's server is its credential's, or the local-llm-proxy's upstream
-    (``proxy_upstream``) when it calls that host (``local_slots.call_server``).
+    model's server is its credential's, or, while the local-llm-proxy's
+    upstream is set (``proxy_upstream``), that upstream's, as every agent run's
+    is (``local_slots.server_for``).
     """
     from embry0.agents.providers import provider_for_model, upstream_model
 
@@ -190,7 +191,7 @@ async def resolve_endpoint(
         key=cred.secret,
         upstream_model=upstream_model(provider, model),
         local=local,
-        server=call_server(getattr(cred, "id", None), root, proxy_upstream=proxy_upstream) if local else "",
+        server=server_for(getattr(cred, "id", None), proxy_upstream=proxy_upstream) if local else "",
     )
 
 

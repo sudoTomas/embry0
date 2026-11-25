@@ -199,9 +199,11 @@ async def test_a_brief_writer_stops_its_tick_on_a_busy_server_and_writes_once_a_
     [
         ("cred-local", "http://models.test:8000/v1", "", "cred-local"),
         (None, "http://models.test:8000/v1", "", ENV_SERVER),
-        ("cred-local", "http://models.test:8000/v1", "http://MODELS.test:8000/v1", PROXY_SERVER),
-        ("cred-local", "http://models.test:8000/v1", "http://models.test:9000/v1", "cred-local"),
-        ("cred-local", "https://models.test/v1", "https://models.test:443", PROXY_SERVER),
+        ("cred-local", "http://models.test:8000/v1", "http://models.test:8000/v1", PROXY_SERVER),
+        # The same machine by another name: an address, a .lan name, a trailing dot.
+        ("cred-local", "http://models.test:8000/v1", "http://10.0.0.5:8000/v1", PROXY_SERVER),
+        ("cred-local", "http://models.lan:8000/v1", "http://models.test.:8000/v1", PROXY_SERVER),
+        (None, "http://models.test:8000/v1", "http://models.test:8000/v1", PROXY_SERVER),
     ],
 )
 async def test_a_local_endpoint_names_the_server_it_reaches(
@@ -211,6 +213,6 @@ async def test_a_local_endpoint_names_the_server_it_reaches(
         LOCAL, Resolver(credential_id, base_url), "acme/widgets", proxy_upstream=proxy_upstream
     )
     assert endpoint is not None and endpoint.server == server, (
-        "a call reaches its credential's base URL itself; only on the local-llm-proxy's upstream's host and port "
-        f"does it share the slots agent runs take there: {endpoint}"
+        "while the local-llm-proxy's upstream is set, every call on the custom provider shares its slots, whatever "
+        f"name its credential gives the machine; else the credential's own: {endpoint}"
     )

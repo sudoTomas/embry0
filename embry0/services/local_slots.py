@@ -18,9 +18,11 @@ for the length of the call, and its tick stops when none is free
 **Which server.** A server is the custom credential a call is made with
 (:func:`server_of`): its id, or :data:`ENV_SERVER` for the environment's.
 While ``LOCAL_LLM_UPSTREAM`` sends every agent run on the custom provider
-through the local-llm-proxy to that one root, those runs are all on
-:data:`PROXY_SERVER` whatever their credential (:func:`run_server`), and so is
-a background call to the same host and port (:func:`call_server`).
+through the local-llm-proxy to that one root, every call on the custom
+provider, a background one included, is on :data:`PROXY_SERVER` whatever its
+credential (:func:`server_for`): one machine may go by several names (an
+address, a name, a trailing dot), so no name a call is made by tells it
+apart.
 
 A lease expires by itself after the run's own time limit, so one left by a
 process that died frees its slot without anyone deleting it.
@@ -33,7 +35,6 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
-from urllib.parse import urlparse
 
 import structlog
 
@@ -55,30 +56,10 @@ def server_of(credential_id: str | None) -> str:
     return credential_id or ENV_SERVER
 
 
-def run_server(credential_id: str | None, *, proxy_upstream: str) -> str:
-    """The server an agent run on the custom provider reaches with ``credential_id``: the local-llm-proxy's upstream
-    while one is set (every run goes there), else the credential's."""
+def server_for(credential_id: str | None, *, proxy_upstream: str) -> str:
+    """The server a call on the custom provider with ``credential_id`` holds a slot of: :data:`PROXY_SERVER` while
+    the local-llm-proxy's upstream is set, for an agent run and a background call alike, else the credential's."""
     return PROXY_SERVER if proxy_upstream else server_of(credential_id)
-
-
-def call_server(credential_id: str | None, base_url: str, *, proxy_upstream: str) -> str:
-    """The server a background call reaches: it calls ``base_url`` itself, so the credential's, unless that is the
-    local-llm-proxy's upstream's host and port, whose slots agent runs take as :data:`PROXY_SERVER`."""
-    if proxy_upstream and _address(base_url) is not None and _address(base_url) == _address(proxy_upstream):
-        return PROXY_SERVER
-    return server_of(credential_id)
-
-
-def _address(url: str) -> tuple[str, int] | None:
-    """A URL's host and port (its scheme's when it names none); None when it names no host."""
-    try:
-        parts = urlparse(url.strip())
-        port = parts.port
-    except ValueError:
-        return None
-    if not parts.hostname:
-        return None
-    return parts.hostname.lower(), port or (443 if parts.scheme == "https" else 80)
 
 
 def local_cap(provider_config: Mapping[str, Any] | None) -> int:

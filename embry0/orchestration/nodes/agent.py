@@ -606,17 +606,17 @@ async def _local_server(state: dict[str, Any], configurable: dict[str, Any]) -> 
     after a restart), the one the job resolves to. A server that cannot be
     told is ``UNKNOWN_SERVER``, whose runs share one cap.
     """
-    from embry0.services.local_slots import UNKNOWN_SERVER, run_server
+    from embry0.services.local_slots import UNKNOWN_SERVER, server_for
     from embry0.storage.database import StoredValueTooDeep
 
     upstream = str(getattr(configurable.get("embry0_config"), "local_llm_upstream", "") or "")
     if upstream:
-        return run_server(None, proxy_upstream=upstream)
+        return server_for(None, proxy_upstream=upstream)
     known = getattr(configurable.get("sandbox_manager"), "last_llm_credentials", None)
     container = state.get("sandbox_container_id")
     held = known(container) if callable(known) and container else None
     if isinstance(held, dict) and held.get("custom") is not None:
-        return run_server(getattr(held["custom"], "id", None), proxy_upstream="")
+        return server_for(getattr(held["custom"], "id", None), proxy_upstream="")
     resolver = configurable.get("credential_resolver")
     if resolver is None:
         return UNKNOWN_SERVER
@@ -629,7 +629,7 @@ async def _local_server(state: dict[str, Any], configurable: dict[str, Any]) -> 
     except Exception:  # noqa: BLE001 - the run takes its slot among those that cannot be told
         logger.warning("local_server_unresolved", exc_info=True)
         return UNKNOWN_SERVER
-    return run_server(getattr(credential, "id", None), proxy_upstream="")
+    return server_for(getattr(credential, "id", None), proxy_upstream="")
 
 
 def _slot_wait_seconds(config: Any) -> float:
