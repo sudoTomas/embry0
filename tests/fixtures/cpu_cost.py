@@ -67,7 +67,7 @@ def cpu_seconds(work: Callable[[], object], *, times: int = 1) -> float:
             gc.enable()
 
 
-def _read(seconds: float, what: str) -> float:
+def read_seconds(seconds: float, what: str) -> float:
     """``seconds`` as a reading of ``what``, refusing a zero, which no work costs: the clock moved in steps longer
     than the work (:class:`ClockTooCoarse`)."""
     if seconds <= 0:
@@ -97,7 +97,7 @@ def _reference_pass(texts: Iterable[str]) -> tuple[Callable[[], None], int]:
 
 
 def _per_pass(least: float, repetitions: int) -> float:
-    return _read(least, f"{repetitions} passes of the reference") / repetitions
+    return read_seconds(least, f"{repetitions} passes of the reference") / repetitions
 
 
 def reference_seconds(texts: Iterable[str], *, runs: int = 3) -> float:
@@ -127,7 +127,7 @@ def _one_call(prepare: Callable[[], Callable[[], object]]) -> Callable[[], float
     work needs fresh (a compiled pattern a cache would otherwise hold warm from the run before, with what it
     remembered of the text), so each run times the work as its first call does it. A call the clock reads as no time
     is refused (:class:`ClockTooCoarse`)."""
-    return lambda: _read(cpu_seconds(prepare()), "the work")
+    return lambda: read_seconds(cpu_seconds(prepare()), "the work")
 
 
 def cost(prepare: Callable[[], Callable[[], object]], texts: Iterable[str], *, runs: int = 3) -> float:

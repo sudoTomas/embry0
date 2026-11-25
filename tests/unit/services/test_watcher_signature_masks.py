@@ -193,14 +193,17 @@ def test_a_mask_python_re_backtracks_on_masks_a_long_line_in_linear_time(pattern
 
 async def _one_tick(settings: dict[str, Any], lines: list[str]) -> float:
     """This thread's CPU time for one tick of a fresh watcher (the event loop runs on it, and nothing else is
-    scheduled), the garbage collector held: the tick's own work."""
+    scheduled), the garbage collector held: the tick's own work. A tick the clock reads as no time is refused
+    (``ClockTooCoarse``, the fixture's own refusal), never read as free: a ratio over it would pass measuring nothing."""
+    from tests.fixtures.cpu_cost import read_seconds
+
     svc = _watcher(settings, lines=lines)
     collecting = gc.isenabled()
     gc.disable()
     try:
         started = time.thread_time()
         await _tick_clusters(svc)
-        return time.thread_time() - started
+        return read_seconds(time.thread_time() - started, "a tick")
     finally:
         if collecting:
             gc.enable()
@@ -235,12 +238,35 @@ async def test_the_tick_ratio_reads_its_two_ticks_in_turns(monkeypatch: pytest.M
     monkeypatch.setattr(module, "_watcher", lambda settings, **_kw: settings)
     monkeypatch.setattr(module, "_tick_clusters", tick)
     monkeypatch.setattr(time, "thread_time", lambda: now[0])
-    ratio = getattr(module, "_tick_ratio", None)
-    if ratio is not None:
-        measured = await ratio(_BACKTRACKS, _PLAIN, ["x"])
-    else:
-        measured = await module._tick_cpu_seconds(_BACKTRACKS, ["x"]) / await module._tick_cpu_seconds(_PLAIN, ["x"])
+    measured = await _tick_ratio(_BACKTRACKS, _PLAIN, ["x"])
     assert measured == 1.0, f"load that left before the plain tick was read was taken for its cost: {measured}"
+
+
+@pytest.mark.asyncio
+async def test_a_tick_the_clock_reads_as_no_time_is_refused_not_read_as_free(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#685 review: on a clock coarser than a tick, the tick backtracking on its mask read 0 s, the ratio 0, and the
+    bound passed measuring nothing. The tick's reading goes through the fixture's refusal of a zero."""
+    import sys
+
+    from tests.fixtures.cpu_cost import ClockTooCoarse
+
+    module = sys.modules[__name__]
+    now = [0.0]
+
+    async def tick(svc: Any) -> list[Any]:
+        if svc is _PLAIN:
+            now[0] += 0.0156  # the plain tick reads one step of a coarse clock; the backtracking one reads none
+        return []
+
+    monkeypatch.setattr(module, "_watcher", lambda settings, **_kw: settings)
+    monkeypatch.setattr(module, "_tick_clusters", tick)
+    monkeypatch.setattr(time, "thread_time", lambda: now[0])
+    try:
+        ratio = await _tick_ratio(_BACKTRACKS, _PLAIN, ["x"])
+    except ClockTooCoarse as refused:
+        assert "a tick read 0 s" in str(refused), str(refused)
+    else:
+        pytest.fail(f"a tick the clock read as no time made the ratio {ratio}, which passes measuring nothing")
 
 
 #: How many times a tick whose mask Python's re backtracks on may cost a tick whose mask it does not, on the same

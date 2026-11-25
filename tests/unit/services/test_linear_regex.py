@@ -511,8 +511,6 @@ def test_a_search_of_a_text_a_backtracking_pattern_almost_matches_takes_linear_t
 def test_the_growth_and_cost_checks_read_their_two_sides_in_turns(monkeypatch: pytest.MonkeyPatch) -> None:
     """#679: a clock charging each side the same, under a load that leaves once the second side is first read. Read
     in turns, both sides have a quiet reading and the ratio is exactly 1; read in separate stretches it was 2."""
-    import sys
-
     from tests.fixtures import cpu_cost
 
     line = "a" * (LONGER * 64)
@@ -534,7 +532,6 @@ def test_the_growth_and_cost_checks_read_their_two_sides_in_turns(monkeypatch: p
         return chars * (1 if quiet else 2)
 
     monkeypatch.setattr(cpu_cost, "cpu_seconds", charged)
-    monkeypatch.setattr(sys.modules[__name__], "cpu_seconds", charged, raising=False)
     assert _growth(work, line) == 1.0, "load that left before the short lines were read was taken for growth"
     quiet.clear()
     assert _cost(work, line) == 1.0, "load that left before the reference was read was taken for cost"
