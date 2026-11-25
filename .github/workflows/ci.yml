@@ -73,7 +73,8 @@ jobs:
   # one runner took 17 to 29 minutes, and turning the Postgres service's
   # durability off saved nothing (an A/B run: 26:52 against 26:56). Each part
   # is a hash of the test file's path (tests/fixtures/shards.py); measured on
-  # CI, they hold about 58% and 42% of the suite's time.
+  # CI, the larger part holds about 58% of the suite's time (which part is
+  # the larger varies with the runner).
   backend-tests:
     name: Backend tests (${{ matrix.shard }} of 2)
     runs-on: ubuntu-latest
@@ -139,6 +140,8 @@ jobs:
     if: always()
     steps:
       - name: The lint and every part of the unit suite passed
+        # bash -e -o pipefail, whatever a defaults: section above says.
+        shell: bash
         env:
           LINT: ${{ needs.backend-lint.result }}
           TESTS: ${{ needs.backend-tests.result }}

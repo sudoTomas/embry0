@@ -7,6 +7,7 @@ nothing pushed, and the one secret read only where a run has secrets.
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -125,29 +126,35 @@ def test_the_gate_passes_only_when_the_lint_and_the_tests_both_succeeded():
     have: only success and success pass. Its text is not enough: a line after the checks, or `|| true`, would let a
     failure pass while reading the same."""
     (step,) = _gate()["steps"]
-    assert "shell" not in step, "the gate's step must run in the runner's default shell, bash -e -o pipefail"
+    # `shell: bash` is the runner's `bash --noprofile --norc -eo pipefail {0}`; without it, a defaults: section at
+    # the job or the workflow could run the step without -e, and only the last line's status would count.
+    assert step.get("shell") == "bash", f"the gate's step must name its shell, bash: {step.get('shell')!r}"
+    script = str(step["run"])
+    assert "${{" not in script, "the gate's script holds an expression, which the runner fills in and this cannot"
     env = step.get("env") or {}
     by_need = {}
     for need in ("backend-lint", "backend-tests"):
         (var,) = [k for k, v in env.items() if v == f"${{{{ needs.{need}.result }}}}"]
         by_need[need] = var
-    for lint in _RESULTS:
-        for tests in _RESULTS:
-            done = subprocess.run(
-                ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
-                env={
-                    "PATH": os.environ.get("PATH", ""),
-                    by_need["backend-lint"]: lint,
-                    by_need["backend-tests"]: tests,
-                },
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            passed = done.returncode == 0
-            assert passed is (lint == tests == "success"), (
-                f"the gate {'passes' if passed else 'fails'} when the lint is {lint} and the tests are {tests}"
-            )
+    assert set(env) == set(by_need.values()), f"the gate's step sets more than its needs' results: {sorted(env)}"
+    read = set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", script))
+    assert read <= set(by_need.values()), f"the gate's script reads more than its needs' results: {sorted(read)}"
+    for event in ("push", "pull_request"):
+        for lint in _RESULTS:
+            for tests in _RESULTS:
+                runner = {"PATH": os.environ.get("PATH", ""), "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": event}
+                done = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+                    env={**runner, by_need["backend-lint"]: lint, by_need["backend-tests"]: tests},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                passed = done.returncode == 0
+                assert passed is (lint == tests == "success"), (
+                    f"on a {event}, the gate {'passes' if passed else 'fails'} when the lint is {lint} and the "
+                    f"tests are {tests}"
+                )
 
 
 def test_nothing_in_the_backend_jobs_lets_a_failure_pass_or_a_part_go_unrun():
@@ -167,14 +174,32 @@ def test_nothing_in_the_backend_jobs_lets_a_failure_pass_or_a_part_go_unrun():
             )
 
 
+def _one_command(job: str, marker: str) -> list[str]:
+    """The words of the one command in ``job``'s step whose script holds ``marker``: one line, nothing chained."""
+    runs = [str(step.get("run", "")) for step in _jobs()[job]["steps"] if marker in str(step.get("run", ""))]
+    assert len(runs) == 1, f"{job} has {len(runs)} steps running {marker!r}"
+    (run,) = runs
+    assert not re.search(r"[;&|\n`]|\$\(", run.strip()), f"{job}'s {marker!r} step chains its command: {run!r}"
+    return shlex.split(run)
+
+
 def test_the_lint_job_runs_the_workflow_s_own_guards_whole():
-    """In the parts they would run only in the one their files hash to: a part cut from the matrix takes them."""
-    runs = [str(step.get("run", "")) for step in _jobs()["backend-lint"]["steps"]]
-    (guard,) = [run for run in runs if "pytest" in run]
+    """In the parts they would run only in the one their files hash to: a part cut from the matrix takes them. The
+    command is pinned whole, so it cannot be narrowed (-k, --co, a file dropped) while this reads it as run."""
+    words = _one_command("backend-lint", "pytest")
+    assert words == ["uv", "run", "--no-sync", "pytest", "-q", "-p", "no:cacheprovider", *_GUARDS], (
+        f"the lint job's guards run as {words}"
+    )
     for path in _GUARDS:
-        assert path in guard.split(), f"the lint job does not run {path}"
         assert (WORKFLOW.parents[2] / path).is_file(), f"{path} is gone"
-    assert "--shard" not in guard, "the guards run in part"
+
+
+def test_each_part_runs_the_whole_unit_suite_s_command():
+    """Each part runs tests/unit/ whole but for its own part: no other path, -k, -m, --deselect, --ignore or --co."""
+    words = _one_command("backend-tests", "pytest tests/unit")
+    expected = ["uv", "run", "--no-sync", "pytest", "tests/unit/", "--shard", "${{", "matrix.shard", "}}/2"]
+    expected += ["-n", "4", "-v", "--tb=short", "--timeout=60", "--fail-on-warnings", "--durations=25"]
+    assert words == expected, f"the unit suite runs as {words}"
 
 
 def test_the_unit_suite_runs_every_part_of_itself():
