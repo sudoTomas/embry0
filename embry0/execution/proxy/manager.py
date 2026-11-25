@@ -63,6 +63,9 @@ METERED_PROXIES: dict[str, tuple[int, str]] = {"xai-proxy": (9106, "xai"), "loca
 
 #: The order a recreated proxy is given back its state: an enrollment before the run declared for it.
 _REPLAY_ORDER = {"enroll": 0, "token": 1, "run": 2}
+#: The longest a run's declaration or end waits for a replay of its proxy's state: past it, it is sent anyway, and a
+#: run declared that way is charged as one whose tally is not whole (``declared_unordered``).
+REPLAY_WAIT_SECONDS = 30.0
 _RESTRICTED = "sandbox-restricted"
 _INTERNET = "sandbox-internet"
 
@@ -231,6 +234,9 @@ class ProxyManager:
         # Held while a recreated proxy is given its state back; a run's declaration or end waits for it, so it
         # reaches the proxy after whatever the replay sends (two docker execs at once arrive in either order).
         self._replay_locks: dict[str, asyncio.Lock] = {}
+        # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
+        # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
+        self._unordered_runs: set[tuple[str, str]] = set()
         self._on_recreated: Callable[[], Awaitable[None]] | None = None
         self.auth_proxy_url: str = ""
         self.xai_proxy_url: str = ""
@@ -1022,7 +1028,8 @@ class ProxyManager:
             k for k, (_, _, b, _) in held.items() if k.startswith("run:") and b.get("sandbox_id") == sandbox_id
         ]:
             del held[key]
-        await self._after_replay(proxy)
+        if not await self._after_replay(proxy):
+            self._unordered_runs.add((proxy, run_id))
         response = await self._exec_admin_request(
             container=proxy, method="POST", path="/admin/runs", port=port, body=body
         )
@@ -1054,12 +1061,27 @@ class ProxyManager:
             raise RuntimeError(f"{proxy} answered its meter without a boot id or tallies")
         return response
 
-    async def _after_replay(self, proxy: str) -> None:
-        """Wait until no replay of ``proxy``'s state is under way: what the caller sends then lands after it."""
+    async def _after_replay(self, proxy: str) -> bool:
+        """Wait until no replay of ``proxy``'s state is under way, so what the caller sends lands after it. False when
+        the wait passed :data:`REPLAY_WAIT_SECONDS` and the caller goes ahead: metering never holds a run up longer."""
         lock = self._replay_locks.get(proxy)
-        if lock is not None:
-            async with lock:
-                pass
+        if lock is None:
+            return True
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=REPLAY_WAIT_SECONDS)
+        except TimeoutError:
+            logger.warning("proxy_replay_wait_expired", proxy=proxy, waited_seconds=REPLAY_WAIT_SECONDS)
+            return False
+        lock.release()
+        return True
+
+    def declared_unordered(self, proxy: str, run_id: str) -> bool:
+        """Whether ``run_id`` was declared on ``proxy`` without waiting a replay out (and forget it)."""
+        try:
+            self._unordered_runs.remove((proxy, run_id))
+        except KeyError:
+            return False
+        return True
 
     async def _exec_admin_request(
         self,
@@ -1166,7 +1188,7 @@ class ProxyManager:
         held = self._admin_state.get(name, {})
         now = time.monotonic()
         entries = sorted(held.items(), key=lambda item: _REPLAY_ORDER.get(item[0].split(":", 1)[0], 3))
-        for key, entry in entries:
+        for index, (key, entry) in enumerate(entries):
             if held.get(key) is not entry:
                 continue  # dropped or replaced since the replay began (a run ended, the sandbox's next one declared)
             path, port, body, expires = entry
@@ -1181,6 +1203,15 @@ class ProxyManager:
                     container=name, method="POST", path=path, port=port, body=replay, accept_404=False
                 )
                 restored += 1
+            except TimeoutError:
+                # A proxy that does not answer in time is given up on at once: the rest would each wait as long, and
+                # every declaration and end on it waits for the replay. What it holds is kept, so the next time it is
+                # recreated it is given all of it again; a run on it meanwhile falls to the gap rule (its tally there
+                # is from another process, or none).
+                left = len(entries) - index
+                failed += left
+                logger.error("proxy_state_replay_abandoned", proxy=name, entry=key.split(":", 1)[0], left=left)
+                break
             except RuntimeError as exc:
                 failed += 1
                 logger.error("proxy_state_replay_failed", proxy=name, entry=key.split(":", 1)[0], error=str(exc))

@@ -226,6 +226,10 @@ output. A proxy process that went away mid-run leaves its last read in
 `run_meter` with its calls in flight, and the recreated proxy is given the run
 back after the sandbox's enrollment, under a new process (`boot_id`), so the
 run's calls are the two tallies summed and the charge is the larger figure.
+Metering never holds a run up for long: a replay that times out is given up
+at once (the next recreation gives the proxy everything again), and a run's
+declaration or end waits at most 30 seconds for a replay before it goes
+ahead, the run then charged as one whose tally is not whole.
 
 The trace keeps both figures: `metering` (the source, whether the tally was
 whole, the proxy's cost, the sandbox's, each proxy's processes, calls, calls

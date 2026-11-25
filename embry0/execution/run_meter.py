@@ -43,6 +43,7 @@ class MeteringProxies(Protocol):
     async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str: ...
     async def end_run(self, proxy: str, run_id: str) -> dict[str, Any] | None: ...
     async def read_meter(self, proxy: str) -> dict[str, Any]: ...
+    def declared_unordered(self, proxy: str, run_id: str) -> bool: ...
 
 
 @dataclass
@@ -106,6 +107,10 @@ class RunMeter:
         finals: dict[tuple[str, str], BootTally] = {}
         unreached: list[str] = []
         for proxy in window.declared:
+            if self._proxies.declared_unordered(proxy, window.run_id):
+                # Declared without waiting out a replay of the proxy: it may have landed before an older run's, so
+                # its tally there is not taken as whole (the run is charged at least what its sandbox reported).
+                unreached.append(proxy)
             try:
                 ended = await self._proxies.end_run(proxy, window.run_id)
             except Exception as exc:  # noqa: BLE001 — a lost end is a gap, never a failed run
@@ -114,7 +119,8 @@ class RunMeter:
                 unreached.append(proxy)
                 continue
             if ended is None:
-                unreached.append(proxy)
+                if proxy not in unreached:
+                    unreached.append(proxy)
                 continue
             boot_id, tally = str(ended.get("boot_id") or ""), ended["tally"]
             finals[(proxy, boot_id)] = BootTally(proxy, boot_id, tally, final=True)

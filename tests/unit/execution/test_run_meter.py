@@ -85,6 +85,9 @@ class _Proxies:
         tally = self.tallies[proxy].pop(run_id, None)
         return None if tally is None else {"boot_id": self.boot[proxy], "tally": tally}
 
+    def declared_unordered(self, proxy: str, run_id: str) -> bool:
+        return (proxy, run_id) in getattr(self, "unordered", set())
+
     async def read_meter(self, proxy: str) -> dict[str, Any]:
         self._maybe_fail(proxy, "read")
         return {"boot_id": self.boot[proxy], "tallies": list(self.tallies[proxy].values())}

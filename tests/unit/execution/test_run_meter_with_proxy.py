@@ -310,3 +310,87 @@ async def test_a_run_ended_while_a_replay_sends_it_is_ended_after_it(
     metering = await box["end"]
     assert metering.unreached == (), "the end landed before the replayed declaration and found nothing"
     assert "sbx-1" not in new.app[METER]._current, "the replay left the ended run declared"
+
+
+async def test_a_replay_gives_up_at_its_first_timeout_and_the_next_starts_over(proxy: Any) -> None:
+    """A recreated proxy that does not answer: the rest of its state would each wait as long, and every declaration
+    and end on it waits for the replay."""
+    mgr = proxy.mgr
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
+    sent: list[str] = []
+
+    async def _hung(**kw: Any) -> dict[str, Any]:
+        sent.append(kw["path"])
+        raise TimeoutError
+
+    real_once, mgr._exec_admin_once = mgr._exec_admin_once, _hung  # type: ignore[method-assign]
+    restored, failed = await mgr._replay("xai-proxy")
+    assert (sent, restored, failed) == (["/admin/enroll"], 0, 3), "the replay went on after a timeout"
+    assert set(mgr._admin_state["xai-proxy"]) == {"enroll:sbx-1", "token:", "run:run-1"}, "the held state was lost"
+    resent: list[str] = []
+
+    async def _answers(**kw: Any) -> dict[str, Any]:
+        resent.append(kw["path"])
+        return {}
+
+    mgr._exec_admin_once = _answers  # type: ignore[method-assign]
+    assert await mgr._replay("xai-proxy") == (3, 0)
+    assert resent == ["/admin/enroll", "/admin/token", "/admin/runs"]
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+
+
+async def _slow_replay(mgr: Any) -> asyncio.Task[None]:
+    """A replay of the xai-proxy that holds its lock far longer than any wait for it."""
+    lock = mgr._replay_locks.setdefault("xai-proxy", asyncio.Lock())
+    await lock.acquire()
+
+    async def _release_later() -> None:
+        await asyncio.sleep(30)
+        lock.release()
+
+    return asyncio.create_task(_release_later())
+
+
+async def test_a_declaration_waits_for_a_replay_no_longer_than_the_bound_and_its_run_is_charged_at_least_its_sandbox_s(
+    proxy: Any, monkeypatch: Any
+) -> None:
+    monkeypatch.setattr(manager_module, "REPLAY_WAIT_SECONDS", 0.2, raising=False)
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    slow = await _slow_replay(mgr)
+    try:
+        started = asyncio.get_running_loop().time()
+        window = await meter.begin("sbx-1", "run-1", "job-1")
+        assert asyncio.get_running_loop().time() - started < 5, "the run waited for the replay without bound"
+        assert window.declared, "the run was not declared once the wait ran out"
+        await _sandbox_call(proxy)
+        started = asyncio.get_running_loop().time()
+        metering = await meter.end(window)
+        assert asyncio.get_running_loop().time() - started < 5, "the end waited for the replay without bound"
+    finally:
+        slow.cancel()
+    cost = (1000 * 2.0 + 100 * 6.0 + 400 * 2.0 * 0.25) / 1e6
+    charge = charge_run(metering, _record(), sandbox_cost_usd=cost * 3, sandbox_tokens=(3000, 300, 1200, 0))
+    assert charge.metering["gap"] is True, "a run declared out of order was taken as whole"
+    assert charge.cost_usd >= cost * 3, "charged less than its sandbox reported"
+    assert not mgr.declared_unordered("xai-proxy", "run-1"), "the mark outlived the run"
+
+
+async def test_a_run_across_an_abandoned_replay_is_charged_at_least_its_sandbox_s(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """Recreated, then given up on: the new process never heard of the run, whose end finds nothing there."""
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    window = await meter.begin("sbx-1", "run-1", "job-1")
+    await _recreated(aiohttp_server, proxy, monkeypatch)
+
+    async def _hung(**kw: Any) -> dict[str, Any]:
+        raise TimeoutError
+
+    real_once, mgr._exec_admin_once = mgr._exec_admin_once, _hung  # type: ignore[method-assign]
+    await mgr._replay("xai-proxy")
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    metering = await meter.end(window)
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.02, sandbox_tokens=(1, 1, 0, 0))
+    assert (charge.metering["gap"], charge.cost_usd) == (True, pytest.approx(0.02))
