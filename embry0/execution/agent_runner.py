@@ -92,12 +92,13 @@ def agent_run_event(event: dict[str, Any]) -> dict[str, Any] | None:
     return {key: value for key, value in event.items() if key not in ORCHESTRATOR_STAMPED}
 
 
-def _refused_result(final_result: dict[str, Any] | None, results: int, nonce: str | None) -> str | None:
+def _refused_result(final_result: dict[str, Any] | None, results: int, nonce: str) -> str | None:
     """Why a run's result is not its runner's own, or None to take it: more than one final result (whichever
-    is the runner's, the other is not), or, when the run was marked, one that does not carry its nonce."""
+    is the runner's, the other is not), or one that does not carry the run's nonce. Every run is marked: an
+    image whose runner cannot carry the mark is refused before it runs (:data:`STALE_IMAGE_LACKS`)."""
     if results > 1:
         return f"its output held {results} final results, where its runner writes one"
-    if nonce is not None and final_result is not None:
+    if final_result is not None:
         carried = final_result.get("nonce")
         if not isinstance(carried, str) or not hmac.compare_digest(carried.encode(), nonce.encode()):
             return "its final result does not carry this run's mark"
@@ -213,9 +214,6 @@ def _is_start_crash(exit_code: int | None, stdout_lines: int, stderr: str) -> bo
     return bool(exit_code) and stdout_lines == 0 and any(marker in stderr for marker in _START_CRASH_MARKERS)
 
 
-# #304 stale-image fallback. Linux caps ONE argv string at MAX_ARG_STRLEN
-# (128 KiB); stay well under it so `docker exec` framing never tips it over.
-_ARGV_FALLBACK_MAX_BYTES = 100 * 1024
 # What argparse prints when a runner that predates --config-stdin is handed it.
 _STALE_RUNNER_STDERR_MARKER = "arguments are required: --config"
 #: What argparse says of an image's runner that predates ``--result-nonce``: the flag is not one it knows.
@@ -225,6 +223,7 @@ _RESULT_NONCE_KEY = "result_nonce"
 _RESULT_NONCE_FLAG = "--result-nonce"
 #: What a sandbox image built before this release lacks, by the outcome its refusal is counted under.
 STALE_IMAGE_LACKS: Final[Mapping[str, str]] = {
+    "config_stdin_missing": "the runner's config on stdin (--config-stdin)",
     "interpreter_missing": f"the runner's execute-only interpreter ({RUNNER_INTERPRETER})",
     "result_unmarked": f"the runner's result mark ({_RESULT_NONCE_FLAG})",
 }
@@ -291,10 +290,11 @@ class AgentRunner:
     ) -> None:
         self._sandbox = sandbox_manager
         self._docker = docker
-        # #285: called with "argv_fallback" / "config_too_large" when a stale
-        # runner image is met. A plain callable, not the metrics facade: this
-        # module is baked into the sandbox image, which ships neither
-        # embry0.metrics nor prometheus_client.
+        # #285: called with the outcome (a STALE_IMAGE_LACKS key) when an image
+        # built before what this release runs agents with is refused. A plain
+        # callable, not the metrics facade: this module is baked into the
+        # sandbox image, which ships neither embry0.metrics nor
+        # prometheus_client.
         self._on_stale_image = on_stale_image or (lambda _outcome: None)
 
     async def run(
@@ -319,7 +319,6 @@ class AgentRunner:
         try:
             extra_args = await self._stage_resume_session(container, resume_session)
 
-            config_json = json.dumps(config)
             # #304: the config rides stdin, never argv. One argv string is
             # capped at 128 KiB (MAX_ARG_STRLEN); a review prompt carrying a
             # PR diff blew past it and the exec died with "[Errno 7] Argument
@@ -345,39 +344,10 @@ class AgentRunner:
                 return await self._refuse_stale_image(container, config, "interpreter_missing")
             if exit_facts.is_unmarked_runner_usage_error():
                 return await self._refuse_stale_image(container, config, "result_unmarked")
-            if not exit_facts.is_stale_runner_usage_error():
-                return output
-
-            # The image's runner predates --config-stdin (prebaked per-repo QA
-            # images are `docker commit`s of an old sandbox; profile images
-            # are built FROM it — neither is rebuilt by the deploy recipe).
-            # argparse rejected the flag before the runner imported anything,
-            # so no agent work has happened and one argv retry cannot
-            # double-execute.
-            image = await self._image_ref(container)
-            if len(config_json.encode()) > _ARGV_FALLBACK_MAX_BYTES:
-                logger.error("sandbox_runner_stale_image_config_too_large", image=image, container=container)
-                self._on_stale_image("config_too_large")
-                return AgentOutput(
-                    agent_type=config.get("agent_type", "unknown"),
-                    is_error=True,
-                    error_message=(
-                        f"sandbox image {image!r} has a runner that predates --config-stdin and this agent "
-                        f"config ({len(config_json.encode())} bytes) is too large for argv — rebuild the image"
-                    ),
-                    error_code=ErrorCode.SANDBOX_IMAGE_STALE.value,
-                )
-            logger.warning(
-                "sandbox_runner_stale_image",
-                image=image,
-                container=container,
-                agent_type=config.get("agent_type"),
-                hint="runner predates --config-stdin; config sent on argv — rebuild this image",
-            )
-            self._on_stale_image("argv_fallback")
-            output, _ = await self._exec_runner(
-                container, [*runner, "--config", config_json, *extra_args], None, config, on_event
-            )
+            if exit_facts.is_stale_runner_usage_error():
+                # A runner older still, from before its config came on stdin (#304). It once ran again with the
+                # config on argv, its result taken unmarked; no image this release accepts can reach that.
+                return await self._refuse_stale_image(container, config, "config_stdin_missing")
             return output
 
         finally:
@@ -395,7 +365,7 @@ class AgentRunner:
         config: dict[str, Any],
         on_event: Callable[[dict[str, Any]], None] | None,
         *,
-        nonce: str | None = None,
+        nonce: str,
     ) -> tuple[AgentOutput, _RunnerExit]:
         """One `docker exec` of the sandbox runner: stream events, return the
         result plus how the process ended (``_RunnerExit`` stays at its

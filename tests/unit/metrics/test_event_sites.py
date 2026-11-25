@@ -254,7 +254,7 @@ async def test_a_stale_runner_image_is_reported_through_the_hook() -> None:
     )
     runner._on_stale_image = seen.append
     await runner.run(container="c", config={"agent_type": "qa", "timeout_seconds": 5, "prompt": "small"})
-    assert seen == ["argv_fallback"]
+    assert seen == ["config_stdin_missing"]
 
 
 def test_agent_runner_stays_importable_inside_the_sandbox_image() -> None:

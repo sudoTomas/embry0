@@ -209,7 +209,7 @@ def test_case_and_infra_events() -> None:
     m.case_event("merged", "applied")
     m.case_event("ENG-1988", "applied")
     m.case_resolved("out_of_band")
-    m.sandbox_runner_stale_image("argv_fallback")
+    m.sandbox_runner_stale_image("interpreter_missing")
     m.state_channel_fold("pr_url", "PreferNonEmpty")
     m.volume_reaper_volume("removed", "owner_terminal")
     m.volume_reaper_volume("kept", "sandbox-job-123")
@@ -219,7 +219,7 @@ def test_case_and_infra_events() -> None:
     assert get("embry0_healing_case_events_total", {"event": "merged", "effect": "applied"}) == 1
     assert get("embry0_healing_case_events_total", {"event": "other", "effect": "applied"}) == 1
     assert get("embry0_healing_cases_resolved_total", {"resolution_path": "out_of_band"}) == 1
-    assert get("embry0_sandbox_runner_stale_image_total", {"outcome": "argv_fallback"}) == 1
+    assert get("embry0_sandbox_runner_stale_image_total", {"outcome": "interpreter_missing"}) == 1
     folds = "embry0_state_channel_folded_concurrent_writes_total"
     assert get(folds, {"key": "pr_url", "channel": "PreferNonEmpty"}) == 1
     assert get("embry0_volume_reaper_volumes_total", {"outcome": "removed", "reason": "owner_terminal"}) == 1
