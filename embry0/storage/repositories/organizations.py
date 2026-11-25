@@ -7,6 +7,7 @@ from typing import Any
 
 from embry0.services.organizations import FORGES, STATUSES, Organization
 from embry0.storage.database import DatabasePool, StoredValueTooDeep
+from embry0.storage.repositories import registrations
 
 _COLUMNS = (
     "owner, forge, credential_id, display_name, settings, access, repo_count, "
@@ -108,6 +109,7 @@ class OrganizationsRepository:
             dict(settings or {}),
             created_by,
         )
+        registrations.written("organization", owner)
         return _org(row)
 
     async def update_access(
@@ -175,4 +177,5 @@ class OrganizationsRepository:
             owner.strip().lower(),
             status,
         )
+        registrations.written("organization", owner)
         return _org(row) if row else None

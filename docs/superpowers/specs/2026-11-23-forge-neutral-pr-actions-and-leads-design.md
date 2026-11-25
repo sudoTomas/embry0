@@ -110,6 +110,13 @@ An address on another host still parses, so a refusal can name it: `github at gh
 
 Owners are stored as `github:<login>` or `gitlab:<username>`. A bare name means the organization's own forge. The pattern check moves from `forge_logins.GITHUB_LOGIN_RE` to one per forge. This depends on #179's people design, so it lands with or after #179's people PR.
 
+Decided 2026-11-25, for PR 6 (built on #179's PR 4, #704, which resolves a bare owner on the repository's organization's forge):
+- **Bare owners already stored stay as written** and read as the organization's own forge: no migration. A bare owner is checked by GitHub's pattern, which every owner was checked by before and which GitLab's takes in whole, so it is a login on either forge; a GitLab username GitHub would not take is written `gitlab:<username>`.
+- **Where owners are written:** the repository preferences and the areas document take `github:<login>`, `gitlab:<username>` and bare (`forge_logins.parse_owner`), stored and shown as written. The hand-off login route stays a GitHub login: it sets a user's `users.github_login`; a GitLab login is a person's `gitlab` identity (#179).
+- **Resolution** (`owner_people.Directory.handle`): a named owner is a login on its own forge, whatever the organization's; a bare one on the organization's. Asks, who may decide and the decisions that wait for a viewer read it; the proposals feed's owner filter reads each bare owner on its organization's forge (`forges_of`). People's suggestions list each owner with its forge, held only by an identity of that forge.
+- **CODEOWNERS on GitLab** is read through the GitLab client with the organization's credential, only for a repository on its organization's forge, where GitLab looks and in its order (the root, `docs/`, `.gitlab/`), the first one there, with its sections (`[Name]`, `^[Name]`, `[Name][2]`, default owners on the heading; each section's last rule for every file; every section's owners). Groups (`@group/subgroup`), roles (`@@developer`) and email addresses are left out, each logged with why.
+- **Owners not known are not "nobody's"** (decided 2026-11-25): a `CODEOWNERS` that could not be read, a repository whose forge could not be looked up, and a repository whose file is not read at all (registered on another forge than its organization's, of an organization embry0 does not hold, or on a forge nothing names) leave its owners unread (`owners_unread`): only an admin, or the person a decision was handed to, answers its decisions from a chat. Only a file at no place, or an empty GitLab project, means no owners.
+
 ### Other address readers, and why they stay
 
 These read a pull request address too. None of them is one of the three github.com-only copies above:

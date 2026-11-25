@@ -19,6 +19,7 @@ import structlog
 from embry0.storage import repo_renames
 from embry0.storage.database import DatabasePool
 from embry0.storage.repo_renames import repo_slug_variants
+from embry0.storage.repositories import registrations
 
 logger = structlog.get_logger(__name__)
 
@@ -100,6 +101,7 @@ class ReposRepository:
             notes,
             forge,
         )
+        registrations.written("repo", repo)
         out = await self.get(repo)
         assert out is not None
         return out
@@ -216,3 +218,4 @@ class ReposRepository:
         """Hard delete — cascades to repo_qa_configs. Env/preference rows are
         deliberately untouched (no FK; they predate the registry)."""
         await self._db.execute("DELETE FROM repos WHERE repo = $1", repo)
+        registrations.written("repo", repo)

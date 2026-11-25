@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from structlog.testing import capture_logs
 
 from embry0.api.v1 import proposals as proposals_api
 from embry0.services.context_audit import FIX_ACTOR
@@ -69,13 +70,17 @@ class FakeForge:
 
 
 class FakeOrgs:
-    """acme, registered on ``forge``."""
+    """acme, registered on ``forge``, with ``status``."""
 
-    def __init__(self, forge: str = "github") -> None:
+    def __init__(self, forge: str = "github", status: str = "active") -> None:
         self.forge = forge
+        self.status = status
 
     async def get(self, owner: str) -> Any:
-        return SimpleNamespace(owner=owner, forge=self.forge) if owner == "acme" else None
+        return SimpleNamespace(owner=owner, forge=self.forge, status=self.status) if owner == "acme" else None
+
+    async def list_all(self) -> list[Any]:
+        return [SimpleNamespace(owner="acme", forge=self.forge, status=self.status)]
 
 
 @pytest.fixture
@@ -91,6 +96,8 @@ def app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     async def forge_client(request: Any, org: Any) -> FakeForge:
         return FakeForge()
 
+    # CODEOWNERS is read with the organization's own forge's client; a finding's fix reads GitHub's.
+    monkeypatch.setattr("embry0.api.v1.organizations.org_own_forge_client", forge_client)
     monkeypatch.setattr("embry0.api.v1.organizations.org_forge_client", forge_client)
 
     async def no_audit(*args: Any, **kwargs: Any) -> None:
@@ -110,30 +117,140 @@ async def test_the_feed_lists_every_kind_newest_first_with_its_owners(app: FastA
     assert [p["kind"] for p in body["proposals"]] == ["issue", "case", "finding"]
     owners = {p["repo"]: p["owners"] for p in body["proposals"]}
     assert owners == {"acme/web": ["octo", "pat"], "acme/api": ["octo"], "acme/docs": ["docs-owner"]}, (
-        "preferences first, else CODEOWNERS (teams skipped)"
+        "preferences first, else CODEOWNERS (teams skipped), each as written"
     )
     finding = body["proposals"][2]
     assert finding["id"].startswith("finding:") and finding["path"] == "AGENTS.md" and finding["line"] == 3
 
 
-async def test_a_gitlab_organization_s_files_are_not_read_with_the_github_reader(
+class _Registry:
+    """The repository registry: every repository of acme registered on ``forge``, or none registered (``registered``
+    false) and ``forge`` the configured default."""
+
+    def __init__(self, forge: str, *, registered: bool = True) -> None:
+        self.forge = forge
+        self.registered = registered
+
+    async def registered_as(self, repo: str) -> str | None:
+        return repo if self.registered else None
+
+    async def forge_or_none(self, repo: str) -> str:
+        return self.forge
+
+
+GITLAB_CODEOWNERS = """\
+# The default section
+* @root-owner
+docs/ @x
+
+[Docs] @dora
+*
+^[Ops][2] @ops-default
+* @@maintainer @acme/platform/sre @erin_e someone@example.test
+[docs]
+/** @dan.dev
+"""
+
+
+async def test_a_gitlab_repository_s_owners_come_from_its_preference_and_its_codeowners_on_gitlab(
     app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The proposals' file reader speaks GitHub's REST paths (#181): it reads no CODEOWNERS of an organization on
-    GitLab, as of an owner nobody registered, and the feed still answers."""
+    """#181: an organization on GitLab: its CODEOWNERS is read through the GitLab client with its credential, in
+    GitLab's order of places and with its sections; groups, roles and emails are left out, each with why. Owners
+    are as written: a bare one is the organization's forge's, read so where it is resolved (owner_people)."""
+    from tests.unit.services.leads.fakes import fake_gitlab
+
+    asked: list[str] = []
+    gitlab = fake_gitlab(
+        {
+            "/projects/acme%2Fdocs": {"default_branch": "trunk"},
+            "/projects/acme%2Fdocs/repository/files/docs%2FCODEOWNERS/raw": GITLAB_CODEOWNERS.encode(),
+        },
+        asked,
+    )
     made: list[str] = []
 
-    async def forge_client(request: Any, org: Any) -> FakeForge:
-        made.append(org.owner)
-        return FakeForge()
+    async def forge_client(request: Any, org: Any) -> Any:
+        made.append(f"{org.owner} on {org.forge}")
+        return gitlab
 
-    monkeypatch.setattr("embry0.api.v1.organizations.org_forge_client", forge_client)
+    monkeypatch.setattr("embry0.api.v1.organizations.org_own_forge_client", forge_client)
     app.state.organizations_repo = FakeOrgs(forge="gitlab")
+    app.state.repos_repo = _Registry("gitlab")
     async with await _client(app) as client:
         resp = await client.get("/api/v1/proposals")
     assert resp.status_code == 200, resp.text
     owners = {p["repo"]: p["owners"] for p in resp.json()["proposals"]}
-    assert (owners["acme/docs"], made) == ([], [])
+    assert owners == {
+        "acme/web": ["octo", "pat"],
+        "acme/api": ["octo"],
+        "acme/docs": ["root-owner", "gitlab:dan.dev", "gitlab:erin_e"],
+    }, "CODEOWNERS read as GitLab reads it: bare where a bare owner may be the login, else gitlab:<username>"
+    assert made == ["acme on gitlab"]
+    files = [path.split("/repository/files/")[1] for path in asked if "/repository/files/" in path]
+    assert files == ["CODEOWNERS/raw", "docs%2FCODEOWNERS/raw"], "GitLab's order: the root, then docs/, then .gitlab/"
+
+
+async def test_a_repository_on_another_forge_than_its_organization_s_reads_no_codeowners(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    class Recording(FakeForge):
+        """Answers every read GitHub's way and GitLab's, and keeps each one asked."""
+
+        async def get(self, path: str, **kwargs: Any) -> Any:
+            asked.append(path)
+            return await super().get(path, **kwargs)
+
+        async def get_project(self, repo: str) -> dict[str, Any]:
+            asked.append(f"project {repo}")
+            return {"default_branch": "main"}
+
+        def project_path(self, repo: str, suffix: str = "") -> str:
+            return f"/projects/{repo}{suffix}"
+
+    async def forge_client(request: Any, org: Any) -> FakeForge:
+        return Recording()
+
+    monkeypatch.setattr("embry0.api.v1.organizations.org_own_forge_client", forge_client)
+    app.state.repos_repo = _Registry("gitlab")  # acme is on GitHub
+    with capture_logs() as logs:
+        async with await _client(app) as client:
+            resp = await client.get("/api/v1/proposals")
+    assert resp.status_code == 200, resp.text
+    docs = next(p for p in resp.json()["proposals"] if p["repo"] == "acme/docs")
+    assert (docs["owners"], docs.get("owners_unread")) == ([], True), (
+        "a GitLab repository is not read with its GitHub organization's client, and its owners are not known"
+    )
+    assert asked == [], f"nothing is asked of the organization's forge for it: {asked}"
+    said = [e for e in logs if e["event"] == "codeowners_not_read_other_forge"]
+    assert [(e["repo"], e["repo_forge"], e["organization_forge"]) for e in said] == [("acme/docs", "gitlab", "github")]
+
+
+async def test_an_unregistered_repository_of_a_gitlab_organization_is_read_on_gitlab(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repository nobody registered is its organization's forge's, not the configured default's (GitHub)."""
+    from tests.unit.services.leads.fakes import fake_gitlab
+
+    gitlab = fake_gitlab(
+        {
+            "/projects/acme%2Fdocs": {"default_branch": "main"},
+            "/projects/acme%2Fdocs/repository/files/CODEOWNERS/raw": b"* @root-owner\n",
+        }
+    )
+
+    async def forge_client(request: Any, org: Any) -> Any:
+        return gitlab
+
+    monkeypatch.setattr("embry0.api.v1.organizations.org_own_forge_client", forge_client)
+    app.state.organizations_repo = FakeOrgs(forge="gitlab")
+    app.state.repos_repo = _Registry("github", registered=False)
+    async with await _client(app) as client:
+        resp = await client.get("/api/v1/proposals")
+    owners = {p["repo"]: p["owners"] for p in resp.json()["proposals"]}
+    assert owners["acme/docs"] == ["root-owner"]
 
 
 async def test_a_gitlab_organization_s_finding_is_not_fixed_with_the_github_reader(app: FastAPI) -> None:
@@ -147,6 +264,16 @@ async def test_a_gitlab_organization_s_finding_is_not_fixed_with_the_github_read
         422,
         "fixing a finding is not supported for this forge (gitlab)",
     )
+
+
+async def test_the_feed_filters_by_an_owner_on_its_forge(app: FastAPI) -> None:
+    """#181: a bare owner of a GitLab organization's repository is a GitLab login; a bare filter is a GitHub one."""
+    app.state.organizations_repo = FakeOrgs(forge="gitlab")
+    async with await _client(app) as client:
+        on_gitlab = (await client.get("/api/v1/proposals", params={"owner": "gitlab:@Octo"})).json()
+        on_github = (await client.get("/api/v1/proposals", params={"owner": "octo"})).json()
+    assert sorted(p["id"] for p in on_gitlab["proposals"]) == ["case:hc-1", "issue:iss-1"]
+    assert on_github["proposals"] == []
 
 
 async def test_the_feed_filters_by_owner_and_kind(app: FastAPI) -> None:
@@ -440,3 +567,241 @@ async def test_the_feed_without_its_repository_answers_503_and_leaves_no_corouti
     assert refused.value.status_code == 503
     unawaited = [str(w.message) for w in caught if "never awaited" in str(w.message)]
     assert not unawaited, f"the 503 left a coroutine behind: {unawaited}"
+
+
+class _Answering(FakeForge):
+    """The forge answers every CODEOWNERS place with ``status`` (the repository itself reads), and keeps each ask."""
+
+    def __init__(self, status: int, asked: list[str]) -> None:
+        self.status = status
+        self.asked = asked
+
+    async def get(self, path: str, **_: Any) -> Any:
+        self.asked.append(path)
+        if path == "/repos/acme/docs":
+            return SimpleNamespace(status_code=200, json=lambda: {"default_branch": "main"})
+        return SimpleNamespace(status_code=self.status, json=lambda: {})
+
+
+@pytest.mark.parametrize("status", [403, 500, 502])
+async def test_a_codeowners_that_could_not_be_read_is_unread_not_nobody_s_and_is_read_again(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A refused or failed read (a rate limit, a 5xx) is not "no owners": the proposal says its owners are unread,
+    so who may decide it is not decided on them, and nothing is cached: the next read asks the forge again."""
+    asked: list[str] = []
+
+    async def forge_client(request: Any, org: Any) -> Any:
+        return _Answering(status, asked)
+
+    for name in ("org_own_forge_client", "org_forge_client"):
+        monkeypatch.setattr(f"embry0.api.v1.organizations.{name}", forge_client)
+    async with await _client(app) as client:
+        first = (await client.get("/api/v1/proposals")).json()["proposals"]
+        reads = len(asked)
+        await client.get("/api/v1/proposals")
+    docs = next(p for p in first if p["repo"] == "acme/docs")
+    assert (docs["owners"], docs.get("owners_unread")) == ([], True), docs
+    assert all(not p.get("owners_unread") for p in first if p["repo"] != "acme/docs"), "a preference was read"
+    assert reads and len(asked) == 2 * reads, f"a failed read is not cached: {asked}"
+
+
+async def test_a_codeowners_at_no_place_is_nobody_s_and_is_cached(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    async def forge_client(request: Any, org: Any) -> Any:
+        return _Answering(404, asked)
+
+    for name in ("org_own_forge_client", "org_forge_client"):
+        monkeypatch.setattr(f"embry0.api.v1.organizations.{name}", forge_client)
+    async with await _client(app) as client:
+        first = (await client.get("/api/v1/proposals")).json()["proposals"]
+        reads = len(asked)
+        await client.get("/api/v1/proposals")
+    docs = next(p for p in first if p["repo"] == "acme/docs")
+    assert (docs["owners"], "owners_unread" in docs) == ([], False), docs
+    assert reads and len(asked) == reads, "not there at any place: no owners, read once an hour"
+
+
+class _RegistryDown(_Registry):
+    """The registry: ``failing`` (``registered_as`` or ``forge_or_none``) raises, and every ask is kept."""
+
+    def __init__(self, failing: str, asked: list[str]) -> None:
+        super().__init__("github")
+        self.failing = failing
+        self.asked = asked
+
+    async def registered_as(self, repo: str) -> str | None:
+        self.asked.append(f"registered_as {repo}")
+        if self.failing == "registered_as":
+            raise ConnectionError("the registry could not be read")
+        return await super().registered_as(repo)
+
+    async def forge_or_none(self, repo: str) -> str:
+        self.asked.append(f"forge_or_none {repo}")
+        if self.failing == "forge_or_none":
+            raise ConnectionError("the registry could not be read")
+        return await super().forge_or_none(repo)
+
+
+@pytest.mark.parametrize("failing", ["registered_as", "forge_or_none"])
+async def test_a_repository_whose_forge_could_not_be_looked_up_is_unread_and_looked_up_again(
+    app: FastAPI, failing: str
+) -> None:
+    """A registry lookup that fails is not "no forge": the repository's owners are unread, not nobody's, and nothing
+    is cached, so the next read looks it up again."""
+    asked: list[str] = []
+    app.state.repos_repo = _RegistryDown(failing, asked)
+    async with await _client(app) as client:
+        first = (await client.get("/api/v1/proposals")).json()["proposals"]
+        looked_up = sum(1 for a in asked if a.endswith("acme/docs"))
+        await client.get("/api/v1/proposals")
+    docs = next(p for p in first if p["repo"] == "acme/docs")
+    assert (docs["owners"], docs.get("owners_unread")) == ([], True), docs
+    assert looked_up and sum(1 for a in asked if a.endswith("acme/docs")) > looked_up, f"not looked up again: {asked}"
+
+
+class _NoOrganizations:
+    """No organization embry0 knows."""
+
+    async def get(self, owner: str) -> Any:
+        return None
+
+    async def list_all(self) -> list[Any]:
+        return []
+
+
+class _CountingRegistry(_Registry):
+    """:class:`_Registry` whose answers for an unregistered repository may name no forge (``forge`` None, no
+    configured default), and which keeps each repository it is asked about."""
+
+    def __init__(self, forge: str | None, *, registered: bool, asked: list[str]) -> None:
+        super().__init__(forge or "", registered=registered)
+        self.none = forge is None
+        self.asked = asked
+
+    async def registered_as(self, repo: str) -> str | None:
+        self.asked.append(repo)
+        return await super().registered_as(repo)
+
+    async def forge_or_none(self, repo: str) -> str | None:  # type: ignore[override]
+        self.asked.append(repo)
+        return None if self.none else await super().forge_or_none(repo)
+
+
+@pytest.mark.parametrize(
+    ("forge", "registered", "organizations"),
+    [
+        pytest.param("gitlab", True, "github", id="registered-on-another-forge-than-its-organization"),
+        pytest.param("github", True, None, id="its-organization-unknown"),
+        pytest.param(None, False, None, id="nothing-says-its-forge"),
+    ],
+)
+async def test_a_repository_whose_codeowners_is_not_read_has_its_owners_unread_not_none(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, forge: str | None, registered: bool, organizations: str | None
+) -> None:
+    """A repository embry0 does not read CODEOWNERS for (on another forge than its organization's, an organization
+    embry0 does not know, a forge nothing names) has owners nobody knows: unread, so only an admin decides its
+    proposals, not "nobody owns it". No forge is asked, and the answer is kept as a read's is."""
+    asked_forge: list[str] = []
+
+    async def forge_client(request: Any, org: Any) -> Any:
+        asked_forge.append(str(org))
+        return FakeForge()
+
+    monkeypatch.setattr("embry0.api.v1.organizations.org_own_forge_client", forge_client)
+    looked_up: list[str] = []
+    app.state.repos_repo = _CountingRegistry(forge, registered=registered, asked=looked_up)
+    app.state.organizations_repo = FakeOrgs(forge=organizations) if organizations else _NoOrganizations()
+    async with await _client(app) as client:
+        first = (await client.get("/api/v1/proposals")).json()["proposals"]
+        before = looked_up.count("acme/docs")
+        await client.get("/api/v1/proposals")
+    docs = next(p for p in first if p["repo"] == "acme/docs")
+    assert (docs["owners"], docs.get("owners_unread")) == ([], True), docs
+    assert asked_forge == [], f"a forge was asked: {asked_forge}"
+    assert before and looked_up.count("acme/docs") == before, "a repository not read is kept as a read is, an hour"
+
+
+@pytest.mark.parametrize(
+    ("kind", "name", "read_again"),
+    [
+        pytest.param("repo", "acme/docs", True, id="its-registration"),
+        pytest.param("organization", "acme", True, id="its-organization-s-registration"),
+        pytest.param("repo", "acme/elsewhere", False, id="another-repository-s"),
+        pytest.param("organization", "other", False, id="another-organization-s"),
+    ],
+)
+async def test_a_kept_codeowners_is_read_again_once_its_registration_is_written(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, kind: str, name: str, read_again: bool
+) -> None:
+    """A repository's CODEOWNERS is kept for an hour, but a registration written since (the repository's, or its
+    organization's: a fix, or registering it again to read a file just added) drops it at once; another's does
+    not."""
+    from embry0.storage.repositories import registrations
+
+    asked: list[str] = []
+
+    async def forge_client(request: Any, org: Any) -> Any:
+        return _Answering(404, asked)
+
+    monkeypatch.setattr("embry0.api.v1.organizations.org_own_forge_client", forge_client)
+    async with await _client(app) as client:
+        await client.get("/api/v1/proposals")
+        reads = len(asked)
+        await client.get("/api/v1/proposals")
+        assert reads and len(asked) == reads, "kept: the second read asks nothing"
+        registrations.written(kind, name)
+        await client.get("/api/v1/proposals")
+    assert (len(asked) > reads) is read_again, f"read again after {kind} {name} was written: {asked}"
+
+
+@pytest.mark.parametrize(
+    ("repo_forge", "organization_forge", "said"),
+    [
+        pytest.param("github", "bitbucket", {"organization_forge": "bitbucket"}, id="its-organization-s-forge"),
+        pytest.param("bitbucket", "github", {"repo_forge": "bitbucket"}, id="its-own-forge"),
+    ],
+)
+async def test_a_forge_embry0_does_not_read_codeowners_on_is_logged_as_such(
+    app: FastAPI, repo_forge: str, organization_forge: str, said: dict[str, str]
+) -> None:
+    """Not as an organization embry0 does not know: it knows it, on a forge whose CODEOWNERS it does not read."""
+    app.state.repos_repo = _Registry(repo_forge)
+    app.state.organizations_repo = FakeOrgs(forge=organization_forge)
+    with capture_logs() as logs:
+        async with await _client(app) as client:
+            docs = next(
+                p for p in (await client.get("/api/v1/proposals")).json()["proposals"] if p["repo"] == "acme/docs"
+            )
+    assert docs.get("owners_unread") is True, docs
+    events = [e for e in logs if str(e["event"]).startswith("codeowners_not_read")]
+    assert [(e["event"], {k: e[k] for k in said}) for e in events] == [("codeowners_not_read_unsupported_forge", said)]
+
+
+@pytest.mark.parametrize(("status", "unread"), [("removed", True), ("paused", False), ("active", False)])
+async def test_a_removed_organization_s_codeowners_is_not_read_and_a_paused_one_s_is(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, status: str, unread: bool
+) -> None:
+    """A removed organization is as good as unknown: its repositories' owners are unread, so only an admin decides
+    their proposals, and its credential is not used. A paused one is still read."""
+    built: list[str] = []
+
+    async def forge_client(request: Any, org: Any) -> Any:
+        built.append(org.owner)
+        return FakeForge()
+
+    monkeypatch.setattr("embry0.api.v1.organizations.org_own_forge_client", forge_client)
+    app.state.organizations_repo = FakeOrgs(status=status)
+    with capture_logs() as logs:
+        async with await _client(app) as client:
+            docs = next(
+                p for p in (await client.get("/api/v1/proposals")).json()["proposals"] if p["repo"] == "acme/docs"
+            )
+    assert bool(docs.get("owners_unread")) is unread, docs
+    assert (docs["owners"] == ["docs-owner"]) is not unread, docs
+    assert (built == []) is unread, f"the removed organization's credential is not used: {built}"
+    said = [e["event"] for e in logs if str(e["event"]).startswith("codeowners_not_read")]
+    assert said == (["codeowners_not_read_removed_organization"] if unread else []), said

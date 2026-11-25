@@ -245,6 +245,41 @@ async def _suggested(app: Any) -> dict[str, Any]:
     return dict(answer.json())
 
 
+async def test_an_owner_is_suggested_on_its_forge_and_only_that_forge_s_identity_holds_it(
+    people_app: tuple[Any, Any],
+) -> None:
+    """#181: an owner is a handle. A bare one is on its repository's forge, a named one on its own; a person holds
+    it by an identity of that forge only."""
+    app, _keys = people_app
+    await app.state.repos_repo.register("lab/web", forge="gitlab")
+    await app.state.db.execute(
+        "INSERT INTO repo_preferences (repo, owners) VALUES ($1, $2) ON CONFLICT (repo) DO UPDATE SET owners = $2",
+        "lab/web",
+        ["Mira", "github:mira", "gitlab:bob_s"],
+    )
+    suggested = (await _call(app, "GET", f"{PEOPLE}/suggestions", MASTER)).json()["owners"]
+    mine = {(o["forge"], o["login"]): o["repos"] for o in suggested if "lab/web" in o["repos"]}
+    assert mine == {("gitlab", "mira"): ["lab/web"], ("github", "mira"): ["lab/web"], ("gitlab", "bob_s"): ["lab/web"]}
+    made = await _call(
+        app, "POST", PEOPLE, MASTER, {"name": "Mira", "identities": [{"kind": "gitlab", "value": "MIRA"}]}
+    )
+    assert made.status_code == 201, made.text
+    after = (await _call(app, "GET", f"{PEOPLE}/suggestions", MASTER)).json()["owners"]
+    left = {(o["forge"], o["login"]) for o in after if "lab/web" in o["repos"]}
+    assert left == {("github", "mira"), ("gitlab", "bob_s")}, "a GitLab identity holds the GitLab owner alone"
+    # The organization's forge wins over the repository's own registration, as owners resolve (owner_people).
+    await app.state.organizations_repo.register("lab2", "gitlab")
+    await app.state.db.execute(
+        "INSERT INTO repo_preferences (repo, owners) VALUES ($1, $2) ON CONFLICT (repo) DO UPDATE SET owners = $2",
+        "lab2/api",
+        ["Theo"],
+    )
+    org = {
+        (o["forge"], o["login"]) for o in (await _call(app, "GET", f"{PEOPLE}/suggestions", MASTER)).json()["owners"]
+    }
+    assert ("gitlab", "theo") in org and ("github", "theo") not in org, org
+
+
 async def test_a_login_route_makes_no_person_and_says_when_a_cleared_login_falls_back(
     people_app: tuple[Any, Any],
 ) -> None:

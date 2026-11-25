@@ -27,7 +27,8 @@ export interface OwnerProposal {
   repo: string;
   /** The part of a monorepo it is about, from the areas embry0 keeps for the repository; null when it names none. */
   area?: string | null;
-  /** GitHub logins: the area's owners, else the repository's owners preference, else its CODEOWNERS. */
+  /** Owners as handles, `github:<login>` or `gitlab:<username>`: the area's owners, else the repository's owners
+   * preference, else its CODEOWNERS (#181). */
   owners: string[];
   title: string;
   /** A sentence a chat message can carry. */

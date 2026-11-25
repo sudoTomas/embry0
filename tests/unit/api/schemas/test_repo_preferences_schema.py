@@ -22,3 +22,18 @@ def test_no_owners_falls_back_to_codeowners() -> None:
 def test_a_value_that_is_no_login_is_refused(login: str) -> None:
     with pytest.raises(ValidationError, match="not a GitHub login"):
         RepoPreferencesUpdateRequest(owners=[login])
+
+
+def test_an_owner_may_be_named_with_its_forge() -> None:
+    """#181: ``github:<login>`` and ``gitlab:<username>`` (each checked by its forge's pattern) beside bare logins,
+    stored as written with the forge lower-cased; the same owner written twice is kept once."""
+    body = RepoPreferencesUpdateRequest(owners=["GitLab:@bob_s", "gitlab:bob_s", "github:Octo", "octo", "@pat"])
+    assert body.owners == ["gitlab:bob_s", "github:Octo", "octo", "pat"]
+
+
+@pytest.mark.parametrize("owner", ["bob_s", "github:bob_s", "gitlab:-bob", "bitbucket:ada"])
+def test_an_owner_no_forge_would_take_is_refused(owner: str) -> None:
+    """A bare owner is checked by GitHub's pattern, as before forges were named: a GitLab username GitHub would not
+    take is written gitlab:<username>."""
+    with pytest.raises(ValidationError, match="is not an owner"):
+        RepoPreferencesUpdateRequest(owners=[owner])

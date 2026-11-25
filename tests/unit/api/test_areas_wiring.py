@@ -58,7 +58,7 @@ READS_FILES = (
 #: Every module that reads a repository's files through a forge, and what it reads: files the repository keeps for
 #: itself, never embry0's configuration (#175). A new one is added here, with its reason, in review.
 KNOWN_READERS = {
-    "embry0/services/forge_files.py": "the helper: one file of the default branch (the owners fallback's CODEOWNERS)",
+    "embry0/services/forge_files.py": "the helper: one file of the default branch (the owners fallback's CODEOWNERS, on GitHub or GitLab)",
     "embry0/api/v1/environment.py": "the repository's env templates, to detect the variables it needs",
     "embry0/services/org_discovery.py": "what the repository holds (its listing, package.json, an env file)",
     "embry0/services/context_audit.py": "the repository's tree of blob shas, for the context audit's fingerprint",
@@ -118,7 +118,10 @@ def test_nothing_but_the_owners_fallback_takes_from_the_forge_files_helper() -> 
         if name != helper
         for imported in imports_of(path, ROOT, "embry0.services.forge_files", _HELPER_NAMES)
     )
-    assert readers == [("embry0/api/v1/proposals.py", "read_contents")], f"what uses the forge files helper: {readers}"
+    assert readers == [
+        ("embry0/api/v1/proposals.py", "read_contents"),
+        ("embry0/api/v1/proposals.py", "read_gitlab_file"),
+    ], f"what uses the forge files helper: {readers}"
 
 
 def test_a_repository_s_files_are_read_only_by_the_known_readers() -> None:

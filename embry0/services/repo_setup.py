@@ -21,6 +21,7 @@ from embry0.services.bootstrap import render_starter_qa_yaml
 from embry0.services.credentials.shown import Read, label_shown, model_scopes
 from embry0.services.qa_config_check import check_qa_config
 from embry0.settings.sections.budget import BUDGET
+from embry0.storage.repositories import registrations
 from embry0.storage.repositories.jobs import TERMINAL_JOB_STATUSES, job_repository_sql
 from embry0.storage.repositories.repo_qa_configs import SetupChanged
 
@@ -238,6 +239,7 @@ async def apply_proposal(
     # started from, so a turn-down or a save that landed meanwhile wins.
     applied = False
     revision_id: int | None = None
+    registered: list[str] = []
     try:
         async with app_state.db.transaction() as conn:
             applied = await proposals.decide(proposal_id, status="applied", decided_by=actor, conn=conn)
@@ -250,7 +252,11 @@ async def apply_proposal(
                     updated_by=actor,
                     source="proposal",
                     reason=f"proposal {proposal_id}",
+                    registered=registered,
                 )
+        # Committed: a registration the write made is noted now, not inside the transaction (#181).
+        for name in registered:
+            registrations.written("repo", name)
     except SetupChanged:
         await proposals.decide(proposal_id, status="stale", decided_by=actor)
         raise Refused(409, STALE) from None

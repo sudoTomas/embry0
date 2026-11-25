@@ -107,7 +107,7 @@ class MemoryLeads:
 
 def fake_gitlab(answers: dict[str, Any], asked: list[str] | None = None, *, transport: Any = None) -> Any:
     """A real ``GitLabClient`` whose GitLab is faked: each GET answered by its path (as sent, the project
-    URL-encoded, without the query), a path not in the table is a 404. ``asked`` keeps every path asked;
+    URL-encoded, without the query), as JSON, or as it is when bytes (a raw file); a path not in the table is a 404. ``asked`` keeps every path asked;
     ``transport`` answers every request instead (one that raises, say)."""
     from embry0.execution.gitlab_client import GitLabClient
 
@@ -117,6 +117,8 @@ def fake_gitlab(answers: dict[str, Any], asked: list[str] | None = None, *, tran
             asked.append(path)
         if path not in answers:
             return httpx.Response(404, json={"message": "404 Not Found"})
+        if isinstance(answers[path], bytes):  # a raw file
+            return httpx.Response(200, content=answers[path])
         return httpx.Response(200, json=answers[path])
 
     return GitLabClient(

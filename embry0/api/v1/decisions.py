@@ -61,11 +61,10 @@ def _offered(p: dict[str, Any], leads: PerRepository[LeadsSettings]) -> Decision
 
 
 async def _offers(request: Request, *, owner: str | None, repo: str | None) -> list[Decision]:
-    from embry0.api.v1.proposals import _shown, feed, leads_policy, readable
-    from embry0.services.proposals import for_owner
+    from embry0.api.v1.proposals import _shown, feed, leads_policy, owned_by, readable
 
     try:
-        proposals = for_owner(readable(request, await feed(request)), owner)
+        proposals = await owned_by(request, readable(request, await feed(request)), owner)
     except HTTPException:
         return []
     if repo:
@@ -189,10 +188,11 @@ async def with_reports(request: Request, shown: Sequence[dict[str, Any]]) -> lis
     ]
 
 
-async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, list[str]] | None:
-    """Each finished quest's owners, as a quest on offer's are (:func:`embry0.services.owners.owners_for`): its
-    area's, else its repository's, else CODEOWNERS'. None when they could not be read, which is not "no owners": a
-    list may show the card without them, but who may answer it cannot be decided on them (:func:`read_decision`)."""
+async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Each finished quest's owners (:class:`embry0.services.owners.Owners`), as a quest on offer's are
+    (:func:`embry0.services.owners.owners_for`): its area's, else its repository's, else CODEOWNERS'. None when they
+    could not be read at all, and a quest's ``unread`` when its repository's CODEOWNERS could not be: neither is
+    "no owners", so a list may show the card without them, but who may answer it is not decided on them."""
     from embry0.api.v1.proposals import owner_sources
     from embry0.services.owners import Owners, owners_for
 
@@ -204,12 +204,21 @@ async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, l
     except Exception:  # noqa: BLE001 - unread, not empty: the caller says what that means for it
         logger.warning("decisions_owners_unread", exc_info=True)
         return None
-    out: dict[str, list[str]] = {}
+    out: dict[str, Any] = {}
     for r in rows:
         name = str(r.get("repo") or "").lower()
         area = next((a for a in areas.get(name, []) if a.name == r.get("area")), None)
-        out[str(r["job_id"])] = list(owners_for(area, repository.get(name, Owners())).logins)
+        out[str(r["job_id"])] = owners_for(area, repository.get(name, Owners()))
     return out
+
+
+def _with_owners(quest: dict[str, Any], owners: dict[str, Any] | None) -> dict[str, Any]:
+    """``quest`` with its owners (:func:`owners_of`); ``owners_unread`` when they could not be read."""
+    from embry0.services.owners import Owners
+
+    found = (owners or {}).get(str(quest["job_id"]), Owners())
+    unread = owners is None or found.unread
+    return {**quest, "owners": list(found.logins), **({"owners_unread": True} if unread else {})}
 
 
 async def _reviews(request: Request, *, repo: str | None, report_chars: int) -> list[Decision]:
@@ -231,9 +240,9 @@ async def _reviews(request: Request, *, repo: str | None, report_chars: int) -> 
     inputs, owners = await asyncio.gather(
         done_inputs(request, rows, report_chars=report_chars), owners_of(request, rows)
     )
-    # Owners that could not be read leave the cards without them: asked of nobody, and still shown.
-    owned = owners or {}
-    return [done({**q, "owners": owned.get(str(q["job_id"]), [])}, game=game) for q in inputs]
+    # Owners that could not be read leave the cards without them, and say so: still shown, and answered from a
+    # chat only by an admin or the person it was handed to.
+    return [done(_with_owners(q, owners), game=game) for q in inputs]
 
 
 async def with_assignees(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -366,9 +375,7 @@ async def read_decision(request: Request, decision_id: str, *, action: str | Non
         game = (await ui_settings(request)).game
         # Its owners, as the feed reads them (_reviews): who may answer it from a chat is decided on them.
         inputs, owners = await asyncio.gather(done_inputs(request, [quest]), owners_of(request, [quest]))
-        found = done({**inputs[0], "owners": (owners or {}).get(str(quest["job_id"]), [])}, game=game).to_dict()
-        if owners is None:
-            # Not "nobody owns it": who may answer it is not decided on owners that could not be read.
-            found["owners_unread"] = True
+        # Not "nobody owns it": who may answer it is not decided on owners that could not be read.
+        found = done(_with_owners(inputs[0], owners), game=game).to_dict()
         return (await with_assignees(request, [found]))[0]
     raise HTTPException(status_code=404, detail="a decision id is offer:<proposal id> or done:<job id>")

@@ -1,10 +1,12 @@
 """Owners resolve to people (#179, spec 2026-11-23 sections 4 and 5).
 
 An owner is a login, as a repository's preferences, an area or
-``CODEOWNERS`` names it (:func:`embry0.services.owners.owners_for`). The
-forge it is a login on is the repository's organization's: a bare owner of a
-GitLab organization's repository is ``gitlab:<login>``. That pair is looked
-up among the people's identities, so asks and who may decide receive people:
+``CODEOWNERS`` names it (:func:`embry0.services.owners.owners_for`), named
+with its forge (``github:<login>``, ``gitlab:<username>``, #181) or bare. The
+forge a bare one is a login on is the repository's organization's: a bare
+owner of a GitLab organization's repository is ``gitlab:<login>``; a named one
+is on its own forge, whatever the organization's. That pair is looked up
+among the people's identities, so asks and who may decide receive people:
 
 - **Who is asked.** A person is asked by their email, and one with no email
   as ``<forge>:<login>``. A login no person holds is asked as
@@ -33,6 +35,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from embry0.forge_logins import split_owner
 from embry0.settings.scope import organization_of
 from embry0.storage.repositories.people import Identity, Person
 
@@ -45,8 +48,8 @@ GROUP = "group:"
 
 
 def login_of(owner: Any) -> str:
-    """An owner as stored, without its ``@``, lowercase: how it is compared."""
-    return str(owner).strip().lstrip("@").lower()
+    """An owner's login as stored, without its forge and its ``@``, lowercase: how it is compared."""
+    return split_owner(owner)[1]
 
 
 @dataclass(frozen=True)
@@ -71,12 +74,19 @@ class Directory:
                 self._by_user[person.user_id] = person
 
     def forge_of(self, repo: str | None) -> str:
-        """The forge ``repo``'s owners are logins on: its organization's, else its own, else GitHub."""
+        """The forge ``repo``'s bare owners are logins on: its organization's, else its own, else GitHub."""
         return self.forges.get(str(repo or "").lower()) or DEFAULT_FORGE
 
+    def handle(self, repo: str | None, owner: Any) -> tuple[str, str]:
+        """``owner`` of ``repo`` as the identity it names, ``(forge, login)``: a named one's own forge
+        (``gitlab:<username>``), a bare one's on ``repo``'s forge (:meth:`forge_of`)."""
+        forge, login = split_owner(owner)
+        return forge or self.forge_of(repo), login
+
     def holder(self, repo: str | None, owner: Any) -> Person | None:
-        """The person whose identity ``owner`` is on ``repo``'s forge, disabled or not; None for nobody."""
-        return self._by_identity.get((self.forge_of(repo), login_of(owner)))
+        """The person whose identity ``owner`` of ``repo`` names (:meth:`handle`), disabled or not; None for
+        nobody."""
+        return self._by_identity.get(self.handle(repo, owner))
 
     def recipient(self, repo: str | None, owner: Any) -> str | None:
         """Who ``owner`` of a decision in ``repo`` is asked as: their person's email, else ``<forge>:<login>``,
@@ -86,7 +96,8 @@ class Directory:
             return None
         if person is not None and person.email:
             return person.email.lower()
-        return f"{self.forge_of(repo)}:{login_of(owner)}"
+        forge, login = self.handle(repo, owner)
+        return f"{forge}:{login}"
 
     def by_email(self, email: str) -> Person | None:
         return self._by_email.get(email.strip().lower())
@@ -124,9 +135,10 @@ class Directory:
         return found
 
     def owns(self, person: Person | None, decision: Mapping[str, Any]) -> bool:
-        """Whether ``person`` holds one of ``decision``'s owners on its repository's forge: is the one the directory
-        names for that login, not merely one with an identity of the same text (a user standing in for a login a
-        person holds owns nothing). A disabled person owns nothing."""
+        """Whether ``person`` holds one of ``decision``'s owners (:meth:`handle`: a named owner on its own forge, a
+        bare one on its repository's): is the one the directory names for that login, not merely one with an
+        identity of the same text (a user standing in for a login a person holds owns nothing). A disabled person
+        owns nothing."""
         if person is None or person.disabled:
             return False
         repo = decision.get("repo")
@@ -174,17 +186,17 @@ def _stand_ins(users: Iterable[Any], linked: set[str]) -> tuple[Person, ...]:
 
 
 def unheld_owners(owners: Iterable[Mapping[str, Any]], directory: Directory) -> list[dict[str, Any]]:
-    """The owner logins nobody holds, from ``owners`` (``{repo, owner}`` each, as stored): each login on its forge,
-    ``{forge, login, repos}``, with the repositories naming it, by forge and login. What the People page offers to
-    add (D6). Nobody means no person, and no user standing in for one by their GitHub login: that user is suggested
-    as a user, whose Add takes the login."""
+    """The owner logins nobody holds, from ``owners`` (``{repo, owner}`` each, as stored): each login on its forge
+    (:meth:`Directory.handle`: a named owner's own, a bare one's repository's), ``{forge, login, repos}``, with the
+    repositories naming it, by forge and login. What the People page offers to add (D6). Nobody means no person, and
+    no user standing in for one by their GitHub login: that user is suggested as a user, whose Add takes the login."""
     found: dict[tuple[str, str], set[str]] = {}
     for row in owners:
         repo, owner = str(row.get("repo") or ""), row.get("owner")
-        login = login_of(owner)
+        forge, login = directory.handle(repo, owner)
         if not login or directory.holder(repo, owner) is not None:
             continue
-        found.setdefault((directory.forge_of(repo), login), set()).add(repo)
+        found.setdefault((forge, login), set()).add(repo)
     return [{"forge": forge, "login": login, "repos": sorted(repos)} for (forge, login), repos in sorted(found.items())]
 
 
@@ -202,6 +214,12 @@ async def read_directory(
         everyone = tuple(replace(p, disabled=True) if p.user_id in off and not p.disabled else p for p in everyone)
         linked = {p.user_id for p in everyone if p.user_id}
         everyone = (*_stand_ins(await users.people(), linked), *everyone)
+    return Directory(people=everyone, forges=await forges_of(organizations, repos, asked_about))
+
+
+async def forges_of(organizations: Any, repos: Any, asked_about: Iterable[str | None]) -> dict[str, str]:
+    """The forge each repository in ``asked_about`` (lower-cased) has its bare owners on: its organization's when
+    the organization is registered, else the repository's own registration's, else GitHub's."""
     names = {str(repo).lower() for repo in asked_about if repo}
     forges: dict[str, str] = {}
     by_owner: dict[str, str] = {}
@@ -212,7 +230,7 @@ async def read_directory(
         if forge is None and repos is not None:
             forge = await repos.forge_or_none(repo)
         forges[repo] = forge or DEFAULT_FORGE
-    return Directory(people=everyone, forges=forges)
+    return forges
 
 
 async def directory_of(state: Any, asked_about: Iterable[str | None]) -> Directory:

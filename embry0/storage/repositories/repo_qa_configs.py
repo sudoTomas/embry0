@@ -19,6 +19,7 @@ import asyncpg
 import structlog
 
 from embry0.storage.database import DatabasePool
+from embry0.storage.repositories import registrations
 from embry0.storage.repositories.repo_config_revisions import RepoConfigRevisionsRepository, RevisionSource
 from embry0.storage.repositories.repos import DEFAULT_FORGE
 
@@ -83,8 +84,16 @@ class RepoQAConfigsRepository:
         ``source`` defaults to the path ``updated_by`` names: ``bootstrap``,
         ``onboard-pipeline`` (onboard), anything else a person.
         """
+        registered: list[str] = []
         async with self._db.transaction() as conn:
-            return await self._upsert_on(conn, repo, yaml_text, updated_by, source=source, reason=reason, check=check)
+            stored = await self._upsert_on(
+                conn, repo, yaml_text, updated_by, source=source, reason=reason, check=check, registered=registered
+            )
+        # Once committed, not inside: a cache read through the registration (a repository's CODEOWNERS, #181)
+        # drops what it kept only when the registration can be read.
+        for name in registered:
+            registrations.written("repo", name)
+        return stored
 
     async def upsert_recorded_if_unchanged(
         self,
@@ -96,12 +105,16 @@ class RepoQAConfigsRepository:
         updated_by: str,
         source: RevisionSource,
         reason: str,
+        registered: list[str],
     ) -> tuple[dict[str, Any], int | None]:
         """``upsert_recorded`` as a compare-and-set, on the caller's connection
         inside its transaction. It writes only over the setup whose
         ``updated_at`` is ``base_updated_at`` (None: no setup is stored), and
         raises SetupChanged when another one is, so the caller's transaction
-        rolls back with nothing written."""
+        rolls back with nothing written.
+
+        A repository it registers is added to ``registered``: the caller notes
+        each (``registrations.written``) once its transaction commits."""
         return await self._upsert_on(
             conn,
             repo,
@@ -111,6 +124,7 @@ class RepoQAConfigsRepository:
             reason=reason,
             check_base=True,
             base_updated_at=base_updated_at,
+            registered=registered,
         )
 
     async def _upsert_on(
@@ -125,10 +139,11 @@ class RepoQAConfigsRepository:
         check_base: bool = False,
         base_updated_at: datetime | None = None,
         check: Callable[[str | None], None] | None = None,
+        registered: list[str],
     ) -> tuple[dict[str, Any], int | None]:
         if not self._default_forge:
-            registered = await conn.fetchrow("SELECT 1 FROM repos WHERE repo = $1", repo)
-            if not registered:
+            exists = await conn.fetchrow("SELECT 1 FROM repos WHERE repo = $1", repo)
+            if not exists:
                 raise ValueError(
                     f"repo {repo!r} is not registered and DEFAULT_FORGE is empty — "
                     "register it with its forge first (POST /repos with "
@@ -136,11 +151,13 @@ class RepoQAConfigsRepository:
                     "then store its QA config."
                 )
         else:
-            await conn.execute(
-                "INSERT INTO repos (repo, forge) VALUES ($1, $2) ON CONFLICT (repo) DO NOTHING",
+            inserted = await conn.fetchrow(
+                "INSERT INTO repos (repo, forge) VALUES ($1, $2) ON CONFLICT (repo) DO NOTHING RETURNING repo",
                 repo,
                 self._default_forge,
             )
+            if inserted is not None:
+                registered.append(repo)
         stored = await conn.fetchrow(
             "SELECT yaml_text, updated_at FROM repo_qa_configs WHERE repo = $1 FOR UPDATE", repo
         )

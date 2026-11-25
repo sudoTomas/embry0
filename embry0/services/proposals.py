@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from embry0.forge_logins import GITHUB_LOGIN_RE
+from embry0.forge_logins import parse_owner, split_owner
 from embry0.orchestration import dispatch_actors
 from embry0.services import lead_kinds
 from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_path
@@ -49,8 +49,13 @@ FINDING_COLUMNS = ("severity", "location", "claim", "evidence", "fix")
 _LOCATION = re.compile(r"^`?(?P<path>[^`:\s]+)(?::(?P<line>\d+)(?:-\d+)?)?`?$")
 #: Where CODEOWNERS may live, in the order GitHub reads them.
 CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
-#: An owner written ``@login``, the login by :data:`embry0.forge_logins.GITHUB_LOGIN_RE`.
-_LOGIN = re.compile(r"^@(.+)$")
+#: Where CODEOWNERS may live on each forge, in the order that forge reads them: the first one there is the one.
+CODEOWNERS_PATHS_ON = {"github": CODEOWNERS_PATHS, "gitlab": ("CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS")}
+#: A pattern every file matches: its rule names the owners of every file.
+_EVERY_FILE = ("*", "/*", "**", "/**", "**/*", "/**/*")
+#: A GitLab section heading: ``[Name]``, ``^[Name]`` (optional approval), ``[Name][2]`` (approvals needed), then the
+#: section's default owners, for its rules that name none, and perhaps a comment. Its name may hold a ``#``.
+_GITLAB_SECTION = re.compile(r"\^?\[(?P<name>[^\]]+)\](?:\[\d+\])?(?P<rest>(?:\s.*)?)")
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -133,21 +138,85 @@ def finding_id(repo: str, path: str, claim: str) -> str:
 # ---- owners ----
 
 
-def codeowners_for_all(text: str | None) -> list[str]:
-    """The users ``CODEOWNERS`` names for every file: the last ``*`` rule's ``@login`` entries.
+@dataclass(frozen=True)
+class CodeOwners:
+    """What a ``CODEOWNERS`` file names for every file: the owners, as an owner is written (a bare login, read on
+    the repository's forge, the file's; ``gitlab:<username>`` for a GitLab username a bare owner may not be), and
+    each entry left out with why."""
 
-    Teams (``@org/team``) and email addresses are skipped: a team would need
-    resolving to people, which this version does not do.
+    owners: tuple[str, ...] = ()
+    skipped: tuple[tuple[str, str], ...] = ()
+
+
+def read_codeowners(text: str | None, forge: str = "github") -> CodeOwners:
+    """The owners ``CODEOWNERS`` on ``forge`` names for every file, as that forge reads the file.
+
+    GitHub: the last rule for every file (``*``, ``**``, ``**/*``) names them. GitLab reads the file in sections
+    (``[Name]``, ``^[Name]`` for an optional one, ``[Name][2]``; the rules before the first heading are a section of
+    their own, and a heading met again continues its section): in each section the last such rule names its
+    owners, or the section's default owners when it names none, and every section's owners are the file's, an
+    optional section's too. A section that excludes every file (``!*``, GitLab's exclusions, within their
+    section) has no owners for every file, whatever its rules say; an exclusion of some paths leaves every
+    file's owners as they are, as GitHub's lines that start with ``!`` do (it reads none).
+
+    A user (``@login``) is an owner. Left out, each with why: a team or group (``@org/team``,
+    ``@group/subgroup``: its members are not read), a role (GitLab's ``@@developer``), an email address (no one
+    is matched by email here), and a name that forge would not take.
     """
-    owners: list[str] = []
+    sections: dict[str, list[str]] = {}
+    defaults: dict[str, list[str]] = {}
+    excluded: set[str] = set()
+    current = ""
     for raw in (text or "").splitlines():
+        # A heading first: its name may hold a "#", which elsewhere starts a comment.
+        heading = _GITLAB_SECTION.fullmatch(raw.strip()) if forge == "gitlab" else None
+        if heading is not None:
+            current = heading["name"].strip().lower()
+            sections.setdefault(current, [])
+            owners_named = heading["rest"].split("#", 1)[0].split()
+            if owners_named:
+                defaults[current] = owners_named
+            continue
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
         pattern, *entries = line.split()
-        if pattern in ("*", "/*", "/**", "**"):
-            owners = [m.group(1) for e in entries if (m := _LOGIN.match(e)) and GITHUB_LOGIN_RE.fullmatch(m.group(1))]
-    return owners
+        if forge == "gitlab" and pattern.startswith("!"):
+            if pattern[1:] in _EVERY_FILE:
+                excluded.add(current)
+            continue
+        if pattern in _EVERY_FILE:
+            sections[current] = entries or (defaults.get(current, []) if forge == "gitlab" else [])
+    for name in excluded:
+        sections[name] = []
+    owners: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    group = "a team" if forge == "github" else "a group"
+    for entries in sections.values():
+        for entry in entries:
+            if entry.startswith("@@"):
+                skipped.append((entry, "a role: its members are not read"))
+            elif entry.startswith("@") and "/" in entry:
+                skipped.append((entry, f"{group}: its members are not read"))
+            elif entry.startswith("@"):
+                named = parse_owner(f"{forge}:{entry[1:]}")
+                if named is None:
+                    skipped.append((entry, f"not a {forge} login"))
+                    continue
+                # Bare when a bare owner may be that login (GitHub's pattern): read on the file's forge.
+                owner = named.login if parse_owner(named.login) is not None else str(named)
+                if owner.lower() not in (o.lower() for o in owners):
+                    owners.append(owner)
+            elif "@" in entry:
+                skipped.append((entry, "an email address: no one is matched by email here"))
+            else:
+                skipped.append((entry, "not an owner"))
+    return CodeOwners(tuple(owners), tuple(skipped))
+
+
+def codeowners_for_all(text: str | None, forge: str = "github") -> list[str]:
+    """The owners ``CODEOWNERS`` on ``forge`` names for every file (:func:`read_codeowners`)."""
+    return list(read_codeowners(text, forge).owners)
 
 
 # ---- the feed ----
@@ -171,6 +240,8 @@ class Proposal:
     extra: Mapping[str, Any] = field(default_factory=dict)
     #: The repository's area it is about (its areas document), None for a repository without areas.
     area: str | None = None
+    #: Its owners could not be read (its repository's CODEOWNERS): not "nobody owns it".
+    owners_unread: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -178,6 +249,7 @@ class Proposal:
             "kind": self.kind,
             "repo": self.repo,
             "owners": list(self.owners),
+            **({"owners_unread": True} if self.owners_unread else {}),
             "area": self.area,
             "title": self.title,
             "summary": self.summary,
@@ -352,7 +424,8 @@ def with_owners(
             )
             if area is None and p.area:
                 # The areas changed since: keep the stored name, with the repository's owners.
-                out.append(Proposal(**{**p.__dict__, "owners": owners_for(None, repository).logins}))
+                stamped = owners_for(None, repository)
+                out.append(Proposal(**{**p.__dict__, "owners": stamped.logins, "owners_unread": stamped.unread}))
                 continue
         elif p.kind == "finding" and p.extra.get("path"):
             area = area_of_path(areas, str(p.extra["path"]))
@@ -360,8 +433,17 @@ def with_owners(
             area = area_of_logs(areas, p.extra.get("signature"), p.title)
         elif p.kind == "issue":
             area = area_of_labels(areas, p.extra.get("labels") or ())
-        owners = owners_for(area, repository).logins
-        out.append(Proposal(**{**p.__dict__, "owners": owners, "area": area.name if area else None}))
+        stamped = owners_for(area, repository)
+        out.append(
+            Proposal(
+                **{
+                    **p.__dict__,
+                    "owners": stamped.logins,
+                    "owners_unread": stamped.unread,
+                    "area": area.name if area else None,
+                }
+            )
+        )
     return out
 
 
@@ -370,11 +452,23 @@ def area_of_paths_any(areas: Sequence[Area], paths: Iterable[str]) -> Area | Non
     return next((area for path in paths if (area := area_of_path(areas, path)) is not None), None)
 
 
-def for_owner(proposals: Iterable[Proposal], owner: str | None) -> list[Proposal]:
+def for_owner(
+    proposals: Iterable[Proposal], owner: str | None, forges: Mapping[str, str] | None = None
+) -> list[Proposal]:
+    """The proposals ``owner`` owns: ``github:<login>`` or ``gitlab:<username>``, or a bare login, a GitHub one as
+    this filter has always taken. A proposal's owner is on its own named forge, a bare one on its repository's
+    (``forges``, lower-cased repository to the forge of its organization, ``owner_people.forges_of``; GitHub's
+    when it is not there). None: all of them."""
     if not owner:
         return list(proposals)
-    login = owner.strip().removeprefix("@").lower()
-    return [p for p in proposals if login in (o.lower() for o in p.owners)]
+    named, login = split_owner(owner)
+    wanted = (named or "github", login)
+    on = forges or {}
+    return [
+        p
+        for p in proposals
+        if wanted in {(forge or on.get(p.repo.lower(), "github"), name) for forge, name in map(split_owner, p.owners)}
+    ]
 
 
 def finding_task(repo: str, head_sha: str, proposal: Proposal) -> str:

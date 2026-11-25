@@ -29,7 +29,8 @@ interface DevCheckDraft {
   command: string;
 }
 
-/** The owners field's logins: split on commas and spaces, the @ dropped; none clears it. */
+/** The owners field's owners (a login, github:<login> or gitlab:<username>): split on commas and spaces, a leading
+ * @ dropped (the server drops one after the forge too); none clears it. */
 function ownerLogins(text: string): string[] | null {
   const logins = text
     .split(/[\s,]+/)
@@ -245,7 +246,7 @@ export function RepoPreferencesSection({ repo, showIntro = true }: RepoPreferenc
           <Input
             id="repo-prefs-owners"
             value={owners}
-            placeholder="GitHub logins, comma separated — blank reads CODEOWNERS"
+            placeholder="Logins, or gitlab:<username>, comma separated — blank reads CODEOWNERS"
             onChange={(e) => {
               setOwners(e.target.value);
               setDirty(true);
