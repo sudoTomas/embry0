@@ -141,7 +141,14 @@ async def test_review_threads_a_reviewer_started_and_nobody_answered_make_a_lead
     }
     draft = {**pull, "number": 43, "isDraft": True}
     fork = {**pull, "number": 44, "isCrossRepository": True}
-    body = {"data": {"repository": {"pullRequests": {"totalCount": 3, "nodes": [pull, draft, fork]}}}}
+    body = {
+        "data": {
+            "repository": {
+                "defaultBranchRef": {"name": "main"},
+                "pullRequests": {"totalCount": 3, "nodes": [pull, draft, fork]},
+            }
+        }
+    }
     now = datetime(2026, 10, 25, tzinfo=UTC)
     result = await find_unanswered_reviews(FakeForge(graphql=body), REPO, now=now, stale_days=3)
     (lead,) = result.leads
@@ -149,3 +156,29 @@ async def test_review_threads_a_reviewer_started_and_nobody_answered_make_a_lead
     assert len(lead.data["threads"]) == 1 and lead.summary.startswith("1 review thread waits for an answer on #42")
     errors = await find_unanswered_reviews(FakeForge(graphql={"errors": [{"message": "no"}]}), REPO, now=now)
     assert not errors.complete and not errors.leads
+
+
+async def test_a_pull_request_from_the_default_branch_is_no_review_lead():
+    """A follow-up is refused on one (``start_followup``: its push would land on the default branch), so no lead
+    offers it; a repository whose default branch the answer does not name closes nothing."""
+    pull = {
+        "number": 45,
+        "title": "Release",
+        "url": "https://forge/pull/45",
+        "isDraft": False,
+        "isCrossRepository": False,
+        "headRefName": "develop",
+        "author": {"login": "dev"},
+        "reviewThreads": {"nodes": [_thread("rev", "rev", 5)]},
+    }
+    other = {**pull, "number": 46, "headRefName": "feat/export"}
+    now = datetime(2026, 10, 25, tzinfo=UTC)
+
+    def answer(default: dict[str, str] | None) -> dict[str, object]:
+        nodes = {"totalCount": 2, "nodes": [pull, other]}
+        return {"data": {"repository": {"defaultBranchRef": default, "pullRequests": nodes}}}
+
+    result = await find_unanswered_reviews(FakeForge(graphql=answer({"name": "develop"})), REPO, now=now)
+    assert [lead.source_key for lead in result.leads] == ["pr:46"] and result.complete
+    unnamed = await find_unanswered_reviews(FakeForge(graphql=answer(None)), REPO, now=now)
+    assert unnamed.leads == [] and not unnamed.complete, "no default branch named: nothing offered, nothing closed"

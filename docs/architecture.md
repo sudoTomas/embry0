@@ -310,7 +310,7 @@ sequenceDiagram
     API->>EX: execute(issue_id) — auto-triage
 
     EX->>EX: Create job, link to issue
-    Note over EX: PR dedup (RAV-1079) — if an open PR already<br/>matches the issue, skip + link it (zero agent spend);<br/>if a failed job of this issue left it, continue on it (#349)
+    Note over EX: PR dedup (RAV-1079) — if an open PR already<br/>matches the issue, skip + link it (zero agent spend);<br/>if a failed job of this issue left it, continue on it (#349),<br/>unless its head is a fork or the default branch
     EX->>SM: create sandbox container
     SM->>SB: docker run (DinD)
     Note over SB: Clone repo via Git Proxy

@@ -15,6 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from embry0.services.issue_executor import IssueExecutor
 
@@ -28,6 +29,8 @@ PR = {
     "issue_refs": [],
     "closes_numbers": [],
     "issue_prefix": "iss-eafd1fec",
+    "from_fork": False,
+    "default_branch": "main",
 }
 
 
@@ -82,10 +85,13 @@ def _owner(status: str, issue_id: str = ISSUE_ID, job_id: str = "job-earlier") -
     }
 
 
-async def _run(owners: list[dict[str, Any]] | Exception) -> tuple[IssueExecutor, dict[str, Any]]:
+async def _run(
+    owners: list[dict[str, Any]] | Exception, pr: dict[str, Any] | None = None
+) -> tuple[IssueExecutor, dict[str, Any]]:
     ex, captured = _executor(owners)
     issue = {"title": "Stop stub deals", "body": "", "repo": "o/r", "tracker": "linear", "tracker_key": "ENG-9999"}
-    with patch("embry0.services.github_prs.OpenPRService.list_open_prs", new=AsyncMock(return_value=[dict(PR)])):
+    listed = AsyncMock(return_value=[dict(pr or PR)])
+    with patch("embry0.services.github_prs.OpenPRService.list_open_prs", new=listed):
         await ex._run_workflow(ISSUE_ID, "job-new", issue)
     return ex, captured
 
@@ -157,3 +163,107 @@ async def test_the_newest_owner_decides() -> None:
     ex, captured = await _run([_owner("completed", job_id="job-later"), _owner("failed")])
 
     assert _skipped(ex) and "initial_state" not in captured
+
+
+# ---- never a fork's branch, nor the default branch --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pr",
+    [
+        {**PR, "from_fork": True},
+        {**PR, "head_ref": "main"},
+        {**PR, "default_branch": None},
+        {key: value for key, value in PR.items() if key != "from_fork"},
+        {key: value for key, value in PR.items() if key not in ("from_fork", "default_branch")},
+    ],
+    ids=["fork", "head-is-default-branch", "default-branch-unread", "fork-unread", "listing-says-neither"],
+)
+async def test_a_retry_continues_on_no_fork_s_branch_nor_the_default_branch(pr: dict[str, Any]) -> None:
+    """Continuing grants the job a push to the pull request's branch. A fork's branch is another repository's, and
+    the default branch is never a job's: the retry works on a fresh branch of its own instead, and is not skipped."""
+    ex, captured = await _run([_owner("failed")], pr)
+
+    state = captured.get("initial_state")
+    assert state is not None and not _skipped(ex), "the retry runs, on a fresh branch"
+    assert "ref" not in (state.get("context") or {}), f"the job does not take the pull request's branch: {state}"
+    assert "pr_url" not in state and "additional_context" not in state
+    assert all(c.kwargs.get("pr_url") != PR["url"] for c in ex._jobs.update.await_args_list)
+
+
+LISTING = [
+    {
+        "number": 50,
+        "title": "Fix the sender",
+        "body": "Closes #7",
+        "html_url": "https://github.com/acme/web/pull/50",
+        "user": {"login": "someone"},
+        "head": {"ref": "main", "repo": {"full_name": "someone/web"}},
+        "base": {"ref": "main", "repo": {"full_name": "acme/web", "default_branch": "main"}},
+    },
+    {
+        "number": 51,
+        "title": "Release",
+        "body": "Closes #8",
+        "html_url": "https://github.com/acme/web/pull/51",
+        "user": {"login": "octo"},
+        "head": {"ref": "develop", "repo": {"full_name": "acme/web"}},
+        "base": {"ref": "main", "repo": {"full_name": "acme/web", "default_branch": "develop"}},
+    },
+    {
+        "number": 52,
+        "title": "Gone",
+        "body": "Closes #9",
+        "html_url": "https://github.com/acme/web/pull/52",
+        "user": {"login": "octo"},
+        "head": {"ref": "fix-9", "repo": None},
+        "base": {"ref": "main", "repo": {"full_name": "acme/web", "default_branch": "main"}},
+    },
+]
+
+
+@pytest.mark.asyncio
+async def test_the_open_pr_listing_says_which_are_forks_and_the_default_branch() -> None:
+    import httpx
+
+    from embry0.services.github_prs import OpenPRService
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=LISTING)))
+    prs = await OpenPRService(github_token="tok", http_client=http).list_open_prs("acme/web")
+    assert [(p["number"], p["from_fork"], p["default_branch"]) for p in prs] == [
+        (50, True, "main"),
+        (51, False, "develop"),
+        (52, True, "main"),
+    ], "a deleted head repository is a fork's too"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("number", "branch", "reason"),
+    [(7, "main", "pr_from_fork"), (8, "develop", "pr_head_is_default_branch")],
+    ids=["fork-from-main", "git-flow"],
+)
+async def test_a_retry_matched_by_closes_takes_no_default_or_fork_branch(number: int, branch: str, reason: str) -> None:
+    """Through the real listing: a fork's pull request from its main, and one from a git-flow default branch, each
+    saying ``Closes #N`` and recorded by a failed job of issue N. The retry's push grant is its own branch."""
+    import httpx
+
+    from embry0.orchestration.branch_names import job_push_branch
+    from embry0.services.github_prs import OpenPRService
+
+    real = OpenPRService.list_open_prs
+
+    async def listed(self: OpenPRService, repo: str, limit: int = 30) -> list[dict[str, Any]]:
+        self._http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=LISTING)))
+        return await real(self, repo, limit)
+
+    ex, captured = _executor([_owner("failed", issue_id=f"iss-{number}")])
+    issue = {"title": "Fix it", "body": "", "repo": "acme/web", "tracker": "github", "tracker_key": str(number)}
+    with patch("embry0.services.github_prs.OpenPRService.list_open_prs", new=listed), capture_logs() as logs:
+        await ex._run_workflow(f"iss-{number}", "job-new", issue)
+    refused = [(e.get("pr_url"), e.get("reason")) for e in logs if e["event"] == "job_continue_refused"]
+    assert refused == [(f"https://github.com/acme/web/pull/{number + 43}", reason)], f"matched and refused: {logs}"
+    state = captured["initial_state"]
+    grant = job_push_branch(issue_id=f"iss-{number}", task="t", job_id="job-new", context=state["context"])
+    assert grant != branch and "ref" not in state["context"], f"push grant {grant!r}, context {state['context']}"
