@@ -199,3 +199,56 @@ async def test_no_github_token_skips_fetch():
 
     fetch.assert_not_awaited()
     assert "initial_state" in captured
+
+
+# ---- only a repository on GitHub has its open pull requests listed there ------------------------------------------
+
+
+class _Repos:
+    """The repository registry: ``o/r`` registered on ``forge``; ``fails`` makes every lookup fail. Its configured
+    default is GitHub, as shipped, so a resolver falling back to it would read a failed lookup as GitHub."""
+
+    default_forge = "github"
+
+    def __init__(self, forge: str = "gitlab", *, fails: bool = False) -> None:
+        self.forge, self.fails = forge, fails
+
+    async def forge_for(self, repo: str) -> str:
+        if self.fails:
+            raise RuntimeError("registry down")
+        return self.forge
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "repos",
+    [_Repos("gitlab"), _Repos(fails=True)],
+    ids=["on-gitlab", "forge-unread-default-github"],
+)
+async def test_a_repository_not_on_github_lists_no_github_pull_requests(repos: _Repos):
+    """A GitLab repository with a GitHub token at hand: github.com/<its path> is another repository, whose pull
+    request naming the job's ticket must neither end the job as its duplicate nor reach its prompt."""
+    executor, captured = _executor({"trace_id": None, "pipeline_config": None})
+    executor._repos = repos
+    issue = {"title": "t", "body": "", "repo": "o/r", "tracker": "linear", "tracker_key": "ENG-1066"}
+    listed = AsyncMock(return_value=list(_OPEN_PRS))
+    with patch("embry0.services.github_prs.OpenPRService.list_open_prs", new=listed):
+        await executor._run_workflow("iss-00000000ffff", "job-9", issue)
+
+    listed.assert_not_awaited()
+    state = captured.get("initial_state")
+    assert state is not None, "the job runs: no duplicate was found on another forge"
+    assert "open_prs" not in state, "no other repository's pull request titles reach the prompt"
+    assert not [c for c in executor._jobs.update.call_args_list if c.kwargs.get("status") == "skipped"]
+
+
+@pytest.mark.asyncio
+async def test_a_repository_registered_on_github_is_still_deduplicated():
+    executor, captured = _executor({"trace_id": None, "pipeline_config": None})
+    executor._repos = _Repos("github")
+    issue = {"title": "t", "body": "", "repo": "o/r", "tracker": "linear", "tracker_key": "ENG-1066"}
+    with _patch_open_prs(list(_OPEN_PRS)):
+        await executor._run_workflow("iss-00000000ffff", "job-10", issue)
+
+    assert "initial_state" not in captured
+    assert [c for c in executor._jobs.update.call_args_list if c.kwargs.get("status") == "skipped"]

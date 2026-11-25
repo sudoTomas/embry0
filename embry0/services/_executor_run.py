@@ -1605,21 +1605,29 @@ async def _run_workflow(
         from embry0.services.github_prs import OpenPRService, find_duplicate_pr
 
         resolver = getattr(self, "_credential_resolver", None)
+        wants_dedup = bool(
+            repo_name
+            and "/" in repo_name
+            and not job_pr_url
+            and not job_ref
+            and getattr(self._config, "pr_dedup_enabled", True)
+        )
+        # The listing reads GitHub's pull requests: only a repository on GitHub has any there. Another forge's
+        # repository of the same path on github.com is someone else's, whose pull requests would end this job as a
+        # duplicate of theirs and reach its prompt (open_prs).
+        on_github = wants_dedup and await _on_github(self, repo_name)
+        dedup_token = ""
         try:
-            dedup_token = await forge_token(resolver, repo_name, "github", getattr(self, "_github_token", None) or "")
+            if on_github:
+                dedup_token = await forge_token(
+                    resolver, repo_name, "github", getattr(self, "_github_token", None) or ""
+                )
         except Exception:
             # Dedup is fail-open: a pinned credential that is unavailable
             # skips the fetch (the job's own enroll step reports it).
             logger.warning("pr_dedup_token_lookup_failed", repo=repo_name, exc_info=True)
             dedup_token = ""
-        if (
-            repo_name
-            and "/" in repo_name
-            and dedup_token
-            and not job_pr_url
-            and not job_ref
-            and getattr(self._config, "pr_dedup_enabled", True)
-        ):
+        if on_github and dedup_token:
             open_prs = await OpenPRService(github_token=dedup_token, credential_resolver=resolver).list_open_prs(
                 repo_name,
                 limit=getattr(self._config, "pr_dedup_max_prs", 30),
@@ -1805,6 +1813,30 @@ async def _works_watcher_case(self: IssueExecutor, issue_id: str) -> bool:
         logger.warning("case_origin_lookup_failed", issue_id=issue_id, exc_info=True)
         return False
     return bool(origin == Origin.WATCHER)
+
+
+async def _on_github(self: IssueExecutor, repo: str) -> bool:
+    """Whether the registry says ``repo``'s work is on GitHub, so its open pull requests can be listed there.
+
+    The registry's own answer only (``forge_for``: its registration, or the configured default for a repository
+    nobody registered), never ``resolve_forge``'s fallback when the registry cannot be read: with the shipped
+    default ``github`` that fallback would make a GitLab repository look like GitHub's again. A repository whose
+    forge cannot be read is not listed: the dedup is skipped for it, and says so. No registry at all (a unit
+    graph, a context-less job) is GitHub, as ``resolve_forge`` has it."""
+    from embry0.storage.repositories.repos import DEFAULT_FORGE
+
+    if not repo:
+        return False
+    repos = getattr(self, "_repos", None)
+    try:
+        forge = str(await repos.forge_for(repo)) if repos is not None else DEFAULT_FORGE
+    except Exception:
+        logger.warning("pr_dedup_forge_unread", repo=repo, exc_info=True)
+        return False
+    if forge != "github":
+        logger.info("pr_dedup_skipped_on_forge", repo=repo, forge=forge)
+        return False
+    return True
 
 
 async def _failed_job_owning(self: IssueExecutor, pr: dict[str, Any], issue_id: str | None) -> dict[str, Any] | None:
