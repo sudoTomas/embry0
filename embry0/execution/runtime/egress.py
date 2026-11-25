@@ -325,10 +325,15 @@ class EgressEnforcer:
         logger.info("egress_enforcement_ready")
         return True
 
-    async def container_ip(self, container_id: str, network: str = "sandbox-internet") -> str | None:
+    async def container_ip(
+        self, container_id: str, network: str = "sandbox-internet", *, gone_ok: bool = False
+    ) -> str | None:
+        """``container_id``'s address on ``network``, None when it has none there. ``gone_ok`` for a teardown, where
+        the container may already be gone: the daemon's answer that it is not there is logged at debug (#720)."""
         base = self._docker._build_base_cmd()  # noqa: SLF001
         fmt = f'{{{{with index .NetworkSettings.Networks "{network}"}}}}{{{{.IPAddress}}}}{{{{end}}}}'
-        out = str(await self._docker.run_cmd([*base, "inspect", "--format", fmt, container_id], timeout=15)).strip()
+        cmd = [*base, "inspect", "--format", fmt, container_id]
+        out = str(await self._docker.run_cmd(cmd, timeout=15, gone_ok=gone_ok)).strip()
         return out or None
 
     async def apply(

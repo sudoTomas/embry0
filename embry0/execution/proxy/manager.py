@@ -41,7 +41,7 @@ import aiohttp
 import structlog
 
 from embry0.execution.admin_seq import next_admin_seq
-from embry0.execution.docker_client import DockerClient
+from embry0.execution.docker_client import DockerClient, ObjectGone
 from embry0.execution.image_registry import qualify_image
 from embry0.execution.proxy.forge_scope import SCOPE_FIELD, normalize_github_repo, normalize_gitlab_project
 from embry0.execution.proxy.git_scope import (
@@ -1492,9 +1492,12 @@ class ProxyManager:
                         self._docker.build_rm_cmd(name),
                         timeout=_CLEANUP_RM_TIMEOUT_S,
                         log_context={"container": name, "phase": phase, "attempt": attempt},
+                        gone_ok=True,
                     )
                 except asyncio.CancelledError:
                     raise
+                except ObjectGone:
+                    continue  # already gone: removed, nothing to do (#720)
                 except Exception as exc:
                     if _daemon_unreachable(exc) and attempt < _CLEANUP_ATTEMPTS:
                         logger.warning(
