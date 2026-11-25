@@ -175,14 +175,26 @@ no host port; everything below reaches it through the frontend's nginx.
   # what the running orchestrator met since it started, which a deploy restarts: each outcome is 0 when none
   # (an orchestrator restarted since the last deploy: Prometheus's increase(embry0_sandbox_runner_stale_image_total[<since the deploy>]))
   docker exec embry0-orchestrator curl -s localhost:8000/metrics | grep '^embry0_sandbox_runner_stale_image_total'
-  # the sandbox profiles' base images, each checked with the one-liner above (a name without a registry host is the stack's registry:5000/<name>)
+  # the sandbox profiles' base images, each checked as a sandbox runs it (embry0's qualify_image): under registry:5000/
+  # unless the name's first path segment names another registry host (a '.', a ':' or localhost), and by the digest
+  # the image pins hold for it when they hold one, since a pinned profile runs @digest, not its tag
+  pins=$(docker exec embry0-orchestrator cat /run/embry0/image-pins/pins)
   docker exec embry0-orchestrator sh -c 'printf "Authorization: Bearer %s\n" "$API_KEY" | curl -s -H @- localhost:8000/api/v1/sandbox-profiles' \
     | jq -r '.[].base_image' | sort -u | while read -r image; do
-        case "$image" in *.*/*|*:*/*|localhost/*) ref=$image ;; *) ref=registry:5000/$image ;; esac
+        image=${image#registry:5000/}
+        first=${image%%/*}
+        if [ "$first" != "$image" ] && case "$first" in *.*|*:*|localhost) true ;; *) false ;; esac; then
+          ref=$image
+        else
+          case "${image##*/}" in *:*|*@*) named=$image ;; *) named=$image:latest ;; esac
+          digest=$(printf '%s\n' "$pins" | awk -v n="$named" '$1 == n {print $2}')
+          ref=registry:5000/$image${digest:+@$digest}
+        fi
         printf '%s: ' "$ref"
         docker exec embry0-dind docker run --rm --network none --entrypoint sh "$ref" -c 'test -x /usr/local/bin/embry0-runner-python && grep -c -e --result-nonce /app/embry0/sandbox/runner.py || echo 0'
       done
   ```
+  Under `AGENT_RUNTIME=rootless` there is no registry and no pins: run the same check on the host as `DOCKER_HOST=unix:///run/embry0-sandbox/docker.sock docker run --rm --network none --entrypoint sh "$image" -c '…'`, by each profile's bare `base_image`.
   Then the prebaked QA images above (`qa_prebuilt_images`: `stale`, `unknown`).
   The `embry0` console script works inside the orchestrator container and defaults to the in-container API (`EMBRY0_API_URL=http://localhost:8000`, set in the image); the image build fails if it ever stops working.
 - **Refreshing OS packages.** Every image upgrades its distribution's packages in one early layer, and every build after the first reuses that layer from its cache: CI's GitHub Actions cache and the host's own. So a security fix Debian or Alpine publishes later never reaches an image by itself, and CI's Trivy step starts failing on a CRITICAL that is already fixed. To pick fixes up, raise `OS_PACKAGES_REFRESHED` (a date) in all five Dockerfiles (`infra/Dockerfile.orchestrator`, `infra/Dockerfile.sandbox`, `infra/Dockerfile.sandbox.qa`, `infra/Dockerfile.proxy`, `frontend/Dockerfile`) in one pull request. `tests/unit/infra/test_os_packages_refresh.py` keeps them on one date. After it merges, `infra/deploy.sh` rebuilds the orchestrator and frontend; the sandbox, QA and proxy images need the two recipes below.
