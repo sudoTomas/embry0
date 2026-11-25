@@ -91,6 +91,28 @@ async def test_the_lifespan_warns_once_for_each_moved_variable_still_set_never_i
 
 @pytest.mark.requires_postgres
 @pytest.mark.usefixtures("stub_container_runtime")
+async def test_the_lifespan_says_a_deployment_skipped_the_release_that_imported_its_budget(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saved budget_config row no import ever carried into the document: its caps read as the defaults now, so
+    the start says so at error level and in the audit log (embry0.settings.upgrade_check)."""
+    monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
+    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)
+    await db_with_migrations.execute("INSERT INTO budget_config (id, daily_cap_usd) VALUES ('default', 5.0)")
+    app = create_app(_config(db_with_migrations))
+    with capture_logs() as logs:
+        async with lifespan(app):
+            pass
+    said = [(e["log_level"], e.get("section")) for e in logs if e["event"] == "settings_upgrade_skipped"]
+    assert said == [("error", "budget")], f"the start must say what a skipped release would have imported: {said}"
+    flagged = await db_with_migrations.fetchval(
+        "SELECT count(*) FROM audit_log WHERE action = 'settings.upgrade.flagged'"
+    )
+    assert flagged == 1
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.usefixtures("stub_container_runtime")
 async def test_a_layer_under_a_renamed_slug_applies_from_the_first_snapshot(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:

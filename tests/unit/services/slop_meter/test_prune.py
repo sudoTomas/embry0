@@ -822,3 +822,60 @@ async def test_the_meter_turned_off_everywhere_removes_what_it_kept_after_its_we
     assert store.forgotten == ["acme/only"] == mirror.removed, (
         "with the meter off for every repository, what it kept still goes a week later"
     )
+
+
+def _ledgered(layers: Mapping[str, Mapping[str, Any]], *marks: str) -> Any:
+    """:func:`_snapshot` whose deployment document's import ledger holds ``marks``."""
+    snapshot = _snapshot(layers)
+    rows: list[dict[str, Any]] = [
+        {
+            "scope": "deployment",
+            "data": dict(snapshot.data),
+            "generation": 1,
+            "updated_at": None,
+            "bootstrapped_keys": list(marks),
+        }
+    ]
+    rows += [
+        {"scope": scope, "data": {"background": dict(values)}, "generation": 1, "updated_at": None}
+        for scope, values in layers.items()
+    ]
+    return build_snapshot(CATALOG, rows, log=False)
+
+
+async def test_a_deployment_that_skipped_the_enrollment_import_removes_nothing_until_one_is_enrolled() -> None:
+    """Nothing enrolled and no import ever ran: the meter reads nothing, and must not remove all it kept a week
+    later. Once background.slop_meter is set in a document, what is out of scope goes after its week as always."""
+    documents = Documents(_ledgered({}))
+    store, mirror, exits, clock = Kept(["acme/widgets"]), Mirror(), Exits(), [NOW]
+    loop = _meter(documents, store, mirror, ["acme/widgets"], exits=exits, clock=clock)
+    with capture_logs() as logs:
+        await loop.tick()
+        clock[0] = NOW + timedelta(days=30)
+        await loop.tick()
+    assert store.forgotten == [] and mirror.removed == [] and exits.rows == {}, "the prune is held"
+    assert [e["event"] for e in logs].count("slop_meter_prune_held") == 1, "said once"
+    documents.current = _ledgered({"repository:other/kit": {"slop_meter": True}})
+    await loop.tick()
+    clock[0] = NOW + timedelta(days=38)
+    await loop.tick()
+    assert store.forgotten == ["acme/widgets"], "enrolled somewhere: the repository out of scope goes after its week"
+
+
+async def test_a_held_prune_of_nothing_says_nothing() -> None:
+    """A new deployment that never enrolled anything keeps nothing: the hold costs nothing, and is not worth a line."""
+    documents = Documents(_ledgered({}))
+    loop = _meter(documents, Kept([]), Mirror(), ["acme/widgets"])
+    with capture_logs() as logs:
+        await loop.tick()
+    assert "slop_meter_prune_held" not in [e["event"] for e in logs], logs
+
+
+async def test_a_deployment_whose_enrollment_import_ran_prunes_as_always() -> None:
+    documents = Documents(_ledgered({}, "background.slop_meter"))
+    store, mirror, exits, clock = Kept(["acme/widgets"]), Mirror(), Exits(), [NOW]
+    loop = _meter(documents, store, mirror, ["acme/widgets"], exits=exits, clock=clock)
+    await loop.tick()
+    clock[0] = NOW + timedelta(days=7)
+    await loop.tick()
+    assert store.forgotten == ["acme/widgets"], "its import decided the enrollment: nothing is held"

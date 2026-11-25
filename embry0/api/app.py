@@ -1246,6 +1246,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         warn_moved_variables()
     except Exception:
         logger.warning("settings_env_retired_scan_failed", exc_info=True)
+    # A deployment that skipped the releases that imported what it kept before
+    # the document (a saved budget row, the meter's repositories): say so, at
+    # error level and in the audit log; the meter holds its prune meanwhile.
+    from embry0.settings.upgrade_check import warn_if_imports_skipped
+
+    await warn_if_imports_skipped(db, audit_log_path=config.audit_log_path)
 
     # The provider catalogue (#173, ADR 0031): the deployment's overlay of the
     # shipped one, installed for every reader before anything routes a model.

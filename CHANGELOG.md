@@ -99,3 +99,14 @@ describes what embry0 does rather than listing changes.
   start imports them any more. While one is still set, startup logs
   `settings_env_retired` naming it and `embry0 config` says where its setting
   lives now: set it there, then remove the variable from `.env`.
+- **Upgrading from before the settings document.** The imports also carried
+  state no variable names: a saved `budget_config` row's caps, the repositories
+  the scout and the Slop-O-Meter read before their enrollment was explicit, and
+  leads running by default on a deployment that existed before. A deployment
+  that has not started the last release carrying the imports (`main` just
+  before #168 retired them) must start it once before this one; otherwise its
+  caps read as the section's defaults, nothing is enrolled and leads are off. Startup logs `settings_upgrade_skipped` and writes
+  `settings.upgrade.flagged` when it finds such state never imported and not
+  set by hand since, and the meter removes nothing until
+  `background.slop_meter` is set
+  ([docs/configuration.md](docs/configuration.md#variables-no-longer-read)).

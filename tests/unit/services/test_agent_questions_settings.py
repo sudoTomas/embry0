@@ -259,7 +259,9 @@ def test_embry0_config_names_both_variables_as_no_longer_read() -> None:
     lines = retired_lines(config, environ=environ, env_file=None)
     for variable, key in (("ASK_USER_ROUNDS_CAP", "rounds_cap"), ("USER_RETRY_ROUNDS_CAP", "retry_rounds_cap")):
         assert any(
-            line.startswith(f"{variable} is no longer read: the settings document's agent_questions.{key} holds")
+            line.startswith(
+                f"{variable} is no longer read: what it set is set in the settings document's agent_questions.{key} now"
+            )
             for line in lines
         ), f"embry0 config does not say {variable} is no longer read and where its setting lives: {lines}"
 

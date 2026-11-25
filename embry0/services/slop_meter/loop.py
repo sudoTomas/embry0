@@ -366,6 +366,8 @@ class SlopMeterLoop:
         self._store = store
         self._mirror = mirror
         self._pruner = Pruner(store=store, mirror=mirror, exits=exits, audit=audit, clock=clock)
+        #: Whether this process said the prune is held for an undecided enrollment (said once).
+        self._prune_held_said = False
         self._token_for = token_for
         self._client_for = client_for
         self._areas_of = areas_of
@@ -481,13 +483,30 @@ class SlopMeterLoop:
 
     async def _prune(self, read: MeterRead, registered: Registered) -> PruneOutcome | None:
         """Remove, after the grace period, what the meter keeps of every repository out of its scope: not
-        enrolled, or not registered. An inactive repository that is enrolled keeps what was read."""
+        enrolled, or not registered. An inactive repository that is enrolled keeps what was read. Nothing while
+        the enrollment is undecided: a deployment that skipped the release that enrolled what the meter read before
+        reads nothing until an operator enrolls (:meth:`Enrollment.prune_held`)."""
+        if read.enrollment.prune_held(SCOPE):
+            if not self._prune_held_said and await self._keeps_any():
+                self._prune_held_said = True
+                logger.warning(
+                    "slop_meter_prune_held",
+                    hint="nothing is enrolled and no import ever ran: set background.slop_meter in a document",
+                )
+            return None
         keep = read.enrollment.scope(SCOPE, registered.every)
         try:
             return await self._pruner.run(keep, grace=read.enrollment.prune_after, registered=len(registered.every))
         except Exception:  # noqa: BLE001 - reading what is in scope goes on; the next tick tries again
             logger.warning("slop_meter_prune_failed", exc_info=True)
             return None
+
+    async def _keeps_any(self) -> bool:
+        """Whether the meter keeps anything, rows or a mirror: a held prune of nothing is not worth a line."""
+        try:
+            return bool(await self._store.held()) or bool(await self._mirror.held())
+        except Exception:  # noqa: BLE001 - only whether to say it is held
+            return True
 
     async def prune_only(self, read: MeterRead | None = None) -> PruneOutcome | None:
         """What a tick removes, and nothing else: the run of a schedule with the meter off."""

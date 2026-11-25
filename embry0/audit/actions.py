@@ -38,6 +38,8 @@ AuditAction = Literal[
     # The startup check could not establish that the host kernel stops a sandbox process from tracing
     # another of the same user: Yama ptrace_scope is 0, absent, or could not be read
     "kernel.ptrace_scope.flagged",
+    # The startup check found what a skipped release imported, kept in older storage and read by nothing now
+    "settings.upgrade.flagged",
     # Settings
     "provider_config_updated",
     "provider_config_tested",
@@ -185,6 +187,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "apikey.repo_refused": "API key refused a repository",
     "dev_mode_enabled": "Dev mode enabled",
     "kernel.ptrace_scope.flagged": "Kernel ptrace restriction missing or unverified",
+    "settings.upgrade.flagged": "Settings kept before the settings document were never imported",
     "provider_config_updated": "Provider config updated",
     "provider_config_tested": "Provider tested",
     "provider_connection_tested": "Provider connection tested",

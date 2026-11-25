@@ -977,8 +977,8 @@ setup until a person applies the proposal.
 on this embry0, the median recorded cost of the newest 20 (`null` when
 there are none), the per-job budget, the model the run uses (the medium
 tier) and the label of the AI account that would pay (`null` when none
-resolves). These are recorded facts, not an estimate. With the default
-`BUDGET_OVERRUN_MODE` of `soft`, the per-job budget is not a hard stop
+resolves). These are recorded facts, not an estimate. With `budget.overrun_mode`
+at its default, `soft`, the per-job budget is not a hard stop
 ([configuration](configuration.md)).
 
 `POST .../setup/propose` takes `{"confirm_spend": true}`; without it the

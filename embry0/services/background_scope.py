@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.background import BACKGROUND, FEATURES, BackgroundSettings, Feature
@@ -45,6 +45,15 @@ class Enrollment:
     """The ``background`` section of one snapshot of the settings documents."""
 
     section: PerRepository[BackgroundSettings]
+    #: The features that remove what they kept whose enrollment nothing has decided yet: the import that wrote it
+    #: never ran on this deployment and no document sets the key (``embry0.settings.upgrade_check``).
+    undecided: frozenset[str] = frozenset()
+
+    def prune_held(self, feature: str) -> bool:
+        """Whether ``feature`` must keep what it kept of every repository for now: a deployment that skipped the
+        release that enrolled what it read before reads nothing, and must not remove it all before an operator
+        enrolls (``background.<feature>`` set in any document)."""
+        return _feature(feature) in self.undecided
 
     def enrolled(self, feature: str, repo: str) -> bool:
         """Whether ``repo`` is enrolled in ``feature``, through its organization's layer and its own."""
@@ -71,9 +80,25 @@ class Enrollment:
         return sorted(out.values(), key=str.lower)
 
 
+#: The features that remove what they kept of a repository that left their scope.
+_PRUNING: Final[tuple[Feature, ...]] = ("slop_meter",)
+
+
+def _set_anywhere(snapshot: Any, feature: str) -> bool:
+    """Whether any document of ``snapshot``, the deployment's or a layer, sets ``background.<feature>``."""
+    documents = [getattr(snapshot, "data", None) or {}, *(getattr(snapshot, "layers", None) or {}).values()]
+    return any(feature in (doc.get(BACKGROUND.name) or {}) for doc in documents if isinstance(doc, Mapping))
+
+
 def enrollment(snapshot: _Snapshot) -> Enrollment:
     """The enrollment ``snapshot`` holds: what one tick reads, from the snapshot the tick took."""
-    return Enrollment(section=snapshot.scoped(BACKGROUND))
+    imported = getattr(snapshot, "imported", None)
+    undecided = frozenset(
+        feature
+        for feature in _PRUNING
+        if callable(imported) and not imported(f"{BACKGROUND.name}.{feature}") and not _set_anywhere(snapshot, feature)
+    )
+    return Enrollment(section=snapshot.scoped(BACKGROUND), undecided=undecided)
 
 
 class _Registry(Protocol):

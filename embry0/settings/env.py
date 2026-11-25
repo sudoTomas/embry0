@@ -57,7 +57,7 @@ def moved_variables_set(environ: Mapping[str, str] | None = None, env_file: str 
 
 
 def _moved_line(name: str) -> str:
-    return f"{name} is no longer read: {MOVED_TO_DOCUMENTS[name]} holds what it set; remove it"
+    return f"{name} is no longer read: what it set is set in {MOVED_TO_DOCUMENTS[name]} now; remove it"
 
 
 def warn_moved_variables(environ: Mapping[str, str] | None = None, env_file: str | Path | None = ".env") -> list[str]:

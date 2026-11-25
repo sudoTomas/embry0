@@ -120,7 +120,9 @@ def test_embry0_config_says_where_a_moved_variable_s_setting_lives(capsys, monke
     with patch.dict(os.environ, {"LEADS_ENABLED": _VALUE}, clear=True), pytest.raises(SystemExit):
         cmd_config(argparse.Namespace())
     err = capsys.readouterr().err
-    assert f"LEADS_ENABLED is no longer read: {_moved()['LEADS_ENABLED']} holds what it set; remove it" in err, err
+    assert (
+        f"LEADS_ENABLED is no longer read: what it set is set in {_moved()['LEADS_ENABLED']} now; remove it" in err
+    ), err
     assert "is set but is not an embry0 setting" not in err, "a moved variable is no typo of a setting"
     assert _VALUE not in err
 
