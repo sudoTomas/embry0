@@ -701,7 +701,8 @@ class _PullRequests:
     async def __call__(self, repo: str, number: int) -> dict[str, Any]:
         return {
             "state": "open",
-            "head": {"ref": f"fix-{number}"},
+            "head": {"ref": f"fix-{number}", "repo": {"full_name": repo}},
+            "base": {"ref": "main", "repo": {"full_name": repo}},
             "html_url": f"https://github.com/{repo}/pull/{number}",
         }
 

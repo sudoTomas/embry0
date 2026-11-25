@@ -33,6 +33,14 @@ logger = structlog.get_logger(__name__)
 _DEDUP_MAX = 512
 
 
+def _from_fork(pr: dict[str, Any], repo: str) -> bool:
+    """Whether the pull request's head branch is another repository's: any head repository other than the base, a
+    deleted one (``head.repo`` null) included, as the reviewer reads it (``pr_review.triggers.pr_from_github``)."""
+    head_repo = str(((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
+    base_repo = str(((pr.get("base") or {}).get("repo") or {}).get("full_name") or "") or repo
+    return not head_repo or head_repo.lower() != base_repo.lower()
+
+
 class CommentDispatchService:
     """Resolves a tagged PR comment into a pr-followup pipeline job."""
 
@@ -178,6 +186,10 @@ class CommentDispatchService:
             return {"dispatched": False, "reason": "pr_fetch_failed"}
         if pr.get("state") != "open":
             return {"dispatched": False, "reason": "pr_not_open"}
+        if _from_fork(pr, repo):
+            # Its branch is another repository's: a follow-up here would work, and push, on this repository's branch
+            # of the same name.
+            return {"dispatched": False, "reason": "pr_from_fork"}
         head_ref = ((pr.get("head") or {}).get("ref")) or ""
         pr_url = pr.get("html_url") or ""
         if not head_ref:
