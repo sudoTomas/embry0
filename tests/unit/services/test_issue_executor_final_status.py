@@ -12,7 +12,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from embry0.execution.github_client import GitHubClient
+from embry0.execution.gitlab_client import GitLabClient
 from embry0.services.issue_executor import IssueExecutor
+
+
+@pytest.fixture(autouse=True)
+def _forge_reports_main():
+    """The PR fallback reads the repository's default branch from its forge when the job's state has none (§3.7):
+    here the forge reports ``main`` instead of being asked, so no test reaches it (#702)."""
+    with (
+        patch.object(GitHubClient, "get_repo", AsyncMock(return_value={"default_branch": "main"})),
+        patch.object(GitLabClient, "get_project", AsyncMock(return_value={"default_branch": "main"})),
+    ):
+        yield
 
 
 def _executor():

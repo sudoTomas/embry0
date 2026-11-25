@@ -20,6 +20,7 @@ from structlog.testing import capture_logs
 
 from embry0.api.deps import bust_api_key_cache
 from embry0.api.repo_allowlist import covered_slugs, key_covers, repo_allowed
+from embry0.api.v1 import qa_images
 from embry0.config import Embry0Config
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 
@@ -48,6 +49,15 @@ def _key(key_id: str, name: str, allowed: tuple[str, ...] | None, scope: str = "
         revoked_at=None,
         allowed_repos=allowed,
     )
+
+
+@pytest.fixture(autouse=True)
+def _forge_reports_main():
+    """The QA image build asks the repository's forge for its default branch before it decides the tier (#372):
+    here the forge reports ``main``, the branch these bodies bake, so the build is the operator's and the allowlist
+    is what decides, and no test reaches a forge (#702)."""
+    with patch.object(qa_images, "_forge_default_branch", AsyncMock(return_value="main")):
+        yield
 
 
 KEYS = {

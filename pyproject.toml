@@ -151,4 +151,5 @@ markers = [
     "requires_minio: needs a reachable MinIO instance (set MINIO_ENDPOINT)",
     "requires_dind: needs a reachable DinD instance (set DIND_ENDPOINT)",
     "memory_capped(margin=...): runs with the process's address space capped, so a matcher that grows without bound fails at once with MemoryError (tests/fixtures/memory_cap.py)",
+    "allow_network(reason): a unit test that may connect beyond loopback and the run's own services; every other one is refused (tests/fixtures/network_guard.py)",
 ]

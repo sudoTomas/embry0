@@ -10,13 +10,16 @@ reaches nothing else.
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from unittest.mock import patch
 
+import httpx
 from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
 from prometheus_client.parser import text_string_to_metric_families
 
 from embry0.api.app import create_app
 from embry0.config import Embry0Config
+from embry0.execution.forge_client import ForgeClient
 from embry0.metrics.wiring import _slash_redirect_patterns
 from tests.fixtures.routes import app_routes
 
@@ -212,12 +215,19 @@ async def test_every_route_is_counted_under_its_full_template() -> None:
     """
     app = _app()
     expected: set[tuple[str, str]] = set()
-    async with _client(app) as client:
-        for n, route in enumerate(r for r in app_routes(app) if r.is_api_route and r.path != "/metrics"):
-            for method in sorted((route.methods or set()) - {"HEAD"}):
-                expected.add((route.path, method))
-                await client.request(method, _filled(route.path, f"lit{n}x"))
-        samples = await _request_samples(client)
+
+    async def nothing_there(self: ForgeClient, method: str, path: str, **_: object) -> httpx.Response:
+        # A route that asks a forge (environment detect reads a repository's file) gets a 404, not the real
+        # forge: the sweep counts requests, and no unit test reaches the network (#702).
+        return httpx.Response(404, request=httpx.Request(method, f"https://forge.invalid{path}"))
+
+    with patch.object(ForgeClient, "request", nothing_there):
+        async with _client(app) as client:
+            for n, route in enumerate(r for r in app_routes(app) if r.is_api_route and r.path != "/metrics"):
+                for method in sorted((route.methods or set()) - {"HEAD"}):
+                    expected.add((route.path, method))
+                    await client.request(method, _filled(route.path, f"lit{n}x"))
+            samples = await _request_samples(client)
 
     missing = sorted(expected - {(s["handler"], s["method"]) for s in samples})
     assert not missing, f"requests not counted under their full route template: {missing}"
