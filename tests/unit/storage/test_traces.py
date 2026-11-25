@@ -331,3 +331,54 @@ async def test_finish_records_the_runs_actions_by_skill(repos: tuple[JobsReposit
         stderr_tail=None,
     )
     assert (await traces_repo.get("run-sk"))["skill_actions"] == {"shell:test-runner": 2}
+
+
+@pytest.mark.asyncio
+async def test_running_traces_are_listed_and_closed_only_while_still_running(db_with_migrations: DatabasePool):
+    """#694: close_running closes a run that never ended, counts its spend once, and never overwrites a trace its own
+    finish (or an earlier close) reached first."""
+    spent: list[tuple[str, float]] = []
+
+    class _Metrics:
+        def agent_spend(self, *, pipeline_template: str | None, model: str, cost_usd: float) -> None:
+            spent.append((model, cost_usd))
+
+    jobs_repo = JobsRepository(db_with_migrations)
+    traces_repo = TracesRepository(db_with_migrations, metrics=_Metrics())  # type: ignore[arg-type]
+    job_id = await jobs_repo.create(repo="a/b", task="Fix bug")
+    pricing = {"provider": "xai", "model": "grok-4.7", "rates": {"in": 2.0, "out": 6.0}}
+    for run_id in ("run-1", "run-2"):
+        await traces_repo.create(
+            job_id=job_id, agent_type="developer", model="grok-4.7", result="running", trace_id=run_id, pricing=pricing
+        )
+    await traces_repo.create(
+        job_id=job_id, agent_type="developer", model="grok-4.7", result="success", trace_id="run-3"
+    )
+    running = await traces_repo.running()
+    assert [r["trace_id"] for r in running] == ["run-1", "run-2"]
+    assert running[0]["pricing"] == pricing and running[0]["job_id"] == job_id and running[0]["created_at"] is not None
+    fields = {
+        "result": "error",
+        "cost_usd": 0.75,
+        "duration_ms": 5,
+        "result_summary": "closed",
+        "input_tokens": 10,
+        "output_tokens": 2,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "error_code": "ERR_RUN_INTERRUPTED",
+        "stderr_tail": None,
+        "metering": {"closed": {"cause": "restart"}},
+        "sandbox_cost_usd": 0.75,
+    }
+    assert await traces_repo.close_running("run-1", **fields) is True
+    assert await traces_repo.close_running("run-1", **{**fields, "cost_usd": 9.0}) is False, (
+        "a closed trace closed again"
+    )
+    assert await traces_repo.close_running("run-3", **fields) is False, "a finished trace was overwritten"
+    closed = await traces_repo.get("run-1")
+    assert closed is not None
+    assert (closed["result"], closed["cost_usd"], closed["error_code"]) == ("error", 0.75, "ERR_RUN_INTERRUPTED")
+    assert closed["metering"] == {"closed": {"cause": "restart"}}
+    assert spent == [("grok-4.7", 0.75)], f"the close must count the spend exactly once, got {spent}"
+    assert [r["trace_id"] for r in await traces_repo.running()] == ["run-2"]

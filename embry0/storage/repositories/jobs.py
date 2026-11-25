@@ -968,6 +968,26 @@ class JobsRepository:
         assert row is not None, "INSERT ... RETURNING must return a row"
         return int(row["id"])
 
+    async def run_events(self, run_id: str, event_types: Sequence[str]) -> list[dict[str, Any]]:
+        """The events of one agent run of these types, in the order they were kept (#694). An event that no longer
+        parses is skipped."""
+        import json as json_mod
+
+        rows = await self._db.fetch(
+            "SELECT text FROM job_logs WHERE run_id = $1 AND event_type = ANY($2::text[]) ORDER BY id",
+            run_id,
+            list(event_types),
+        )
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                event = json_mod.loads(row["text"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        return events
+
     async def fetch_active_sandbox_containers(self) -> set[str]:
         """Return the set of `sandbox-<job_id>` container names that back
         currently-active jobs (any non-terminal status).

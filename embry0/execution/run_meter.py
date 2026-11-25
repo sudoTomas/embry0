@@ -22,6 +22,7 @@ from typing import Any, Protocol
 import structlog
 
 from embry0.agents.run_charge import BootTally, Charge, RunMetering
+from embry0.agents.run_close import metering_from_kept
 from embry0.execution.admin_seq import next_admin_seq
 from embry0.metrics.loop import NULL_METRICS, LoopMetrics
 from embry0.storage.repositories.run_meter import RunMeterRepository
@@ -105,6 +106,19 @@ class RunMeter:
                 self._metrics.meter_admin_failed(proxy, "declare")
                 logger.warning("run_meter_declare_failed", proxy=proxy, run_id=run_id, error=str(exc))
         return window
+
+    async def kept(self, window: RunWindow) -> RunMetering | None:
+        """The proxies' account of the run from the tallies kept of it so far (``run_meter``), its end unread: what a
+        run cancelled before its end is charged from (``embry0.agents.run_close``). None when none was kept, or they
+        cannot be read."""
+        if self._repository is None:
+            return None
+        try:
+            rows = await self._repository.for_run(window.run_id)
+        except Exception as exc:  # noqa: BLE001 — the run is charged its sandbox's figure
+            logger.warning("run_meter_read_kept_failed", run_id=window.run_id, error=str(exc))
+            return None
+        return metering_from_kept(window.run_id, rows, targets=window.targets, declared=window.declared)
 
     def number_end(self, window: RunWindow) -> None:
         """Number the run's end on every proxy now, when it is decided, before any wait: the sandbox's next run is

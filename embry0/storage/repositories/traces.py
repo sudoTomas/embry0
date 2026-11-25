@@ -159,6 +159,69 @@ class TracesRepository:
             if row is not None:
                 await self._count_spend(str(row["job_id"]), str(row["model"]), cost_usd)
 
+    async def running(self) -> list[dict[str, Any]]:
+        """Every trace still ``running``: at start-up, the runs the previous process left unfinished (#694)."""
+        rows = await self._db.fetch(
+            """
+            SELECT trace_id, job_id, agent_type, model, pricing, created_at
+              FROM traces WHERE result = 'running' ORDER BY created_at
+            """
+        )
+        return [dict(r) for r in rows]
+
+    async def close_running(
+        self,
+        trace_id: str,
+        *,
+        result: str,
+        cost_usd: float,
+        duration_ms: int,
+        result_summary: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int,
+        cache_creation_tokens: int,
+        error_code: str | None,
+        stderr_tail: str | None,
+        metering: dict[str, Any] | None,
+        sandbox_cost_usd: float | None,
+        tools_called: dict[str, int] | None = None,
+        skill_actions: dict[str, int] | None = None,
+    ) -> bool:
+        """Close a run that never ended (``embry0.agents.run_close``), as :meth:`finish` does, but only while its row
+        is still ``running``: a run its own finish, or an earlier close, reached first keeps what that wrote. Returns
+        whether this closed it; spend is counted only then."""
+        row = await self._db.fetchrow(
+            """
+            UPDATE traces SET result = $2, cost_usd = $3, duration_ms = $4, tools_called = $5, result_summary = $6,
+                input_tokens = $7, output_tokens = $8, cache_read_tokens = $9, cache_creation_tokens = $10,
+                error_code = $11, stderr_tail = $12, skill_actions = $13, metering = $14, sandbox_cost_usd = $15
+            WHERE trace_id = $1 AND result = 'running'
+            RETURNING job_id, model
+            """,
+            trace_id,
+            result,
+            cost_usd,
+            duration_ms,
+            tools_called or {},
+            result_summary,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            error_code,
+            stderr_tail,
+            skill_actions or {},
+            metering,
+            sandbox_cost_usd,
+        )
+        if row is None:
+            return False
+        logger.info("trace_closed", trace_id=trace_id, result=result, cost_usd=cost_usd)
+        if self._metrics is not None and cost_usd > 0:
+            await self._count_spend(str(row["job_id"]), str(row["model"]), cost_usd)
+        return True
+
     async def _count_spend(self, job_id: str, model: str, cost_usd: float) -> None:
         """Best-effort: the trace is written; a metric must not fail its caller.
 

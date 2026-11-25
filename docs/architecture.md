@@ -1490,6 +1490,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_TRIAGE_MALFORMED` | Triage LLM output failed to parse or failed schema validation twice: the answer and the one repair retry that fed the error back (#455). Also used when the triage agent run itself errored. |
 | `ERR_ORPHANED` | Orchestrator restarted with the job in-flight, and boot could not resume it. |
 | `ERR_INTERRUPTED_BY_SHUTDOWN` | An orchestrator shutdown drained the job (`jobs.interrupted_at`) and boot could not resume it: a QA or onboard job that had begun its graph, or one without a checkpoint or launch record (#307). |
+| `ERR_RUN_INTERRUPTED` | A trace's code, never a job's: the agent run stopped before it ended (the orchestrator stopped, or the run was cancelled), and its trace was closed with what is known of its spend, at start-up or at the cancel (`embry0/agents/run_close.py`, #694). `traces.metering.closed` says what it was charged from. |
 | `ERR_RESUME_LIMIT` | Boot already recovered the job `MAX_RESUME_ATTEMPTS` times after unclean stops; it may be what stops the orchestrator, so it is not resumed again (#307). |
 | `ERR_WORKFLOW_UNKNOWN` | Referenced workflow is not registered. |
 | `ERR_SANDBOX_INIT` | Sandbox container creation failed. |

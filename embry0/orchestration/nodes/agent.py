@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -27,6 +28,7 @@ from embry0.agents.model_policy import build_model_policy, resolve_tier_models
 from embry0.agents.providers import price_usage
 from embry0.agents.resolver import _chosen_for_job, resolve_agent_invocation
 from embry0.agents.run_charge import Charge, charge_run
+from embry0.agents.run_close import close_run, sandbox_figure
 from embry0.agents.session import AgentSession
 from embry0.execution import events
 from embry0.execution.auth_provider import AuthConfigError
@@ -193,6 +195,30 @@ def _end_in_background(run_meter: Any, window: Any) -> None:
     task = asyncio.ensure_future(_end_metering(run_meter, window))
     _BACKGROUND_ENDS.add(task)
     task.add_done_callback(_BACKGROUND_ENDS.discard)
+
+
+#: Closes of cancelled runs' traces that outlived their wait (a reference keeps each task alive until it is done).
+_BACKGROUND_CLOSES: set[asyncio.Task[Any]] = set()
+#: How long a cancelled run waits for its trace's close before its cancellation goes on: the close goes on by
+#: itself after, and start-up closes any trace still running (embry0.services.interrupted_runs). Below the 5 s a job
+#: cancel waits for its task.
+CANCEL_CLOSE_WAIT_SECONDS = 3.0
+
+
+async def _close_while_cancelled(close: Any, run_id: str) -> None:
+    """Await ``close()`` for at most :data:`CANCEL_CLOSE_WAIT_SECONDS`, shielded: a slow close, or a second cancel,
+    leaves it running on its own. Never raises."""
+    task = asyncio.ensure_future(close())
+    _BACKGROUND_CLOSES.add(task)
+    task.add_done_callback(_BACKGROUND_CLOSES.discard)
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=CANCEL_CLOSE_WAIT_SECONDS)
+    except BaseException:  # noqa: BLE001 — slow or cancelled again; the caller re-raises its own cancellation
+        logger.warning("cancelled_run_close_pending", run_id=run_id)
+
+
+#: The run's events its sandbox's figure is read from (embry0.agents.run_close.sandbox_figure).
+_FIGURE_EVENTS = frozenset({"turn_usage", "cost_update"})
 
 
 def _charge(
@@ -1239,7 +1265,12 @@ async def run_agent_node(
         # skill it trains, counted from the events as they stream past.
         skill_actions: dict[str, int] = {}
 
+        # The run's usage as its sandbox reported it, so a run that never ends normally is charged its last figure.
+        figure_events: list[dict[str, Any]] = []
+
         def _count_then_forward(event: dict[str, Any]) -> None:
+            if event.get("type") in _FIGURE_EVENTS:
+                figure_events.append(event)
             if event.get("type") == "tool_call":
                 tool_input = event.get("tool_input")
                 count_action(
@@ -1266,12 +1297,54 @@ async def run_agent_node(
 
         def _crash_charge(exc: BaseException, error_code: str | None) -> dict[str, Any]:
             fields = _crashed_trace_fields(exc, error_code)
+            # A crashed exec returns no result: its sandbox's last figure is what its events reported (#694).
+            figure = sandbox_figure(figure_events, invocation.provider_record)
             if run_meter is None:
-                return fields
-            # A crashed exec reports nothing; the proxies' count of its calls is charged.
-            charge = _charge(run_meter, metering, invocation, cost_usd=0.0, tokens=(0, 0, 0, 0))
+                return {
+                    **fields,
+                    "cost_usd": figure.cost_usd,
+                    "input_tokens": figure.tokens[0],
+                    "output_tokens": figure.tokens[1],
+                    "cache_read_tokens": figure.tokens[2],
+                    "cache_creation_tokens": figure.tokens[3],
+                }
+            # The proxies' count of its calls is charged, or that figure when it is larger and the count not whole.
+            charge = _charge(run_meter, metering, invocation, cost_usd=figure.cost_usd, tokens=figure.tokens)
             return {**fields, **_charged_fields(charge)}
 
+        async def _close_cancelled() -> None:
+            """Close the trace of a run cancelled before it ended (#694): charged the tallies the proxies kept of it, the
+            sandbox's last figure, or nothing, said so; the charge added to the job's total as its cost_update would have
+            added it."""
+            kept = await run_meter.kept(meter_window) if run_meter is not None and meter_window is not None else None
+            figure = sandbox_figure(figure_events, invocation.provider_record)
+            closing = close_run(
+                cause="cancelled",
+                record=invocation.provider_record,
+                metering=kept,
+                figure=figure,
+                duration_ms=int((time.monotonic() - exec_started) * 1000),
+            )
+            await _finish_trace(**closing.fields, tools_called={}, skill_actions=dict(skill_actions))
+            loop_metrics = configurable.get("loop_metrics")
+            if loop_metrics is not None:
+                loop_metrics.run_closed("cancelled", closing.charged_from)
+            logger.info(
+                "interrupted_run_closed",
+                trace_id=run_id,
+                job_id=trace_job_id,
+                cause="cancelled",
+                charged_from=closing.charged_from,
+                cost_usd=closing.fields["cost_usd"],
+            )
+            jobs_repo = configurable.get("jobs_repo")
+            if closing.delta_usd > 0 and jobs_repo is not None and trace_job_id:
+                from embry0.services.job_events import broadcast_job_event
+
+                update = closing.cost_update(run_id=run_id, node=invocation.node, agent=agent_type)
+                await broadcast_job_event(jobs_repo, None, loop_metrics, trace_job_id, update)
+
+        exec_started = time.monotonic()
         try:
             # Production path: docker-exec the sandbox runner with the serialized
             # invocation; the in-container SdkAgentExecutor handles the actual
@@ -1294,9 +1367,11 @@ async def run_agent_node(
             await _finish_trace(**_crash_charge(exc, None))
             raise
         except BaseException:
-            # Cancelled: the run is ended on the proxies without waiting, so its declaration does not linger.
+            # Cancelled: the run is ended on the proxies without waiting, so its declaration does not linger, and its
+            # trace is closed with what is known of it rather than left running (#694).
             if meter_window is not None:
                 _end_in_background(run_meter, meter_window)
+            await _close_while_cancelled(_close_cancelled, run_id)
             raise
         metering = await _end_metering(run_meter, meter_window)
     finally:

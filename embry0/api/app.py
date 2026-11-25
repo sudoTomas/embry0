@@ -1406,6 +1406,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.qa_event_bus = QAEventBus()
 
+    # #694: close the traces of the runs the previous process left running, each
+    # charged what is known of it (embry0.services.interrupted_runs). Before
+    # recovery, so an orphaned job's job_finished carries its total with them,
+    # and before any run of this process can write a running trace of its own.
+    try:
+        from embry0.services.interrupted_runs import close_interrupted_runs
+        from embry0.storage.repositories.run_meter import RunMeterRepository
+        from embry0.storage.repositories.traces import TracesRepository as _BootTracesRepository
+
+        boot_metrics_for_runs = getattr(app.state, "loop_metrics", None)
+        await close_interrupted_runs(
+            _BootTracesRepository(db, metrics=boot_metrics_for_runs),
+            RunMeterRepository(db),
+            JobsRepository(db, metrics=boot_metrics_for_runs),
+            boot_metrics_for_runs,
+        )
+    except Exception:
+        logger.exception("interrupted_runs_close_failed")
+
     # Recover the jobs the previous orchestrator lifecycle left in flight.
     # Lifecycle knowledge lives in the repositories (RAV-1063): fail_orphaned /
     # reopen_stuck_for_jobs are the set-based boot-reconciliation writes.

@@ -264,6 +264,7 @@ above 0, since only a person writing the catalogue again clears it.
 | `embry0_run_meter_charges_total` | counter | `source` (`proxy`, `proxy_gap`, `sandbox_gap`, `proxy_unordered`, `sandbox_unordered`, `sandbox`, `sandbox_unpriced`) |
 | `embry0_run_meter_disagreements_total` | counter | `direction` (`sandbox_higher`, `proxy_higher`) |
 | `embry0_run_meter_last_disagreement_timestamp_seconds` | gauge | `direction` |
+| `embry0_interrupted_runs_closed_total` | counter | `cause` (`restart`, `cancelled`), `charged_from` (`proxy`, `sandbox`, `nothing`) |
 
 What the orchestrator's meter does with the model proxies' tallies
 ([Metering at the proxies](../providers.md#metering-at-the-proxies)): when it
@@ -273,8 +274,12 @@ the proxy to answer, how many admin requests a proxy refused as older than the
 last it took (a late or replayed one; since that proxy process started), the
 metering calls to a proxy that failed, what each run's
 charge came from, and how often a metered run's two figures (the proxy's count,
-the sandbox's figure) differed by more than 10% and $0.05. The direction and
-source series are seeded when the process starts, the proxy ones when the meter
+the sandbox's figure) differed by more than 10% and $0.05, and how many runs
+that never ended had their trace closed (#694): at start-up for the runs a
+stopped process left running (`restart`), at the cancel for a cancelled run,
+by what each was charged from. `charged_from="nothing"` is a run closed at $0
+because nothing of its spend was known. The direction, source, cause and
+charged_from series are seeded when the process starts, the proxy ones when the meter
 starts (0, and 0 for the read time), so every rule reads a series from the
 first scrape.
 

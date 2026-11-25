@@ -28,6 +28,7 @@ class ErrorCode(StrEnum):
     TRIAGE_MALFORMED = "ERR_TRIAGE_MALFORMED"  # Triage output unusable after one repair retry (#455)
     ORPHANED = "ERR_ORPHANED"  # Orchestrator restart with in-flight job
     INTERRUPTED_BY_SHUTDOWN = "ERR_INTERRUPTED_BY_SHUTDOWN"  # an orchestrator shutdown (deploy, restart) stopped the job and boot could not resume it — a QA or onboard job, or one with no checkpoint or launch record (#307)
+    RUN_INTERRUPTED = "ERR_RUN_INTERRUPTED"  # a trace's code, never a job's: the agent run stopped before it ended (the orchestrator stopped, or the run's task was cancelled) and its trace was closed with what is known of its spend (#694)
     RESUME_LIMIT = "ERR_RESUME_LIMIT"  # the job was already recovered MAX_RESUME_ATTEMPTS times after unclean orchestrator stops; it may be what takes the orchestrator down, so boot fails it instead of resuming it again (#307)
     WORKFLOW_UNKNOWN = "ERR_WORKFLOW_UNKNOWN"  # Referenced workflow not in registry
     SANDBOX_INIT = "ERR_SANDBOX_INIT"  # Sandbox container setup failed
@@ -179,6 +180,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.TRIAGE_MALFORMED: _C.AGENT,
     ErrorCode.ORPHANED: _C.INFRA,
     ErrorCode.INTERRUPTED_BY_SHUTDOWN: _C.INFRA,
+    ErrorCode.RUN_INTERRUPTED: _C.INFRA,
     ErrorCode.RESUME_LIMIT: _C.INFRA,
     ErrorCode.WORKFLOW_UNKNOWN: _C.CONFIG,
     ErrorCode.SANDBOX_INIT: _C.INFRA,

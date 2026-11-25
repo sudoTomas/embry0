@@ -65,6 +65,21 @@ class METER_CHARGE_SOURCES(StrEnum):  # noqa: N801
     SANDBOX_UNPRICED = "sandbox_unpriced"
 
 
+class RUN_CLOSE_CAUSES(StrEnum):  # noqa: N801
+    """Why a run that never ended had its trace closed (``embry0.agents.run_close``)."""
+
+    RESTART = "restart"
+    CANCELLED = "cancelled"
+
+
+class RUN_CLOSE_CHARGED_FROM(StrEnum):  # noqa: N801
+    """What a run closed that way was charged from (``embry0.agents.run_close``)."""
+
+    PROXY = "proxy"
+    SANDBOX = "sandbox"
+    NOTHING = "nothing"
+
+
 class METER_DISAGREEMENTS(StrEnum):  # noqa: N801
     """Which of a metered run's two figures was higher when they disagreed."""
 
@@ -432,6 +447,17 @@ class LoopMetrics:
         )
         for source in METER_CHARGE_SOURCES:
             self._run_meter_charges.labels(source=source.value)
+        self._runs_closed = Counter(
+            "embry0_interrupted_runs_closed_total",
+            "Agent runs that never ended (the orchestrator stopped, or the run was cancelled) whose trace was closed, "
+            "by cause and by what they were charged from; charged_from=nothing is a run closed at $0 because nothing "
+            "of its spend was known (embry0.agents.run_close).",
+            ["cause", "charged_from"],
+            registry=r,
+        )
+        for cause in RUN_CLOSE_CAUSES:
+            for charged_from in RUN_CLOSE_CHARGED_FROM:
+                self._runs_closed.labels(cause=cause.value, charged_from=charged_from.value)
         for direction in METER_DISAGREEMENTS:
             self._run_meter_disagreements.labels(direction=direction.value)
             self._run_meter_last_disagreement.labels(direction=direction.value).set(0)
@@ -658,6 +684,13 @@ class LoopMetrics:
         if disagreement is not None and disagreement in METER_DISAGREEMENTS._value2member_map_:
             self._run_meter_disagreements.labels(direction=disagreement).inc()
             self._run_meter_last_disagreement.labels(direction=disagreement).set(time.time())
+
+    @_never_raises
+    def run_closed(self, cause: str, charged_from: str) -> None:
+        """A run that never ended had its trace closed, charged from ``charged_from``."""
+        self._runs_closed.labels(
+            cause=enum_label(RUN_CLOSE_CAUSES, cause), charged_from=enum_label(RUN_CLOSE_CHARGED_FROM, charged_from)
+        ).inc()
 
     # ---- runner / infrastructure -------------------------------------------
 
