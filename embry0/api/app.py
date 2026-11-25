@@ -2782,7 +2782,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # jobs to, and the spend recorded where the caps and /stats count it.
     from embry0.orchestration.budget_gate import build_budget_gate
     from embry0.services.background_models import BackgroundCalls
+    from embry0.services.local_slots import CallSlots, LocalSlots, local_cap
     from embry0.storage.repositories.background_spend import BackgroundSpendRepository
+    from embry0.storage.repositories.local_model_leases import LocalModelLeasesRepository
+
+    async def local_model_cap() -> int:
+        return local_cap(await app.state.provider_repo.get())
 
     app.state.background_calls = BackgroundCalls(
         resolver=getattr(app.state, "credential_resolver", None),
@@ -2790,6 +2795,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The gate the executor's dispatches ask, built by the one factory both use, over the
         # application's budget policy: the operator's caps, never the section's code defaults.
         gate=build_budget_gate(app.state.budget_policy),
+        # A call to the operator's own server holds one of its slots, the leases agent runs take (#174).
+        local_slots=CallSlots(
+            slots=LocalSlots(LocalModelLeasesRepository(db)),
+            cap=local_model_cap,
+            proxy_upstream=config.local_llm_upstream,
+        ),
     )
 
     # Proposal briefs (spec 2026-10-25): writes each owner proposal in plain

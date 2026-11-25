@@ -44,14 +44,6 @@ class RunWith:
         return {k: v for k, v in self.__dict__.items() if v}
 
 
-def model_provider(model: str) -> str:
-    """The provider that serves ``model``: a routed provider's name, else anthropic."""
-    from embry0.agents.providers import provider_for_model
-
-    provider = provider_for_model(model)
-    return provider.name if provider is not None else "anthropic"
-
-
 def apply_run_with(config: Mapping[str, Any] | None, run_with: RunWith | None) -> dict[str, Any] | None:
     """``config`` carrying ``run_with``; unchanged (None stays None) for the usual run.
 

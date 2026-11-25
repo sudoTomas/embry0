@@ -214,7 +214,7 @@ def local_busy_wait(model: str, agent: str | None, now: datetime) -> AccountWait
 def main_provider(agent_definitions: Iterable[Mapping[str, Any]], model_policy: Mapping[str, Any] | None) -> str:
     """The provider most of a job's agents run on: the default model's when one is set,
     else the one most agent definitions name (anthropic on a tie, and with none)."""
-    from embry0.agents.fallback import model_provider
+    from embry0.agents.providers import model_provider
 
     default_model = (model_policy or {}).get("default_model")
     if isinstance(default_model, str) and default_model.strip():

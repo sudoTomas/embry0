@@ -809,8 +809,7 @@ async def _resolve_local_first(
     the model no longer routes, the provider is paused, or it does not
     resolve: the job then runs as if it had no preference.
     """
-    from embry0.agents.fallback import model_provider
-    from embry0.agents.providers import provider_for_model
+    from embry0.agents.providers import model_provider, provider_for_model
     from embry0.services.credentials.resolver import CredentialMissingError, CredentialUnavailableError
 
     if not isinstance(local_first_model, str) or not local_first_model or provider_for_model(local_first_model) is None:
@@ -854,8 +853,7 @@ async def _wait_before_start(
     """
     from datetime import UTC, datetime
 
-    from embry0.agents.fallback import model_provider
-    from embry0.agents.providers import provider_for_model
+    from embry0.agents.providers import model_provider, provider_for_model
     from embry0.agents.resolver import _chosen_for_job
     from embry0.services.account_waits import main_provider, provider_pause, wait_for
 

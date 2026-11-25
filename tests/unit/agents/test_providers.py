@@ -239,3 +239,24 @@ def test_a_local_model_server_gets_the_slow_provider_budgets() -> None:
 
     assert CUSTOM.timeout_factor == XAI.timeout_factor == 2.0
     assert CUSTOM.turn_budget_factor == XAI.turn_budget_factor == 2.0
+
+
+def test_one_model_provider_names_the_provider_of_a_model_for_every_caller() -> None:
+    """#174: the provider of a model is told in one place. Two copies (``agents.fallback`` and ``services.run_with``)
+    could drift apart, so a fallback and a person's choice of key would disagree on whose key a model needs."""
+    import ast
+    from pathlib import Path
+
+    import embry0
+
+    root = Path(embry0.__file__).parent
+    defined = sorted(
+        str(path.relative_to(root.parent))
+        for path in root.rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == "model_provider"
+    )
+    assert defined == ["embry0/agents/providers.py"], f"model_provider is defined in {defined}"
+    from embry0.agents.providers import model_provider
+
+    assert model_provider("claude-sonnet-5") == "anthropic"

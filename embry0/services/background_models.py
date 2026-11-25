@@ -18,7 +18,13 @@ model directly over chat completions. Each goes through
 - a call to a hosted model asks the budget gate first, the daily and
   monthly caps a job's dispatch is held to, and is refused once one is
   reached (:class:`BackgroundCallRefused`, logged; the loop goes on). The
-  operator's own server (``custom/``) bills nothing and is never refused;
+  operator's own server (``custom/``) bills nothing and is never refused
+  for spend;
+- a call to the operator's own server holds one of its slots for the
+  length of the call, as an agent run does
+  (:mod:`embry0.services.local_slots`): with every slot taken it is not
+  made (:class:`LocalServerBusy`, a refusal) and the feature's tick stops
+  there, so background work never crowds out the runs the server is for;
 - a model with no price is never called, as a job's agent never runs on one;
 - the tokens the provider reports are priced as a job's run is
   (``price_run``) and recorded under the feature (``background_spend``),
@@ -47,6 +53,7 @@ import httpx
 import structlog
 
 from embry0.orchestration.budget_gate import DispatchDecision
+from embry0.services.local_slots import CallSlots, call_server
 from embry0.settings.sections.background_models import (
     BACKGROUND_MODELS,
     FEATURES,
@@ -120,6 +127,8 @@ class Endpoint:
     upstream_model: str
     #: The custom provider: the operator's own server, which bills nothing.
     local: bool
+    #: The server a local call holds a slot of (``services.local_slots``); '' for a hosted model.
+    server: str = ""
 
 
 @dataclass(frozen=True)
@@ -133,7 +142,8 @@ class Answer:
 
 
 class BackgroundCallRefused(Exception):
-    """A call to a hosted model the budget caps refused; nothing was sent."""
+    """A call that may not be made now: the budget caps refused a hosted model's, or every slot of the operator's
+    own server is taken (:class:`LocalServerBusy`). Nothing was sent; the feature's tick stops there."""
 
     def __init__(self, feature: str, model: str, decision: Any) -> None:
         super().__init__(f"{feature} on {model}: {getattr(decision, 'public_message', '') or 'refused'}")
@@ -142,11 +152,23 @@ class BackgroundCallRefused(Exception):
         self.decision = decision
 
 
-async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature: str = "") -> Endpoint | None:
+class LocalServerBusy(BackgroundCallRefused):
+    """Every slot of the server a local call reaches is taken, or how many it has could not be read."""
+
+    def __init__(self, feature: str, model: str, decision: Any) -> None:
+        super().__init__(feature, model, decision)
+        self.args = (f"{feature} on {model}: every slot of its server is taken",)
+
+
+async def resolve_endpoint(
+    model: str, resolver: Any, repo: str = "", *, feature: str = "", proxy_upstream: str = ""
+) -> Endpoint | None:
     """The chat-completions endpoint ``model`` runs on for ``repo``, or None when it cannot be called from here.
 
     The key is the one a job of ``repo`` would get: the repository's binding,
-    then its owner's, then the global pool, then the environment.
+    then its owner's, then the global pool, then the environment. A local
+    model's server is its credential's, or the local-llm-proxy's upstream
+    (``proxy_upstream``) when it calls that host (``local_slots.call_server``).
     """
     from embry0.agents.providers import provider_for_model, upstream_model
 
@@ -161,12 +183,14 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
     root = str(cred.metadata.get("base_url") or provider.openai_base_url or "").rstrip("/")
     if not root or not cred.secret:
         return None
+    local = provider.name == "custom"
     return Endpoint(
         model=model,
         root=root,
         key=cred.secret,
         upstream_model=upstream_model(provider, model),
-        local=provider.name == "custom",
+        local=local,
+        server=call_server(getattr(cred, "id", None), root, proxy_upstream=proxy_upstream) if local else "",
     )
 
 
@@ -280,7 +304,9 @@ class BackgroundCalls:
 
     ``spend`` records each call (``BackgroundSpendRepository``); ``gate`` is
     the budget gate jobs are dispatched through (``build_budget_gate`` over the
-    application's budget policy).
+    application's budget policy); ``local_slots`` the slots of the operator's
+    own servers, which a local call holds while it is made. Without them a
+    local call holds none: the application always gives them.
 
     Fail closed on the record: a call whose spend could not be stored keeps
     its row here, and the feature's next hosted call first stores it. While
@@ -295,12 +321,14 @@ class BackgroundCalls:
         resolver: Any,
         spend: _Spend,
         gate: _Gate,
+        local_slots: CallSlots | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._resolver = resolver
         self._spend = spend
         self._gate = gate
+        self._local_slots = local_slots
         self._clock = clock
         #: When a call was made, stamped on its row: a row held and stored later keeps its call's time.
         self._wall = wall
@@ -330,7 +358,8 @@ class BackgroundCalls:
                 hint="a model with no price is never called: name a priced one in background_models",
             )
             return None
-        return await resolve_endpoint(model, self._resolver, repo or "", feature=feature)
+        proxy_upstream = self._local_slots.proxy_upstream if self._local_slots is not None else ""
+        return await resolve_endpoint(model, self._resolver, repo or "", feature=feature, proxy_upstream=proxy_upstream)
 
     async def ask(
         self,
@@ -345,10 +374,12 @@ class BackgroundCalls:
         name: str,
         max_tokens: int = 600,
     ) -> str:
-        """The model's answer; :class:`BackgroundCallRefused` when a hosted model's call may not be made.
+        """The model's answer; :class:`BackgroundCallRefused` when the call may not be made now.
 
         A hosted model's call is refused while an earlier call's spend is
-        not stored, and when the budget gate refuses it. What the call spent
+        not stored, and when the budget gate refuses it; a local model's when
+        every slot of its server is taken (:class:`LocalServerBusy`), the slot
+        it takes otherwise held until the answer is in. What the call spent
         is recorded before the answer is read, so an answer that does not
         parse still counts; ``ValueError`` for a body that is not JSON.
         """
@@ -366,13 +397,51 @@ class BackgroundCalls:
             if not getattr(decision, "allowed", True):
                 self._refused(feature, endpoint.model, decision)
                 raise BackgroundCallRefused(feature, endpoint.model, decision)
-        answer = await ask_json(
-            endpoint, client, system=system, user=user, schema=schema, name=name, max_tokens=max_tokens
-        )
+        lease = await self._take_slot(feature, endpoint) if endpoint.local else None
+        try:
+            answer = await ask_json(
+                endpoint, client, system=system, user=user, schema=schema, name=name, max_tokens=max_tokens
+            )
+        finally:
+            if lease is not None and self._local_slots is not None:
+                await self._local_slots.slots.release(lease)
         await self._record(feature, endpoint, repo, answer)
         if answer.usage_problem == "unreadable":
             raise ValueError("the model's answer is not a JSON object")
         return answer.text
+
+    async def _take_slot(self, feature: str, endpoint: Endpoint) -> str | None:
+        """A lease on a slot of the server ``endpoint`` reaches, held for one call; :class:`LocalServerBusy` when
+        none is free or the cap cannot be read. None without slots to take."""
+        local = self._local_slots
+        if local is None:
+            return None
+        try:
+            cap = await local.cap()
+        except Exception:  # noqa: BLE001 - a cap that cannot be read is no slot
+            logger.warning("background_model_cap_unread", feature=feature, model=endpoint.model, exc_info=True)
+            cap = None
+        lease = (
+            await local.slots.try_acquire(
+                cap=cap,
+                server=endpoint.server,
+                job_id="",
+                agent_type=feature,
+                model=endpoint.model,
+                run_seconds=math.ceil(REQUEST_TIMEOUT_SECONDS),
+            )
+            if cap is not None
+            else None
+        )
+        if lease is None:
+            decision = DispatchDecision(
+                allowed=False,
+                limit="local_slots",
+                message="every slot of the local model server is taken; the tick stops until one is free",
+            )
+            logger.info("background_model_busy", feature=feature, model=endpoint.model, server=endpoint.server)
+            raise LocalServerBusy(feature, endpoint.model, decision)
+        return lease
 
     def _refused(self, feature: str, model: str, decision: Any) -> None:
         (logger.warning if self._loud("refused", feature) else logger.info)(
@@ -469,6 +538,7 @@ __all__ = [
     "BackgroundCalls",
     "BackgroundModels",
     "Endpoint",
+    "LocalServerBusy",
     "ModelLookup",
     "ask_json",
     "background_model",

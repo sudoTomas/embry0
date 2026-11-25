@@ -148,3 +148,20 @@ def test_the_retired_chain_and_variables_are_read_nowhere_in_the_app() -> None:
             if isinstance(name, ast.Constant) and name.value in RETIRED:
                 read.append(ast.unparse(node))
     assert read == [], f"each background feature reads its model from the settings document only (#164): {read}"
+
+
+def test_a_background_call_to_a_local_model_takes_the_slots_agent_runs_take() -> None:
+    """#174: ``BackgroundCalls`` constructs without slots, and a local call then holds none, so the server
+    gets background calls on top of every run its cap allows. Production gives it the leases agent runs take,
+    the cap they read and the local-llm-proxy's upstream."""
+    passed = _keywords(_construction("BackgroundCalls"))
+    assert passed.get("local_slots") == (
+        "CallSlots(slots=LocalSlots(LocalModelLeasesRepository(db)), cap=local_model_cap, "
+        "proxy_upstream=config.local_llm_upstream)"
+    ), f"a local call must hold one of its server's slots; got {passed.get('local_slots')}"
+    [cap] = [
+        node for node in ast.walk(_tree()) if isinstance(node, ast.AsyncFunctionDef) and node.name == "local_model_cap"
+    ]
+    assert [ast.unparse(n) for n in cap.body] == ["return local_cap(await app.state.provider_repo.get())"], (
+        "the cap is the one agent runs read: provider_config.local_max_runs"
+    )

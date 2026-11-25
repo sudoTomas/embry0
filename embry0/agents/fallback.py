@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
+from embry0.agents.providers import model_provider
 from embry0.safety.error_codes import ErrorCode
 
 #: Codes that pause the provider a run failed on for the rest of its job:
@@ -91,14 +92,6 @@ def describe(agent_type: str, model: str, record: Mapping[str, Any]) -> str:
         f"{agent_type} runs on {model} instead of {record.get('instead_of')}: "
         f"the {record.get('provider')} account is paused ({record.get('reason')}){until}."
     )
-
-
-def model_provider(model: str) -> str:
-    """The provider that serves ``model``: a routed provider's name, else anthropic."""
-    from embry0.agents.providers import provider_for_model
-
-    provider = provider_for_model(model)
-    return provider.name if provider is not None else "anthropic"
 
 
 def fallback_order(model_policy: Mapping[str, Any] | None) -> list[str]:

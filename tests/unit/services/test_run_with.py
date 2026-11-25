@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
+from embry0.agents.providers import model_provider
 from embry0.agents.resolver import resolve_agent_config
 from embry0.services.run_with import (
     RunWith,
     apply_run_with,
     job_pins_reader,
     key_scopes,
-    model_provider,
     models_with,
     pins_of,
     run_with_of,
