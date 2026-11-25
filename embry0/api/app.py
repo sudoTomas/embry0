@@ -1149,44 +1149,6 @@ async def _init_app_state(
     )
 
 
-async def _import_areas(app: FastAPI, config: Any) -> None:
-    """Run the one-time import of each repository's old areas file (:mod:`embry0.services.areas_import`) with the
-    forge credential the resolver picks for each repository, as the pull requests embry0 opens read it: a pass
-    now, and later ones while a read that failed is still to be retried."""
-    from embry0.audit.helpers import emit_audit
-    from embry0.execution.github_client import GitHubClient
-    from embry0.services.areas_import import ACTOR, AREAS_PATH, import_passes
-    from embry0.services.forge_files import read_file
-
-    client = GitHubClient(
-        default_token=str(getattr(config, "github_token", "") or ""),
-        credential_resolver=app.state.credential_resolver,
-    )
-
-    async def read(repo: str) -> tuple[str, str | None] | None:
-        return await read_file(lambda url: client.get(url, repo=repo), repo, AREAS_PATH)
-
-    async def record(repo: str, details: dict[str, Any]) -> None:
-        await emit_audit(
-            app.state.db,
-            "repo.areas_imported",
-            actor=ACTOR,
-            details=details,
-            audit_log_path=getattr(config, "audit_log_path", None),
-        )
-
-    try:
-        await import_passes(
-            ledger=app.state.repo_areas_imports_repo,
-            store=app.state.areas,
-            repos=app.state.repos_repo,
-            read=read,
-            record=record,
-        )
-    except Exception:
-        logger.error("areas_import_unavailable", exc_info=True)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config: Embry0Config = app.state.config
@@ -2974,11 +2936,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.background_tasks.add(scout_task)
     scout_task.add_done_callback(app.state.background_tasks.discard)
 
-    # Spec 2026-11-10: the one-time import of each repository's old areas file, for the repositories migration
-    # 145 listed; in the background, as nothing waits on it. Removed by the next minor release.
-    app.state.areas_import = asyncio.create_task(_import_areas(app, config))
-    app.state.background_tasks.add(app.state.areas_import)
-    app.state.areas_import.add_done_callback(app.state.background_tasks.discard)
+    # #175: no code reads a repository's old areas file any more. A deployment that upgraded past the release
+    # that imported them is told which repositories were never read, at error level and in the audit log.
+    from embry0.services.areas_import_check import warn_if_areas_never_imported
+
+    await warn_if_areas_never_imported(db, audit_log_path=config.audit_log_path)
 
     # Asks (spec 2026-10-27, decisions): keeps one ask per person a decision
     # waits on, for a chat assistant to send. The loop always runs and reads

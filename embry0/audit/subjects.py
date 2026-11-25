@@ -118,6 +118,7 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "repo.preferences_set": _REPO,
     "repo.areas_set": _REPO,
     "repo.areas_imported": _REPO,
+    "repo.areas_import_skipped": DEPLOYMENT,
     "repo.areas_map_applied": _REPO,
     "repo.areas_map_rejected": _REPO,
     "repo.preferences_cleared": _REPO,

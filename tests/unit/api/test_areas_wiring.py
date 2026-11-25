@@ -22,12 +22,11 @@ from tests.fixtures.repository_writes import COVERED, MASTER, call, repository_w
 from tests.unit.metrics.test_lifespan_wiring import booted, stub_container_runtime  # noqa: F401 - fixtures
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-#: The modules that may still name the old file: the import (until the release that removes it) and the
-#: migrations, which are history.
-MAY_NAME_THE_FILE = {"embry0/services/areas_import.py", "embry0/storage/migrations/runner.py"}
+#: The one module that may still name the old file: the migrations, which are history. The import is gone (#175).
+MAY_NAME_THE_FILE = {"embry0/storage/migrations/runner.py"}
 
 
-def test_no_code_names_the_repository_s_old_areas_file_but_the_import() -> None:
+def test_no_code_names_the_repository_s_old_areas_file() -> None:
     named = sorted(
         str(path.relative_to(ROOT))
         for path in (ROOT / "embry0").rglob("*.py")
@@ -36,18 +35,17 @@ def test_no_code_names_the_repository_s_old_areas_file_but_the_import() -> None:
     assert named == [], f"code that names the repository's old areas file: {named}"
 
 
-def test_only_the_import_reads_a_file_of_a_repository_for_its_areas() -> None:
-    """The one module that reads a repository's files through the forge for areas is the import; the rest use
-    ``read_contents`` for CODEOWNERS only."""
+def test_a_repository_s_files_are_read_only_for_its_codeowners() -> None:
+    """embry0 reads no configuration of its own from a target repository (#175): the one reader of a repository's
+    files through the forge is the owners fallback, which reads CODEOWNERS with ``read_contents``."""
     readers = sorted(
-        str(path.relative_to(ROOT))
+        (str(path.relative_to(ROOT)), alias.name)
         for path in (ROOT / "embry0").rglob("*.py")
         for node in ast.walk(ast.parse(path.read_text()))
-        if isinstance(node, ast.ImportFrom)
-        and node.module == "embry0.services.forge_files"
-        and any(alias.name == "read_file" for alias in node.names)
+        if isinstance(node, ast.ImportFrom) and node.module == "embry0.services.forge_files"
+        for alias in node.names
     )
-    assert readers == ["embry0/api/app.py"], f"what reads a repository's file with its blob: {readers}"
+    assert readers == [("embry0/api/v1/proposals.py", "read_contents")], f"what reads a repository's files: {readers}"
 
 
 @pytest.mark.requires_postgres
@@ -61,7 +59,32 @@ async def test_production_gives_every_reader_the_areas_embry0_keeps(booted: Any)
     assert state.issue_executor._areas_proposals is state.repo_areas_proposals_repo, (  # noqa: SLF001
         "a map's document waits on its proposal"
     )
-    assert state.areas_import is not None, "the one-time import runs in the background"
+    assert getattr(state, "areas_import", None) is None, "no import of a repository's old areas file runs (#175)"
+
+
+@pytest.mark.requires_postgres
+@pytest.mark.usefixtures("stub_container_runtime")
+async def test_the_start_names_the_repositories_whose_old_areas_file_was_never_read(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lifespan runs the check (embry0.services.areas_import_check): a repository migration 145 listed and no
+    import ever read is logged at error level and audited."""
+    from structlog.testing import capture_logs
+
+    from embry0.api.app import create_app, lifespan
+    from tests.unit.api.test_settings_lifespan import _config
+
+    await db_with_migrations.execute("INSERT INTO repos (repo) VALUES ('acme/widgets') ON CONFLICT DO NOTHING")
+    await db_with_migrations.execute(
+        "INSERT INTO repo_areas_imports (repo, outcome) VALUES ('acme/widgets', 'pending') ON CONFLICT DO NOTHING"
+    )
+    monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)  # keep capture_logs
+    app = create_app(_config(db_with_migrations))
+    with capture_logs() as logs:
+        async with lifespan(app):
+            pass
+    said = [(e["log_level"], e.get("repos")) for e in logs if e["event"] == "areas_import_skipped"]
+    assert said == [("error", ["acme/widgets"])], f"the start must name the repository never read: {said}"
 
 
 @pytest.mark.requires_postgres

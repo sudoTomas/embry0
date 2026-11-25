@@ -184,8 +184,6 @@ OPAQUE: dict[tuple[str, str], frozenset[str]] = {
     # embry0.api.v1.handoffs._audit writes the hand-off's id and its decision's.
     ("embry0/api/v1/handoffs.py", "handoff.returned"): frozenset({"handoff_id", "decision_id"}),
     ("embry0/api/v1/handoffs.py", "handoff.cancelled"): frozenset({"handoff_id", "decision_id"}),
-    # embry0.services.areas_import.import_one's record(repo, {...}).
-    ("embry0/api/app.py", "repo.areas_imported"): frozenset({"repo", "revision_id", "left_out"}),
     # embry0.services.watcher_stacks.audit_refused_signature_masks's write({...}).
     ("embry0/api/app.py", "watcher_signature_masks_refused"): frozenset({"repo", "kept", "refused"}),
 }

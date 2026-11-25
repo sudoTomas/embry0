@@ -209,16 +209,6 @@ def test_unreadable_linter_configs_add_no_ignore_patterns(kind: str) -> None:
     assert (from_biome, from_pyproject) == ([], []), "a malformed file adds no patterns"
 
 
-def test_an_unreadable_areas_file_names_no_areas(kind: str) -> None:
-    """The old file, as the one-time import's lenient reader reads it (spec 2026-11-10)."""
-    from embry0.services.areas_import import parse_areas
-
-    value = DEEP_ARRAY if kind == "deep" else HUGE_INTEGER
-    with handled("parse_areas"):
-        areas = parse_areas(f"areas:\n  - name: web\n    paths: [web/]\n    weight: {value}\n")
-    assert areas == []
-
-
 def test_an_unreadable_areas_document_is_refused_not_raised(kind: str) -> None:
     """The areas document embry0 keeps (spec 2026-11-10): such a text is a refusal a 422 can name, never an
     error past the write path."""
