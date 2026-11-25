@@ -354,6 +354,8 @@ async def read_decision(request: Request, decision_id: str, *, action: str | Non
 
         quest = await _quest_or_404(request, ref, action=action)
         game = (await ui_settings(request)).game
-        found = done((await done_inputs(request, [quest]))[0], game=game).to_dict()
+        # Its owners, as the feed reads them (_reviews): who may answer it from a chat is decided on them.
+        inputs, owners = await asyncio.gather(done_inputs(request, [quest]), owners_of(request, [quest]))
+        found = done({**inputs[0], "owners": owners.get(str(quest["job_id"]), [])}, game=game).to_dict()
         return (await with_assignees(request, [found]))[0]
     raise HTTPException(status_code=404, detail="a decision id is offer:<proposal id> or done:<job id>")
