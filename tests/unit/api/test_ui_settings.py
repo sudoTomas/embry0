@@ -119,7 +119,9 @@ async def app(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch)
     keys.touch_last_used = AsyncMock()
     app.state.api_keys_repo = keys
     user = MagicMock(disabled=False, email="alex@example.com")
-    app.state.users_repo = MagicMock(get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None))
+    app.state.users_repo = MagicMock(
+        get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None), people=AsyncMock(return_value=[])
+    )
 
     async def leads(request: Any) -> list[dict[str, Any]]:
         return []

@@ -33,7 +33,8 @@ from embry0.api.issue_allowlist import hidden_issue_ids, hide_input_unless_cover
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers, restricted_key_name
 from embry0.api.schemas.person_name import PersonName
 from embry0.api.session import TIER_ADMIN, TIER_OPERATOR
-from embry0.services.asks import AskPolicy, ask_settings, asked_order, release, working
+from embry0.services.asks import AskPolicy, AskSettings, ask_settings, asked_order, release, working
+from embry0.services.owner_people import Directory
 from embry0.settings.sections.asks import ASKS, AsksSettings
 from embry0.settings.store import Scoped, SettingsStore
 from embry0.storage.repositories.jobs import job_repository
@@ -92,23 +93,47 @@ async def _dashboard_link_for(request: Request, who: str, decision: dict[str, An
     return dashboard_link(request, decision)
 
 
-async def _person(request: Request, who: str) -> dict[str, Any]:
-    """Whom an ask is for. ``key`` is its ``recipient`` as stored, which ``GET /asks/of`` reads them by."""
+async def _person(
+    request: Request, who: str, directory: Directory | None = None, *, timed_by: AskSettings | None = None
+) -> dict[str, Any]:
+    """Whom an ask is for. ``key`` is its ``recipient`` as stored, which ``GET /asks/of`` reads them by.
+
+    A person by their email, a person with no email or a login no person holds
+    as ``<forge>:<login>`` (``unknown`` for the login: asked as itself, for
+    someone to add, #179), or a group. With ``timed_by``, for a caller with no
+    repository allowlist (D4 of the people spec), the person's chat handles
+    (``chat``, ``[{channel, id}]``) and the time zone the ask is timed by.
+    """
+    from embry0.services.owner_people import chat, unknown
+
     users = getattr(request.app.state, "users_repo", None)
     key = who.lower()
-    if who.startswith("group:"):
-        name = who.removeprefix("group:")
-        return {"key": key, "group": name, "github_login": None, "email": None, "name": name}
-    if who.startswith("github:"):
-        login = who.removeprefix("github:")
-        return {"key": key, "github_login": login, "email": None, "name": login}
-    found = await users.get_by_email(who) if users is not None else None
-    return {
-        "key": key,
-        "email": who,
-        "name": (found.name if found is not None else "") or who,
-        "github_login": found.github_login if found is not None else None,
-    }
+    person = directory.of_recipient(key) if directory is not None else None
+    if key.startswith("group:"):
+        name = key.removeprefix("group:")
+        out: dict[str, Any] = {"key": key, "group": name, "github_login": None, "email": None, "name": name}
+    elif "@" not in key:
+        forge, _, login = key.partition(":")
+        out = {
+            "key": key,
+            "github_login": login if forge == "github" else None,
+            "email": None,
+            "name": person.name if person is not None else login,
+        }
+    else:
+        found = await users.get_by_email(who) if users is not None else None
+        github = next((i.value for i in person.identities if i.kind == "github"), None) if person is not None else None
+        out = {
+            "key": key,
+            "email": who,
+            "name": (person.name if person is not None else "") or (found.name if found is not None else "") or who,
+            "github_login": (found.github_login if found is not None else None) or github,
+        }
+    out["unknown"] = directory is not None and unknown(key, directory)
+    if timed_by is not None:
+        out["chat"] = chat(person)
+        out["timezone"] = timed_by.timezone
+    return out
 
 
 def hands_out(request: Request) -> bool:
@@ -187,10 +212,16 @@ async def asks_due(
     section = await ask_policy(request)
     if not section.deployment().enabled:
         return {"asks": [], "count": 0, "enabled": False}
+    from embry0.api.deployment_reads import deployment_hidden
+    from embry0.services.owner_people import directory_of
+
     asks = _repo(request, "asks_repo")
     now = datetime.now(UTC)
     decisions = await open_decisions(request.app)
-    policy = AskPolicy(section, decisions)
+    directory = await directory_of(request.app.state, (d.get("repo") for d in decisions))
+    policy = AskPolicy(section, decisions, directory)
+    # The people's handles and hours are the deployment's: a key with a repository allowlist reads none (D4).
+    unrestricted = not deployment_hidden(request)
     by_id = {str(d["id"]): d for d in decisions}
     order = asked_order(decisions)
 
@@ -226,11 +257,12 @@ async def asks_due(
     for ask, reminder in page:
         decision = labelled(cards[str(ask["decision_id"])], game=game)
         key = str(ask["recipient"]).lower()
+        timed_by = policy.settings(str(ask["decision_id"]), key) if unrestricted else None
         out.append(
             {
                 "id": ask["id"],
                 "code": await asks.code(str(ask["decision_id"])),
-                "recipient": await _person(request, str(ask["recipient"])),
+                "recipient": await _person(request, str(ask["recipient"]), directory, timed_by=timed_by),
                 "waiting": waiting[key],
                 "at_once": policy.settings(str(ask["decision_id"])).max_open_per_person,
                 "first": key not in known,
@@ -306,29 +338,35 @@ class AnswerBody(BaseModel):
 
 
 async def _may_decide(request: Request, decision: dict[str, Any], person: str) -> bool:
-    """The hand-off's person while one is open; else an owner (by GitHub login) or an admin. A decision nobody owns
-    that goes to a group (``asks.unowned_group``) is anyone's embry0 knows.
+    """Whether ``person``, an email the assistant verified, may answer ``decision``.
 
-    A disabled user decides nothing, by any of those. A decision whose owners
-    could not be read (``owners_unread``) is not one nobody owns: only an admin,
-    or its hand-off's person, answers it.
+    The hand-off's person while one is open; else a person whose identities
+    own it on its repository's forge, signed in or not (#179), or a signed-in
+    admin. A decision with no owner but disabled people, which goes to a group
+    (``asks.unowned_group``), is anyone's embry0 knows: a person not disabled,
+    or a user.
+
+    A disabled user or person decides nothing, by any of those. A decision
+    whose owners could not be read (``owners_unread``) is not one nobody owns:
+    only an admin, or its hand-off's person, answers it.
     """
+    from embry0.services.owner_people import directory_of
+
     users = getattr(request.app.state, "users_repo", None)
     me = await users.get_by_email(person) if users is not None else None
-    if me is not None and getattr(me, "disabled", False):
+    directory = await directory_of(request.app.state, [decision.get("repo")])
+    who = directory.by_email(person) or directory.by_user(me.id if me is not None else None)
+    if (me is not None and getattr(me, "disabled", False)) or (who is not None and who.disabled):
         return False
     admin = me is not None and me.tier == "admin"
     held = (decision.get("assigned_to") or {}).get("email")
     if held:
         return held == person.lower() or admin
-    if me is None:
-        return False
     if decision.get("owners_unread"):
         return admin
-    owners = {str(o).lstrip("@").lower() for o in decision.get("owners") or []}
-    if not owners and (await ask_policy(request)).deployment().unowned_group:
-        return True
-    return admin or (bool(me.github_login) and me.github_login.lower() in owners)
+    if not directory.live_owners(decision) and (await ask_policy(request)).deployment().unowned_group:
+        return who is not None or me is not None
+    return admin or directory.owns(who, decision)
 
 
 async def _do(request: Request, decision: dict[str, Any], body: AnswerBody) -> dict[str, Any]:
@@ -468,7 +506,8 @@ async def asks_recap(
             worked.setdefault(by, set()).add(str(m["decision_id"]))
         if m["created_at"] >= since and m["state"] != "withdrawn":
             new[who] += 1
-    everyone = sorted(w for w in {*waiting, *worked, *new} if not w.startswith("github:"))
+    # A login asked as itself (<forge>:<login>) has no inbox to recap; a person by email and a group do.
+    everyone = sorted(w for w in {*waiting, *worked, *new} if "@" in w or w.startswith("group:"))
     return {
         "recaps": [
             {

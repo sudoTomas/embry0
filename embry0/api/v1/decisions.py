@@ -253,28 +253,34 @@ async def with_assignees(request: Request, shown: list[dict[str, Any]]) -> list[
     return [{**d, "assigned_to": assignee(open_[d["id"]], people) if d["id"] in open_ else None} for d in shown]
 
 
-async def _my_login(request: Request) -> str | None:
+async def _me(request: Request, shown: list[dict[str, Any]]) -> tuple[Any, Any]:
+    """``(directory, the viewer's person)`` over ``shown``'s repositories; ``(None, None)`` when they cannot be read."""
+    from embry0.services.owner_people import directory_of
+
     users = getattr(request.app.state, "users_repo", None)
-    if users is None:
-        return None
+    email = request_actor(request)
     try:
-        me = await users.get_by_email(request_actor(request))
-    except Exception:  # noqa: BLE001 - without a login, owned quests are not known
-        return None
-    return me.github_login if me is not None else None
+        directory = await directory_of(request.app.state, (d.get("repo") for d in shown))
+        user = await users.get_by_email(email) if users is not None else None
+    except Exception:  # noqa: BLE001 - without the people, owned quests are not known
+        logger.warning("decisions_mine_people_unread", exc_info=True)
+        return None, None
+    return directory, directory.by_email(email) or directory.by_user(user.id if user is not None else None)
 
 
 async def mine(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """What waits for the viewer: handed to them, or on offer, owned by their login, and handed to nobody."""
+    """What waits for the viewer: handed to them, or on offer, owned by them and handed to nobody. They own a quest
+    when one of their person's identities is one of its owners on its repository's forge, as who may answer it from a
+    chat is decided (#179)."""
     me = request_actor(request).lower()
-    login = (await _my_login(request) or "").lower()
+    directory, person = await _me(request, shown)
     out = []
     for d in shown:
         to = (d.get("assigned_to") or {}).get("email")
         if to:
             if to == me:
                 out.append(d)
-        elif login and d.get("stage") == "offered" and login in {o.lower().lstrip("@") for o in d.get("owners") or []}:
+        elif directory is not None and d.get("stage") == "offered" and directory.owns(person, d):
             out.append(d)
     return out
 
@@ -317,7 +323,7 @@ async def list_decisions(
     repo: str | None = Query(default=None, description="owner/name: only this repository's"),
     include_held: bool = Query(default=True, description="Also what a chat does not ask (shown on the page)"),
     for_: Literal["me", "all"] = Query(
-        default="all", alias="for", description="me: handed to you, or on offer, owned by your GitHub login"
+        default="all", alias="for", description="me: handed to you, or on offer, owned by one of your identities"
     ),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> dict[str, Any]:

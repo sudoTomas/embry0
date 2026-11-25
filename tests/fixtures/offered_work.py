@@ -313,7 +313,9 @@ def offered_work_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     keys.touch_last_used = AsyncMock()
     app.state.api_keys_repo = keys
     chat = MagicMock(disabled=False, email="chat@example.com", tier="admin", github_login=None)
-    app.state.users_repo = MagicMock(get=AsyncMock(return_value=chat), get_by_email=AsyncMock(return_value=None))
+    app.state.users_repo = MagicMock(
+        get=AsyncMock(return_value=chat), get_by_email=AsyncMock(return_value=None), people=AsyncMock(return_value=[])
+    )
     app.state.proposals_repo = FakeProposalRows()
     app.state.proposal_briefs_repo = None
     app.state.leads_repo = FakeLeads()

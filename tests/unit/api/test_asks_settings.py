@@ -31,6 +31,8 @@ from embry0.settings.sections import CATALOG
 from embry0.settings.store import SettingsStore, scoped_reader
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
 pytestmark = pytest.mark.requires_postgres
@@ -147,8 +149,7 @@ async def test_a_put_reaches_the_next_tick_of_the_running_loop(app: Any, client:
         read.append("decisions")
         return [{"id": "d1", "owners": ["ada"]}, {"id": "d2", "owners": ["ada"]}]
 
-    async def people() -> dict[str, str]:
-        return {"ada": "ada@example.com"}
+    people = people_reader(directory({"ada": "ada@example.com"}))
 
     loop = AskLoop(
         settings=scoped_reader(app.state.settings, section),

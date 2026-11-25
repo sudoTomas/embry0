@@ -16,6 +16,8 @@ from typing import Any
 from embry0.services.ask_loop import AskLoop
 from embry0.services.asks import AskPolicy, release, still_kept_from
 from tests.fixtures.asks import asks_read
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 
 SECTION = asks_read(
     {
@@ -90,8 +92,7 @@ async def test_an_ask_held_from_friday_evening_to_the_next_monday_is_still_asked
     async def listed() -> list[dict[str, Any]]:
         return list(decisions)
 
-    async def people() -> dict[str, str]:
-        return {"ada": "ada@example.com"}
+    people = people_reader(directory({"ada": "ada@example.com"}))
 
     async def section() -> Any:
         return SECTION

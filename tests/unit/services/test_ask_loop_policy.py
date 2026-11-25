@@ -16,6 +16,8 @@ from embry0.services.ask_loop import AskLoop
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
 from tests.fixtures.asks import asks_read
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 
 # Tuesday 2026-10-27, 10:00 in Chicago.
 NOW = datetime(2026, 10, 27, 15, 0, tzinfo=UTC)
@@ -68,8 +70,7 @@ class FakeAsks:
         return len(set(ask_ids))
 
 
-async def _people() -> dict[str, str]:
-    return {"ada": "ada@example.com"}
+_people = people_reader(directory({"ada": "ada@example.com"}))
 
 
 @pytest.mark.asyncio

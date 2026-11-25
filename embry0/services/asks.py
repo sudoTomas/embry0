@@ -5,9 +5,12 @@ renders and sends (``GET /asks/due``), reports it sent, and passes a button
 press back (``POST /asks/answer``). No model turns a reply into an answer.
 
 - **Who.** The person an open hand-off went to, and only them while it is
-  open; else each owner of the decision. A quest on offer a chat does not ask
-  (``held``) is asked of nobody.
-- **When.** Within working hours; one reminder after ``remind_hours``
+  open; else each owner of the decision, as the people's directory names them
+  (:mod:`embry0.services.owner_people`): a person by their email, else as
+  ``<forge>:<login>``. A quest on offer a chat does not ask (``held``) is
+  asked of nobody.
+- **When.** Within working hours, the person's own where they set them,
+  field by field, else their organization's; one reminder after ``remind_hours``
   unanswered; expired ``expire_days`` after it was sent, which answers
   nothing. An ask that waits in the queue, behind its person's limit or for
   working hours, was never sent and does not expire (#295); one the feed
@@ -33,14 +36,20 @@ from __future__ import annotations
 import base64
 import hashlib
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from embry0.settings.layers import PerRepository
 from embry0.settings.scope import organization_of
 from embry0.settings.sections.asks import AsksSettings, parse_hours, parse_weekdays
+
+if TYPE_CHECKING:
+    from embry0.services.owner_people import Directory
+
+#: Who an owner of a decision in a repository is asked as (``Directory.recipient``): a key, or None for nobody.
+RecipientOf = Callable[[str | None, Any], str | None]
 
 #: The states of an ask still waiting on its person.
 LIVE = ("queued", "sent", "reminded")
@@ -94,10 +103,22 @@ class AskPolicy:
     about a decision with no repository, or one not among ``decisions``,
     follows the deployment's. Each repository is resolved once, in memory, so
     a tick or a feed over many decisions reads nothing more.
+
+    Its working hours are its person's where they set them (D3 of the
+    people spec): their ``timezone``, ``hours`` and ``weekdays`` win field by
+    field over the organization's, read from ``directory``. A group, or a
+    login no person holds, follows the organization.
     """
 
-    def __init__(self, section: PerRepository[AsksSettings], decisions: Iterable[Mapping[str, Any]]) -> None:
+    def __init__(
+        self,
+        section: PerRepository[AsksSettings],
+        decisions: Iterable[Mapping[str, Any]],
+        directory: Directory | None = None,
+    ) -> None:
         self._section = section
+        self._directory = directory
+        self._for_person: dict[tuple[str, str], AskSettings] = {}
         #: The deployment's values: what an ask about a decision with no repository is held to.
         self.deployment = ask_settings(section.deployment())
         known = list(decisions)
@@ -114,9 +135,22 @@ class AskPolicy:
             found = self._by_repo[repo] = (organization_of(repo), ask_settings(self._section.repo(repo)))
         return found
 
-    def settings(self, decision_id: str) -> AskSettings:
-        """The values an ask about ``decision_id`` is held to."""
-        return self._of(decision_id)[1]
+    def settings(self, decision_id: str, recipient: str = "") -> AskSettings:
+        """The values an ask about ``decision_id`` is held to; for ``recipient``, with their own working hours."""
+        organization = self._of(decision_id)[1]
+        person = self._directory.of_recipient(recipient) if self._directory is not None and recipient else None
+        if person is None or not (person.timezone or person.hours or person.weekdays):
+            return organization
+        key = (decision_id, recipient.lower())
+        found = self._for_person.get(key)
+        if found is None:
+            found = self._for_person[key] = replace(
+                organization,
+                timezone=person.timezone or organization.timezone,
+                hours=parse_hours(person.hours) if person.hours else organization.hours,
+                weekdays=parse_weekdays(person.weekdays) if person.weekdays else organization.weekdays,
+            )
+        return found
 
     def organization(self, decision_id: str) -> str:
         """The organization whose ``max_open_per_person`` an ask about ``decision_id`` counts against;
@@ -171,17 +205,20 @@ def code_for(decision_id: str, taken: Collection[str]) -> str:
 
 def recipients(
     decision: Mapping[str, Any],
-    email_of: Mapping[str, str],
+    recipient_of: RecipientOf,
     *,
     include_held: bool = False,
     unowned_group: str = "",
 ) -> list[str]:
-    """Who is asked about ``decision``: its hand-off's person, else its owners (as emails where known).
+    """Who is asked about ``decision``: its hand-off's person, else its owners, as ``recipient_of`` names each.
 
-    An owner with no person in embry0 is ``github:<login>``: the deployment may
-    know how to reach them, or skip them. A decision nobody owns goes to
-    ``group:<name>`` when the deployment names a group. One held back from a
-    chat is asked of nobody unless ``include_held``.
+    ``recipient_of`` (``Directory.recipient``) asks a person by their email,
+    else as ``<forge>:<login>``, and a login no person holds as
+    ``<forge>:<login>`` too: the deployment may know how to reach them, or skip
+    them. It names nobody for a disabled person. A decision nobody owns, or
+    only disabled people do, goes to ``group:<name>`` when the deployment names
+    a group. One held back from a chat is asked of nobody unless
+    ``include_held``.
     """
     held_by = (decision.get("assigned_to") or {}).get("email")
     if held_by:
@@ -190,10 +227,10 @@ def recipients(
         return []
     out: list[str] = []
     for owner in decision.get("owners") or []:
-        login = str(owner).lstrip("@").lower()
-        who = email_of.get(login) or f"github:{login}"
-        if who not in out:
+        who = recipient_of(decision.get("repo"), owner)
+        if who is not None and who not in out:
             out.append(who)
+    # Nobody to ask: no owner, or only disabled people, who are no owners (people spec, section 3).
     if not out and unowned_group:
         out.append(f"group:{unowned_group.lower()}")
     return out
@@ -210,7 +247,7 @@ class Plan:
 def plan(
     decisions: Iterable[Mapping[str, Any]],
     live: Sequence[Mapping[str, Any]],
-    email_of: Mapping[str, str],
+    recipient_of: RecipientOf,
     *,
     include_held: bool = False,
     unowned_group: str = "",
@@ -221,7 +258,7 @@ def plan(
         dict.fromkeys(
             (str(d["id"]), r)
             for d in decisions
-            for r in recipients(d, email_of, include_held=include_held, unowned_group=unowned_group)
+            for r in recipients(d, recipient_of, include_held=include_held, unowned_group=unowned_group)
         )
     )
     have = {(str(a["decision_id"]), str(a["recipient"]).lower()): str(a["id"]) for a in live}
@@ -287,7 +324,7 @@ def release(
     handed = [a for a in live if (shown is None or shown(a)) and not leased(a, now)]
     out: list[tuple[Mapping[str, Any], bool]] = []
     for a in handed:
-        s = policy.settings(str(a["decision_id"]))
+        s = policy.settings(str(a["decision_id"]), str(a["recipient"]))
         if reminder_due(a, now, s) and working(now, s):
             out.append((a, True))
     queued = [a for a in handed if a.get("state") == "queued" and a["due_at"] <= now]
@@ -295,7 +332,7 @@ def release(
     # Each person's places: hand-offs, then the asks handed out before and unreported, whose leases lapsed.
     for a in sorted(queued, key=lambda a: (not handed_off(a), not _handed_out_before(a), *rank(a))):
         # Outside working hours a queued ask waits, its slot freed or not, for the next working time (#276).
-        s = policy.settings(str(a["decision_id"]))
+        s = policy.settings(str(a["decision_id"]), str(a["recipient"]))
         key = counted(a)
         if working(now, s) and (handed_off(a) or held.get(key, 0) < s.max_open_per_person):
             picked.append(a)

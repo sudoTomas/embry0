@@ -23,6 +23,8 @@ from embry0.settings.sections.asks import AsksSettings
 from embry0.settings.store import Scoped
 from embry0.storage import repo_renames
 from tests.fixtures.asks import asks_read
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 
 ON = AsksSettings(enabled=True, timezone="America/Chicago")
 S = ask_settings(ON)
@@ -40,32 +42,36 @@ def test_a_code_is_four_letters_from_the_decision_and_longer_when_taken() -> Non
 
 def test_the_hand_off_s_person_alone_is_asked_while_it_is_open() -> None:
     d = {"id": "d", "owners": ["ada", "@Bo"], "assigned_to": {"email": "cy@example.com"}}
-    assert recipients(d, {"ada": "ada@example.com"}) == ["cy@example.com"]
+    assert recipients(d, directory({"ada": "ada@example.com"}).recipient) == ["cy@example.com"]
 
 
 def test_owners_are_asked_by_email_where_known_and_by_login_otherwise_and_held_ones_by_nobody() -> None:
     d = {"id": "d", "owners": ["Ada", "@bo", "ada"], "assigned_to": None}
-    assert recipients(d, {"ada": "ada@example.com"}) == ["ada@example.com", "github:bo"]
-    assert recipients({**d, "held": True}, {}) == []
+    assert recipients(d, directory({"ada": "ada@example.com"}).recipient) == ["ada@example.com", "github:bo"]
+    assert recipients({**d, "held": True}, directory({}).recipient) == []
 
 
 def test_held_ones_are_asked_when_the_deployment_says_so() -> None:
     d = {"id": "d", "owners": ["ada"], "held": True}
-    assert recipients(d, {"ada": "ada@example.com"}, include_held=True) == ["ada@example.com"]
+    assert recipients(d, directory({"ada": "ada@example.com"}).recipient, include_held=True) == ["ada@example.com"]
 
 
 def test_a_decision_nobody_owns_goes_to_the_deployment_s_group_and_otherwise_to_nobody() -> None:
     d = {"id": "d", "owners": []}
-    assert recipients(d, {}) == []
-    assert recipients(d, {}, unowned_group="Triage") == ["group:triage"]
-    assert recipients({"id": "d", "owners": ["ada"]}, {}, unowned_group="triage") == ["github:ada"]
-    assert recipients({**d, "held": True}, {}, unowned_group="triage") == [], "held stays held unless asked for"
-    assert recipients({**d, "held": True}, {}, include_held=True, unowned_group="triage") == ["group:triage"]
+    assert recipients(d, directory({}).recipient) == []
+    assert recipients(d, directory({}).recipient, unowned_group="Triage") == ["group:triage"]
+    assert recipients({"id": "d", "owners": ["ada"]}, directory({}).recipient, unowned_group="triage") == ["github:ada"]
+    assert recipients({**d, "held": True}, directory({}).recipient, unowned_group="triage") == [], (
+        "held stays held unless asked for"
+    )
+    assert recipients({**d, "held": True}, directory({}).recipient, include_held=True, unowned_group="triage") == [
+        "group:triage"
+    ]
 
 
 def test_a_group_s_live_ask_stays_when_the_plan_runs_again() -> None:
     live = [{"id": "a1", "decision_id": "d", "recipient": "group:triage"}]
-    p = plan([{"id": "d", "owners": []}], live, {}, unowned_group="Triage")
+    p = plan([{"id": "d", "owners": []}], live, directory({}).recipient, unowned_group="Triage")
     assert p.ask == [] and p.withdraw == []
 
 
@@ -75,7 +81,7 @@ def test_the_plan_asks_whoever_is_new_and_withdraws_what_is_no_longer_wanted() -
         {"id": "a1", "decision_id": "d1", "recipient": "ada@example.com"},
         {"id": "a9", "decision_id": "gone", "recipient": "ada@example.com"},
     ]
-    p = plan(decisions, live, {"ada": "ada@example.com"})
+    p = plan(decisions, live, directory({"ada": "ada@example.com"}).recipient)
     assert p.ask == [("d2", "github:bo")] and p.withdraw == ["a9"]
 
 
@@ -165,8 +171,7 @@ async def test_a_tick_queues_withdraws_and_expires_and_never_re_asks_an_expired_
     async def listed() -> list[dict[str, Any]]:
         return decisions
 
-    async def people() -> dict[str, str]:
-        return {"ada": "ada@example.com"}
+    people = people_reader(directory({"ada": "ada@example.com"}))
 
     loop = AskLoop(settings=lambda: _read(ON), asks=asks, decisions=listed, people=people, clock=lambda: TUE_10)
     assert await loop.tick() == {"expired": 0, "withdrawn": 0, "queued": 1}

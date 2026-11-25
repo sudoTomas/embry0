@@ -36,6 +36,8 @@ from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
 from embry0.storage.repositories.asks import AsksRepository
 from embry0.storage.repositories.organizations import OrganizationsRepository
 from tests.fixtures.asks import CountingDb
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
 pytestmark = pytest.mark.requires_postgres
@@ -167,8 +169,7 @@ def _loop(app: Any, asks: FakeAsks, decisions: Callable[[], list[dict[str, Any]]
     async def listed() -> list[dict[str, Any]]:
         return decisions()
 
-    async def people() -> dict[str, str]:
-        return {"ada": "ada@example.com"}
+    people = people_reader(directory({"ada": "ada@example.com"}))
 
     return AskLoop(settings=app.state.ask_loop.settings, asks=asks, decisions=listed, people=people, clock=lambda: NOW)
 
@@ -313,6 +314,7 @@ async def feed(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
     app.state.users_repo = MagicMock(
         get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None),
         get_by_email=AsyncMock(return_value=None),
+        people=AsyncMock(return_value=[]),
     )
     decisions = [
         {"id": "acme-1", "repo": "acme/widgets", "stage": "offered", "owners": ["ada"], "actions": []},

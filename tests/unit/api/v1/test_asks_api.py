@@ -166,18 +166,28 @@ JOB = {
 
 
 class FakeUsers:
+    """Users who signed in, none of them a person yet: each stands in as one with their GitHub login (#179)."""
+
+    USERS = {
+        "ada@example.com": SimpleNamespace(
+            id="usr-ada", email="ada@example.com", name="Ada", github_login="ada", tier="operator"
+        ),
+        "nora@example.com": SimpleNamespace(
+            id="usr-nora", email="nora@example.com", name="Nora", github_login="nora", tier="none"
+        ),
+        "cy@example.com": SimpleNamespace(
+            id="usr-cy", email="cy@example.com", name="Cy", github_login="cy", tier="operator"
+        ),
+        "root@example.com": SimpleNamespace(
+            id="usr-root", email="root@example.com", name="Root", github_login=None, tier="admin"
+        ),
+    }
+
     async def get_by_email(self, email: str) -> Any:
-        people = {
-            "ada@example.com": SimpleNamespace(
-                email="ada@example.com", name="Ada", github_login="ada", tier="operator"
-            ),
-            "nora@example.com": SimpleNamespace(
-                email="nora@example.com", name="Nora", github_login="nora", tier="none"
-            ),
-            "cy@example.com": SimpleNamespace(email="cy@example.com", name="Cy", github_login="cy", tier="operator"),
-            "root@example.com": SimpleNamespace(email="root@example.com", name="Root", github_login=None, tier="admin"),
-        }
-        return people.get(email.lower())
+        return self.USERS.get(email.lower())
+
+    async def people(self) -> list[Any]:
+        return list(self.USERS.values())
 
 
 class FakeSettings:
@@ -269,6 +279,11 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
         "email": "ada@example.com",
         "name": "Ada",
         "github_login": "ada",
+        # #179: a person embry0 knows; to a caller with no repository allowlist, their chat handles (none here) and
+        # the time zone their ask is timed by.
+        "unknown": False,
+        "chat": [],
+        "timezone": "UTC",
     }
     assert due[0]["actions"] == ["start", "decline", "later", "send_to"]
     assert due[0]["dashboard_url"] == "https://e0.example/decisions?stage=offered"
@@ -480,6 +495,10 @@ async def test_a_group_is_asked_by_name_and_anyone_embry0_knows_may_answer_for_i
         "github_login": None,
         "email": None,
         "name": "triage",
+        # A group follows its decision's organization (#179); it has no handle of a person's.
+        "unknown": False,
+        "chat": [],
+        "timezone": "UTC",
     }
     assert due[0]["waiting"] == 2
 
