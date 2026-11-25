@@ -614,14 +614,21 @@ class OpenPRService:
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            head_ref = ((item.get("head") or {}).get("ref")) or ""
+            head, base = item.get("head") or {}, item.get("base") or {}
+            head_ref = head.get("ref") or ""
             title = item.get("title") or ""
+            # A fork: any head repository other than the base, a deleted one (head.repo null) included, as the
+            # pull-request read decides it (execution.pull_requests.GitHubPullRequests.read).
+            head_repo = str((head.get("repo") or {}).get("full_name") or "")
+            base_repo = str((base.get("repo") or {}).get("full_name") or "") or repo
             entry: dict[str, Any] = {
                 "number": item.get("number"),
                 "title": title[:200],
                 "head_ref": head_ref,
                 "url": item.get("html_url") or "",
                 "author": ((item.get("user") or {}).get("login")) or "",
+                "from_fork": not head_repo or head_repo.lower() != base_repo.lower(),
+                "default_branch": str((base.get("repo") or {}).get("default_branch") or "") or None,
             }
             entry.update(extract_pr_issue_refs(head_ref, title, item.get("body") or ""))
             prs.append(entry)

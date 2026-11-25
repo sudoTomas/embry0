@@ -1633,7 +1633,19 @@ async def _run_workflow(
                     issue_id=issue_id,
                 )
                 earlier = await _failed_job_owning(self, duplicate, issue_id) if duplicate is not None else None
-                if earlier is not None and duplicate is not None:
+                refused = continue_refusal(duplicate) if earlier is not None and duplicate is not None else None
+                if refused is not None and duplicate is not None:
+                    # The job would be granted a push to that pull request's branch: never a fork's branch (it is
+                    # another repository's, so this one's branch of the same name would be pushed) nor the
+                    # repository's default branch. The job works on a fresh branch of its own instead.
+                    logger.warning(
+                        "job_continue_refused",
+                        job_id=job_id,
+                        issue_id=issue_id,
+                        pr_url=duplicate["url"],
+                        reason=refused,
+                    )
+                elif earlier is not None and duplicate is not None:
                     # #349: the open PR holds work an earlier job of this
                     # issue pushed before it failed. Continue on it, as a
                     # follow-up does: same branch, same PR. Skipping would
@@ -1816,6 +1828,21 @@ async def _failed_job_owning(self: IssueExecutor, pr: dict[str, Any], issue_id: 
     newest = owners[0] if owners else None
     if newest and newest.get("issue_id") == issue_id and newest.get("status") in REDISPATCHABLE_JOB_STATUSES:
         return newest
+    return None
+
+
+def continue_refusal(pr: dict[str, Any]) -> str | None:
+    """Why a job may not continue on the open pull request ``pr`` (an entry of ``OpenPRService.list_open_prs``),
+    or None when it may: its branch becomes the job's, with a push grant to it. Refused, as a follow-up is
+    (``CommentDispatchService.start_followup``): a fork's pull request, one whose head is the repository's default
+    branch, and one whose default branch the listing did not give."""
+    if pr.get("from_fork") is not False:
+        return "pr_from_fork"
+    default_branch = pr.get("default_branch")
+    if not default_branch:
+        return "default_branch_unread"
+    if pr.get("head_ref") == default_branch:
+        return "pr_head_is_default_branch"
     return None
 
 

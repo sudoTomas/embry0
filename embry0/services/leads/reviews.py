@@ -5,8 +5,10 @@ Reads the open pull requests of the repository with their review threads
 resolved). A thread is unanswered when it is neither resolved nor outdated,
 a reviewer started it, and its newest comment, not by the pull request's
 author, is older than the staleness window. Each pull request with one or
-more is one lead; accepting it starts a follow-up job on its branch. Drafts
-and pull requests from forks are left out: a follow-up cannot push to a fork.
+more is one lead; accepting it starts a follow-up job on its branch. Drafts,
+pull requests from forks and pull requests whose head is the repository's
+default branch are left out: a follow-up is refused on each
+(``CommentDispatchService.start_followup``), so none is offered.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ PULLS = 30
 _QUERY = """
 query OpenReviewThreads($owner: String!, $name: String!, $first: Int!) {
   repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
     pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
       totalCount
       nodes {
@@ -110,7 +113,8 @@ def review_lead(repo: str, pull: dict[str, Any], threads: list[dict[str, Any]]) 
 async def find_unanswered_reviews(
     client: Any, repo: str, *, now: datetime, stale_days: int = DEFAULT_STALE_DAYS
 ) -> FinderResult:
-    """Every open, same-repository, non-draft pull request with review threads nobody answered."""
+    """Every open, same-repository, non-draft pull request not from the default branch with review threads nobody
+    answered. A repository whose default branch the answer does not name is not read whole."""
     owner, name = repo.split("/", 1)
     resp = await client.post(
         "/graphql",
@@ -121,7 +125,11 @@ async def find_unanswered_reviews(
     body = resp.json() if resp.status_code == 200 else None
     if not isinstance(body, dict) or body.get("errors") or not (body.get("data") or {}).get("repository"):
         return FinderResult([], complete=False)
-    pulls = body["data"]["repository"]["pullRequests"] or {}
+    repository = body["data"]["repository"]
+    default_branch = str((repository.get("defaultBranchRef") or {}).get("name") or "")
+    if not default_branch:
+        return FinderResult([], complete=False)
+    pulls = repository["pullRequests"] or {}
     leads = []
     for pull in pulls.get("nodes") or []:
         if (
@@ -129,6 +137,7 @@ async def find_unanswered_reviews(
             or pull.get("isDraft")
             or pull.get("isCrossRepository")
             or pull.get("number") is None
+            or pull.get("headRefName") == default_branch
         ):
             continue
         threads = unanswered(pull, now=now, stale_days=stale_days)
