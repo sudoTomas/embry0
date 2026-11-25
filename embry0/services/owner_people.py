@@ -174,9 +174,10 @@ def _stand_ins(users: Iterable[Any], linked: set[str]) -> tuple[Person, ...]:
 
 
 def unheld_owners(owners: Iterable[Mapping[str, Any]], directory: Directory) -> list[dict[str, Any]]:
-    """The owner logins no person holds, from ``owners`` (``{repo, owner}`` each, as stored): each login on its
-    forge, ``{forge, login, repos}``, with the repositories naming it, by forge and login. What the People page
-    offers to add (D6)."""
+    """The owner logins nobody holds, from ``owners`` (``{repo, owner}`` each, as stored): each login on its forge,
+    ``{forge, login, repos}``, with the repositories naming it, by forge and login. What the People page offers to
+    add (D6). Nobody means no person, and no user standing in for one by their GitHub login: that user is suggested
+    as a user, whose Add takes the login."""
     found: dict[tuple[str, str], set[str]] = {}
     for row in owners:
         repo, owner = str(row.get("repo") or ""), row.get("owner")

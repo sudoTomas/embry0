@@ -27,8 +27,9 @@ const isForge = (forge: string): forge is IdentityKind => (FORGE_KINDS as readon
 /**
  * People (#179): who embry0 asks and names as an owner, whether or not they sign in. Operators and admins read;
  * adding, editing and removing are an admin's and are offered disabled below that. Below the people, who could be
- * added: the users who sign in and are no person yet, and the owner logins no person holds, each with an Add that
- * starts the form from what embry0 knows of them. embry0 adds nobody by itself.
+ * added: the users who sign in and are no person yet, and the owner logins nobody holds (a user standing in by their
+ * GitHub login holds theirs), each with an Add that starts the form from what embry0 knows of them. embry0 adds nobody
+ * by itself.
  */
 export function PeoplePage() {
   const [includeDisabled, setIncludeDisabled] = useState(false);
@@ -82,7 +83,8 @@ export function PeoplePage() {
           <tbody>
             {list.data.map((person) => (
               <tr key={person.id} data-testid="person-row">
-                <td className="whitespace-nowrap">
+                {/* A long name or email wraps anywhere, so on a phone the row's Actions stay on screen. */}
+                <td className="[overflow-wrap:anywhere]" data-testid="person-name">
                   <span className="font-medium">{person.name}</span>
                   {person.disabled && (
                     <Badge tone="neutral" className="ml-2">

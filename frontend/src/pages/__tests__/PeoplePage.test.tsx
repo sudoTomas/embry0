@@ -73,6 +73,16 @@ describe("PeoplePage", () => {
     expect(within(rows[1]).getByText("Their organization's")).toBeInTheDocument();
   });
 
+  it("lets a long name or email wrap, so a phone keeps each row's Actions on screen", () => {
+    renderPage();
+    const rows = screen.getAllByTestId("person-row");
+    for (const row of rows) {
+      const cell = (row as HTMLTableRowElement).cells[0];
+      expect(cell.className, "the name cell never holds a long name or email on one line").not.toMatch(/nowrap/);
+      expect(cell.className, "the name cell breaks an email with no spaces anywhere").toContain("[overflow-wrap:anywhere]");
+    }
+  });
+
   it("shows the disabled people on request, through the hook", async () => {
     renderPage();
     expect(mockDirectory).toHaveBeenLastCalledWith(false);
