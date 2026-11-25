@@ -13,7 +13,10 @@ and who is asked about a decision nobody owns, are the deployment's
 is withdrawn, never expired. Each ask is held to its decision's organization's values
 (spec 2026-10-29): an organization's layer may set the hours, weekdays, time
 zone, reminder and expiry its asks follow; an ask about a decision with no
-repository follows the deployment's.
+repository follows the deployment's. The owners are asked as the people's
+directory names them, read once a tick (#179): a person by their email, else
+as ``<forge>:<login>``, the forge their repository's organization's, and a
+person who set their own hours, time zone or weekdays is held to those.
 A person whose ask about a decision reached them and expired is not asked about
 it again: the decision stays on their page. One handed out but never reported
 sent keeps them from being asked again for ``expire_days`` only, and one that
@@ -32,6 +35,7 @@ from typing import Any, Protocol
 import structlog
 
 from embry0.services.asks import AskPolicy, expired, next_working_time, plan, still_kept_from
+from embry0.services.owner_people import Directory
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.asks import AsksSettings
 
@@ -54,8 +58,9 @@ class AskLoop:
     #: Every open decision, with owners, held and assigned_to (the decisions API's shape), none cut off by the
     #: decisions page or the inbox's (#273, #296): an ask whose decision is not among them is withdrawn.
     decisions: Callable[[], Awaitable[list[dict[str, Any]]]]
-    #: GitHub login (lowercased) to the email of the person who named it.
-    people: Callable[[], Awaitable[Mapping[str, str]]]
+    #: The people and the forges of the repositories given, read once a tick (``owner_people.directory_of``): who
+    #: each owner is asked as, and the working hours a person set for themselves.
+    people: Callable[[Iterable[str | None]], Awaitable[Directory]]
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     #: Whether the last tick found asks on; None before the first.
     _enabled: bool | None = field(default=None, init=False, repr=False)
@@ -79,7 +84,8 @@ class AskLoop:
         now = self.clock()
         # The decisions first: an ask is held to its decision's organization's values.
         decisions = await self.decisions()
-        policy = AskPolicy(section, decisions)
+        directory = await self.people(d.get("repo") for d in decisions)
+        policy = AskPolicy(section, decisions, directory)
         open_ids = {str(d["id"]) for d in decisions}
         live = await self.asks.live()
         # Only an ask whose decision is open expires. The rest are withdrawn below: expiring one
@@ -96,13 +102,13 @@ class AskLoop:
         done_with = still_kept_from(await self.asks.expired_pairs(), now, policy)
         base = section.deployment()
         changes = plan(
-            decisions, live, await self.people(), include_held=base.include_held, unowned_group=base.unowned_group
+            decisions, live, directory.recipient, include_held=base.include_held, unowned_group=base.unowned_group
         )
         if changes.withdraw:
             await self.asks.close(changes.withdraw, state="withdrawn", now=now)
         # One call for every new ask, so a tick makes no round trip per decision (#273).
         new = [
-            (decision_id, recipient, next_working_time(now, policy.settings(decision_id)))
+            (decision_id, recipient, next_working_time(now, policy.settings(decision_id, recipient)))
             for decision_id, recipient in changes.ask
             if (decision_id, recipient) not in done_with
         ]

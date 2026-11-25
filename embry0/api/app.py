@@ -4,7 +4,7 @@ import asyncio
 import os
 import pathlib
 import secrets
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -2997,11 +2997,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # feed reads the same.
         return await _ask_decisions(app)
 
-    async def _ask_people() -> dict[str, str]:
-        users = getattr(app.state, "users_repo", None)
-        if users is None:
-            return {}
-        return {str(u.github_login).lower(): u.email.lower() for u in await users.people() if u.github_login}
+    from embry0.services.owner_people import Directory, directory_of
+
+    async def _ask_people(repos: Iterable[str | None]) -> Directory:
+        # The people and each repository's forge, once a tick (#179): who an owner is asked as, and their hours.
+        return await directory_of(app.state, repos)
 
     app.state.ask_loop = AskLoop(
         settings=_scoped_reader(app.state.settings, _ASKS),

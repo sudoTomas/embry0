@@ -38,6 +38,7 @@ from embry0.storage.repositories.leads import LeadsRepository
 from embry0.storage.repositories.repos import ReposRepository
 from tests.fixtures.areas import no_areas_for
 from tests.fixtures.leads import leads_section
+from tests.fixtures.people_directory import directory
 from tests.unit.api.v1.test_proposals_api import FakeLeads, FakeOrgs, FakeRepo
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 from tests.unit.services.leads.fakes import FakeForge
@@ -76,7 +77,11 @@ async def app(db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch)
     keys.touch_last_used = AsyncMock()
     app.state.api_keys_repo = keys
     user = MagicMock(disabled=False, email="alex@example.com")
-    app.state.users_repo = MagicMock(get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None))
+    app.state.users_repo = MagicMock(
+        get=AsyncMock(side_effect=lambda uid: user if uid == "usr-admin" else None),
+        people=AsyncMock(return_value=[]),
+        disabled_ids=AsyncMock(return_value=set()),
+    )
     # The proposals feed: two backlog tickets of acme/api, ready 70 and 40 (tests.unit.api.v1.test_proposals_api).
     app.state.proposals_repo = FakeRepo()
     app.state.leads_repo = FakeLeads()
@@ -347,7 +352,7 @@ async def test_a_held_flag_follows_each_repository_s_ask_min_on_every_path_that_
     assert decided.status_code == 200, decided.text
     decisions = {d["id"]: d for d in decided.json()["decisions"] if d["kind"] == "ticket"}
     assert {i: d["held"] for i, d in decisions.items()} == {"offer:ticket:acme": False, "offer:ticket:globex": True}
-    people = {"octo": "octo@example.com", "pat": "pat@example.com"}
+    people = directory({"octo": "octo@example.com", "pat": "pat@example.com"}).recipient
     assert recipients(decisions["offer:ticket:acme"], people) == ["octo@example.com"], "acme's ticket is asked"
     assert recipients(decisions["offer:ticket:globex"], people) == [], "globex's is asked of nobody"
 

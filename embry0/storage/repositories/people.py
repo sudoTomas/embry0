@@ -7,8 +7,9 @@ one transaction with its ``audit_log`` row (``person.created``,
 audit row cannot be stored does not happen. Values are checked by
 :mod:`embry0.services.people` before they are stored.
 
-**A linked user's GitHub login, for one release.** ``users.github_login`` is
-still what owners are matched by. While a person is linked to a user, that
+**A linked user's GitHub login, for one release.** Owners are matched by the
+people's identities (:mod:`embry0.services.owner_people`), a user with no
+person by ``users.github_login`` until it is retired. While a person is linked to a user, that
 login is one of the person's ``github`` identities: the one it names when it
 still is one, else the person's oldest, else none. A change of the person's
 GitHub identities, or of their link, writes it in the same transaction, and

@@ -134,13 +134,23 @@ person_identities
 It now returns, for each login, the person its identity names, or the login marked unknown. Its consumers:
 
 - **The decisions feed** shows a person by name and an unknown login as itself, with "add".
-- **Asks** go to people.
-  - An ask to an unknown login is not sent. The decision lists it as unknown, so a person can add them, and asks
-    the decision's other owners.
-  - `asks.recipient` keeps its text: the person's id once known.
+- **Asks** go to people (decided for pull request 4).
+  - An owner is a login on the forge of its repository's organization (else the repository's own, else GitHub):
+    `<forge>:<login>` is looked up among the identities.
+  - A person is asked by their email, else as `<forge>:<login>`. `asks.recipient` keeps that text, so the asks
+    queued before go on under the keys they had.
+  - An unknown login is still asked, as `<forge>:<login>`, as before: `GET /asks/due` marks it `unknown: true`,
+    and the People page lists it with "add" (pull request 6). A disabled person is not asked and is no owner.
+  - For one release, a user who signed in with a GitHub login and has no person yet counts as a person holding
+    that login, read and never stored, so a user who signed in after the backfill keeps being asked and deciding.
 - **Hand-offs** name a person by email. An email with no person is listed as unknown with "add", as a login is.
-- **Who may decide.** `_may_decide` compares the signed-in user's person with the decision's owners, by identity
-  instead of by `users.github_login` alone.
+- **Who may decide.** `_may_decide` resolves the email the assistant verified to a person, signed in or not, and
+  compares that person's identities with the decision's owners on its forge, instead of `users.github_login`
+  (decided for pull request 4). A caller owns a decision only as the person the directory names for one of its
+  owners, so a login left on an unlinked user owns nothing the person holds. Acting as admin still needs a
+  signed-in admin; a dashboard session answers as itself; a person with no email answers nothing from a chat. A
+  disabled user or person decides nothing, and a person whose sign-in is disabled is disabled with it.
+  `GET /decisions?for=me` matches the viewer's person the same way.
 
 ## 5. Asks
 
@@ -148,9 +158,9 @@ It now returns, for each login, the person its identity names, or the login mark
   time, by the person's time zone, else the organization's, else the deployment's. `remind_hours`, `expire_days`
   and `max_open_per_person` stay the organization's.
 - **Chat handles.**
-  - `GET /asks/due` adds `person: {id, name, chat: {channel, id}}` to each ask whose person has a handle, for a key
-    with no repository allowlist (D4).
-  - A restricted key reads `person: {id, name}`.
+  - `GET /asks/due` adds `chat: [{channel, id}]` and the `timezone` the ask is timed by to each recipient, for a
+    caller with no repository allowlist (D4; decided for pull request 4 in place of a `person` object).
+  - A restricted key reads the recipient as before, by key and name, with neither.
   - An ask whose person has no handle is still handed out. The assistant decides where it goes, as it does today.
 
 ## 6. `agent_questions` (pull request 1)
@@ -229,8 +239,11 @@ agent_questions:
      suggestion. For a person, the answer says when a cleared login falls back to their oldest GitHub identity.
    - A GitHub login is one person's: an identity may not be a login another user signs in as, and a user's login may
      not be another person's identity.
-4. **`feat(owners): owners resolve to people`**: section 4, with unknown logins listed by the feed and decisions.
-5. **`feat(asks): a person's hours and chat handle`**: section 5.
+4. **`feat(owners): owners resolve to people`**: sections 4 and 5 together (decided 2026-11-25): owners resolve
+   to people on their repository's forge, asks go to people in their own hours with their chat handles, and who
+   may decide, from a chat or as "waiting for me", is matched by identity. Unknown logins are marked in
+   `GET /asks/due`; their "add" listing comes with the People page.
+5. *(folded into pull request 4)*
 6. **`feat(frontend): the People page`**:
    - add and edit a person;
    - link a sign-in;

@@ -130,7 +130,12 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     keys.touch_last_used = AsyncMock()
     app.state.api_keys_repo = keys
     chat = MagicMock(disabled=False, email="chat@example.com")
-    app.state.users_repo = MagicMock(get=AsyncMock(return_value=chat), get_by_email=AsyncMock(return_value=None))
+    app.state.users_repo = MagicMock(
+        get=AsyncMock(return_value=chat),
+        get_by_email=AsyncMock(return_value=None),
+        people=AsyncMock(return_value=[]),
+        disabled_ids=AsyncMock(return_value=set()),
+    )
     offers: list[Proposal] = []
     app.state.offers = offers
 
@@ -300,4 +305,57 @@ async def test_only_the_assistant_and_operators_hand_asks_out(app: Any, scope: s
     assert [a["id"] for a in handed] == ["q-offer-web"], f"{scope}: the page is read all the same"
     assert (stored.get("lease_until") is not None) is hands_out, (
         f"a {scope} key {'did not lease' if hands_out else 'leased'} the asks it read: {stored}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_key_with_an_allowlist_reads_no_person_s_chat_handle_or_hours(app: Any) -> None:
+    """#179, D4 of the people spec: a person's chat handles and hours are the deployment's, so a key limited to some
+    repositories is handed the asks it may read, each recipient by name and key, and neither."""
+    from tests.fixtures.people_directory import person
+
+    ed = person("Ed", email="ed@example.com", identities=[("telegram", "ed_tg")], timezone="Asia/Tokyo")
+
+    class People:
+        async def all(self, *, include_disabled: bool = False) -> list[Any]:
+            return [ed]
+
+    app.state.people_repo = People()
+    app.state.offers.append(_offer("issue:web", "acme/web"))
+    app.state.asks_repo.codes["offer:issue:web"] = "WEBQ"
+    app.state.asks_repo.rows = [ask("q-offer-web", "offer:issue:web", "ed@example.com")]
+    [handed] = (await _get(app, "/api/v1/asks/due"))["asks"]
+    assert handed["recipient"]["name"] == "Ed" and handed["recipient"]["key"] == "ed@example.com", (
+        f"the limited key reads the person by name and key: {handed['recipient']}"
+    )
+    assert "chat" not in handed["recipient"] and "timezone" not in handed["recipient"], (
+        f"a key with a repository allowlist read a person's chat handle or hours: {handed['recipient']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_read_key_reads_no_person_s_chat_handle_or_hours_either(app: Any) -> None:
+    """#179, #704 review: not only an allowlist keeps them; a read key, which GET /people refuses, reads none."""
+    from dataclasses import replace
+
+    from tests.fixtures.people_directory import person
+
+    ed = person("Ed", email="ed@example.com", identities=[("telegram", "ed_tg")], timezone="Asia/Tokyo")
+
+    class People:
+        async def all(self, *, include_disabled: bool = False) -> list[Any]:
+            return [ed]
+
+    keys = app.state.api_keys_repo
+    row = await keys.get_by_hash(hash_token(KEY))
+    reader = replace(row, scope="read", allowed_repos=None)
+    keys.get_by_hash = AsyncMock(side_effect=lambda h: reader if h == hash_token(KEY) else None)
+    bust_api_key_cache()
+    app.state.people_repo = People()
+    app.state.offers.append(_offer("issue:web", "acme/web"))
+    app.state.asks_repo.codes["offer:issue:web"] = "WEBQ"
+    app.state.asks_repo.rows = [ask("q-offer-web", "offer:issue:web", "ed@example.com")]
+    [handed] = (await _get(app, "/api/v1/asks/due?peek=1"))["asks"]
+    assert "chat" not in handed["recipient"] and "timezone" not in handed["recipient"], (
+        f"a read key read a person's chat handle or hours: {handed['recipient']}"
     )

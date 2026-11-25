@@ -27,6 +27,8 @@ from embry0.services.ask_loop import AskLoop
 from embry0.settings.sections.asks import ASKS
 from embry0.settings.store import scoped_reader
 from embry0.storage.database import DatabasePool
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 from tests.fixtures.repository_writes import COVERED, MASTER, NOW, UNCOVERED, call, repository_writes_app
 from tests.fixtures.statements import count_statements, counted
 
@@ -334,8 +336,7 @@ async def test_the_loop_and_the_feed_read_no_report_and_the_feed_s_page_carries_
         )
         assert put.status_code == 200, put.text
 
-        async def people() -> dict[str, str]:
-            return {}
+        people = people_reader(directory({}))
 
         loop = AskLoop(
             settings=scoped_reader(app.state.settings, ASKS),

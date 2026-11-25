@@ -22,6 +22,8 @@ from embry0.services.ask_loop import AskLoop
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.asks import AsksRepository
 from tests.fixtures.asks import asks_read
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 
 pytestmark = pytest.mark.requires_postgres
 
@@ -51,8 +53,7 @@ def _loop(asks: AsksRepository, clock: list[datetime]) -> AskLoop:
     async def decisions() -> list[dict[str, Any]]:
         return [{"id": f"offer:issue:{i}", "owners": ["ada"]} for i in (1, 2, 3)]
 
-    async def people() -> dict[str, str]:
-        return {"ada": "ada@example.com"}
+    people = people_reader(directory({"ada": "ada@example.com"}))
 
     return AskLoop(settings=section, asks=asks, decisions=decisions, people=people, clock=lambda: clock[0])
 

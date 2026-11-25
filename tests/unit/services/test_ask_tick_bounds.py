@@ -17,6 +17,8 @@ from embry0.services import ask_loop, asks
 from embry0.services.ask_loop import AskLoop
 from embry0.services.asks import plan
 from tests.fixtures.asks import asks_read
+from tests.fixtures.people_directory import asked as people_reader
+from tests.fixtures.people_directory import directory
 
 NOW = datetime(2026, 10, 27, 15, 0, tzinfo=UTC)
 
@@ -40,7 +42,7 @@ def _sets_built(monkeypatch: pytest.MonkeyPatch, module: Any) -> type[CountingSe
 def _plan(n: int) -> Any:
     decisions = [{"id": f"d{i}", "owners": ["ada"]} for i in range(n)]
     live = [{"id": f"a{i}", "decision_id": f"d{i}", "recipient": "ada@example.com"} for i in range(n)]
-    return plan(decisions, live, {"ada": "ada@example.com"})
+    return plan(decisions, live, directory({"ada": "ada@example.com"}).recipient)
 
 
 @pytest.mark.parametrize("n", [10, 20_000])
@@ -105,8 +107,7 @@ async def _expiring_tick(n: int) -> dict[str, int]:
     async def decisions() -> list[dict[str, Any]]:
         return [{"id": f"d{i}", "owners": ["ada"]} for i in range(n)]
 
-    async def people() -> dict[str, str]:
-        return {"ada": "ada@example.com"}
+    people = people_reader(directory({"ada": "ada@example.com"}))
 
     loop = AskLoop(settings=section, asks=rows, decisions=decisions, people=people, clock=lambda: NOW)
     return await loop.tick()
