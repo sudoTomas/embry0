@@ -42,8 +42,6 @@ function key(name: string, value: unknown) {
     source: "document",
     set_by: null,
     set_at: null,
-    env: null,
-    env_still_set: false,
     overridable: [],
     refused: null,
     description: "",
@@ -161,52 +159,6 @@ describe("GeneralTab", () => {
     expect(screen.getByTestId("max_budget_per_job_usd-source")).toHaveTextContent(/^Imported at upgrade on /);
     expect(screen.getByTestId("daily_cap_usd-source")).toHaveTextContent(/^Set by alex@example\.com on /);
     expect(screen.getByTestId("rate_limit_per_author_per_hour-source")).toHaveTextContent(/^Set by someone else on /);
-  });
-
-  it("shows the limits enforced while the import has not happened, and where they are read from", async () => {
-    // The review's case: the import failed over a saved row of 2 / 20 / hard. The tab must show the caps
-    // enforced, so an operator who lowers the daily cap lowers it from 20, not from the default 100.
-    const enforced: Record<string, { value: unknown; label: string; read_from: string }> = {
-      max_budget_per_job_usd: { value: 2, read_from: "row", label: "the budget_config table" },
-      daily_cap_usd: { value: 20, read_from: "row", label: "the budget_config table" },
-      overrun_mode: { value: "hard", read_from: "row", label: "the budget_config table" },
-      monthly_cap_usd: { value: 500, read_from: "default", label: "the default" },
-      rate_limit_per_author_per_hour: { value: 3, read_from: "variable", label: "RATE_LIMIT_PER_AUTHOR_PER_HOUR" },
-    };
-    mockGet.mockImplementation(async (url: string) => {
-      if (url === "/config/settings") return { data: DOCUMENT };
-      return {
-        data: {
-          ...EFFECTIVE,
-          sections: [
-            {
-              name: "budget",
-              summary: "",
-              keys: Object.entries(LIMITS).map(([name, value]) => {
-                const pending = enforced[name];
-                if (!pending) return key(name, value);
-                return {
-                  ...key(name, pending.value),
-                  source: "not_imported",
-                  not_imported: { read_from: pending.read_from, label: pending.label },
-                };
-              }),
-            },
-          ],
-        },
-      };
-    });
-    renderTab();
-    expect(await screen.findByLabelText("Daily budget cap (USD)")).toHaveValue(20);
-    expect(screen.getByLabelText("Max budget per job (USD)")).toHaveValue(2);
-    expect(screen.getByLabelText("Overrun mode")).toHaveValue("hard");
-    expect(screen.getByTestId("daily_cap_usd-source")).toHaveTextContent(
-      /^Not imported yet: read from the budget_config table$/,
-    );
-    expect(screen.getByTestId("rate_limit_per_author_per_hour-source")).toHaveTextContent(
-      /^Not imported yet: read from RATE_LIMIT_PER_AUTHOR_PER_HOUR$/,
-    );
-    expect(screen.getByTestId("monthly_cap_usd-source")).toHaveTextContent(/^Not imported yet: the default$/);
   });
 
   it("names the providers page in sentence case, as its section title and the sidebar do", async () => {

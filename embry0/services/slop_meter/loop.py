@@ -144,68 +144,13 @@ class MeterRead:
     snapshot: Any = None
 
 
-@dataclass(frozen=True)
-class _NotImported:
-    """The ``slop_meter`` section with the keys the import has not imported read from their variables, as the
-    release before read them (``legacy``), where no layer sets them."""
-
-    scoped: Any
-    legacy: Mapping[str, Any]
-
-    def deployment(self) -> SlopMeterSettings:
-        model: SlopMeterSettings = self.scoped.deployment()
-        return model.model_copy(update=dict(self.legacy))
-
-    def repo(self, repo: str | None) -> SlopMeterSettings:
-        resolved = self.scoped.snapshot.resolve(SLOP_METER, repo=repo)
-        own = {key for values in resolved.applied.values() for key in values}
-        updates = {key: value for key, value in self.legacy.items() if key not in own}
-        model: SlopMeterSettings = resolved.model
-        return model.model_copy(update=updates) if updates else model
-
-
-def not_imported(snapshot: Any, config: Any) -> dict[str, Any]:
-    """The keys of the ``slop_meter`` section the environment import has not imported into the deployment's
-    document (a first start whose import failed) and that it does not set, each with its variable's value as the
-    import would read it; a variable not set is left out, so its key reads its default, as it did."""
-    from embry0.settings.bootstrap import env_value
-    from embry0.settings.document import mapping
-
-    stored = mapping(snapshot.data.get(SLOP_METER.name))
-    out: dict[str, Any] = {}
-    for key in SLOP_METER.imports():
-        if snapshot.imported(f"{SLOP_METER.name}.{key}") or key in stored:
-            continue
-        value = env_value(SLOP_METER, key, config)
-        if value is not None:
-            out[key] = value
-    return out
-
-
-def meter_reader(store: Any, config: Any = None) -> Callable[[], Awaitable[MeterRead]]:
+def meter_reader(store: Any) -> Callable[[], Awaitable[MeterRead]]:
     """The reader the meter is built with: each call takes one snapshot of the settings documents
-    (``store.snapshot()``) and reads the judge's model, the enrollment and the ``slop_meter`` section from it.
-
-    With ``config``, a key the environment import has not imported yet reads
-    its variable, as the budget's readers do (#171): a deployment that had the
-    meter off keeps it off until the import, which the budget policy tries
-    again while it runs, succeeds (``slop_meter_settings_not_imported``).
-    """
-    logged: set[str] = set()
+    (``store.snapshot()``) and reads the judge's model, the enrollment and the ``slop_meter`` section from it."""
 
     async def read() -> MeterRead:
         snapshot = await store.snapshot()
         meter: PerRepository[SlopMeterSettings] = snapshot.scoped(SLOP_METER)
-        legacy = not_imported(snapshot, config) if config is not None else {}
-        if legacy:
-            meter = _NotImported(meter, legacy)
-            if set(legacy) - logged:
-                logged.update(legacy)
-                logger.error(
-                    "slop_meter_settings_not_imported",
-                    keys=sorted(f"{SLOP_METER.name}.{key}" for key in legacy),
-                    hint="read from their variables, as the release before read them, until the import succeeds",
-                )
         return MeterRead(
             models=model_lookup(snapshot, "slop_judge"), enrollment=enrollment(snapshot), meter=meter, snapshot=snapshot
         )
@@ -421,6 +366,8 @@ class SlopMeterLoop:
         self._store = store
         self._mirror = mirror
         self._pruner = Pruner(store=store, mirror=mirror, exits=exits, audit=audit, clock=clock)
+        #: Whether this process said the prune is held for an undecided enrollment (said once).
+        self._prune_held_said = False
         self._token_for = token_for
         self._client_for = client_for
         self._areas_of = areas_of
@@ -467,9 +414,8 @@ class SlopMeterLoop:
         The settings and the registry are read first: which repositories are
         enrolled, the judge's model and the ``slop_meter`` section, from one
         snapshot. What the meter keeps under a spelling the registry spells
-        otherwise moves onto the registry's. Once the enrollment is settled,
-        what it keeps of a repository out of scope is removed after the grace
-        period. Then the git work (no API calls). Then the forge calls, dealt
+        otherwise moves onto the registry's. What it keeps of a repository out
+        of scope is removed after the grace period. Then the git work (no API calls). Then the forge calls, dealt
         one per repository in turn from its credential's budget, so a large
         backlog in one cannot starve the rest; the starting repository
         rotates every tick. Last, every repository that is caught up is
@@ -537,9 +483,19 @@ class SlopMeterLoop:
 
     async def _prune(self, read: MeterRead, registered: Registered) -> PruneOutcome | None:
         """Remove, after the grace period, what the meter keeps of every repository out of its scope: not
-        enrolled, or not registered. An inactive repository that is enrolled keeps what was read. Nothing
-        until the enrollment is settled."""
-        if not read.enrollment.settled(SCOPE):
+        enrolled, or not registered. An inactive repository that is enrolled keeps what was read. Nothing while
+        the enrollment is undecided: a deployment that skipped the release that enrolled what the meter read before
+        reads nothing until an operator enrolls (:meth:`Enrollment.prune_held`)."""
+        if read.enrollment.prune_held(SCOPE):
+            if not self._prune_held_said and await self._keeps_any():
+                self._prune_held_said = True
+                logger.warning(
+                    "slop_meter_prune_held",
+                    hint=(
+                        "nothing is enrolled and no import ever ran: set background.slop_meter in the deployment's "
+                        "document or an organization's layer"
+                    ),
+                )
             return None
         keep = read.enrollment.scope(SCOPE, registered.every)
         try:
@@ -547,6 +503,13 @@ class SlopMeterLoop:
         except Exception:  # noqa: BLE001 - reading what is in scope goes on; the next tick tries again
             logger.warning("slop_meter_prune_failed", exc_info=True)
             return None
+
+    async def _keeps_any(self) -> bool:
+        """Whether the meter keeps anything, rows or a mirror: a held prune of nothing is not worth a line."""
+        try:
+            return bool(await self._store.held()) or bool(await self._mirror.held())
+        except Exception:  # noqa: BLE001 - only whether to say it is held
+            return True
 
     async def prune_only(self, read: MeterRead | None = None) -> PruneOutcome | None:
         """What a tick removes, and nothing else: the run of a schedule with the meter off."""

@@ -36,9 +36,6 @@ def _refusal(**kwargs: Any) -> str:
 def test_the_test_section_registers_and_keeps_its_declarations() -> None:
     assert SAMPLE.fields == ("enabled", "per_tick", "remind_hours", "mode", "labels", "zone")
     assert SAMPLE.org_keys == frozenset({"per_tick", "remind_hours"}), "org_keys are kept as declared"
-    assert SAMPLE.imports()["per_tick"].attr == "linear_reconcile_max_dispatches", (
-        "a plain string is the config attribute"
-    )
     assert SAMPLE.defaults() == SampleSettings(), "defaults() is the model with nothing written"
 
 
@@ -63,10 +60,9 @@ def test_a_field_that_looks_secret_is_refused() -> None:
     assert "field 'api_token' looks like a secret" in _refusal(model=Secretive)
 
 
-@pytest.mark.parametrize("label", ["org_keys", "repo_keys", "env"])
+@pytest.mark.parametrize("label", ["org_keys", "repo_keys"])
 def test_a_declaration_that_names_no_field_is_refused(label: str) -> None:
-    value: Any = {"limt": "leads_enabled"} if label == "env" else frozenset({"limt"})
-    assert f"{label} names no field of the model: ['limt']" in _refusal(**{label: value})
+    assert f"{label} names no field of the model: ['limt']" in _refusal(**{label: frozenset({"limt"})})
 
 
 @pytest.mark.parametrize(

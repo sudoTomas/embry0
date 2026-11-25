@@ -171,9 +171,6 @@ OPAQUE: dict[tuple[str, str], frozenset[str]] = {
     ("embry0/api/v1/settings.py", "settings.updated"): frozenset(
         {"scope", "revision_id", "generation", "keys", "source", "reason"}
     ),
-    ("embry0/settings/bootstrap.py", "settings.bootstrapped"): frozenset(
-        {"sections", "revision_id", "earlier", "kept"}
-    ),
     ("embry0/execution/runtime/ptrace_scope.py", "kernel.ptrace_scope.flagged"): frozenset(
         {"value", "reason", "path", "remedy"}
     ),

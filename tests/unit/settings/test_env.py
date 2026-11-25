@@ -1,53 +1,23 @@
-"""``embry0 config`` names each variable the settings document governs (spec 2026-10-28)."""
+"""The variables embry0 no longer reads: startup and ``embry0 config`` name each one still set (#168)."""
 
 from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from embry0.cli.__main__ import cmd_config
 from embry0.config import Embry0Config
-from embry0.settings.env import env_name, governed_lines, governed_variables
+from embry0.settings.env import env_name
 from tests.fixtures.settings_sections import TEST_CATALOG
 
 
 def test_a_variable_name_is_the_attribute_in_capitals() -> None:
-    assert env_name("ask_remind_hours") == "ASK_REMIND_HOURS"
-
-
-def test_only_variables_the_config_was_given_are_governed() -> None:
-    with patch.dict(os.environ, {"ASK_REMIND_HOURS": "24", "SCOUT_REPOS": "acme/widgets"}, clear=True):
-        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    found = [(v.name, v.path) for v in governed_variables(TEST_CATALOG, config)]
-    assert found == [("ASK_REMIND_HOURS", "sample.remind_hours"), ("SCOUT_REPOS", "sample.labels")], (
-        "a variable set to its default is still set, and still governed"
-    )
-
-
-def test_embry0_config_names_a_governed_variable(capsys, monkeypatch) -> None:
-    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)
-    with patch.dict(os.environ, {"ASK_REMIND_HOURS": "12"}, clear=True), pytest.raises(SystemExit):
-        cmd_config(argparse.Namespace())
-    err = capsys.readouterr().err
-    assert governed_lines(TEST_CATALOG, Embry0Config(_env_file=None, ask_remind_hours=12))[0] in err  # type: ignore[call-arg]
-    assert "ASK_REMIND_HOURS is governed by the settings document (sample.remind_hours)" in err
-
-
-@pytest.mark.parametrize("catalog", ["application", "tests"])
-def test_every_env_import_names_a_config_attribute(catalog: str) -> None:
-    from embry0.settings.sections import CATALOG
-
-    sections = CATALOG if catalog == "application" else TEST_CATALOG
-    missing = [
-        f"{section.name}.{key} -> {imported.attr}"
-        for section in sections
-        for key, imported in section.imports().items()
-        if imported.attr not in Embry0Config.model_fields
-    ]
-    assert missing == [], f"env names no Embry0Config field: {missing}"
+    assert env_name("api_rate_limit_per_minute") == "API_RATE_LIMIT_PER_MINUTE"
 
 
 #: The variables no longer read at all (#168), with what each line says runs instead.
@@ -91,3 +61,83 @@ def test_no_retired_variable_set_says_nothing_of_them() -> None:
         "JOB_BRIEFS_PER_TICK",
         "JOB_BRIEF_INTERVAL_SECONDS",
     ], f"each set variable once, nothing else: {said}"
+
+
+# ---- the variables a one-time import read (#168) -----------------------------------------------------------------
+
+#: A variable a one-time import read, its value: no line or log may repeat it.
+_VALUE = "zz-a-value-of-the-operator"
+
+
+def _moved() -> dict[str, str]:
+    import importlib
+
+    try:
+        config_retired = importlib.import_module("embry0.config_retired")
+    except ImportError:
+        pytest.fail("the variables a one-time import read must be listed, with where each moved")
+    moved = getattr(config_retired, "MOVED_TO_DOCUMENTS", None)
+    assert moved is not None, "the variables a one-time import read must be listed, with where each moved"
+    return dict(moved)
+
+
+def test_no_moved_variable_is_a_setting_any_more() -> None:
+    """The config has no field for any of them, so nothing reads one; the list says where each one's setting is."""
+    from embry0.config_lint import declared_env_names
+
+    still = sorted(set(_moved()) & declared_env_names(Embry0Config))
+    assert still == [], f"still read as settings: {still}"
+    assert len(_moved()) == 43 and all(where.strip() for where in _moved().values())
+
+
+@pytest.mark.parametrize("name", ["LEADS_ENABLED", "SCOUT_REPOS", "OPENAI_COMPATIBLE_PROVIDERS", "ASK_USER_ROUNDS_CAP"])
+def test_startup_names_a_moved_variable_still_set_and_never_its_value(name: str, tmp_path: Path) -> None:
+    from embry0.settings import env
+
+    warn = getattr(env, "warn_moved_variables", None)
+    assert warn is not None, "startup must say that a variable it no longer reads is still set"
+    with capture_logs() as logs:
+        warned = warn({name: _VALUE}, env_file=tmp_path / "absent.env")
+    events = [e for e in logs if e["event"] == "settings_env_retired"]
+    assert warned == [name] and [e["variable"] for e in events] == [name], events
+    assert events[0]["log_level"] == "warning" and _moved()[name] in events[0]["hint"], events
+    assert _VALUE not in repr(logs), "the value is never logged"
+
+
+def test_a_moved_variable_in_the_env_file_counts_and_names_are_read_without_case(tmp_path: Path) -> None:
+    from embry0.settings import env
+
+    moved_set = getattr(env, "moved_variables_set", None)
+    assert moved_set is not None, "which moved variables are set must be read from the environment and .env"
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"SLOP_METER_REPOS={_VALUE}\nAPI_RATE_LIMIT_PER_MINUTE=10\n")
+    assert moved_set({"leads_finders": "ticket"}, env_file=env_file) == ["LEADS_FINDERS", "SLOP_METER_REPOS"]
+    assert moved_set({}, env_file=tmp_path / "absent.env") == []
+
+
+def test_embry0_config_says_where_a_moved_variable_s_setting_lives(capsys, monkeypatch) -> None:
+    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)
+    with patch.dict(os.environ, {"LEADS_ENABLED": _VALUE}, clear=True), pytest.raises(SystemExit):
+        cmd_config(argparse.Namespace())
+    err = capsys.readouterr().err
+    assert (
+        f"LEADS_ENABLED is no longer read: what it set is set in {_moved()['LEADS_ENABLED']} now; remove it" in err
+    ), err
+    assert "is set but is not an embry0 setting" not in err, "a moved variable is no typo of a setting"
+    assert _VALUE not in err
+
+
+def test_a_moved_variable_is_no_unknown_variable_to_either_lint() -> None:
+    from embry0.config import unknown_prefixed_env_keys
+    from embry0.config_lint import declared_env_names, find_unknown_env_vars
+
+    environ = dict.fromkeys(_moved(), "1")
+    assert find_unknown_env_vars(environ, declared_env_names(Embry0Config)) == []
+    assert unknown_prefixed_env_keys(environ) == []
+
+
+def test_the_configuration_doc_lists_every_moved_variable() -> None:
+    text = (Path(__file__).resolve().parents[3] / "docs" / "configuration.md").read_text()
+    section = text.split("### Variables no longer read", 1)[-1].split("\n## ", 1)[0]
+    missing = [name for name, where in _moved().items() if f"| `{name}` | {where} |" not in section]
+    assert missing == [], f"docs/configuration.md does not list: {missing}"

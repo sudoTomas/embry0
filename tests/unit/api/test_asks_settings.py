@@ -2,7 +2,6 @@
 
 - A PUT of the document reaches the next tick of a running ask loop, with no restart.
 - A bad hours, weekdays or timezone value is a 422 naming its key, and nothing is stored (#202).
-- The first boot imports a non-default ``ASK*`` value once; a second boot does not.
 - The real lifespan builds the ask loop with a reader of the document, not a value read once.
 
 Per organization, through the organization layers: ``test_asks_per_organization.py``.
@@ -15,19 +14,17 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from structlog.testing import capture_logs
 
 from embry0.api.app import create_app, lifespan
 from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
 from embry0.services.ask_loop import AskLoop
-from embry0.settings.bootstrap import BOOTSTRAP_ACTOR, import_env_once, log_ignored_env
 from embry0.settings.document import load_yaml
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
@@ -40,7 +37,6 @@ pytestmark = pytest.mark.requires_postgres
 
 URL = "/api/v1/config/settings"
 ADMIN = "emb_" + "a" * 43
-DAY = date(2026, 10, 28)
 # Tuesday 2026-10-27, 15:00 UTC.
 NOW = datetime(2026, 10, 27, 15, 0, tzinfo=UTC)
 ALWAYS = "  hours: 00-24\n  weekdays: mon-sun\n"
@@ -200,50 +196,6 @@ async def test_each_bad_ask_value_is_a_422_naming_its_key_and_nothing_is_stored(
     assert (await app.state.settings.snapshot()).get(_asks()).enabled is False, "so no tick ever reads it"
 
 
-def _config(**env: str) -> Embry0Config:
-    with patch.dict(os.environ, env, clear=True):
-        return Embry0Config(_env_file=None)  # type: ignore[call-arg]
-
-
-async def test_the_first_boot_imports_a_non_default_ask_value_once_and_a_second_does_not(
-    db_with_migrations: DatabasePool,
-) -> None:
-    store = SettingsStore(db_with_migrations)
-    config = _config(
-        ASK_REMIND_HOURS="12",
-        ASK_HOURS="8-17",
-        ASK_WEEKDAYS="Mon-Fri",
-        ASKS_ENABLED="false",
-        ASK_TIMEZONE="Mars/Base",
-    )
-
-    with capture_logs() as logs:
-        first = await import_env_once(store, config, today=DAY)
-    assert first.imported == {"asks": {"hours": "08-17", "remind_hours": 12.0}}, (
-        "the values that differ from the defaults are imported; Mon-Fri reads as the default mon-fri"
-    )
-    refused = [(e["variable"], e["key"]) for e in logs if e["event"] == "settings_bootstrap_value_refused"]
-    assert refused == [("ASK_TIMEZONE", "asks.timezone")], "an unknown zone is reported by name and not imported"
-    (revision,) = await store.revisions()
-    assert (revision["actor"], revision["source"]) == (BOOTSTRAP_ACTOR, "bootstrap")
-    imported = (await store.snapshot()).get(_asks())
-    assert (imported.remind_hours, imported.hours, imported.timezone) == (12.0, "08-17", "UTC")
-
-    text = "asks:\n  remind_hours: 6\n"
-    await store.save(text, load_yaml(text), actor="alex@example.com")
-    again_store = SettingsStore(db_with_migrations)
-    with capture_logs() as logs:
-        again = await import_env_once(again_store, config, today=DAY)
-        await log_ignored_env(again_store, config)
-    assert (again.imported, again.revision_id) == ({}, None), "the second boot imports nothing"
-    assert (await again_store.document())["data"] == {"asks": {"remind_hours": 6.0}}, "the person's value stays"
-    assert len(await again_store.revisions()) == 2
-    ignored = {e["variable"] for e in logs if e["event"] == "settings_env_ignored"}
-    assert ignored == {"ASKS_ENABLED", "ASK_HOURS", "ASK_WEEKDAYS", "ASK_TIMEZONE", "ASK_REMIND_HOURS"}, (
-        "each variable still set is logged as ignored"
-    )
-
-
 @pytest.mark.usefixtures("stub_container_runtime")
 async def test_the_lifespan_builds_the_ask_loop_with_a_reader_of_the_document(
     db_with_migrations: DatabasePool,
@@ -261,7 +213,6 @@ async def test_the_lifespan_builds_the_ask_loop_with_a_reader_of_the_document(
         xai_proxy_enabled=False,
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
-        ask_remind_hours=12.0,
     )
     first = create_app(config)
     async with lifespan(first):
@@ -269,8 +220,8 @@ async def test_the_lifespan_builds_the_ask_loop_with_a_reader_of_the_document(
         assert callable(loop.settings), (
             "the ask loop is built with a reader of the settings document, not a value read once at startup"
         )
-        assert (await loop.settings()).deployment().remind_hours == 12.0, (
-            "the boot imported ASK_REMIND_HOURS into what it reads"
+        assert (await loop.settings()).deployment().remind_hours == _asks().defaults().remind_hours != 3.0, (
+            "nothing stored: the running loop's reader reads the section's default"
         )
         text = "asks:\n  remind_hours: 3\n"
         await first.state.settings.save(text, load_yaml(text), actor="alex@example.com")
@@ -280,6 +231,6 @@ async def test_the_lifespan_builds_the_ask_loop_with_a_reader_of_the_document(
     second = create_app(config)
     async with lifespan(second):
         assert (await second.state.ask_loop.settings()).deployment().remind_hours == 3.0, (
-            "a second boot imports nothing again"
+            "a second boot reads what was stored"
         )
-        assert len(await second.state.settings.revisions()) == kept
+        assert len(await second.state.settings.revisions()) == kept, "a boot writes no revision"

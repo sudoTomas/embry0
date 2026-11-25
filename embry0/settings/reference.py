@@ -1,8 +1,7 @@
 """The settings reference in ``docs/configuration.md``, generated from the sections.
 
 One table per section: each key with its type, default, allowed values,
-the layers that may override it, the variable it was imported from and its
-description. The block between the two markers is written by::
+the layers that may override it and its description. The block between the two markers is written by::
 
     python -m embry0.settings.reference --write docs/configuration.md
 
@@ -100,20 +99,17 @@ def _allowed(prop: dict[str, Any]) -> str:
 
 
 def _section_table(section: Section[Any]) -> list[str]:
-    from embry0.settings.env import env_name
-
     schema = section.model.model_json_schema()
     props: dict[str, Any] = schema.get("properties", {})
     defs: dict[str, Any] = schema.get("$defs", {})
     defaults = section.defaults().model_dump(mode="json")
-    imports = section.imports()
     lines = [
         f"#### `{section.name}`",
         "",
         _cell(section.summary),
         "",
-        "| Key | Type | Default | Allowed | Overridable by | Imported from | Description |",
-        "|---|---|---|---|---|---|---|",
+        "| Key | Type | Default | Allowed | Overridable by | Description |",
+        "|---|---|---|---|---|---|",
     ]
     for key in section.fields:
         prop = _resolve(props.get(key, {}), defs)
@@ -126,14 +122,12 @@ def _section_table(section: Section[Any]) -> list[str]:
             for name, keys in (("organization", section.org_keys), ("repository", section.repo_keys))
             if key in keys
         ]
-        imported = imports.get(key)
         cells = [
             f"`{key}`",
             _type(prop),
             f"`{_cell(json.dumps(defaults.get(key), ensure_ascii=False))}`",
             _allowed(prop),
             ", ".join(layers),
-            f"`{env_name(imported.attr)}`" if imported is not None else "",
             _cell(section.model.model_fields[key].description or ""),
         ]
         lines.append("| " + " | ".join(cells) + " |")

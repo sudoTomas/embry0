@@ -21,28 +21,16 @@ stops it starting jobs, as does ``scout: false`` in ``background_models``.
 
 from __future__ import annotations
 
-from typing import Any, Final, Literal, get_args
+from typing import Final, Literal, get_args
 
 from pydantic import Field, field_validator
 
-from embry0.settings.registry import EnvImport, Section, SectionModel
+from embry0.settings.registry import Section, SectionModel
 
 #: A template a scout may run: read-only, with a deliverable the scout reads into leads.
 Template = Literal["garden", "kintsugi-trace"]
 #: Every template a scout may run, in the order it runs them.
 TEMPLATES: Final[tuple[Template, ...]] = get_args(Template)
-
-
-def templates_from_env(value: Any) -> list[Template]:
-    """``SCOUT_TEMPLATES`` as the scout read it before this section: what the import stores.
-
-    Names it does not know were ignored, the known ones ran in the scout's
-    own order whatever order the variable gave, and a list naming none ran
-    both. So the import keeps exactly what was running: ``garden,bogus`` is
-    ``[garden]``, and ``kintsugi-trace,garden`` is the default.
-    """
-    names = {part.strip() for part in str(value or "").split(",") if part.strip()}
-    return [t for t in TEMPLATES if t in names] or list(TEMPLATES)
 
 
 class ScoutSettings(SectionModel):
@@ -109,10 +97,4 @@ SCOUT = Section(
     # the deployment's.
     org_keys=frozenset({"templates", "revisit_hours", "max_leads_per_job"}),
     repo_keys=frozenset(),
-    env={
-        "templates": EnvImport("scout_templates", templates_from_env),
-        "max_in_flight": "scout_max_in_flight",
-        "revisit_hours": "scout_revisit_hours",
-        "max_leads_per_job": "scout_max_leads_per_job",
-    },
 )

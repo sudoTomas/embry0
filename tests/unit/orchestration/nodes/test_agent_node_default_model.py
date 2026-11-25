@@ -17,6 +17,7 @@ import pytest
 from embry0.agents.executor import AgentOutput
 from embry0.orchestration.nodes.agent import load_model_policy, run_agent_node
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+from tests.fixtures.budget_settings import BudgetStore
 
 _TIERS = {
     "model_heavy": "claude-opus-5",
@@ -40,7 +41,8 @@ class _ProviderRowDb:
 
 def _config(default_model: str, disabled: list[str] | None = None) -> dict[str, Any]:
     row = {**_TIERS, "default_model": default_model, "disabled_models": disabled or []}
-    return {"configurable": {"db": _ProviderRowDb(row)}}
+    # The fake database holds no settings documents: the job's budget is the section's defaults.
+    return {"configurable": {"db": _ProviderRowDb(row), "settings_store": BudgetStore()}}
 
 
 async def _resolved_model(agent_type: str, *, config: dict[str, Any], state: dict[str, Any] | None = None) -> str:

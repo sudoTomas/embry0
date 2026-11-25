@@ -343,13 +343,11 @@ def cmd_config(args: argparse.Namespace) -> None:
         hint = f" — did you mean {unknown.did_you_mean}?" if unknown.did_you_mean else ""
         _warn(f"{unknown.name} is set but is not an embry0 setting{hint}")
 
-    # Spec 2026-10-28: a policy variable a settings section imported is read
-    # once and then ignored; say so, since this command reads no database.
-    from embry0.services.background_enrollment import governed_lines as list_lines
-    from embry0.settings.env import governed_lines, retired_lines
-    from embry0.settings.sections import CATALOG
+    # #168: a variable embry0 no longer reads looks like one that runs in the
+    # listing above; say so while it is still set.
+    from embry0.settings.env import retired_lines
 
-    for line in [*governed_lines(CATALOG, config), *list_lines(config), *retired_lines(config)]:
+    for line in retired_lines(config):
         _warn(line)
 
     if not config.github_token:
@@ -884,9 +882,9 @@ def cmd_areas(args: argparse.Namespace) -> None:
 
 
 def cmd_settings(args: argparse.Namespace) -> None:
-    """Handle ``embry0 settings check|diff|apply|set|export|import-env|revisions|undo`` (#162).
+    """Handle ``embry0 settings check|diff|apply|set|export|revisions|undo`` (#162).
 
-    ``check``, ``import-env`` and ``export --default`` run offline; the other
+    ``check`` and ``export --default`` run offline; the other
     verbs are thin clients of ``/api/v1/config/settings`` on the running
     orchestrator. The exit codes are in :mod:`embry0.cli.exit_codes`.
     """

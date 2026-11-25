@@ -85,8 +85,3 @@ def test_a_repository_may_set_neither(key: str) -> None:
     value: Any = {"game": False, "home": "overview"}[key]
     found = _stored({"ui": {key: value}}, layer="repository")
     assert found == [(("ui", key), "not_overridable")], f"a repository's layer may not set ui.{key}: {found}"
-
-
-def test_no_variable_is_imported_into_it() -> None:
-    section = CATALOG.get("ui")
-    assert section is not None and section.imports() == {}, "no environment variable ever configured the game layer"

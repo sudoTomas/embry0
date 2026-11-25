@@ -250,17 +250,20 @@ async def test_a_running_job_keeps_the_caps_it_started_with_through_a_pause() ->
     assert _exhausted_at(second) == 9, "the next job reads the document as it is now"
 
 
-def test_embry0_config_names_both_variables_as_governed() -> None:
-    from embry0.settings.env import governed_lines
+def test_embry0_config_names_both_variables_as_no_longer_read() -> None:
+    from embry0.settings.env import retired_lines
 
-    with patch.dict(os.environ, {"ASK_USER_ROUNDS_CAP": "12", "USER_RETRY_ROUNDS_CAP": "3"}, clear=True):
+    environ = {"ASK_USER_ROUNDS_CAP": "12", "USER_RETRY_ROUNDS_CAP": "3"}
+    with patch.dict(os.environ, environ, clear=True):
         config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    lines = governed_lines(CATALOG, config)
+    lines = retired_lines(config, environ=environ, env_file=None)
     for variable, key in (("ASK_USER_ROUNDS_CAP", "rounds_cap"), ("USER_RETRY_ROUNDS_CAP", "retry_rounds_cap")):
         assert any(
-            line.startswith(f"{variable} is governed by the settings document (agent_questions.{key})")
+            line.startswith(
+                f"{variable} is no longer read: what it set is set in the settings document's agent_questions.{key} now"
+            )
             for line in lines
-        ), f"embry0 config does not say {variable} is governed and ignored: {lines}"
+        ), f"embry0 config does not say {variable} is no longer read and where its setting lives: {lines}"
 
 
 def test_a_variable_that_is_no_number_does_not_stop_a_start() -> None:
@@ -270,7 +273,7 @@ def test_a_variable_that_is_no_number_does_not_stop_a_start() -> None:
 
 def test_no_cap_is_read_from_the_environment_any_more() -> None:
     """In a fresh process with ASK_USER_ROUNDS_CAP=2 set before the agent module loads, a job with no layer still
-    has the section's cap of 10: the variable is the import's alone."""
+    has the section's cap of 10: the variable is not read."""
     probe = (
         "import json\n"
         "from embry0.orchestration.nodes import agent\n"

@@ -38,16 +38,16 @@ def test_the_check_fails_when_a_section_is_missing_from_the_reference(tmp_path: 
     assert text.startswith("intro\n\n") and text.endswith("\n\nmore\n"), "only the block between the markers changes"
 
 
-def test_every_field_is_in_its_section_table_with_its_description_and_variable() -> None:
+def test_every_field_is_in_its_section_table_with_its_description() -> None:
     block = render(TEST_CATALOG)
     for key in SAMPLE.fields:
         row = next((line for line in block.splitlines() if line.startswith(f"| `{key}` |")), None)
         assert row is not None, f"sample.{key} has no row"
         assert (SAMPLE.model.model_fields[key].description or "") in row
     per_tick = next(line for line in block.splitlines() if line.startswith("| `per_tick` |"))
-    assert per_tick == (
-        "| `per_tick` | whole number | `3` | ≥ 1, ≤ 20 | organization | `LINEAR_RECONCILE_MAX_DISPATCHES` "
-        "| Items the sample loop handles each tick. |"
+    assert (
+        per_tick
+        == "| `per_tick` | whole number | `3` | ≥ 1, ≤ 20 | organization | Items the sample loop handles each tick. |"
     )
 
 
@@ -70,7 +70,7 @@ class _Paint(SectionModel):
 def test_an_enum_field_is_described_as_text_with_its_values() -> None:
     block = render(Catalog((Section(name="paint", model=_Paint, summary="Paint."),)))
     rows = {line.split(" | ")[0]: line for line in block.splitlines() if line.startswith("| `")}
-    assert rows["| `color`"] == '| `color` | text | `"red"` | one of `"red"`, `"blue"` |  |  | The color. |', (
+    assert rows["| `color`"] == '| `color` | text | `"red"` | one of `"red"`, `"blue"` |  | The color. |', (
         "an Enum is a $ref in the schema and must be resolved, not shown as a mapping with no values"
     )
     assert rows["| `maybe`"].startswith('| `maybe` | text or null | `null` | one of `"red"`, `"blue"` |')

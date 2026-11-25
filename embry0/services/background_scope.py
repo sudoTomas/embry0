@@ -17,13 +17,6 @@ the next tick with no restart, and one tick never mixes two versions:
 A feature can narrow the result to the repositories its own rule allows
 (``among``): the leads finders read only where someone answers for the
 repository.
-
-**Settled.** A release that turned a feature's enrollment explicit imported,
-once, the repositories that feature read before
-(:mod:`embry0.services.background_enrollment`). Until that import has run,
-the feature reads its defaults and may read fewer repositories than it
-should; ``settled`` says when what it does not read is truly out, which is
-what a feature that removes what it kept must wait for.
 """
 
 from __future__ import annotations
@@ -34,16 +27,8 @@ from datetime import datetime, timedelta
 from typing import Any, Final, Protocol
 
 from embry0.settings.layers import PerRepository
+from embry0.settings.scope import Scope
 from embry0.settings.sections.background import BACKGROUND, FEATURES, BackgroundSettings, Feature
-
-#: The features whose repositories a release imported once, when their enrollment became explicit. A feature
-#: not listed here imported nothing, so what it reads is final from the start.
-IMPORTED: Final[tuple[Feature, ...]] = ("scout", "slop_meter")
-
-
-def ledger_key(feature: Feature) -> str:
-    """The import ledger entry (``settings_documents.bootstrapped_keys``) saying ``feature``'s import ran."""
-    return f"{BACKGROUND.name}.{feature}"
 
 
 def _feature(feature: str) -> Feature:
@@ -55,16 +40,23 @@ def _feature(feature: str) -> Feature:
 class _Snapshot(Protocol):
     def scoped(self, section: Any) -> Any: ...
 
-    def imported(self, path: str, scope: Any = None) -> bool: ...
-
 
 @dataclass(frozen=True)
 class Enrollment:
     """The ``background`` section of one snapshot of the settings documents."""
 
     section: PerRepository[BackgroundSettings]
-    #: The features whose import has run, or that import nothing.
-    settled_features: frozenset[str]
+    #: The features that remove what they kept whose enrollment nothing has decided yet: the import that wrote it
+    #: never ran on this deployment, nor did a start that found nothing to import, and neither the deployment's
+    #: document nor an organization's layer sets the key (``embry0.settings.upgrade_check``).
+    undecided: frozenset[str] = frozenset()
+
+    def prune_held(self, feature: str) -> bool:
+        """Whether ``feature`` must keep what it kept of every repository for now: a deployment that skipped the
+        release that enrolled what it read before reads nothing, and must not remove it all before an operator
+        decides (``background.<feature>`` set in the deployment's document or an organization's layer, which
+        only a key with no repository allowlist writes: a limited key's repository layer cannot lift it)."""
+        return _feature(feature) in self.undecided
 
     def enrolled(self, feature: str, repo: str) -> bool:
         """Whether ``repo`` is enrolled in ``feature``, through its organization's layer and its own."""
@@ -74,10 +66,6 @@ class Enrollment:
     def prune_after(self) -> timedelta:
         """How long the meter waits, after a repository leaves its scope, before it removes what it kept of it."""
         return timedelta(days=self.section.deployment().prune_after_days)
-
-    def settled(self, feature: str) -> bool:
-        """Whether what ``feature`` does not read is out of its scope for good, not only until the import runs."""
-        return _feature(feature) in self.settled_features
 
     def scope(self, feature: str, registered: Iterable[str], *, among: Iterable[str] | None = None) -> list[str]:
         """The repositories ``feature`` reads: those of ``registered`` (registered and active) that are enrolled
@@ -95,12 +83,37 @@ class Enrollment:
         return sorted(out.values(), key=str.lower)
 
 
+#: The features that remove what they kept of a repository that left their scope.
+_PRUNING: Final[tuple[Feature, ...]] = ("slop_meter",)
+
+
+def _organization(stored: str) -> bool:
+    """Whether the stored scope string ``stored`` is an organization's layer."""
+    try:
+        return Scope.parse(stored).layer == "organization"
+    except ValueError:
+        return False
+
+
+def _decided(snapshot: Any, feature: str) -> bool:
+    """Whether the deployment's document or an organization's layer of ``snapshot`` sets ``background.<feature>``:
+    the documents only a key with no repository allowlist writes. A repository's layer is not counted, since a
+    key limited to that repository writes it, and the meter's prune would remove every other repository."""
+    layers = getattr(snapshot, "layers", None) or {}
+    documents = [getattr(snapshot, "data", None) or {}]
+    documents += [values for stored, values in layers.items() if _organization(str(stored))]
+    return any(feature in (doc.get(BACKGROUND.name) or {}) for doc in documents if isinstance(doc, Mapping))
+
+
 def enrollment(snapshot: _Snapshot) -> Enrollment:
     """The enrollment ``snapshot`` holds: what one tick reads, from the snapshot the tick took."""
-    settled = frozenset(
-        feature for feature in FEATURES if feature not in IMPORTED or snapshot.imported(ledger_key(feature))
+    imported = getattr(snapshot, "imported", None)
+    undecided = frozenset(
+        feature
+        for feature in _PRUNING
+        if callable(imported) and not imported(f"{BACKGROUND.name}.{feature}") and not _decided(snapshot, feature)
     )
-    return Enrollment(section=snapshot.scoped(BACKGROUND), settled_features=settled)
+    return Enrollment(section=snapshot.scoped(BACKGROUND), undecided=undecided)
 
 
 class _Registry(Protocol):
@@ -183,11 +196,9 @@ def registry_reader(registry: _Registry) -> Callable[[], Awaitable[Registered]]:
 
 
 __all__ = [
-    "IMPORTED",
     "Enrollment",
     "Registered",
     "enrollment",
-    "ledger_key",
     "registered_reader",
     "registry_reader",
     "spellings",

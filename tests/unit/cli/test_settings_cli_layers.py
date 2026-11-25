@@ -56,11 +56,10 @@ def test_check_refuses_a_key_the_layer_may_not_set(tmp_path: Path, capsys: pytes
     assert run(_args("check", file=both)) == OK, "the deployment's document sets every key"
 
 
-def test_import_env_and_export_default_are_the_deployment_s_only(capsys: pytest.CaptureFixture[str]) -> None:
+def test_export_default_is_the_deployment_s_only(capsys: pytest.CaptureFixture[str]) -> None:
     api = _Api()
-    assert run(_args("import-env", org="acme"), transport=api.transport) == USAGE
-    assert "the environment is the deployment's" in capsys.readouterr().err
     assert run(_args("export", default=True, repo="acme/widgets"), transport=api.transport) == USAGE
+    assert "a layer holds only what it sets" in capsys.readouterr().err
     assert api.seen == [], "nothing is sent"
 
 

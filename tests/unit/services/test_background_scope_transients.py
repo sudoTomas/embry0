@@ -13,7 +13,6 @@ right cancels it.
 from __future__ import annotations
 
 import importlib
-import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -22,7 +21,6 @@ from unittest.mock import patch
 
 import pytest
 
-from embry0.config import Embry0Config
 from embry0.services.slop_meter.history import Commit
 from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitMirror
@@ -40,10 +38,9 @@ NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
 RENAMES = {"acme/old-name": "acme/new-name"}
 
 
-def _modules() -> tuple[Any, Any, Any]:
+def _modules() -> tuple[Any, Any]:
     try:
         return (
-            importlib.import_module("embry0.services.background_enrollment"),
             importlib.import_module("embry0.services.background_scope"),
             importlib.import_module("embry0.storage.repositories.background_scope"),
         )
@@ -68,19 +65,24 @@ def renames() -> Iterator[dict[str, str]]:
 
 
 async def _deployment(db: DatabasePool, tmp_path: Path) -> tuple[Any, SettingsStore, list[datetime], Audit]:
-    """An existing deployment after the upgrade's import, with what the meter kept of four repositories."""
-    enrollment_import, scope, exits = _modules()
+    """An existing deployment as the upgrade to explicit enrollment left it: three of its repositories enrolled in
+    their own layers (acme/old-name's under the slug ``REPO_RENAMES`` maps it to) and the import marked in the
+    deployment's ledger, with what the meter kept of four repositories."""
+    scope, exits = _modules()
     for repo in ("acme/old-name", "acme/a", "acme/via-org", "acme/hidden"):
         await db.execute(
             "INSERT INTO repos (repo, forge, created_at) VALUES ($1, 'github', now() - interval '400 days')", repo
         )
-    for repo in ("acme/old-name", "acme/a", "acme/hidden"):
-        await db.execute("INSERT INTO jobs (job_id, task, repo) VALUES ($1, 't', $2)", f"j-{repo}", repo)
     store = SettingsStore(db)
-    with patch.dict(os.environ, {}, clear=True):
-        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    result = await enrollment_import.import_enrollment_once(store, config)
-    assert result.marked == ("scout", "slop_meter")
+    for repo in ("acme/old-name", "acme/a", "acme/hidden"):
+        await _set(
+            store,
+            "background:\n  scout: true\n  slop_meter: true\n",
+            {"background": {"scout": True, "slop_meter": True}},
+            Scope.repository(repo),
+        )
+    async with store.edit(actor="embry0", source="bootstrap") as draft:
+        draft.mark_bootstrapped(["background.scout", "background.slop_meter"])
     meter = SlopMeterRepository(db)
     mirror = GitMirror(tmp_path / "slop-meter")
     for repo in ("acme/old-name", "acme/a", "acme/via-org", "acme/hidden"):
@@ -201,7 +203,7 @@ async def test_two_registry_spellings_of_one_repository_are_read_once_and_never_
     """The review's three-tick probe: with `Acme/Widgets` and `acme/widgets` both registered, the meter read one
     spelling and moved its rows to the other at the next tick, so `commits_read` reset every tick and the
     history (and its outliers' judgments) was read again."""
-    _enrollment_import, scope, exits = _modules()
+    scope, exits = _modules()
     db = db_with_migrations
     for repo in ("Acme/Widgets", "acme/widgets", "acme/other"):
         await db.execute(
@@ -211,8 +213,6 @@ async def test_two_registry_spellings_of_one_repository_are_read_once_and_never_
     await _set(
         store, "background:\n  slop_meter: true\n", {"background": {"slop_meter": True}}, Scope.organization("acme")
     )
-    async with store.edit(actor="ops@example.com", source="person", reason="settled") as draft:
-        draft.mark_bootstrapped(["background.scout", "background.slop_meter"])
     meter = SlopMeterRepository(db)
     loop_mod = importlib.import_module("embry0.services.slop_meter.loop")
 
@@ -257,7 +257,7 @@ async def test_a_deactivated_duplicate_spelling_never_takes_the_active_repositor
     """The review's probe: `acme/widgets` is the active registration, with its preferences (owners, the commit
     author the meter counts as a bot); a later `Acme/Widgets` row was deactivated. Every feature must read the
     active spelling, or it reads none of what is kept under it."""
-    _enrollment_import, scope, _exits = _modules()
+    scope, _exits = _modules()
     db = db_with_migrations
     await db.execute(
         "INSERT INTO repos (repo, forge, active, created_at) VALUES "

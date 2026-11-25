@@ -328,16 +328,8 @@ class LoopMetrics:
         for git_step in GitStep:
             self._sandbox_git_refusals.labels(step=git_step.value)
 
-        # ---- settings imports --------------------------------------------
-        # #165: seeded 0 at construction, so the series exists on the first
-        # scrape and an alert on it can be told from one that never fires.
-        self._background_enrollment_blocked = Gauge(
-            "embry0_background_enrollment_blocked",
-            "1 while the background enrollment import is held by a registered repository name no settings layer "
-            "can be stored under (the Slop-O-Meter removes nothing meanwhile); 0 otherwise.",
-            registry=r,
-        )
-        # #173: seeded 0 at construction, as the gauge above, for Embry0ProviderCatalogueRefused.
+        # #173: seeded 0 at construction, so the series exists on the first scrape and
+        # Embry0ProviderCatalogueRefused can be told from a rule that never fires.
         self._provider_catalogue_refused_parts = Gauge(
             "embry0_provider_catalogue_refused_parts",
             "Parts of the stored provider catalogue (a provider's entry, a model's entry, a provider's field) this "
@@ -524,13 +516,6 @@ class LoopMetrics:
         for decision, count in tickets.items():
             self._reconciler_last_sweep_tickets.labels(decision=decision).set(count)
         self._reconciler_last_sweep.set(time.time())
-
-    # ---- settings imports ---------------------------------------------------
-
-    @_never_raises
-    def background_enrollment_blocked(self, blocked: bool) -> None:
-        """Whether the last run of the background enrollment import was held by an unaddressable name (#165)."""
-        self._background_enrollment_blocked.set(1 if blocked else 0)
 
     @_never_raises
     def provider_catalogue_refused(self, parts: int) -> None:

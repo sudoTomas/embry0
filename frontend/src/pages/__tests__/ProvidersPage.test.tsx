@@ -104,8 +104,6 @@ function backgroundKey(key: string, value: unknown, extra: Record<string, unknow
     source: value === null ? "default" : "document",
     set_by: null,
     set_at: null,
-    env: null,
-    env_still_set: false,
     overridable: ["organization"],
     refused: null,
     description: null,

@@ -1,8 +1,7 @@
 """An organization's settings that moved into a section are copied into its layer, once (spec 2026-10-29, §9).
 
 Proven with the test-only section, whose ``per_tick`` and ``remind_hours`` an
-organization may set: the first feature to move a key builds this once, as
-#160 built the environment import.
+organization may set.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from embry0.settings.bootstrap import BOOTSTRAP_ACTOR
+from embry0.settings.org_import import BOOTSTRAP_ACTOR
 from embry0.settings.scope import Scope
 from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool

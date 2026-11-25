@@ -4,7 +4,6 @@
   its templates, its in-flight cap and each job's hard cap.
 - The daily cap counts the scouting jobs stored in the last 24 hours.
 - A bad value is a 422 naming its key, never repeating it, and nothing is stored.
-- The first boot imports a non-default ``SCOUT_*`` value once; a second boot does not.
 - The real lifespan builds the scout loop with a reader of the document, not a value read once,
   and warns once while the retired ``SCOUT_TICK_SECONDS`` is still set.
 
@@ -18,7 +17,7 @@ from __future__ import annotations
 import dataclasses
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,8 +28,8 @@ from structlog.testing import capture_logs
 from embry0.api.app import create_app, lifespan
 from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
+from embry0.config_retired import MOVED_TO_DOCUMENTS
 from embry0.services.scout import ScoutLoop, TickSettings, tick_settings
-from embry0.settings.bootstrap import BOOTSTRAP_ACTOR, import_env_once, log_ignored_env
 from embry0.settings.document import load_yaml
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
@@ -45,7 +44,6 @@ pytestmark = pytest.mark.requires_postgres
 
 URL = "/api/v1/config/settings"
 ADMIN = "emb_" + "a" * 43
-DAY = date(2026, 10, 29)
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 LOCAL = "custom/local-model"
 
@@ -239,66 +237,14 @@ async def test_each_bad_scout_value_is_a_422_naming_its_key_and_nothing_is_store
     assert (await app.state.settings.snapshot()).get(_scout()).max_in_flight == 2, "so no tick ever reads it"
 
 
-def _config(**env: str) -> Embry0Config:
-    with patch.dict(os.environ, env, clear=True):
-        return Embry0Config(_env_file=None)  # type: ignore[call-arg]
-
-
-async def test_the_first_boot_imports_a_non_default_scout_value_once_and_a_second_does_not(
-    db_with_migrations: DatabasePool,
-) -> None:
-    store = SettingsStore(db_with_migrations)
-    config = _config(
-        SCOUT_MODEL=LOCAL,
-        SCOUT_TEMPLATES="garden,bogus",
-        SCOUT_MAX_IN_FLIGHT="2",
-        SCOUT_REVISIT_HOURS="48",
-        SCOUT_MAX_LEADS_PER_JOB="500",
-    )
-
-    with capture_logs() as logs:
-        first = await import_env_once(store, config, today=DAY)
-    assert first.imported.get("scout") == {"templates": ["garden"], "revisit_hours": 48.0}, (
-        "the values that differ from the defaults are imported as the scout read them: garden,bogus ran garden; "
-        f"SCOUT_MAX_IN_FLIGHT=2 is the default, and SCOUT_MODEL is no key of the section: {first.imported}"
-    )
-    assert first.imported.get("background_models") == {"scout": LOCAL}, (
-        f"SCOUT_MODEL is imported into the map of background models (#164): {first.imported}"
-    )
-    refused = [(e["variable"], e["key"]) for e in logs if e["event"] == "settings_bootstrap_value_refused"]
-    assert refused == [("SCOUT_MAX_LEADS_PER_JOB", "scout.max_leads_per_job")], (
-        "a value past the section's bound is reported by name and not imported"
-    )
-    (revision,) = await store.revisions()
-    assert (revision["actor"], revision["source"]) == (BOOTSTRAP_ACTOR, "bootstrap")
-    imported = (await store.snapshot()).get(_scout())
-    assert (imported.templates, imported.revisit_hours, imported.max_leads_per_job) == (("garden",), 48.0, 5)
-
-    text = "scout:\n  revisit_hours: 6\n"
-    await store.save(text, load_yaml(text), actor="alex@example.com")
-    again_store = SettingsStore(db_with_migrations)
-    with capture_logs() as logs:
-        again = await import_env_once(again_store, config, today=DAY)
-        await log_ignored_env(again_store, config)
-    assert (again.imported, again.revision_id) == ({}, None), "the second boot imports nothing"
-    assert (await again_store.document())["data"] == {"scout": {"revisit_hours": 6.0}}, "the person's value stays"
-    assert len(await again_store.revisions()) == 2
-    ignored = {e["variable"] for e in logs if e["event"] == "settings_env_ignored"}
-    assert ignored == {
-        "SCOUT_TEMPLATES",
-        "SCOUT_MAX_IN_FLIGHT",
-        "SCOUT_REVISIT_HOURS",
-        "SCOUT_MAX_LEADS_PER_JOB",
-        "SCOUT_MODEL",
-    }, "each policy variable still set is logged as ignored, SCOUT_MODEL too since #164"
-
-
 @pytest.mark.usefixtures("stub_container_runtime")
 async def test_the_lifespan_builds_the_scout_loop_with_a_reader_of_the_document(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The lifespan configures structlog, which would replace capture_logs' processors.
     monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
+    for name in MOVED_TO_DOCUMENTS:  # the startup warns for each of these still set, too
+        monkeypatch.delenv(name, raising=False)
     config = Embry0Config(
         _env_file=None,
         database_url=db_with_migrations._url,  # noqa: SLF001
@@ -312,7 +258,6 @@ async def test_the_lifespan_builds_the_scout_loop_with_a_reader_of_the_document(
         xai_proxy_enabled=False,
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
-        scout_revisit_hours=12.0,
         scout_tick_seconds="60",
     )
     first = create_app(config)
@@ -322,8 +267,8 @@ async def test_the_lifespan_builds_the_scout_loop_with_a_reader_of_the_document(
             assert callable(loop.settings), (
                 "the scout loop is built with a reader of the settings document, not a value read once at startup"
             )
-            assert (await loop.settings()).section.deployment().revisit_hours == 12.0, (
-                "the boot imported SCOUT_REVISIT_HOURS into what it reads"
+            assert (await loop.settings()).section.deployment().revisit_hours == _scout().defaults().revisit_hours, (
+                "nothing stored: the running loop's reader reads the section's default"
             )
             text = "scout:\n  revisit_hours: 3\n"
             await first.state.settings.save(text, load_yaml(text), actor="alex@example.com")
@@ -339,6 +284,6 @@ async def test_the_lifespan_builds_the_scout_loop_with_a_reader_of_the_document(
     second = create_app(config)
     async with lifespan(second):
         assert (await second.state.scout.settings()).section.deployment().revisit_hours == 3.0, (
-            "a second boot imports nothing again"
+            "a second boot reads what was stored"
         )
-        assert len(await second.state.settings.revisions()) == kept
+        assert len(await second.state.settings.revisions()) == kept, "a boot writes no revision"

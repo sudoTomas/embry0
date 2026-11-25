@@ -9,6 +9,7 @@ import pytest
 from embry0.agents.executor import AgentOutput
 from embry0.orchestration.nodes.agent import run_agent_node
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+from tests.fixtures.budget_settings import BudgetStore
 
 _ROW = {
     "model_heavy": "claude-opus-5",
@@ -71,6 +72,8 @@ async def _run(
 
     configurable: dict[str, Any] = {
         "db": _ProviderRowDb(["grok-4.7"] if order is None else order),
+        # The fake database holds no settings documents: the job's budget is the section's defaults.
+        "settings_store": BudgetStore(),
         "traces_repo": traces,
         "job_id": "job-1",
         "llm_providers": providers,
@@ -162,6 +165,7 @@ async def test_a_resume_into_an_older_sandbox_uses_only_the_keys_it_holds() -> N
 
     configurable = {
         "db": _ProviderRowDb(["grok-4.7"]),
+        "settings_store": BudgetStore(),
         "job_id": "job-1",
         "llm_providers": ("anthropic", "xai"),
         "model_fallbacks": _PLAN,

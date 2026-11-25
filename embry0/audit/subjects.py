@@ -76,6 +76,7 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "apikey.repo_refused": DEPLOYMENT,
     "dev_mode_enabled": DEPLOYMENT,
     "kernel.ptrace_scope.flagged": DEPLOYMENT,
+    "settings.upgrade.flagged": DEPLOYMENT,
     "provider_config_updated": DEPLOYMENT,
     "provider_config_tested": DEPLOYMENT,
     "provider_connection_tested": DEPLOYMENT,

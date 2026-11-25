@@ -33,8 +33,6 @@ from embry0.orchestration.nodes.agent import run_agent_node
 from embry0.orchestration.routing.conditions import check_budget
 from embry0.orchestration.state import JobState
 from embry0.services.budget_policy import BudgetPolicy
-from embry0.settings.bootstrap import import_env_once
-from embry0.settings.earlier import EARLIER_SOURCES
 from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool
 
@@ -59,9 +57,7 @@ async def test_a_job_paused_before_the_upgrade_resumes_with_no_allowance_it_did_
     db = db_with_migrations
     with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    store = SettingsStore(db)
-    await import_env_once(store, config, earlier=EARLIER_SOURCES)
-    policy = BudgetPolicy(store, config, earlier=EARLIER_SOURCES)
+    policy = BudgetPolicy(SettingsStore(db), config)
 
     release_before = {"on": True}
     reviews = {"n": 0}

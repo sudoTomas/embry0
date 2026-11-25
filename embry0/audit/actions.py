@@ -5,7 +5,9 @@ label the dashboard shows for it. The writers (``emit_audit`` and its
 siblings) take an ``AuditAction``, so mypy refuses a name that is not listed,
 and ``GET /audit/actions`` serves the list the Audit page filters by.
 ``tests/unit/audit/test_action_registry.py`` checks both directions: every
-name written is listed, and every listed name is written somewhere.
+name written is listed, and every listed name is written somewhere, but for
+:data:`NO_LONGER_WRITTEN`: actions whose only writer is gone, kept so the rows
+already written still read with their label and match a filter.
 
 A name is the string stored in the row, so a row's name never changes. When
 an action is renamed, its old name moves to :data:`RETIRED_AUDIT_ACTIONS`
@@ -36,6 +38,8 @@ AuditAction = Literal[
     # The startup check could not establish that the host kernel stops a sandbox process from tracing
     # another of the same user: Yama ptrace_scope is 0, absent, or could not be read
     "kernel.ptrace_scope.flagged",
+    # The startup check found what a skipped release imported, kept in older storage and read by nothing now
+    "settings.upgrade.flagged",
     # Settings
     "provider_config_updated",
     "provider_config_tested",
@@ -183,6 +187,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "apikey.repo_refused": "API key refused a repository",
     "dev_mode_enabled": "Dev mode enabled",
     "kernel.ptrace_scope.flagged": "Kernel ptrace restriction missing or unverified",
+    "settings.upgrade.flagged": "Settings kept before the settings document were never imported",
     "provider_config_updated": "Provider config updated",
     "provider_config_tested": "Provider tested",
     "provider_connection_tested": "Provider connection tested",
@@ -298,6 +303,12 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))
+
+#: Registered actions nothing writes any more: the one-time imports that wrote them are gone (#168). Kept so the
+#: rows already written still read with their label and match a filter; never written again.
+NO_LONGER_WRITTEN: Final[frozenset[str]] = frozenset(
+    {"background_enrollment.blocked", "provider_catalogue.bootstrapped"}
+)
 
 #: Names that older rows carry and nothing writes any more, each with the name that replaced it.
 #: Reviewing a job was the world's (the game layer's) until it moved under /jobs/{job_id}; the fleet

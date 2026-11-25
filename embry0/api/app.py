@@ -882,17 +882,15 @@ async def _init_app_state(
 
         app.state.provider_catalogue = CatalogueStore(db)
     # The budget every reader enforces (#171): the settings document's
-    # section, and the old readers for a key the import has not imported,
-    # which it tries again while it runs.
+    # section, and an organization's moved settings until its layer has them,
+    # which it copies again while it runs.
     if not hasattr(app.state, "budget_policy"):
         from embry0.services.budget_policy import BudgetPolicy
         from embry0.services.organizations import MOVED_SETTINGS
-        from embry0.settings.earlier import EARLIER_SOURCES
 
         app.state.budget_policy = BudgetPolicy(
             app.state.settings,
             getattr(app.state, "config", None),
-            earlier=EARLIER_SOURCES,
             moved=MOVED_SETTINGS,
         )
     # The lifespan builds these before SandboxManager (which needs the
@@ -1213,38 +1211,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     db = DatabasePool(config.database_url)
     await db.connect()
-    # When this process began, by the database's clock, before the migrations
-    # create anything: the settings import counts as a deployment's past only
-    # what it held before a release first asked (ReliedOn, below).
-    settings_started = await db.fetchval("SELECT now()")
     await run_migrations(db)
 
-    # The settings document (spec 2026-10-28): before any loop reads a
-    # section, import the environment value of each section key not imported
-    # yet, once, and what a release kept in the database before the document
-    # (the budget_config row, which won over its variables), and load the
-    # first snapshot. Then copy each organization's settings that moved into
-    # a section into its layer, once (spec 2026-10-29, section 9). A failed
-    # import never stops this boot: every section reads as its defaults
-    # meanwhile, except the budget. Its policy reads each key not imported as
-    # the release before did and tries the import again while this one runs;
-    # an import that failed, or left a key whose relied-on check failed, is
-    # tried again in this run too, once the background tasks exist
-    # (settle_unchecked, below). The store carries when this process began,
-    # so every try counts a deployment's past against the same moment.
-    from embry0.services.background_enrollment import EnrollmentImport, import_enrollment_once, log_ignored_lists
-    from embry0.services.background_models import import_provider_settings_once
-    from embry0.settings.bootstrap import BootstrapResult, import_env_once, log_ignored_env
-    from embry0.settings.earlier import EARLIER_SOURCES
+    # The settings document (spec 2026-10-28): copy each organization's
+    # settings that moved into a section into its layer, once (spec
+    # 2026-10-29, section 9), and load the first snapshot. A failed copy never
+    # stops this boot: the budget policy reads the organization's own
+    # settings meanwhile and tries the copy again while this one runs. A
+    # variable a one-time import read before is no longer read: say so while
+    # one is still set (#168).
+    from embry0.settings.env import warn_moved_variables
     from embry0.settings.org_import import import_org_settings_once
     from embry0.settings.store import SettingsStore
 
-    app.state.settings = SettingsStore(db, started=settings_started)
-    settings_bootstrap: BootstrapResult | None = None
-    try:
-        settings_bootstrap = await import_env_once(app.state.settings, config, earlier=EARLIER_SOURCES)
-    except Exception:
-        logger.critical("settings_bootstrap_failed", exc_info=True)
+    app.state.settings = SettingsStore(db)
     try:
         from embry0.services.organizations import MOVED_SETTINGS
         from embry0.storage.repositories.organizations import OrganizationsRepository
@@ -1258,47 +1238,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.critical("settings_org_import_failed", exc_info=True)
     try:
-        # #164: the provider settings' watcher_local_model and the retired
-        # fallback chain, once, after the variables, so no model changes.
-        await import_provider_settings_once(app.state.settings, config)
-    except Exception:
-        logger.critical("background_models_import_failed", exc_info=True)
-    enrollment_import: EnrollmentImport | None = None
-    # The unaddressable names this process logged at error level and audited; its retries log them at debug.
-    enrollment_reported: set[str] = set()
-    try:
-        # #165: the repositories the scout and the Slop-O-Meter read before
-        # their enrollment became explicit, and the ones SCOUT_REPOS,
-        # SCOUT_EXCLUDE, SLOP_METER_REPOS and SLOP_METER_EXCLUDE named, into
-        # their repository layers, once. Until it has run for a feature, that
-        # feature reads its defaults and the meter removes nothing. One that
-        # fails is tried again in this run (settle_enrollment, below), with
-        # the store's start as its moment.
-        enrollment_import = await import_enrollment_once(
-            app.state.settings,
-            config,
-            reported=enrollment_reported,
-            metrics=getattr(app.state, "loop_metrics", None),
-        )
-    except Exception:
-        logger.critical("background_enrollment_import_failed", exc_info=True)
-    try:
-        first_snapshot = await app.state.settings.snapshot()
-        await log_ignored_env(app.state.settings, config)
-        log_ignored_lists(first_snapshot, config)
+        await app.state.settings.snapshot()
     except Exception:
         # A loop's own snapshot() reads the document again on its first tick.
         logger.critical("settings_first_read_failed", exc_info=True)
+    try:
+        warn_moved_variables()
+    except Exception:
+        logger.warning("settings_env_retired_scan_failed", exc_info=True)
+    # A deployment that skipped the releases that imported what it kept before
+    # the document (a saved budget row, the meter's repositories): say so, at
+    # error level and in the audit log; the meter holds its prune meanwhile.
+    from embry0.settings.upgrade_check import warn_if_imports_skipped
+
+    await warn_if_imports_skipped(db, audit_log_path=config.audit_log_path)
 
     # The provider catalogue (#173, ADR 0031): the deployment's overlay of the
-    # shipped one. OPENAI_COMPATIBLE_PROVIDERS and
-    # OPENROUTER_CATALOG_REFRESH_HOURS are imported into it once; then the
-    # stored catalogue is installed for every reader before anything routes a
-    # model. A background task (below) picks up a write another process made.
+    # shipped one, installed for every reader before anything routes a model.
+    # A background task (below) picks up a write another process made.
     try:
         from embry0.metrics.loop import NULL_METRICS
         from embry0.services.provider_catalogue_store import CatalogueStore, read_references
-        from embry0.services.provider_catalogue_store import log_ignored_env as log_ignored_catalogue_env
         from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
         tiers_repo = ProviderConfigRepository(db)
@@ -1312,12 +1272,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             audit_log_path=config.audit_log_path,
             metrics=getattr(app.state, "loop_metrics", None) or NULL_METRICS,
         )
-        try:
-            await app.state.provider_catalogue.import_env(config)
-        except Exception:
-            logger.critical("provider_catalogue_import_failed", exc_info=True)
         await app.state.provider_catalogue.refresh()
-        await log_ignored_catalogue_env(app.state.provider_catalogue, config)
     except Exception:
         logger.critical("provider_catalogue_unavailable", exc_info=True)
 
@@ -1882,33 +1837,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.volume_reaper = volume_reaper
 
     app.state.background_tasks = set()
-    # The settings import above failed, or left a key whose relied-on check
-    # failed (it reads its default): it is tried again in this run, not only
-    # at the next start, with the same start time.
-    if settings_bootstrap is None or settings_bootstrap.unchecked:
-        from embry0.settings.bootstrap import settle_unchecked
-
-        settle_task = asyncio.create_task(
-            settle_unchecked(app.state.settings, config, settings_bootstrap, earlier=EARLIER_SOURCES)
-        )
-        app.state.background_tasks.add(settle_task)
-        settle_task.add_done_callback(app.state.background_tasks.discard)
-    # The enrollment import failed, or left a repository's write failed: it is
-    # tried again in this run, with the same start (#165).
-    if enrollment_import is None or enrollment_import.failed:
-        from embry0.services.background_enrollment import settle_enrollment
-
-        enrollment_task = asyncio.create_task(
-            settle_enrollment(
-                app.state.settings,
-                config,
-                enrollment_import,
-                reported=enrollment_reported,
-                metrics=getattr(app.state, "loop_metrics", None),
-            )
-        )
-        app.state.background_tasks.add(enrollment_task)
-        enrollment_task.add_done_callback(app.state.background_tasks.discard)
     if qa_minio_task is not None:
         app.state.background_tasks.add(qa_minio_task)
         qa_minio_task.add_done_callback(app.state.background_tasks.discard)
@@ -2929,7 +2857,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # background_scope_exits, each removal audited); the enrollment, the judge's model
         # (background_models.slop_judge) and the slop_meter section come from one snapshot a tick.
         repos=registry_reader(app.state.repos_repo),
-        read=meter_reader(app.state.settings, config),
+        read=meter_reader(app.state.settings),
         store=app.state.slop_meter_repo,
         mirror=GitMirror(_Path(config.slop_meter_data_path), timeout=config.slop_meter_git_timeout_seconds),
         exits=ScopeExitsRepository(db),

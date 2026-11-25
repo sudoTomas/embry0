@@ -23,28 +23,15 @@ read to its end, through a pause and a resume: a change reaches the next job
 that starts.
 
 Before this section the two caps were the variables ``ASK_USER_ROUNDS_CAP``
-and ``USER_RETRY_ROUNDS_CAP``, read when the orchestrator started, and the
-brainstorming floor was a constant. The first start of the release that added
-the section imports a variable an operator set, once
-(:mod:`embry0.settings.bootstrap`). A value that is not a whole number at or
-above 0 is not imported, and the key keeps its default. The old reader fell
-back to its default for a value that was no number, but kept a negative one,
-which failed a job at its first question; neither is a cap an operator meant.
+and ``USER_RETRY_ROUNDS_CAP``, and the brainstorming floor was a constant. The
+variables are no longer read (:mod:`embry0.settings.env`).
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import Field
 
-from embry0.settings.registry import EnvImport, Section, SectionModel
-
-
-def rounds_from_env(value: Any) -> int:
-    """A cap's variable as a whole number. Anything else raises, so the import refuses it and the key keeps its
-    default; a number below 0 is refused by the field itself."""
-    return int(str(value).strip())
+from embry0.settings.registry import Section, SectionModel
 
 
 class AgentQuestionsSettings(SectionModel):
@@ -83,8 +70,4 @@ AGENT_QUESTIONS = Section(
     "a job back to try again.",
     org_keys=frozenset({"rounds_cap", "brainstorming_floor", "retry_rounds_cap"}),
     repo_keys=frozenset({"rounds_cap", "brainstorming_floor", "retry_rounds_cap"}),
-    env={
-        "rounds_cap": EnvImport("ask_user_rounds_cap", rounds_from_env),
-        "retry_rounds_cap": EnvImport("user_retry_rounds_cap", rounds_from_env),
-    },
 )

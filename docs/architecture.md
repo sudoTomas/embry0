@@ -1561,17 +1561,17 @@ edited on the General tab, the Policy tab or `PATCH /api/v1/config/settings/budg
 admin only, and read again at every check: the dispatch gate reads the section
 at each dispatch and a job at each check of its cap, from the store's snapshot,
 which is read again whenever the document changed. Before #171 they were the
-`budget_config` row, falling back to the variables below until a row was saved;
-the first start of that release imported the row once (or the variables), so a
-deployment kept its caps:
+`budget_config` row and the variables `MAX_BUDGET_USD`, `BUDGET_OVERRUN_MODE`,
+`DAILY_BUDGET_CAP_USD`, `MONTHLY_BUDGET_CAP_USD` and
+`RATE_LIMIT_PER_AUTHOR_PER_HOUR`; neither is read any more:
 
-| Control | `budget` key | Imported from | Default | Enforced |
-|---------|--------------|---------------|---------|----------|
-| Per-job ceiling | `max_budget_per_job_usd` | `MAX_BUDGET_USD` | $10.00 | Layer 1 — after every agent turn |
-| Overrun mode | `overrun_mode` | `BUDGET_OVERRUN_MODE` | `soft` | Layer 1 — how a crossing is handled |
-| Daily cap | `daily_cap_usd` | `DAILY_BUDGET_CAP_USD` | $100.00 | Layer 2 — at dispatch |
-| Monthly cap | `monthly_cap_usd` | `MONTHLY_BUDGET_CAP_USD` | $500.00 | Layer 2 — at dispatch |
-| Rate limit | `rate_limit_per_author_per_hour` | `RATE_LIMIT_PER_AUTHOR_PER_HOUR` | 5 | Layer 3 — at dispatch, per actor |
+| Control | `budget` key | Default | Enforced |
+|---------|--------------|---------|----------|
+| Per-job ceiling | `max_budget_per_job_usd` | $10.00 | Layer 1 — after every agent turn |
+| Overrun mode | `overrun_mode` | `soft` | Layer 1 — how a crossing is handled |
+| Daily cap | `daily_cap_usd` | $100.00 | Layer 2 — at dispatch |
+| Monthly cap | `monthly_cap_usd` | $500.00 | Layer 2 — at dispatch |
+| Rate limit | `rate_limit_per_author_per_hour` | 5 | Layer 3 — at dispatch, per actor |
 
 For each of the four numbers, `0` is no limit; `null` is refused, so an empty
 value never lifts one. The same section holds the unattended jobs' hard caps
@@ -1587,7 +1587,7 @@ is where every agent turn ends, so the cap is evaluated there after each turn
 
 **The cap in force decides the soft-mode route (#283).** Every check of the per-job cap records the cap it enforced and the spend it counted on the job's state (`budget_cap_usd`, `budget_spent_usd`), and `check_budget` compares the two. So a continued job stops at the cap its pause promised even when triage picked more than the ceiling, and a lowered ceiling, or one a continue may no longer pass, holds for a job already continued, from its next agent turn. The two keys are optional and have no value until a check records one, so a job a release without them checkpointed resumes with no recorded cap and routes as before (its overrun verdict and allowance decide) until its next turn; a reducer over a plain number would have started them at 0, an over-budget cap that a continue would have raised.
 
-**A cap the import has not imported yet** is read as the release before read it (`embry0/services/budget_policy.py`): the saved `budget_config` row, else its variable; an organization's audit caps from its own settings until its layer imported them. So a first start whose import failed never runs on the code defaults. The import is tried again while the orchestrator runs, and logged at error level until it succeeds. `GET /config/settings/effective`, and so the General and Policy tabs, show each such key with the value enforced and source `not_imported`, naming where it is read from, so an operator changes the cap that holds, not a default. The dispatch gate is built in one place, `build_budget_gate(policy)` (`embry0/orchestration/budget_gate.py`), over the budget policy; a test pins that nothing else constructs one.
+**An organization's audit caps** are read from its own settings until its layer has them (`embry0/services/budget_policy.py`): the copy at a release's first start is tried again while the orchestrator runs.
 
 **What layer 1 covers:** every agent turn of the job, the QA fan-out included.
 QA sub-task agents run in sub-graphs whose cost never reaches the parent

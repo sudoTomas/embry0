@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from embry0.services.background_scope import Enrollment, enrollment, ledger_key
+from embry0.services.background_scope import Enrollment, enrollment
 from embry0.settings.sections import CATALOG
 from embry0.settings.sections.scout import SCOUT, ScoutSettings
 from embry0.settings.store import Scoped, Snapshot, build_snapshot
@@ -44,18 +44,15 @@ def scout_read(
     return scout_snapshot(deployment, organizations).scoped(SCOUT)
 
 
-def scout_enrollment(
-    deployment: bool = True, layers: Mapping[str, Mapping[str, Any]] | None = None, *, settled: bool = True
-) -> Enrollment:
+def scout_enrollment(deployment: bool = True, layers: Mapping[str, Mapping[str, Any]] | None = None) -> Enrollment:
     """``background.scout`` as a tick reads it: the deployment's value and each layer's ``background``
-    values (stored scope string to them), with the enrollment import run unless ``settled`` is False."""
+    values (stored scope string to them)."""
     rows: list[dict[str, Any]] = [
         {
             "scope": "deployment",
             "data": {"background": {"scout": deployment}},
             "generation": 1,
             "updated_at": None,
-            "bootstrapped_keys": [ledger_key("scout")] if settled else [],
         }
     ]
     for scope, values in (layers or {}).items():

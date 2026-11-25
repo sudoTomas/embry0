@@ -9,23 +9,17 @@ its own message.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
-from embry0.config import Embry0Config
 from embry0.services.instruction_files import INSTRUCTION_FILE_GLOBS, SKIPPED_DIRS
-from embry0.settings.bootstrap import env_values, import_env_once
-from embry0.settings.env import governed_variables
 from embry0.settings.registry import Section, SectionRefused
 from embry0.settings.sections import CATALOG
-from embry0.settings.store import SettingsStore, Snapshot, build_snapshot
-from embry0.storage.database import DatabasePool
+from embry0.settings.store import Snapshot, build_snapshot
 
 WIDGETS = "acme/widgets"
 GIZMOS = "acme/gizmos"
@@ -331,47 +325,6 @@ def test_an_organization_s_cadence_is_not_read() -> None:
     )
     model = snapshot.get(_section(), repo=WIDGETS)
     assert (model.check_minutes, model.read_concurrency) == (60, 8), "a layer may not pace the deployment's schedule"
-
-
-# ---- the environment ------------------------------------------------------------------
-
-
-def _config(**env: str) -> Embry0Config:
-    with patch.dict(os.environ, env, clear=True):
-        return Embry0Config(_env_file=None)  # type: ignore[call-arg]
-
-
-#: Every variable whose name says context audit: none of them is this section's.
-AUDIT_VARIABLES = {
-    "CONTEXT_AUDIT_JOB_BUDGET_USD": "5",
-    "CONTEXT_AUDIT_MAX_JOBS_PER_TICK": "4",
-    "CONTEXT_AUDIT_LOCAL_MODEL": "custom/audit",
-}
-
-
-def test_no_variable_governs_the_section() -> None:
-    # The four keys were constants in the code, never variables: there is nothing to import.
-    section = _section()
-    assert section.env == {}, "no variable ever held the audit's files or cadence; one mapped here would invent one"
-    config = _config(**AUDIT_VARIABLES)
-    assert [v.section for v in governed_variables(CATALOG, config) if v.section == section.name] == []
-    assert section.name not in env_values(CATALOG, config).values, "embry0 settings import-env writes nothing for it"
-
-
-@pytest.mark.requires_postgres
-async def test_the_boot_import_leaves_the_section_and_its_ledger_alone(db_with_migrations: DatabasePool) -> None:
-    section = _section()
-    store = SettingsStore(db_with_migrations, CATALOG)
-
-    result = await import_env_once(store, _config(**AUDIT_VARIABLES))
-
-    assert result.imported.get("budget"), "the context audit's own variables are still imported, into budget"
-    row = await store.document()
-    assert section.name not in row["data"], "the import wrote into the context_audit section"
-    assert [key for key in row["bootstrapped_keys"] if key.startswith(f"{section.name}.")] == [], (
-        "the ledger records no context_audit key, so a later release that adds a variable imports it once"
-    )
-    assert (await store.snapshot()).get(section) == section.defaults()
 
 
 # ---- the schedule, the pull requests and the reserve (#170) ----------------------------------------

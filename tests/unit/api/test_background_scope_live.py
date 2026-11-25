@@ -33,9 +33,10 @@ from embry0.services.slop_meter.history import Commit
 from embry0.services.slop_meter.loop import SlopMeterLimits, SlopMeterLoop
 from embry0.services.slop_meter.mirror import GitMirror
 from embry0.settings.sections import CATALOG
-from embry0.settings.store import build_snapshot
+from embry0.settings.store import SettingsStore, build_snapshot
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.scout import ScoutRunsRepository
+from tests.fixtures.provider_catalogue import store_providers
 from tests.fixtures.settings_reads import snapshots_taken
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
@@ -73,12 +74,14 @@ async def app(
     its own on them, and the test's tick then found them scouted already (#412).
     """
     monkeypatch.setattr(ScoutLoop, "start", _no_ticks)
+    # The custom provider on in the stored catalogue, which the lifespan installs, so the scout's model is offered.
+    await store_providers(db_with_migrations, "custom")
+    # The meter off from its first look; leads are off by default.
+    await SettingsStore(db_with_migrations).set_keys("slop_meter", {"enabled": False}, actor="ops@example.com")
     with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(  # type: ignore[call-arg]
             _env_file=None,
             database_url=db_with_migrations._url,  # noqa: SLF001
-            # Imported once into the provider catalogue by the lifespan, as an upgrading deployment's would be.
-            openai_compatible_providers="custom",
             auth_dev_mode=True,
             webhook_dev_mode=True,
             api_key="",
@@ -89,13 +92,11 @@ async def app(
             xai_proxy_enabled=False,
             auth_proxy_enabled=False,
             context_proxy_enabled=False,
-            leads_enabled=False,
-            slop_meter_interval_seconds=0,
             slop_meter_data_path=str(tmp_path / "slop-meter"),
         )
     app = create_app(config)
     async with lifespan(app):
-        # With the meter off (slop_meter.enabled: false, imported from SLOP_METER_INTERVAL_SECONDS=0), its first
+        # With the meter off (slop_meter.enabled: false), its first
         # look only removes what left its scope, then it waits five minutes: let that first look finish first.
         meter: SlopMeterLoop = app.state.slop_meter
         for _ in range(500):
@@ -460,10 +461,10 @@ async def test_one_leads_pass_reads_its_policy_and_its_repositories_from_one_sna
     )
 
 
-# ---- an upgrade, through the real lifespan ----
+# ---- a start, through the real lifespan ----
 
 
-async def test_an_existing_deployment_keeps_its_scope_on_upgrade_and_a_new_one_starts_off(
+async def test_what_the_old_rule_read_enrolls_nothing_at_a_start_and_nothing_since(
     db_with_migrations: DatabasePool,
     stub_container_runtime: Any,  # noqa: F811
     tmp_path: Path,
@@ -474,7 +475,7 @@ async def test_an_existing_deployment_keeps_its_scope_on_upgrade_and_a_new_one_s
         await db.execute("INSERT INTO repos (repo, forge, created_at) VALUES ($1, 'github', $2)", repo, long_ago)
     await db.execute("INSERT INTO jobs (job_id, task, repo) VALUES ('job-1', 't', 'acme/busy')")
     await db.execute("INSERT INTO repo_preferences (repo, owners) VALUES ('acme/owned', '[\"octo\"]'::jsonb)")
-    with patch.dict(os.environ, {"SCOUT_EXCLUDE": "acme/owned"}, clear=True):
+    with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(  # type: ignore[call-arg]
             _env_file=None,
             database_url=db._url,  # noqa: SLF001
@@ -488,8 +489,6 @@ async def test_an_existing_deployment_keeps_its_scope_on_upgrade_and_a_new_one_s
             xai_proxy_enabled=False,
             auth_proxy_enabled=False,
             context_proxy_enabled=False,
-            leads_enabled=False,
-            slop_meter_interval_seconds=0,
             slop_meter_data_path=str(tmp_path / "slop-meter"),
         )
     app = create_app(config)
@@ -504,12 +503,12 @@ async def test_an_existing_deployment_keeps_its_scope_on_upgrade_and_a_new_one_s
         await app.state.repos_repo.register("acme/fresh", forge="github")
         await db.execute("INSERT INTO jobs (job_id, task, repo) VALUES ('job-2', 't', 'acme/fresh')")
         later = await scout.scope(await scout.settings())
-    assert scouted == ["acme/busy"], (
-        "the first start of the release keeps what the scout read before: a job in the last 90 days, owners, a "
-        f"watched stack, minus SCOUT_EXCLUDE; acme/idle had none of them: {scouted}"
+    assert scouted == [], (
+        "a start enrolls nothing: a job in the last 90 days (acme/busy) or owners (acme/owned), what the scout "
+        f"read before enrollment became explicit, no longer enroll a repository: {scouted}"
     )
-    assert metered == ["acme/busy", "acme/owned"], f"and what the meter read: {metered}"
-    assert later == ["acme/busy"], (
-        "after the upgrade a job no longer enrolls a repository: acme/fresh, registered and run on since, is "
-        f"not scouted until an operator enrolls it: {later}"
+    assert metered == [], f"nor in the meter: {metered}"
+    assert later == [], (
+        "a job no longer enrolls a repository: acme/fresh, registered and run on since, is not scouted until an "
+        f"operator enrolls it: {later}"
     )

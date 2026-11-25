@@ -69,10 +69,8 @@ restart. A provider that is off routes no model, is listed on no catalog
 surface (`GET /config/models`, the LLM Providers page, `GET /agents`), and
 takes no credential. The sandbox does not need it.
 
-`OPENAI_COMPATIBLE_PROVIDERS` named them before the catalogue did. The first
-start of a release with the catalogue imports it once into `enabled`; after
-that it is ignored, and a start that still finds it set logs
-`provider_catalogue_env_ignored`.
+`OPENAI_COMPATIBLE_PROVIDERS` named them before the catalogue did; it is no
+longer read.
 
 | Provider | Model ids | API root | Key (env fallback) | Listed models, $/Mtok in / out | Tool calling |
 |---|---|---|---|---|---|
@@ -135,7 +133,7 @@ shipped), and on demand with **Read the list now** on the OpenRouter card, which
 "refresh_hours"}`). `0` turns the schedule off. The loop looks each minute
 whether OpenRouter is on and at its interval, so a change to either applies
 without a restart. `OPENROUTER_CATALOG_REFRESH_HOURS` set the interval before
-the catalogue did; it is imported once into `refresh_hours`, then ignored. A
+the catalogue did; it is no longer read. A
 read that fails, or that yields fewer than ten models, changes nothing in
 force: the last good list stays and the error is shown beside it, and the loop
 tries again within the hour. With no list ever read, the static entry above
@@ -810,28 +808,10 @@ or the scout included, is set in Settings → Policy.
 of the provider settings, the proposal briefs on `PROPOSAL_BRIEF_MODEL` or
 else that, the job briefs on `JOB_BRIEF_MODEL` or else the proposal briefs'
 model, the judge on the job briefs' model, the scout on `SCOUT_MODEL` and the
-context audit on `CONTEXT_AUDIT_LOCAL_MODEL`. The first start of the release
-that added the section imports each variable into its key, then the
-provider settings' `watcher_local_model` as the `default`, with what each
-feature fell back on, so no feature's model changes. The scout and the
-context audit never ran on the watcher's model: each is set to `false`
-whenever its own variable gives it no model, so a default written later
-never starts the scout or moves the context audits. The provider settings'
-import writes each variable's model into its key too, unless the environment
-import stored it first. Both read the variables themselves, never what is
-stored: a first start whose environment import failed already runs every
-feature on its variable's model, never on the default in its place while
-the import is tried again, and loses no variable to the next. A hosted
-`CONTEXT_AUDIT_LOCAL_MODEL` is refused, since the context audit prefers only
-a model of your own server: scheduled audits then run on their agents' own
-models, and `background_models_variable_refused` names the variable (never
-its value) at warning level. Name a `custom/<model>` in
-`background_models.context_audit` to prefer one. Each import runs once
-(revision sources `bootstrap` and `upgrade`). `PUT /config/provider` refuses
+context audit on `CONTEXT_AUDIT_LOCAL_MODEL`. Those variables are no longer
+read: each feature runs on what this section names. `PUT /config/provider` refuses
 `watcher_local_model` with a 422 naming where it went; its column is kept,
-unread, so a rollback finds its value, and a later release drops it. Keep
-the four variables set until you are sure you will not roll back: the
-release before reads them.
+unread, so a rollback finds its value, and a later release drops it.
 
 ## Provider readiness
 

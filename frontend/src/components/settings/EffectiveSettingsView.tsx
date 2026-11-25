@@ -21,10 +21,9 @@ const SOURCE_TONES: Record<SettingSource, BadgeTone> = {
 
 const LAYERS: Record<string, string> = { organization: "an organization", repository: "a repository" };
 
-/** Where the value comes from, in the deployment's view: the default, its document, the import, or, until
- * the import succeeds, where the value enforced meanwhile is read from. */
+/** Where the value comes from, in the deployment's view: the default, its document, an import, or, until
+ * an organization's copy succeeds, where the value enforced meanwhile is read from. */
 function sourceLabel(setting: EffectiveSetting): string {
-  if (setting.source === "bootstrap" && setting.env) return `Imported from ${setting.env}`;
   if (setting.source === "not_imported") return notImportedText(setting.not_imported);
   return SOURCE_LABELS[setting.source] ?? setting.source;
 }
@@ -50,16 +49,14 @@ function setBy(setting: EffectiveSetting): string | null {
 }
 
 /**
- * The small print under a key: its default, who set it, the variable it
- * replaces, who can override it. A layer's view says the last two in its
- * own words, so it keeps the first two.
+ * The small print under a key: its default, who set it, who can override it.
+ * A layer's view says the last in its own words, so it keeps the first two.
  */
 function details(setting: EffectiveSetting, inLayer = false): string {
   const parts = [`Default ${formatSettingValue(setting.default)}`];
   const who = setBy(setting);
   if (who) parts.push(who);
   if (inLayer) return parts.join(" · ");
-  if (setting.env && setting.source !== "bootstrap") parts.push(`replaces ${setting.env}`);
   if (setting.overridable.length > 0) {
     parts.push(`${setting.overridable.map((layer) => LAYERS[layer] ?? layer).join(" or ")} can override it`);
   }
@@ -81,11 +78,6 @@ function SettingRow({ setting }: { setting: EffectiveSetting }) {
       {setting.refused && (
         <p className="text-xs text-warning" data-testid="effective-refused">
           {`The stored value is refused, so the default is read: ${setting.refused}`}
-        </p>
-      )}
-      {setting.env_still_set && setting.env && (
-        <p className="text-xs text-warning" data-testid="effective-env-still-set">
-          {`${setting.env} is still set in the environment. The document governs this key now and the variable is ignored, so it can be removed.`}
         </p>
       )}
     </li>

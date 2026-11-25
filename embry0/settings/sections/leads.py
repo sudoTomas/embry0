@@ -22,14 +22,7 @@ An operator writes it the way they would say it::
         done: 20
       done_phrases: [acceptance criteria, definition of done, akzeptanzkriterien]
 
-Leads are off until an operator turns them on. A deployment that existed
-before this section, when leads ran by default on every deployment that
-left ``LEADS_ENABLED`` unset, keeps them on: the first start of this release
-writes ``enabled: true`` when ``LEADS_ENABLED`` is not set and the
-deployment held a registered repository, a job or a lead a finder stored
-before this release first started (``relied_on`` below,
-:mod:`embry0.settings.bootstrap`). A new deployment held none of these then:
-its tables did not exist yet.
+Leads are off until an operator turns them on.
 
 The two readiness thresholds are two keys rather than one ``readiness``
 object, so an organization's layer can set one without restating the other
@@ -64,12 +57,12 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Mapping, Sequence
-from typing import Any, Final, Literal, Protocol, get_args
+from typing import Any, Final, Literal, get_args
 
 from pydantic import Field, field_validator
 
 from embry0.services.lead_kinds import rated
-from embry0.settings.registry import UNPRINTABLE_CATEGORIES, EnvImport, ReliedOn, Section, SectionModel
+from embry0.settings.registry import UNPRINTABLE_CATEGORIES, Section, SectionModel
 from embry0.settings.sections.maps import (
     MAX_ISSUE_LABEL_LENGTH,
     MAX_ISSUE_LABELS,
@@ -209,60 +202,9 @@ def _rated_kinds() -> str:
 
 _RATED_KINDS: Final = _rated_kinds()
 
-#: What a true ``ReliedOn`` check of ``enabled`` means, as the import's comment and ``import-env`` say it.
-EXISTED_BEFORE: Final = (
-    "the deployment existed before leads became opt-in "
-    "(it held a registered repository, a job or a lead a finder stored before this release first started)"
-)
-
-
-def finders_from_env(value: Any) -> list[Finder]:
-    """``LEADS_FINDERS`` as the loop read it before this section: what the import stores.
-
-    Names were read without case or spaces, a name that is no finder was
-    ignored (``crack`` and ``weed`` included: the scout stores those), and a
-    list naming none ran no finder. So ``CI, bogus`` imports ``[ci]``, and an
-    empty variable imports ``[]``.
-    """
-    return [finder for finder in FINDERS if finder in _names(value)]
-
-
-def finders_dropped(value: Any) -> list[str]:
-    """The names in ``LEADS_FINDERS`` that are no finder, which the import names in a warning."""
-    return sorted(_names(value) - set(FINDERS))
-
 
 def _names(value: Any) -> set[str]:
     return {part.strip().lower() for part in str(value or "").split(",") if part.strip()}
-
-
-def interval_from_env(value: Any) -> float:
-    """``LEADS_INTERVAL_HOURS`` as the loop read it: never more often than every quarter hour."""
-    return max(MIN_INTERVAL_HOURS, float(value))
-
-
-def backlog_interval_from_env(value: Any) -> float:
-    """``LEADS_BACKLOG_INTERVAL_HOURS`` as the loop read it: never more often than hourly."""
-    return max(MIN_BACKLOG_INTERVAL_HOURS, float(value))
-
-
-class DeploymentHistory(Protocol):
-    """What ``ReliedOn.check`` is given: ``embry0.storage.repositories.deployment_history.DeploymentHistory``."""
-
-    async def existed_before(self, *, lead_kinds: Sequence[str] = ()) -> bool: ...
-
-
-async def existed_before_leads_were_opt_in(history: DeploymentHistory) -> bool:
-    """Whether this deployment ran leads before this section: whether it existed before.
-
-    Until this section, leads ran on every deployment that left
-    ``LEADS_ENABLED`` unset, whether or not a finder stored anything, so any
-    record of use from before this release first started is the evidence: a
-    registered repository, a job, or a lead of a finder's kind (kept after
-    its repository is removed). ``history`` holds only what is older than
-    that moment; the query is the storage layer's.
-    """
-    return await history.existed_before(lead_kinds=FINDERS)
 
 
 class LeadsSettings(SectionModel):
@@ -611,18 +553,4 @@ LEADS = Section(
     # names the readiness roles and signals it labels and weighs its own way the same way, and inherits the
     # rest (#168).
     merged_keys=frozenset({"ask_severities", "readiness_labels", "readiness_weights"}),
-    env={
-        "enabled": EnvImport(
-            "leads_enabled",
-            relied_on=ReliedOn(value=True, check=existed_before_leads_were_opt_in, evidence=EXISTED_BEFORE),
-        ),
-        "finders": EnvImport("leads_finders", finders_from_env, dropped=finders_dropped),
-        "interval_hours": EnvImport("leads_interval_hours", interval_from_env),
-        "backlog_interval_hours": EnvImport("leads_backlog_interval_hours", backlog_interval_from_env),
-        "max_new_per_repo_per_day": "leads_max_new_per_repo_per_day",
-        "review_stale_days": "leads_review_stale_days",
-        "flaky_commits": "leads_flaky_commits",
-        "offer_min": "leads_ticket_min_score",
-        "ask_min": "proposals_ticket_min_readiness",
-    },
 )

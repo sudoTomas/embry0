@@ -144,7 +144,7 @@ class _EveryRepository:
 
 
 class NoExits:
-    """The record of repositories that left the scope: never read here, since nothing is settled."""
+    """The record of repositories that left the scope: always empty here; test_prune.py reads a real one."""
 
     async def left(self, feature: str) -> dict[str, Any]:
         return {}
@@ -175,13 +175,13 @@ class _Meter:
 
 def _read(model: str = "", **meter: Any) -> Any:
     """A tick's read with every listed repository enrolled, its outliers judged on ``model`` and the
-    ``slop_meter`` section's ``meter`` keys over its defaults. Not settled, so nothing is removed: what the
-    meter removes is tested in test_prune.py."""
+    ``slop_meter`` section's ``meter`` keys over its defaults. No repository has left the scope, so nothing is
+    removed: what the meter removes is tested in test_prune.py."""
 
     async def read() -> MeterRead:
         return MeterRead(
             models=lambda repo: model,
-            enrollment=Enrollment(_EveryRepository(), frozenset()),
+            enrollment=Enrollment(_EveryRepository()),
             meter=_Meter(**meter),
         )
 

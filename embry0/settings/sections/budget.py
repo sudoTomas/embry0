@@ -31,42 +31,22 @@ the ceiling lowers every one of them at once without refusing what the
 organizations stored. The dollar caps have no bound of their own, so with no
 ceiling (``0``) nothing bounds them. ``context_audit_max_jobs_per_tick``
 keeps the bound of 50 an organization's setting had, as a guard against a
-typo; a variable above it is not imported, so it reads the default.
+typo.
 
-Before this section the five fleet keys lived in the ``budget_config`` row,
-which won over the variables once saved; the first start of this release
-imports that row, else the variables, once (:mod:`embry0.settings.bootstrap`
-with :data:`embry0.settings.earlier.EARLIER_SOURCES`).
+Before this section the five fleet keys lived in the ``budget_config`` row and
+their variables. Neither is read any more (:mod:`embry0.settings.env`); the
+row is left in place, unread.
 """
 
 from __future__ import annotations
 
-import math
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field, model_validator
 
-from embry0.settings.registry import EnvImport, Section, SectionModel
+from embry0.settings.registry import Section, SectionModel
 
 OverrunMode = Literal["soft", "hard"]
-
-
-def cap_from_env(value: Any) -> float:
-    """A fleet cap's variable as the budget's readers read it before this section: a positive, finite
-    number is that cap, and anything at or below 0, or not finite (``inf``, ``nan``), is 0, no cap: an
-    infinite cap was no cap.
-
-    A value that is no number at all raises, so the import refuses it and the
-    key keeps its default, as the old reader fell back to its default.
-    """
-    number = float(value)
-    return number if math.isfinite(number) and number > 0 else 0.0
-
-
-def limit_from_env(value: Any) -> int:
-    """``RATE_LIMIT_PER_AUTHOR_PER_HOUR`` as the dispatch gate read it: a positive number, else 0, no limit."""
-    number = int(value)
-    return number if number > 0 else 0
 
 
 class BudgetSettings(SectionModel):
@@ -182,9 +162,6 @@ class BudgetSettings(SectionModel):
         return self
 
 
-#: The variable each unattended cap was imported from: one variable served all three jobs.
-_UNATTENDED = "context_audit_job_budget_usd"
-
 BUDGET = Section(
     name="budget",
     model=BudgetSettings,
@@ -199,15 +176,4 @@ BUDGET = Section(
     # unattended ones included.
     org_keys=frozenset({"context_audit_job_usd", "context_audit_max_jobs_per_tick", "area_map_job_usd", "fix_job_usd"}),
     repo_keys=frozenset(),
-    env={
-        "max_budget_per_job_usd": EnvImport("max_budget_usd", cap_from_env),
-        "daily_cap_usd": EnvImport("daily_budget_cap_usd", cap_from_env),
-        "monthly_cap_usd": EnvImport("monthly_budget_cap_usd", cap_from_env),
-        "rate_limit_per_author_per_hour": EnvImport("rate_limit_per_author_per_hour", limit_from_env),
-        "overrun_mode": "budget_overrun_mode",
-        "context_audit_job_usd": _UNATTENDED,
-        "context_audit_max_jobs_per_tick": "context_audit_max_jobs_per_tick",
-        "area_map_job_usd": _UNATTENDED,
-        "fix_job_usd": _UNATTENDED,
-    },
 )

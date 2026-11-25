@@ -18,8 +18,8 @@ import json
 import re
 import typing
 import unicodedata
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError, create_model, field_validator
@@ -171,51 +171,6 @@ def field_alone(model: type[BaseModel], key: str) -> type[BaseModel]:
     return alone
 
 
-@dataclass(frozen=True)
-class ReliedOn:
-    """A value a deployment keeps when it relied on it before a release turned the key's default.
-
-    The import never imports a code default, so a section whose default
-    differs from what an unset variable meant changes the value for every
-    deployment that never set the variable. Where those deployments relied
-    on the old meaning, as on a feature that ran by default and is now off
-    until an operator turns it on, the section declares the ``value`` such a
-    deployment keeps and how to tell it from a new one. ``check`` is given a
-    ``DeploymentHistory`` (``embry0.storage.repositories.deployment_history``)
-    read on the import's own connection, at most once per key (the import's
-    ledger) and only while the variable is not set; when it answers true,
-    ``value`` is imported as if the variable had been set to it. ``evidence``
-    says, as a clause, what a true answer means: the comment written above
-    the value, the log line and ``embry0 settings import-env`` all carry it.
-    The section's own checks must accept ``value``, and it must differ from
-    the key's default, or there is nothing to keep.
-    """
-
-    value: Any
-    check: Callable[[Any], Awaitable[bool]]
-    evidence: str
-
-
-@dataclass(frozen=True)
-class EnvImport:
-    """Where a section field's value came from before the document existed.
-
-    ``attr`` is the ``Embry0Config`` attribute (its variable is the
-    attribute's name in capitals, or its alias). ``convert`` turns the
-    config value into the field's form, for a field whose shape differs, such
-    as a comma-separated string that became a list. ``dropped`` names the
-    parts of the variable's value ``convert`` leaves out, such as a name the
-    field does not know, which the import names in a warning. ``relied_on``
-    is for a field whose default differs from what the unset variable meant
-    on purpose (:class:`ReliedOn`).
-    """
-
-    attr: str
-    convert: Callable[[Any], Any] | None = None
-    dropped: Callable[[Any], Sequence[str]] | None = None
-    relied_on: ReliedOn | None = None
-
-
 #: ``(before, after, context) -> [(key, why)]``: a section's check of what a write's readers read, the section's
 #: model before and after the write, with the write's context (:attr:`Section.effective_check`).
 EffectiveCheck = Callable[[Any, Any, Mapping[str, Any]], Iterable[tuple[str, str]]]
@@ -241,10 +196,7 @@ class Section[M: SectionModel]:
     total larger; a read past it keeps the most specific entries first: the
     document's own, then those of the documents below it, nearest first,
     then the default's (:func:`embry0.settings.layers.merged`).
-    ``env`` maps a field to the ``Embry0Config`` attribute its value is
-    imported from, once (``embry0.settings.bootstrap``): a string is the
-    attribute, an :class:`EnvImport` adds a converter, the parts it drops, or a
-    :class:`ReliedOn`. ``effective_check`` is for a value a write is checked
+    ``effective_check`` is for a value a write is checked
     against the running deployment by what its readers read, not by what the
     write sets: it is given the section as the written document's readers
     read it before the write and after it, defaults included, and the write's
@@ -259,7 +211,6 @@ class Section[M: SectionModel]:
     summary: str
     org_keys: frozenset[str] = frozenset()
     repo_keys: frozenset[str] = frozenset()
-    env: Mapping[str, str | EnvImport] = field(default_factory=dict)
     merged_keys: frozenset[str] = frozenset()
     added_keys: frozenset[str] = frozenset()
     effective_check: EffectiveCheck | None = None
@@ -269,7 +220,6 @@ class Section[M: SectionModel]:
         object.__setattr__(self, "repo_keys", frozenset(self.repo_keys))
         object.__setattr__(self, "merged_keys", frozenset(self.merged_keys))
         object.__setattr__(self, "added_keys", frozenset(self.added_keys))
-        object.__setattr__(self, "env", dict(self.env))
         problems = _section_problems(self)
         if problems:
             raise SectionError(f"section {self.name!r} cannot be registered: " + "; ".join(problems))
@@ -278,10 +228,6 @@ class Section[M: SectionModel]:
     def fields(self) -> tuple[str, ...]:
         """The section's keys, in the order the model declares them."""
         return tuple(self.model.model_fields)
-
-    def imports(self) -> dict[str, EnvImport]:
-        """``env`` with every entry as an :class:`EnvImport`."""
-        return {key: value if isinstance(value, EnvImport) else EnvImport(value) for key, value in self.env.items()}
 
     def defaults(self) -> M:
         """The section with nothing written: every field at its default."""
@@ -388,7 +334,6 @@ def _section_problems(section: Section[Any]) -> list[str]:
     for label, keys in (
         ("org_keys", section.org_keys),
         ("repo_keys", section.repo_keys),
-        ("env", section.env),
         ("merged_keys", section.merged_keys),
         ("added_keys", section.added_keys),
     ):
@@ -409,26 +354,6 @@ def _section_problems(section: Section[Any]) -> list[str]:
             problems.append(f"{key!r} is in both merged_keys and added_keys")
     if not problems:
         problems.extend(_default_problems(section))
-    if not problems:
-        problems.extend(_relied_on_problems(section))
-    return problems
-
-
-def _relied_on_problems(section: Section[Any]) -> list[str]:
-    """A ``ReliedOn`` value the section refuses, or one equal to the default, would keep nothing."""
-    problems: list[str] = []
-    defaults = section.model().model_dump(mode="json")
-    for key, imported in section.env.items():
-        relied = imported.relied_on if isinstance(imported, EnvImport) else None
-        if relied is None:
-            continue
-        try:
-            kept = section.validate({key: relied.value}).model_dump(mode="json")[key]
-        except SectionRefused as exc:
-            problems.append(f"the value env[{key!r}].relied_on keeps is refused by the section: {exc}")
-            continue
-        if kept == defaults.get(key):
-            problems.append(f"env[{key!r}].relied_on keeps the key's default: there is nothing to keep")
     return problems
 
 

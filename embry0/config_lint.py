@@ -31,6 +31,7 @@ from pydantic import AliasChoices
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 
+from embry0.config_retired import MOVED_TO_DOCUMENTS
 from embry0.execution.auth_provider import RESERVED_ENV_KEYS, RESERVED_ENV_PREFIXES
 
 # Per-owner GitHub / per-namespace GitLab tokens (see execution/github_tokens.py
@@ -64,7 +65,7 @@ _UNDECLARED_KEYS: Final[frozenset[str]] = frozenset({"XAI_DIRECT_EXECUTOR", "EMB
 
 def _provider_variables() -> frozenset[str]:
     """Each provider's key and address variables (``catalogue.ENVIRONMENT``): the credential resolver reads them,
-    not a config field, and they share prefixes config fields own (``OPENAI_``, ``OPENROUTER_``)."""
+    not a config field. Known, and a close misspelling of one is said whatever its prefix (``OPENAI_API_KY``)."""
     from embry0.agents.catalogue import ENVIRONMENT
 
     return frozenset(name for env in ENVIRONMENT.values() for name in (env.api_key, env.base_url) if name)
@@ -95,16 +96,24 @@ def declared_env_names(model: type[BaseSettings]) -> set[str]:
 
 
 def find_unknown_env_vars(environ: Mapping[str, str], declared: set[str]) -> list[UnknownEnvVar]:
-    """Env keys that look like a misspelled ``declared`` name, sorted by key."""
+    """Env keys that look like a misspelled ``declared`` name or provider variable, sorted by key."""
     prefixes = tuple({name.split("_", 1)[0] + "_" for name in declared if "_" in name})
     findings: list[UnknownEnvVar] = []
     providers = _provider_variables()
+    known = sorted(declared | providers)
     for name in sorted(environ):
         if name in declared or name in RESERVED_ENV_KEYS or name in _UNDECLARED_KEYS or name in providers:
             continue
-        if name.startswith(_IGNORED_PREFIXES) or not name.startswith(prefixes):
+        if name in MOVED_TO_DOCUMENTS:  # no longer read, and said so on its own (embry0.settings.env)
             continue
-        close = difflib.get_close_matches(name, declared, n=1, cutoff=_SUGGESTION_CUTOFF)
+        if name.startswith(_IGNORED_PREFIXES):
+            continue
+        close = difflib.get_close_matches(name, known, n=1, cutoff=_SUGGESTION_CUTOFF)
+        if not name.startswith(prefixes):
+            # No config field owns the prefix: only a close misspelling of a provider's variable is said.
+            if close and close[0] in providers:
+                findings.append(UnknownEnvVar(name=name, did_you_mean=close[0]))
+            continue
         if not close and name.startswith(_SHARED_PREFIXES):
             continue
         findings.append(UnknownEnvVar(name=name, did_you_mean=close[0] if close else None))

@@ -9,15 +9,11 @@ own message on a tree that has no slop_meter section.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
-from embry0.config import Embry0Config
-from embry0.settings.bootstrap import env_values
 from embry0.settings.document import DocumentInvalid, check, load_yaml
 from embry0.settings.registry import Section
 from embry0.settings.sections import CATALOG
@@ -301,31 +297,6 @@ def test_the_configuration_version_follows_what_a_score_is_computed_from_and_not
         assert config_version(section.validate({key: value})) == base, f"{key} is not what a score is computed from"
     reordered = dict(reversed(list(section.defaults().weights.items())))
     assert config_version(section.validate({"weights": reordered})) == base, "the order globs are written in is not"
-
-
-# ---- the import from the environment ----
-
-
-def _imported(**env: str) -> dict[str, Any]:
-    _section()
-    with patch.dict(os.environ, env, clear=True):
-        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    return env_values(CATALOG, config).values.get("slop_meter", {})
-
-
-def test_the_reading_pace_is_imported_from_its_variables_once() -> None:
-    assert _imported() == {}, "nothing set, nothing imported: a code default is never imported"
-    assert _imported(SLOP_METER_INTERVAL_SECONDS="0") == {"enabled": False}, "0 turned the reading off"
-    assert _imported(SLOP_METER_INTERVAL_SECONDS="86400") == {}, "the default interval is not imported"
-    assert _imported(SLOP_METER_INTERVAL_SECONDS="3600") == {"interval_hours": 1.0}
-    assert _imported(SLOP_METER_INTERVAL_SECONDS="60") == {"interval_hours": 0.25}, "at least a quarter hour"
-    assert _imported(SLOP_METER_API_CALLS_PER_TICK="50", SLOP_METER_RATE_RESERVE="500") == {
-        "api_calls_per_tick": 50,
-        "rate_reserve": 500,
-    }
-    assert (
-        _imported(SLOP_METER_COMMITS_PER_TICK="10", SLOP_METER_DATA_PATH="/x", SLOP_METER_CATCHUP_SECONDS="9") == {}
-    ), "the process's own limits stay variables"
 
 
 def test_the_section_reads_as_an_operator_writes_it() -> None:

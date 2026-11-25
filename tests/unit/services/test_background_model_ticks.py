@@ -191,7 +191,7 @@ async def test_the_slop_judge_reads_its_model_at_every_tick() -> None:
     reader = Reader("")
 
     async def read() -> MeterRead:
-        return MeterRead(models=await reader(), enrollment=Enrollment(fakes._EveryRepository(), frozenset()))
+        return MeterRead(models=await reader(), enrollment=Enrollment(fakes._EveryRepository()))
 
     loop._read = read  # noqa: SLF001 - the reader the loop was built with, swapped for one the test drives
     await loop.tick()

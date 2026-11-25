@@ -1,10 +1,7 @@
 """A section that exists only in tests, so the settings foundation is proven before any feature uses it.
 
 Its fields cover each kind a real section will have: a switch, a whole
-number with bounds, a number, a choice, a list imported from a
-comma-separated variable, and text with a validator. Its ``env`` names real
-``Embry0Config`` attributes, so the environment import reads what the
-running config was given.
+number with bounds, a number, a choice, a list, and text with a validator.
 """
 
 from __future__ import annotations
@@ -14,11 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, ValidationInfo, field_validator
 
-from embry0.settings.registry import Catalog, EnvImport, Section, SectionModel
-
-
-def split_commas(value: object) -> list[str]:
-    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+from embry0.settings.registry import Catalog, Section, SectionModel
 
 
 class SampleSettings(SectionModel):
@@ -45,13 +38,6 @@ SAMPLE = Section(
     summary="A section that exists only in tests.",
     org_keys=frozenset({"per_tick", "remind_hours"}),
     repo_keys=frozenset({"mode"}),
-    env={
-        "enabled": "asks_enabled",
-        "per_tick": "linear_reconcile_max_dispatches",
-        "remind_hours": "ask_remind_hours",
-        "labels": EnvImport("scout_repos", split_commas),
-        "zone": "ask_timezone",
-    },
 )
 
 
@@ -82,7 +68,6 @@ BRITTLE = Section(
     name="brittle",
     model=BrittleSettings,
     summary="A section whose check raises KeyError.",
-    env={"zone": "ask_timezone", "hours": "ask_remind_hours"},
 )
 
 

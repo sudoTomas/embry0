@@ -18,7 +18,7 @@ from pydantic import Field, field_validator
 
 from embry0.api.deps import bust_api_key_cache
 from embry0.config import Embry0Config
-from embry0.settings.bootstrap import import_env_once
+from embry0.settings.org_import import BOOTSTRAP_ACTOR
 from embry0.settings.registry import Catalog, Section, SectionModel
 from embry0.settings.store import WHY_NOT, SettingsStore
 from embry0.storage.database import DatabasePool
@@ -78,7 +78,7 @@ async def app(db_with_migrations: DatabasePool) -> AsyncIterator[Any]:
     from embry0.api.app import create_app
 
     bust_api_key_cache()
-    with patch.dict(os.environ, {"ASK_REMIND_HOURS": "12"}, clear=True):
+    with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(_env_file=None, auth_dev_mode=False, webhook_dev_mode=False, api_key="master-key")  # type: ignore[call-arg]
     app = create_app(config)
     state = app.state
@@ -324,11 +324,15 @@ async def test_one_revision_shows_both_texts_and_its_changes(client) -> None:
     assert (await client.get(f"{URL}/revisions/999999")).status_code == 404
 
 
-async def test_embry0_s_own_import_is_shown_to_every_key(app, client) -> None:
-    """The boot import is recorded under embry0's own actor, which names no person, so a read key sees it."""
-    from embry0.settings.bootstrap import BOOTSTRAP_ACTOR
+async def _imported_at_startup(app: Any) -> None:
+    """``sample.remind_hours`` as an import at a release's first start stores it: embry0's own actor and source
+    ``bootstrap`` (the organization settings' copy writes its layers so; older documents hold such revisions)."""
+    await app.state.settings.set_keys("sample", {"remind_hours": 12.0}, actor=BOOTSTRAP_ACTOR, source="bootstrap")
 
-    await import_env_once(app.state.settings, app.state.config)
+
+async def test_embry0_s_own_import_is_shown_to_every_key(app, client) -> None:
+    """An import at startup is recorded under embry0's own actor, which names no person, so a read key sees it."""
+    await _imported_at_startup(app)
     reader = _as(READER)
     listed = (await client.get(f"{URL}/revisions", headers=reader)).json()["revisions"]
     assert [r["actor"] for r in listed] == [BOOTSTRAP_ACTOR], f"a read key must see embry0's own actor: {listed}"
@@ -343,7 +347,7 @@ async def test_embry0_s_own_import_is_shown_to_every_key(app, client) -> None:
 
 
 async def test_effective_values_say_where_each_came_from(app, client) -> None:
-    await import_env_once(app.state.settings, app.state.config)
+    await _imported_at_startup(app)
     await _put(client, (await client.get(URL)).json()["yaml_text"] + "  per_tick: 4\n")
 
     resp = await client.get(f"{URL}/effective")
@@ -351,7 +355,9 @@ async def test_effective_values_say_where_each_came_from(app, client) -> None:
     sample = next(s for s in resp.json()["sections"] if s["name"] == "sample")
     keys = {k["key"]: k for k in sample["keys"]}
     assert (keys["remind_hours"]["value"], keys["remind_hours"]["source"]) == (12.0, "bootstrap")
-    assert (keys["remind_hours"]["env"], keys["remind_hours"]["env_still_set"]) == ("ASK_REMIND_HOURS", True)
+    assert not {"env", "env_still_set"} & set(keys["remind_hours"]), (
+        f"no key names a variable it was imported from: none is read any more (#168): {keys['remind_hours']}"
+    )
     assert (keys["per_tick"]["value"], keys["per_tick"]["source"], keys["per_tick"]["set_by"]) == (
         4,
         "document",
@@ -359,15 +365,15 @@ async def test_effective_values_say_where_each_came_from(app, client) -> None:
     )
     assert keys["per_tick"]["overridable"] == ["organization"]
     assert (keys["mode"]["value"], keys["mode"]["default"], keys["mode"]["source"]) == ("shadow", "shadow", "default")
-    assert keys["mode"]["set_by"] is None and keys["mode"]["env"] is None
+    assert keys["mode"]["set_by"] is None
 
 
-async def test_the_schema_names_each_section_and_its_variables(client) -> None:
+async def test_the_schema_names_each_section_and_its_overridable_keys(client) -> None:
     resp = await client.get(f"{URL}/schema")
     assert resp.status_code == 200, resp.text
     schema = resp.json()
     assert set(schema["properties"]) == {"version", "managed_by", "sample", "other"}
-    assert schema["x-embry0-sections"]["sample"]["env"]["remind_hours"] == "ASK_REMIND_HOURS"
+    assert "env" not in schema["x-embry0-sections"]["sample"], "no section names variables: none is read (#168)"
     assert schema["x-embry0-sections"]["sample"]["repo_keys"] == ["mode"]
 
 

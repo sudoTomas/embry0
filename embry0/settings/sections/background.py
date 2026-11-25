@@ -20,9 +20,7 @@ it. The one rule that applies it is :func:`embry0.services.background_scope.scop
 
 The scout and the Slop-O-Meter clone repositories and may spend money, so
 they read nothing until an operator enrolls a repository, an organization
-or the deployment. A deployment that existed before this section keeps the
-repositories they read before: the first start of this release writes them
-into their repositories' layers, once (``embry0.services.background_enrollment``).
+or the deployment.
 
 Leads read only, and only where someone will be asked (a repository with
 owners, or a watched stack); the leads loop has a switch of its own for the
@@ -73,16 +71,14 @@ class BackgroundSettings(SectionModel):
         description=(
             "The scout starts read-only scouting jobs on this repository and its areas, on the model "
             "background_models.scout names. Off until an operator enrolls a repository, an organization or the "
-            "deployment. Upgrading keeps what it read before, and SCOUT_REPOS and SCOUT_EXCLUDE, in each "
-            "repository's layer, once."
+            "deployment."
         ),
     )
     slop_meter: bool = Field(
         default=False,
         description=(
             "The Slop-O-Meter keeps a bare mirror of this repository and reads its history and forge events to "
-            "score it. Off until enrolled; upgrading keeps what it read before, and SLOP_METER_REPOS and "
-            "SLOP_METER_EXCLUDE, in each repository's layer, once. An inactive repository is not read but keeps "
+            "score it. Off until enrolled. An inactive repository is not read but keeps "
             "what was read. One that leaves (false, or unregistered) has its mirror, its rows and its "
             "contributors' names and emails removed prune_after_days later, unless it comes back first."
         ),

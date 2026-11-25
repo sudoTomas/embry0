@@ -1,10 +1,10 @@
 """Every setting's effective value and where it came from (``GET /config/settings/effective``).
 
 ``source`` is ``default`` (nothing stored for the key), ``document``
-(stored in the deployment's document), ``bootstrap`` (stored there by the
-environment import and not changed since), ``not_imported`` (a key moved from
-older storage that the import has not imported yet, read meanwhile as the
-release before read it; ``not_imported`` says from where), or, for a view of
+(stored in the deployment's document), ``bootstrap`` (stored there by an
+import at a release's first start and not changed since), ``not_imported`` (an
+organization's setting moved from its own settings that its layer has not
+imported yet, read meanwhile from there; ``not_imported`` says from where), or, for a view of
 an organization or a repository (spec 2026-10-29), ``organization`` or
 ``repository`` when that layer supplies it. Who set a stored key and when come from the newest
 kept revision of the supplying document that changed it; a key last changed
@@ -33,7 +33,6 @@ from datetime import datetime
 from typing import Any
 
 from embry0.settings.document import changes, mapping
-from embry0.settings.env import env_name, is_set
 from embry0.settings.layers import Resolved
 from embry0.settings.registry import Catalog, Section
 from embry0.settings.scope import LAYER_NOUNS, Scope, owner_of
@@ -147,7 +146,6 @@ def effective_view(
     catalog: Catalog,
     snapshot: Snapshot,
     revisions: Mapping[str, Iterable[Mapping[str, Any]]] | Iterable[Mapping[str, Any]],
-    config: Any,
     *,
     owner: str | None = None,
     repo: str | None = None,
@@ -188,7 +186,6 @@ def effective_view(
         else:
             inherited = defaults
         stored = mapping(snapshot.data.get(section.name))
-        imports = section.imports()
         keys: list[dict[str, Any]] = []
         for key in section.fields:
             why_refused = refused.get((section.name, key)) or refused.get((section.name, ""))
@@ -249,7 +246,6 @@ def effective_view(
                     inherited_value = org_waiting.value
                 elif dep_waiting is not None:
                     inherited_value = dep_waiting.value
-            imported = imports.get(key)
             overridable = [
                 layer
                 for layer, keys_of in (("organization", section.org_keys), ("repository", section.repo_keys))
@@ -263,8 +259,6 @@ def effective_view(
                 "not_imported": waiting.view() if waiting is not None else None,
                 "set_by": revision.get("actor") if revision is not None else None,
                 "set_at": iso(revision.get("created_at")) if revision is not None else None,
-                "env": env_name(imported.attr) if imported is not None else None,
-                "env_still_set": imported is not None and is_set(config, imported.attr),
                 "overridable": overridable,
                 "refused": why_refused,
                 "description": section.model.model_fields[key].description,

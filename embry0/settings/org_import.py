@@ -44,18 +44,21 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 import structlog
 
 from embry0.audit.helpers import emit_audit
-from embry0.settings.bootstrap import BOOTSTRAP_ACTOR
+from embry0.orchestration import dispatch_actors
 from embry0.settings.document import DocumentInvalid, check, mapping, with_section
 from embry0.settings.scope import Scope, ScopeError, organization_of
 from embry0.settings.store import SettingsStore
 from embry0.storage import repo_renames
 
 logger = structlog.get_logger(__name__)
+
+#: The actor of every revision and audit row the copy writes.
+BOOTSTRAP_ACTOR: Final = dispatch_actors.SETTINGS_BOOTSTRAP
 
 
 class Moved(Protocol):

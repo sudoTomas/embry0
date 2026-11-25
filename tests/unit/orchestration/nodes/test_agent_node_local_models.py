@@ -11,6 +11,7 @@ from embry0.agents.executor import AgentOutput
 from embry0.orchestration.nodes.agent import run_agent_node
 from embry0.safety.error_codes import ErrorCode
 from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+from tests.fixtures.budget_settings import BudgetStore
 from tests.fixtures.provider_catalogue import enable_providers
 
 _LOCAL = "custom/qwen"
@@ -105,6 +106,8 @@ async def _run(
         config={
             "configurable": {
                 "db": _Db(),
+                # The fake database holds no settings documents: the job's budget is the section's defaults.
+                "settings_store": BudgetStore(),
                 "traces_repo": traces,
                 "job_id": "job-1",
                 "llm_providers": providers,

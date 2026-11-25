@@ -148,16 +148,3 @@ def test_the_retired_chain_and_variables_are_read_nowhere_in_the_app() -> None:
             if isinstance(name, ast.Constant) and name.value in RETIRED:
                 read.append(ast.unparse(node))
     assert read == [], f"each background feature reads its model from the settings document only (#164): {read}"
-
-
-def test_the_provider_settings_are_imported_once_after_the_variables() -> None:
-    lifespan = next(n for n in ast.walk(_tree()) if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan")
-    awaited = [
-        ast.unparse(node.value.func)
-        for node in ast.walk(lifespan)
-        if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
-    ]
-    assert "import_provider_settings_once" in awaited, "the old watcher model must reach the section at startup"
-    assert awaited.index("import_env_once") < awaited.index("import_provider_settings_once"), (
-        "after the variables, so the chain it fills in never overwrites a feature's own variable"
-    )

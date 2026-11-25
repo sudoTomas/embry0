@@ -13,9 +13,8 @@ def test_config_defaults():
             _env_file=None,  # type: ignore[call-arg]
         )
     assert config.database_url == "postgresql://embry0:embry0@localhost:5432/embry0"
-    assert config.max_budget_usd == 10.0
-    assert config.daily_budget_cap_usd == 100.0
-    assert config.monthly_budget_cap_usd == 500.0
+    for moved in ("max_budget_usd", "daily_budget_cap_usd", "monthly_budget_cap_usd"):
+        assert moved not in Embry0Config.model_fields, f"{moved} is the settings document's budget, not the config's"
 
 
 def test_dead_env_var_is_silently_ignored():
@@ -32,7 +31,6 @@ def test_config_from_env():
     env = {
         "DATABASE_URL": "postgresql://user:pass@db:5432/mydb",
         "GITHUB_TOKEN": "ghp_test123",
-        "MAX_BUDGET_USD": "25.0",
         "ANTHROPIC_API_KEY": "sk-ant-test",
     }
     with patch.dict(os.environ, env, clear=True):
@@ -41,7 +39,6 @@ def test_config_from_env():
         )
     assert config.database_url == "postgresql://user:pass@db:5432/mydb"
     assert config.github_token == "ghp_test123"
-    assert config.max_budget_usd == 25.0
     assert config.anthropic_api_key == "sk-ant-test"
 
 

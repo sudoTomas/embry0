@@ -53,7 +53,6 @@ from embry0.settings.document import (
     unknown_parts,
 )
 from embry0.settings.effective import NotImported, effective_view, iso
-from embry0.settings.env import env_name
 from embry0.settings.registry import MANAGED_BY_KEY, Catalog
 from embry0.settings.scope import Scope, ScopeError, current, owner_of
 from embry0.settings.store import (
@@ -456,20 +455,18 @@ async def patch_settings_section(
 async def _not_imported(
     request: Request, org_scope: Scope | None
 ) -> Mapping[str, Mapping[tuple[str, str], NotImported]]:
-    """The keys the budget policy reads the old way because the import has not imported them yet, so the
-    view shows the caps that are enforced (#171): the deployment's, and the organization's own settings of
-    the organization in view. Nothing without the application's budget policy."""
+    """The organization's own settings the budget policy reads because its layer has not imported them yet, so
+    the view shows the caps that are enforced (#171). Nothing without an organization in view or the
+    application's budget policy."""
     policy = getattr(request.app.state, "budget_policy", None)
-    if policy is None:
+    if policy is None or org_scope is None:
         return {}
-    org = None
-    if org_scope is not None:
-        organizations = getattr(request.app.state, "organizations_repo", None)
-        org = await organizations.get(org_scope.name) if organizations is not None else None
-    budget = await policy.view([org] if org is not None else [])
-    found: Mapping[str, Mapping[tuple[str, str], NotImported]] = (
-        budget.not_imported(org.owner, org.settings) if org is not None else budget.not_imported()
-    )
+    organizations = getattr(request.app.state, "organizations_repo", None)
+    org = await organizations.get(org_scope.name) if organizations is not None else None
+    if org is None:
+        return {}
+    budget = await policy.view([org])
+    found: Mapping[str, Mapping[tuple[str, str], NotImported]] = budget.not_imported(org.owner, org.settings)
     return found
 
 
@@ -524,7 +521,6 @@ async def get_effective_settings(
         store.catalog,
         snapshot,
         revisions,
-        request.app.state.config,
         owner=org_scope.name if org_scope is not None and repo_scope is None else None,
         repo=repo_scope.name if repo_scope is not None else None,
         not_imported=not_imported,
@@ -541,19 +537,8 @@ async def get_effective_settings(
 
 @router.get("/config/settings/schema")
 async def get_settings_schema(request: Request) -> dict[str, Any]:
-    """The JSON Schema of the whole document, with each section's summary and overridable keys.
-
-    ``x-embry0-sections.<name>.env`` names the environment variable each key
-    was imported from.
-    """
-    store = _store(request)
-    schema = store.catalog.json_schema()
-    extras = schema.get("x-embry0-sections", {})
-    for section in store.catalog:
-        extras.setdefault(section.name, {})["env"] = {
-            key: env_name(imported.attr) for key, imported in section.imports().items()
-        }
-    return schema
+    """The JSON Schema of the whole document, with each section's summary and overridable keys."""
+    return _store(request).catalog.json_schema()
 
 
 @router.get("/config/settings/layers")

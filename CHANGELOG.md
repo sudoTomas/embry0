@@ -89,9 +89,25 @@ describes what embry0 does rather than listing changes.
   starts with `EMBRY0_LLM_` is refused, and a stored one is no longer
   injected: the OpenAI-compatible providers' keys and base URL use that
   namespace in the sandbox. Rename such a variable before you upgrade.
-- **Provider settings move into the catalogue.** The first start imports
-  `OPENAI_COMPATIBLE_PROVIDERS` and `OPENROUTER_CATALOG_REFRESH_HOURS` once into
-  the provider catalogue; after that both are ignored, and the catalogue turns a
-  provider on (`PUT /api/v1/config/providers/catalog`, no restart). Remove them
-  from `.env` once the start is verified
-  ([docs/providers.md](docs/providers.md#changing-the-catalogue)).
+- **Policy variables are no longer read.** The policy a feature read from
+  environment variables before it moved into a document stored in the database
+  (the settings document's sections, the provider catalogue) is set there only:
+  `OPENAI_COMPATIBLE_PROVIDERS`, `OPENROUTER_CATALOG_REFRESH_HOURS`, the budget
+  caps, `LEADS_*`, the scout's, the asks' and the briefs' policy and models,
+  the Slop-O-Meter's pace and repository lists, and the others listed in
+  [docs/configuration.md](docs/configuration.md#variables-no-longer-read). No
+  start imports them any more. While one is still set, startup logs
+  `settings_env_retired` naming it and `embry0 config` says where its setting
+  lives now: set it there, then remove the variable from `.env`.
+- **Upgrading from before the settings document.** The imports also carried
+  state no variable names: a saved `budget_config` row's caps, the repositories
+  the scout and the Slop-O-Meter read before their enrollment was explicit, and
+  leads running by default on a deployment that existed before. A deployment
+  that has not started the last release carrying the imports (`main` just
+  before #168 retired them) must start it once before this one; otherwise
+  its caps read as the section's defaults, nothing is enrolled and leads are
+  off. Startup logs `settings_upgrade_skipped` and writes
+  `settings.upgrade.flagged` when it finds such state never imported and not
+  set by hand since in the deployment's document or an organization's layer,
+  and the meter removes nothing until `background.slop_meter` is set there
+  ([docs/configuration.md](docs/configuration.md#variables-no-longer-read)).

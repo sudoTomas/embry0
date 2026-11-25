@@ -124,8 +124,6 @@ function setting(over: Partial<EffectiveSetting>): EffectiveSetting {
     source: "default",
     set_by: null,
     set_at: null,
-    env: null,
-    env_still_set: false,
     overridable: ["organization"],
     refused: null,
     description: null,

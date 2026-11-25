@@ -2,16 +2,14 @@
 
 - The dispatch gate and every job's ceiling read the section at each check: a
   change through ``PATCH /config/settings/budget`` holds from the next one.
-- The first boot imports the saved ``budget_config`` row once, since a saved
-  row won over the variables, else the variables; a second boot imports
-  nothing, and a cap nobody set stays unset.
-- With the default and with migrated values, the spend checks decide as they
-  did: each case's expected values are what the readers before the section
-  read for the same row and variables.
+- A cap nobody set reads its default. With the defaults, the spend checks
+  decide as the readers before the section did.
 - ``PUT /config/budget`` stays one release as a deprecated, admin-only wrapper
   over the section.
 - An organization's context-audit caps move from ``organizations.settings``
-  into its layer once; ``PATCH /orgs`` still takes them for one release.
+  into its layer once; ``PATCH /orgs`` still takes them for one release. Until
+  its layer has them, the views show the organization's own caps, which are
+  enforced.
 - The real lifespan wires all of it.
 
 The section is taken from the application's catalog by name, so each test
@@ -31,7 +29,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 from packaging.version import Version
-from structlog.testing import capture_logs
 
 from embry0.api.app import create_app, lifespan
 from embry0.api.deps import bust_api_key_cache
@@ -40,7 +37,6 @@ from embry0.orchestration.budget_gate import BudgetGate
 from embry0.orchestration.nodes.agent import load_budget_policy
 from embry0.services import organizations as org_service
 from embry0.services.issue_executor import IssueExecutor
-from embry0.settings.bootstrap import BOOTSTRAP_ACTOR, import_env_once, log_ignored_env
 from embry0.settings.registry import Section
 from embry0.settings.scope import Scope
 from embry0.settings.sections import CATALOG
@@ -65,15 +61,6 @@ def _budget() -> Section[Any]:
     section = CATALOG.get("budget")
     assert section is not None, "budget is a section of the settings document"
     return section
-
-
-async def _import(store: SettingsStore, config: Any) -> Any:
-    """The boot's import, with the sources kept before the document; fails with its own message without them."""
-    try:
-        from embry0.settings.earlier import EARLIER_SOURCES
-    except ImportError:
-        pytest.fail("the settings import reads the budget_config row, once (embry0.settings.earlier)")
-    return await import_env_once(store, config, earlier=EARLIER_SOURCES)
 
 
 def _moved() -> Any:
@@ -167,12 +154,6 @@ async def _spend_today(db: DatabasePool, usd: float) -> None:
     await db.execute("UPDATE jobs SET total_cost_usd = $2, status = 'completed' WHERE job_id = $1", job_id, usd)
 
 
-async def _budget_config_row(db: DatabasePool, **columns: Any) -> None:
-    names = ", ".join(["id", *columns])
-    marks = ", ".join(f"${i}" for i in range(1, len(columns) + 2))
-    await db.execute(f"INSERT INTO budget_config ({names}) VALUES ({marks})", "default", *columns.values())
-
-
 # ---- the caps are read from the section, at every check ----
 
 
@@ -212,93 +193,9 @@ async def test_writing_the_section_takes_an_unrestricted_admin(client: AsyncClie
     assert resp.status_code == 403, f"a key with a repository allowlist may not either: {resp.status_code}"
 
 
-# ---- the saved row, imported once ----
-
-
-async def test_a_saved_row_is_imported_once_and_wins_over_the_variables(db_with_migrations: DatabasePool) -> None:
-    await _budget_config_row(
-        db_with_migrations,
-        max_budget_per_job_usd=25.0,
-        daily_cap_usd=40.0,
-        monthly_cap_usd=500.0,
-        rate_limit_per_author_per_hour=2,
-        overrun_mode="hard",
-    )
-    store = SettingsStore(db_with_migrations)
-    config = _config(MAX_BUDGET_USD="99", DAILY_BUDGET_CAP_USD="1", CONTEXT_AUDIT_JOB_BUDGET_USD="3.5")
-
-    result = await _import(store, config)
-
-    assert result.earlier == {
-        "budget": {
-            "max_budget_per_job_usd": 25.0,
-            "daily_cap_usd": 40.0,
-            "rate_limit_per_author_per_hour": 2,
-            "overrun_mode": "hard",
-        }
-    }, "the row's values, not the variables'; its monthly cap is the default and is left unwritten"
-    budget = (await store.document())["data"]["budget"]
-    assert budget["max_budget_per_job_usd"] == 25.0 and budget["daily_cap_usd"] == 40.0
-    assert budget["context_audit_job_usd"] == 3.5, "a key the row never held still comes from its variable"
-    (revision,) = await store.revisions()
-    assert (revision["actor"], revision["source"], revision["reason"]) == (
-        BOOTSTRAP_ACTOR,
-        "bootstrap",
-        "imported from the budget_config table and the environment",
-    )
-    text = (await store.document())["yaml_text"]
-    assert "# Imported from the budget_config table on " in text
-    assert text.count("CONTEXT_AUDIT_JOB_BUDGET_USD") == 1, f"the variable all three came from is named once: {text}"
-    assert all(budget[key] == 3.5 for key in ("context_audit_job_usd", "area_map_job_usd", "fix_job_usd"))
-
-    await db_with_migrations.execute("UPDATE budget_config SET daily_cap_usd = 7")
-    again = await _import(SettingsStore(db_with_migrations), config)
-    assert (again.imported, again.revision_id) == ({}, None), "the row is imported once"
-    assert (await store.snapshot()).get(_budget()).daily_cap_usd == 40.0
-
-    with capture_logs() as logs:
-        await log_ignored_env(store, config)
-    ignored = sorted(e["variable"] for e in logs if e["event"] == "settings_env_ignored")
-    assert "MAX_BUDGET_USD" in ignored and "DAILY_BUDGET_CAP_USD" in ignored, ignored
-
-
-async def test_a_saved_row_of_defaults_writes_nothing_and_still_wins(db_with_migrations: DatabasePool) -> None:
-    """A row PUT /config/budget created holds the table's defaults: those were the caps, not the variables."""
-    await _budget_config_row(db_with_migrations, rate_limit_per_author_per_hour=5)
-    store = SettingsStore(db_with_migrations)
-
-    result = await _import(store, _config(MAX_BUDGET_USD="50"))
-
-    assert result.imported == {}
-    assert "budget" not in (await store.document())["data"]
-    assert (await store.snapshot()).get(_budget()).max_budget_per_job_usd == 10.0, "the row's 10, not the variable's 50"
-
-
-async def test_without_a_saved_row_the_variables_are_imported(db_with_migrations: DatabasePool) -> None:
-    store = SettingsStore(db_with_migrations)
-    config = _config(MAX_BUDGET_USD="0", DAILY_BUDGET_CAP_USD="250", BUDGET_OVERRUN_MODE="hard")
-
-    result = await _import(store, config)
-
-    assert result.earlier == {}
-    assert result.imported == {
-        "budget": {"max_budget_per_job_usd": 0.0, "daily_cap_usd": 250.0, "overrun_mode": "hard"}
-    }
-    graph = {"configurable": {"settings_store": store}}
-    assert await load_budget_policy(graph) == (0.0, "hard"), "MAX_BUDGET_USD=0 was no ceiling, and still is"
-
-
-async def test_a_cap_nobody_set_stays_unset(app: Any, client: AsyncClient, db_with_migrations: DatabasePool) -> None:
-    """No row and no variable: nothing is written, so each key keeps reading its default, a later default too."""
-    store = app.state.settings
-    result = await _import(store, _config())
-
-    assert result.imported == {}
-    document = await store.document()
-    assert "budget" not in document["data"], "no cap is written into the document"
-    assert {path for path in document["bootstrapped_keys"] if path.startswith("budget.")} == {
-        f"budget.{key}" for key in _budget().imports()
-    }, "every key is marked, so a variable set later is not imported"
+async def test_a_cap_nobody_set_reads_its_default(app: Any, client: AsyncClient) -> None:
+    """Nothing stored: each key reads its default, a later default too, and the effective view says so."""
+    assert "budget" not in (await app.state.settings.document())["data"], "no boot writes a cap into the document"
     resp = await client.get("/api/v1/config/settings/effective", headers=_as(ADMIN))
     (section,) = [s for s in resp.json()["sections"] if s["name"] == "budget"]
     assert {k["key"]: k["source"] for k in section["keys"]} == dict.fromkeys(_budget().fields, "default")
@@ -319,101 +216,27 @@ class _Spend:
         return self.dispatched
 
 
-#: (the row, the variables) -> what the readers before the section read: (ceiling, mode, daily, monthly, rate),
-#: None for no limit. The ceiling and mode were the agent node's reading, the rest the dispatch gate's.
-CASES: list[
-    tuple[str, dict[str, Any] | None, dict[str, str], tuple[float | None, str, float | None, float | None, int | None]]
-] = [
-    ("nothing set", None, {}, (10.0, "soft", 100.0, 500.0, 5)),
-    (
-        "variables, some set to no limit",
-        None,
-        {
-            "MAX_BUDGET_USD": "0",
-            "DAILY_BUDGET_CAP_USD": "0",
-            "MONTHLY_BUDGET_CAP_USD": "-1",
-            "RATE_LIMIT_PER_AUTHOR_PER_HOUR": "0",
-            "BUDGET_OVERRUN_MODE": "hard",
-        },
-        (None, "hard", None, None, None),
-    ),
-    (
-        "variables, all custom",
-        None,
-        {
-            "MAX_BUDGET_USD": "3",
-            "DAILY_BUDGET_CAP_USD": "30",
-            "MONTHLY_BUDGET_CAP_USD": "300",
-            "RATE_LIMIT_PER_AUTHOR_PER_HOUR": "2",
-        },
-        (3.0, "soft", 30.0, 300.0, 2),
-    ),
-    (
-        "a saved row, the variables ignored",
-        {
-            "max_budget_per_job_usd": 25.0,
-            "daily_cap_usd": 40.0,
-            "monthly_cap_usd": 900.0,
-            "rate_limit_per_author_per_hour": 2,
-            "overrun_mode": "hard",
-        },
-        {"MAX_BUDGET_USD": "99", "DAILY_BUDGET_CAP_USD": "1", "BUDGET_OVERRUN_MODE": "soft"},
-        (25.0, "hard", 40.0, 900.0, 2),
-    ),
-    (
-        "a row saved with one field",
-        {"daily_cap_usd": 40.0},
-        {"MAX_BUDGET_USD": "99", "MONTHLY_BUDGET_CAP_USD": "1"},
-        (10.0, "soft", 40.0, 500.0, 5),
-    ),
-    (
-        "a row only SQL could write",
-        {
-            "max_budget_per_job_usd": 0.0,
-            "daily_cap_usd": 0.0,
-            "monthly_cap_usd": float("inf"),
-            "rate_limit_per_author_per_hour": -1,
-            "overrun_mode": "",
-        },
-        {"MAX_BUDGET_USD": "6", "BUDGET_OVERRUN_MODE": "hard"},
-        (6.0, "hard", None, None, None),
-    ),
-]
+#: What the readers before the section read with nothing set: (ceiling, mode, daily, monthly, rate). The ceiling
+#: and mode were the agent node's reading, the rest the dispatch gate's.
+BEFORE: tuple[float, str, float, float, int] = (10.0, "soft", 100.0, 500.0, 5)
 
 
-@pytest.mark.parametrize(("name", "row", "env", "before"), CASES, ids=[case[0] for case in CASES])
-async def test_the_spend_checks_decide_as_before_under_default_and_migrated_values(
-    db_with_migrations: DatabasePool,
-    name: str,
-    row: dict[str, Any] | None,
-    env: dict[str, str],
-    before: tuple[float | None, str, float | None, float | None, int | None],
-) -> None:
-    if row is not None:
-        await _budget_config_row(db_with_migrations, **row)
+async def test_the_spend_checks_decide_as_before_under_the_defaults(db_with_migrations: DatabasePool) -> None:
     store = SettingsStore(db_with_migrations)
-    await _import(store, _config(**env))
-    ceiling, mode, daily, monthly, rate = before
+    ceiling, mode, daily, monthly, rate = BEFORE
 
     graph = {"configurable": {"settings_store": store}}
-    assert await load_budget_policy(graph) == (ceiling or 0.0, mode), f"{name}: the job's ceiling and mode"
+    assert await load_budget_policy(graph) == (ceiling, mode), "the job's ceiling and mode"
 
     reader = section_reader(store, _budget())
     for limit, cap in (("daily", daily), ("monthly", monthly)):
-        if cap is None:
-            spend = _Spend(**{limit: 1e9})
-            assert (await BudgetGate(reader, spend).check()).allowed, f"{name}: no {limit} cap"
-            continue
         under = _Spend(**{limit: round(cap - 0.01, 2)})
-        assert (await BudgetGate(reader, under).check()).allowed, f"{name}: under the {limit} cap of {cap}"
+        assert (await BudgetGate(reader, under).check()).allowed, f"under the {limit} cap of {cap}"
         at = await BudgetGate(reader, _Spend(**{limit: cap})).check()
-        assert (at.allowed, at.limit) == (False, limit), f"{name}: at the {limit} cap of {cap}"
-    if rate is None:
-        assert (await BudgetGate(reader, _Spend(dispatched=10_000)).check(actor="alex")).allowed, f"{name}: no limit"
-    else:
-        assert (await BudgetGate(reader, _Spend(dispatched=rate - 1)).check(actor="alex")).allowed, name
-        at = await BudgetGate(reader, _Spend(dispatched=rate)).check(actor="alex")
-        assert (at.allowed, at.limit) == (False, "rate_limit"), f"{name}: at the rate limit of {rate}"
+        assert (at.allowed, at.limit) == (False, limit), f"at the {limit} cap of {cap}"
+    assert (await BudgetGate(reader, _Spend(dispatched=rate - 1)).check(actor="alex")).allowed
+    at = await BudgetGate(reader, _Spend(dispatched=rate)).check(actor="alex")
+    assert (at.allowed, at.limit) == (False, "rate_limit"), f"at the rate limit of {rate}"
 
 
 # ---- PUT /config/budget, for one release ----
@@ -502,7 +325,7 @@ def test_the_old_paths_are_gone_by_the_release_that_removes_them() -> None:
     version = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert _overdue(version) == [], (
         f"embry0 {version} still serves {_overdue(version)}: remove the /config/budget routes (api/v1/config.py), "
-        "their docs/api.md note and the budget_config import, and refuse MOVED_SETTINGS on PATCH and POST /orgs "
+        "their docs/api.md note, and refuse MOVED_SETTINGS on PATCH and POST /orgs "
         "with a hint naming each key's place in the settings document"
     )
 
@@ -610,11 +433,10 @@ async def test_post_orgs_writes_a_moved_setting_into_the_layer_of_the_organizati
 
 
 @pytest.mark.usefixtures("stub_container_runtime")
-async def test_the_lifespan_imports_the_row_and_the_organizations_and_reads_the_section_everywhere(
+async def test_the_lifespan_copies_the_organizations_and_reads_the_section_everywhere(
     db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("embry0.observability.configure_structlog", lambda **kw: None)
-    await _budget_config_row(db_with_migrations, daily_cap_usd=40.0, overrun_mode="hard")
     await OrganizationsRepository(db_with_migrations).register(
         "acme", "github", settings={"context_audit_budget_usd": 7.5}
     )
@@ -631,15 +453,12 @@ async def test_the_lifespan_imports_the_row_and_the_organizations_and_reads_the_
         xai_proxy_enabled=False,
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
-        max_budget_usd=99.0,
     )
     app = create_app(config)
     async with lifespan(app):
         store = app.state.settings
         document = await store.document()
-        assert document["data"].get("budget") == {"daily_cap_usd": 40.0, "overrun_mode": "hard"}, (
-            "the boot imported the saved row, not MAX_BUDGET_USD"
-        )
+        assert "budget" not in document["data"], "the boot writes nothing into the deployment's document"
         acme = (await store.snapshot()).get(_budget(), owner="acme")
         assert acme.context_audit_job_usd == 7.5, "the boot copied the organization's cap into its layer"
 
@@ -675,55 +494,15 @@ async def test_the_lifespan_imports_the_row_and_the_organizations_and_reads_the_
 
     second = create_app(config)
     async with lifespan(second):
-        assert len(await second.state.settings.revisions()) == kept, "a second boot imports nothing again"
+        assert len(await second.state.settings.revisions()) == kept, "a second boot copies nothing again"
         assert math.isclose((await second.state.settings.snapshot()).get(_budget()).daily_cap_usd, 25.0)
 
 
-# ---- while the import is pending, the views show the caps that are enforced (#171 review) ----
-
-
-async def _a_failed_import(conn: Any, config: Any) -> Any:
-    import asyncpg
-
-    raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed in the middle of operation")
-
-
-def _pending_policy(store: SettingsStore, config: Embry0Config) -> Any:
-    """The application's budget policy, every attempt at the import failing as the first start's did."""
-    from embry0.services.budget_policy import BudgetPolicy
-    from embry0.settings.earlier import EARLIER_SOURCES
-
-    earlier = tuple(type(s)(section=s.section, label=s.label, read=_a_failed_import) for s in EARLIER_SOURCES)
-    return BudgetPolicy(store, config, earlier=earlier, moved=org_service.MOVED_SETTINGS)
+# ---- while an organization's copy is pending, the views show the caps that are enforced (#171 review) ----
 
 
 def _budget_keys(view: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {k["key"]: k for k in next(s for s in view["sections"] if s["name"] == "budget")["keys"]}
-
-
-async def test_the_first_effective_read_shows_the_import_it_starts(app: Any, client: AsyncClient) -> None:
-    """#339: with the boot's import not done (it failed, or a key was held), the first read of the effective view
-    tries it again, and answered from the document as it was before that import: the daily cap at its default and
-    its source "default", while the gate already read the imported 42. Only the next read showed 42."""
-    from embry0.services.budget_policy import BudgetPolicy
-    from embry0.settings.earlier import EARLIER_SOURCES
-
-    config = _config(DAILY_BUDGET_CAP_USD="42")
-    app.state.budget_policy = BudgetPolicy(
-        app.state.settings, config, earlier=EARLIER_SOURCES, moved=org_service.MOVED_SETTINGS
-    )
-
-    first = await client.get("/api/v1/config/settings/effective", headers=_as(OPERATOR))
-    assert first.status_code == 200, first.text
-    second = await client.get("/api/v1/config/settings/effective", headers=_as(OPERATOR))
-    shown = [
-        (keys["daily_cap_usd"]["value"], keys["daily_cap_usd"]["source"])
-        for keys in (_budget_keys(first.json()), _budget_keys(second.json()))
-    ]
-    assert shown == [(42.0, "bootstrap"), (42.0, "bootstrap")], (
-        f"the first read shows the value the import it started wrote, as the next does: {shown}"
-    )
-    assert (await app.state.budget_policy.settings()).daily_cap_usd == 42.0, "the gate reads the imported cap"
 
 
 def _shown(view: dict[str, Any], section: str, key: str) -> tuple[Any, Any]:
@@ -736,102 +515,44 @@ async def test_an_organization_s_first_effective_read_shows_the_import_it_starts
     app: Any, client: AsyncClient, db_with_migrations: DatabasePool
 ) -> None:
     """#339 for an organization's view: the same read's retry copies the organization's moved settings (its
-    context-audit budget and days) into its layer. Read before the retry, the first view showed both, and the daily
-    cap, at their defaults."""
+    context-audit budget and days) into its layer. Read before the retry, the first view showed both at their
+    defaults."""
     from embry0.services.budget_policy import BudgetPolicy
-    from embry0.settings.earlier import EARLIER_SOURCES
 
     await OrganizationsRepository(db_with_migrations).register(
         "acme", "github", settings={"context_audit_budget_usd": 0.5, "context_audit_days": 5}
     )
-    app.state.budget_policy = BudgetPolicy(
-        app.state.settings,
-        _config(DAILY_BUDGET_CAP_USD="42"),
-        earlier=EARLIER_SOURCES,
-        moved=org_service.MOVED_SETTINGS,
-    )
+    app.state.budget_policy = BudgetPolicy(app.state.settings, _config(), moved=org_service.MOVED_SETTINGS)
 
     reads = [
         (await client.get("/api/v1/config/settings/effective?owner=acme", headers=_as(OPERATOR))).json() for _ in "ab"
     ]
-    shown = [
-        (
-            _shown(view, "budget", "context_audit_job_usd"),
-            _shown(view, "context_audit", "days"),
-            _shown(view, "budget", "daily_cap_usd"),
-        )
-        for view in reads
-    ]
-    assert shown == [((0.5, "organization"), (5, "organization"), (42.0, "bootstrap"))] * 2, (
+    shown = [(_shown(view, "budget", "context_audit_job_usd"), _shown(view, "context_audit", "days")) for view in reads]
+    assert shown == [((0.5, "organization"), (5, "organization"))] * 2, (
         f"the organization's first read shows what the import it started wrote, as the next does: {shown}"
     )
 
 
-async def test_while_the_import_is_pending_the_effective_view_shows_the_caps_enforced(
-    app: Any, client: AsyncClient, db_with_migrations: DatabasePool
-) -> None:
-    """The review's case: the import failed over a saved row of 2 / 20 / 50 / 1 / hard. The General tab
-    read 10 / 100 / soft as defaults, so "lowering" the daily cap from 100 to 80 raised it from 20."""
-    await _budget_config_row(
-        db_with_migrations,
-        max_budget_per_job_usd=2.0,
-        daily_cap_usd=20.0,
-        monthly_cap_usd=50.0,
-        rate_limit_per_author_per_hour=1,
-        overrun_mode="hard",
-    )
-    config = _config(CONTEXT_AUDIT_JOB_BUDGET_USD="0.75")
-    app.state.budget_policy = _pending_policy(app.state.settings, config)
-    enforced = await app.state.budget_policy.settings()
+async def _a_failed_copy(*args: Any, **kwargs: Any) -> Any:
+    import asyncpg
 
-    resp = await client.get("/api/v1/config/settings/effective", headers=_as(OPERATOR))
-    assert resp.status_code == 200, resp.text
-    keys = _budget_keys(resp.json())
-    fleet = (
-        "max_budget_per_job_usd",
-        "daily_cap_usd",
-        "monthly_cap_usd",
-        "rate_limit_per_author_per_hour",
-        "overrun_mode",
-    )
-    assert (
-        {key: keys[key]["value"] for key in fleet}
-        == {key: getattr(enforced, key) for key in fleet}
-        == {
-            "max_budget_per_job_usd": 2.0,
-            "daily_cap_usd": 20.0,
-            "monthly_cap_usd": 50.0,
-            "rate_limit_per_author_per_hour": 1,
-            "overrun_mode": "hard",
-        }
-    ), "the view shows the caps the gate and every job enforce, not the section's defaults"
-    assert {keys[key]["source"] for key in fleet} == {"not_imported"}
-    assert keys["daily_cap_usd"]["not_imported"] == {"read_from": "row", "label": "the budget_config table"}
-    assert (keys["context_audit_job_usd"]["value"], keys["context_audit_job_usd"]["not_imported"]) == (
-        0.75,
-        {"read_from": "variable", "label": "CONTEXT_AUDIT_JOB_BUDGET_USD"},
-    ), "a key the row never held reads its variable"
-    assert (keys["continue_extra_max_usd"]["source"], keys["continue_extra_max_usd"]["not_imported"]) == (
-        "default",
-        None,
-    ), "a key no older store held reads its default, as it is"
-
-    resp = await client.patch(BUDGET_URL, json={"daily_cap_usd": 15}, headers=_as(ADMIN))
-    assert resp.status_code == 200, resp.text
-    keys = _budget_keys((await client.get("/api/v1/config/settings/effective", headers=_as(OPERATOR))).json())
-    assert (keys["daily_cap_usd"]["value"], keys["daily_cap_usd"]["source"]) == (15.0, "document")
-    assert (await app.state.budget_policy.settings()).daily_cap_usd == 15.0, "a key written since wins, as enforced"
-    assert keys["monthly_cap_usd"]["source"] == "not_imported", "the others are still read from the row"
+    raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed in the middle of operation")
 
 
 async def test_an_organizations_view_shows_its_own_settings_until_its_layer_imported_them(
-    app: Any, client: AsyncClient, db_with_migrations: DatabasePool
+    app: Any, client: AsyncClient, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from embry0.services.budget_policy import BudgetPolicy
+
     await OrganizationsRepository(db_with_migrations).register(
         "acme", "github", settings={"context_audit_budget_usd": 0.5, "context_audit_max_jobs_per_tick": 1}
     )
-    config = _config(CONTEXT_AUDIT_JOB_BUDGET_USD="0.75")
-    app.state.budget_policy = _pending_policy(app.state.settings, config)
+    await app.state.settings.set_keys(
+        "budget", {"context_audit_job_usd": 0.75, "area_map_job_usd": 0.75}, actor="alex@example.com"
+    )
+    # Every attempt at the copy fails, as the first start's did.
+    monkeypatch.setattr("embry0.services.budget_policy.import_org_settings_once", _a_failed_copy)
+    app.state.budget_policy = BudgetPolicy(app.state.settings, _config(), moved=org_service.MOVED_SETTINGS)
 
     resp = await client.get("/api/v1/config/settings/effective?owner=acme", headers=_as(OPERATOR))
     assert resp.status_code == 200, resp.text
@@ -844,10 +565,10 @@ async def test_an_organizations_view_shows_its_own_settings_until_its_layer_impo
     ), "the audit reads acme's own 0.5 until its layer imported it"
     assert audit["inherited"] == 0.75, "what an override overrides: the deployment's cap as enforced"
     assert keys["context_audit_max_jobs_per_tick"]["value"] == 1
-    assert (keys["area_map_job_usd"]["value"], keys["area_map_job_usd"]["not_imported"]["read_from"]) == (
-        0.75,
-        "variable",
-    ), "a key acme never held reads the deployment's, as enforced"
+    area_map = keys["area_map_job_usd"]
+    assert (area_map["value"], area_map["source"], area_map["not_imported"]) == (0.75, "document", None), (
+        "a key acme never held reads the deployment's, as enforced"
+    )
     repo_view = _budget_keys(
         (await client.get("/api/v1/config/settings/effective?repo=acme/widgets", headers=_as(OPERATOR))).json()
     )
