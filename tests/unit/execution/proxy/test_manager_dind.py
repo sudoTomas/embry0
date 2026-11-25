@@ -4,6 +4,7 @@ We mock DockerClient and assert ProxyManager issues the right `docker run` /
 `docker network connect` / `docker rm -f` commands and records DNS URLs.
 """
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -39,9 +40,20 @@ def docker_mock():
     return docker
 
 
+@pytest.fixture
+async def pm(docker_mock) -> AsyncIterator[ProxyManager]:
+    """A manager over the mocked daemon, stopped when the test ends.
+
+    start() opens an HTTP session that only stop() closes; a test that
+    started one and never stopped it left the session open (#708).
+    """
+    manager = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+    yield manager
+    await manager.stop()
+
+
 @pytest.mark.asyncio
-async def test_start_launches_git_proxy(docker_mock):
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+async def test_start_launches_git_proxy(docker_mock, pm):
     await pm.start(github_token="ghp_test", anthropic_api_key="")
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="git-proxy",
@@ -58,8 +70,7 @@ async def test_start_launches_git_proxy(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_start_launches_github_proxy_dual_network(docker_mock):
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+async def test_start_launches_github_proxy_dual_network(docker_mock, pm):
     await pm.start(github_token="ghp_test", anthropic_api_key="")
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="github-proxy",
@@ -77,8 +88,7 @@ async def test_start_launches_github_proxy_dual_network(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_start_launches_auth_proxy_when_key_set(docker_mock):
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+async def test_start_launches_auth_proxy_when_key_set(docker_mock, pm):
     await pm.start(github_token="", anthropic_api_key="sk-ant-test", enable_auth_proxy=True)
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="auth-proxy",
@@ -96,11 +106,10 @@ async def test_start_launches_auth_proxy_when_key_set(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_start_skips_credential_proxies_when_no_creds(docker_mock):
+async def test_start_skips_credential_proxies_when_no_creds(docker_mock, pm):
     """Without creds, the credential-injection proxies (git/github/auth) are
     skipped. The Phase 1.5 network-plumbing proxies (minio/presign) ALWAYS
     launch — they don't carry credentials, only network plumbing."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="", anthropic_api_key="")
     launched_names = [c.kwargs.get("name") for c in docker_mock.build_run_proxy_cmd.call_args_list]
     assert "git-proxy" not in launched_names
@@ -117,11 +126,10 @@ async def test_start_skips_credential_proxies_when_no_creds(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_start_launches_minio_and_presign_proxies(docker_mock):
+async def test_start_launches_minio_and_presign_proxies(docker_mock, pm):
     """Phase 1.5: minio-proxy and presign-proxy are spawned with resolved
     upstream IPs and are attached to sandbox-internet (so they can NAT back
     to host backend services)."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="", anthropic_api_key="")
 
     docker_mock.build_run_proxy_cmd.assert_any_call(
@@ -151,8 +159,7 @@ async def test_start_launches_minio_and_presign_proxies(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_stop_removes_all_launched_containers(docker_mock):
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+async def test_stop_removes_all_launched_containers(docker_mock, pm):
     await pm.start(github_token="ghp_test", anthropic_api_key="sk-ant-test", enable_auth_proxy=True)
     docker_mock.run_cmd.reset_mock()
     await pm.stop()
@@ -163,10 +170,9 @@ async def test_stop_removes_all_launched_containers(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_start_cleans_existing_containers_first(docker_mock):
+async def test_start_cleans_existing_containers_first(docker_mock, pm):
     """start() must remove pre-existing proxy containers before launching new ones,
     so an orchestrator restart with old containers still around doesn't conflict."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="ghp_test", anthropic_api_key="")
     # Should have issued `docker rm -f git-proxy` etc. before the run commands.
     rm_call_args = [c.args[0] for c in docker_mock.run_cmd.call_args_list]
@@ -176,9 +182,8 @@ async def test_start_cleans_existing_containers_first(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_auth_proxy_not_launched_when_flag_disabled(docker_mock):
+async def test_auth_proxy_not_launched_when_flag_disabled(docker_mock, pm):
     """Default behavior: no auth-proxy even with api_key set."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="", anthropic_api_key="sk-ant-test", enable_auth_proxy=False)
     # auth-proxy must NOT be in the launched run commands
     run_calls = docker_mock.build_run_proxy_cmd.call_args_list
@@ -188,9 +193,8 @@ async def test_auth_proxy_not_launched_when_flag_disabled(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_auth_proxy_launched_when_flag_enabled(docker_mock):
+async def test_auth_proxy_launched_when_flag_enabled(docker_mock, pm):
     """When the flag is explicitly true and api_key is set, launch the proxy."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="", anthropic_api_key="sk-ant-test", enable_auth_proxy=True)
     run_calls = docker_mock.build_run_proxy_cmd.call_args_list
     launched_names = [c.kwargs.get("name") for c in run_calls]
@@ -199,12 +203,11 @@ async def test_auth_proxy_launched_when_flag_enabled(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_gitlab_only_deployment_still_gets_the_git_proxy(docker_mock):
+async def test_gitlab_only_deployment_still_gets_the_git_proxy(docker_mock, pm):
     """A deployment with no GITHUB_TOKEN (GitLab-only) must still launch the
     git credential proxy — sandbox clone credentials come from the enrollment
     payload, not from the baked GitHub fallback. Regression: without this,
     every GitLab clone died with "could not read Username"."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="", gitlab_token="glpat-test", anthropic_api_key="")
 
     launched = [c.kwargs.get("name") for c in docker_mock.build_run_proxy_cmd.call_args_list]
@@ -215,8 +218,7 @@ async def test_gitlab_only_deployment_still_gets_the_git_proxy(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_gitlab_token_launches_gitlab_proxy(docker_mock):
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
+async def test_gitlab_token_launches_gitlab_proxy(docker_mock, pm):
     await pm.start(gitlab_token="glpat-test", gitlab_api_base="https://gitlab.com/api/v4")
     docker_mock.build_run_proxy_cmd.assert_any_call(
         name="gitlab-proxy",
@@ -234,11 +236,10 @@ async def test_gitlab_token_launches_gitlab_proxy(docker_mock):
 
 
 @pytest.mark.asyncio
-async def test_internet_proxies_are_the_ones_attached_to_the_egress_network(docker_mock):
+async def test_internet_proxies_are_the_ones_attached_to_the_egress_network(docker_mock, pm):
     """#472: a sandbox's egress rules except exactly the proxies it can only
     reach over sandbox-internet. Since #521 that includes git-proxy, which
     forwards git's smart HTTP to the forge itself."""
-    pm = ProxyManager(docker_mock, proxy_admin_token=_ADMIN_TOKEN)
     await pm.start(github_token="ghp_test", anthropic_api_key="")
 
     attached = {

@@ -28,6 +28,14 @@ from tests.fixtures.shards import in_shard, parse_shard
 #: The database this pytest-xdist worker created for itself, which it drops when it ends.
 _WORKER_DATABASE = pytest.StashKey[str]()
 
+#: Python ignores ``ResourceWarning`` by default, so an unclosed session, socket, file or event loop
+#: would never reach ``--fail-on-warnings``. pytest_sessionstart adds this to pytest's own
+#: ``filterwarnings``, after the configuration file's lines, so it is in force from collection to the
+#: session's end, in each test and in every pytest-xdist worker (not while conftests are imported).
+#: It is not set in ``pyproject.toml``, whose pytest table is pinned to keys that cannot hide a
+#: warning (tests/unit/test_ci_workflow.py); a ``filterwarnings`` mark on a test still outranks it.
+RESOURCE_WARNINGS = "always::ResourceWarning"
+
 
 def _workers(config: pytest.Config) -> int | None:
     """How many pytest-xdist workers this run starts, when it is the run that starts them; else None.
@@ -81,6 +89,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             f"--fail-on-warnings: the tests warned {warned} time(s); see the warnings summary", red=True
         )
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Turn ``ResourceWarning`` on for the run (#708), before anything is collected."""
+    session.config.addinivalue_line("filterwarnings", RESOURCE_WARNINGS)
 
 
 def pytest_configure(config: pytest.Config) -> None:

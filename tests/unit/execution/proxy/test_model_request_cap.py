@@ -7,6 +7,7 @@ and the xai-proxy refused it with "Maximum request body size 1048576 exceeded".
 
 from __future__ import annotations
 
+import io
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -82,7 +83,8 @@ async def _ready_auth(aiohttp_client, max_request_bytes: int) -> tuple[TestClien
 @pytest.mark.parametrize("ready", [_ready_xai, _ready_auth], ids=["xai-proxy", "auth-proxy"])
 async def test_a_request_over_a_megabyte_is_forwarded_by_default(aiohttp_client, ready) -> None:
     client, fake = await ready(aiohttp_client, DEFAULT_MAX_REQUEST_BYTES)
-    body = _conversation(1_300_000)
+    # As a stream: aiohttp warns that a body this size sent as bytes may hold up the loop (#708).
+    body = io.BytesIO(_conversation(1_300_000))
     resp = await client.post(
         "/v1/messages",
         data=body,
@@ -134,13 +136,16 @@ async def test_the_manager_hands_the_cap_to_both_model_proxies(monkeypatch: pyte
     docker.build_network_cmd = MagicMock(side_effect=lambda *args: ["docker", "network", *args])
     docker.build_rm_cmd = MagicMock(side_effect=lambda c: ["docker", "rm", "-f", c])
     pm = ProxyManager(docker, proxy_admin_token=_ADMIN)
-    await pm.start(
-        github_token="ghp_test",
-        anthropic_api_key="sk-test",
-        enable_auth_proxy=True,
-        enable_xai_proxy=True,
-        model_proxy_max_request_bytes=33_554_432,
-    )
+    try:
+        await pm.start(
+            github_token="ghp_test",
+            anthropic_api_key="sk-test",
+            enable_auth_proxy=True,
+            enable_xai_proxy=True,
+            model_proxy_max_request_bytes=33_554_432,
+        )
+    finally:
+        await pm.stop()  # start() opens an HTTP session that only stop() closes (#708)
     envs = {c.kwargs["name"]: c.kwargs["env"] for c in docker.build_run_proxy_cmd.call_args_list}
     assert envs["xai-proxy"]["MAX_REQUEST_BYTES"] == "33554432"
     assert envs["auth-proxy"]["MAX_REQUEST_BYTES"] == "33554432"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,7 +13,8 @@ import yaml
 
 from tests import conftest
 
-WORKFLOW = Path(conftest.__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+ROOT = Path(conftest.__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 class _Reporter:
@@ -60,3 +63,79 @@ def test_ci_runs_the_unit_suite_with_the_flag() -> None:
     steps = [step for job in jobs for step in job.get("steps", [])]
     runs = [str(step.get("run", "")) for step in steps if " tests/unit/ " in str(step.get("run", ""))]
     assert runs and all("--fail-on-warnings" in run for run in runs), f"CI's unit suite must fail on warnings: {runs}"
+
+
+#: Tests that leave a resource for the collector to find open, each of which Python reports with a
+#: ``ResourceWarning`` it ignores by default (#708).
+_LEAKS = {
+    "an HTTP session": (
+        "import asyncio\nimport aiohttp\n\n\ndef test_leaks():\n"
+        "    async def leak():\n        aiohttp.ClientSession()\n\n    asyncio.run(leak())\n"
+    ),
+    "a socket": "import socket\n\n\ndef test_leaks():\n    socket.socket()\n",
+    "a file": "def test_leaks():\n    open(__file__)\n",
+}
+
+_CLOSES = (
+    "import asyncio\nimport aiohttp\n\n\ndef test_closes():\n"
+    "    async def close():\n        async with aiohttp.ClientSession():\n            pass\n\n"
+    "    asyncio.run(close())\n"
+)
+
+
+def _pytest_of(tmp_path: Path, test: str, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+    """A pytest of its own over one test file, under this suite's conftest and ``--fail-on-warnings``,
+    as CI runs the unit suite; nothing from the environment or a configuration file changes it."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_probe.py").write_text(test)
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "tests.conftest",
+         "--rootdir", str(tmp_path), "--fail-on-warnings", *args, str(tmp_path / "test_probe.py")],
+        cwd=ROOT,
+        env={"PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/bin", "DOCKER_HOST": "unix:///nonexistent.sock", **env},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("leak", sorted(_LEAKS))
+def test_a_test_that_leaves_a_resource_open_fails_the_run(tmp_path: Path, leak: str) -> None:
+    """Python ignores ``ResourceWarning`` unless told otherwise, so ``--fail-on-warnings`` never saw an
+    unclosed session, socket or file (#708): the conftest turns it on."""
+    done = _pytest_of(tmp_path, _LEAKS[leak])
+    out = done.stdout + done.stderr
+    assert done.returncode == pytest.ExitCode.TESTS_FAILED, f"a test that leaves {leak} open must fail the run:\n{out}"
+    assert "1 passed, 1 warning" in out and "ResourceWarning" in out, out
+    assert "--fail-on-warnings: the tests warned 1 time(s)" in out, out
+
+
+def test_a_leak_in_a_pytest_xdist_worker_fails_the_run_too(tmp_path: Path) -> None:
+    """CI runs the suite in workers; each turns the warning on for itself and the controller counts it.
+    The database is unreachable on purpose: a worker that cannot create its own runs on."""
+    done = _pytest_of(
+        tmp_path, _LEAKS["an HTTP session"], "-n", "2", TEST_DATABASE_URL="postgresql://probe@127.0.0.1:1/probe"
+    )
+    out = done.stdout + done.stderr
+    assert done.returncode == pytest.ExitCode.TESTS_FAILED, f"a worker's leak must fail the run:\n{out}"
+    assert "Unclosed client session" in out and "--fail-on-warnings: the tests warned 1 time(s)" in out, out
+
+
+def test_a_test_that_closes_what_it_opens_passes(tmp_path: Path) -> None:
+    done = _pytest_of(tmp_path, _CLOSES)
+    out = done.stdout + done.stderr
+    assert done.returncode == pytest.ExitCode.OK, out
+    assert "1 passed in" in out, out
+
+
+def test_a_test_may_still_say_why_it_leaves_a_resource_open(tmp_path: Path) -> None:
+    """The warning is on in pytest's own filters, so a ``filterwarnings`` mark, which a reviewer reads with
+    its reason, still outranks it; the configuration file cannot (tests/unit/test_ci_workflow.py)."""
+    marked = _LEAKS["a socket"].replace(
+        "def test_leaks", "import pytest\n\n\n@pytest.mark.filterwarnings('ignore::ResourceWarning')\ndef test_leaks"
+    )
+    done = _pytest_of(tmp_path, marked)
+    out = done.stdout + done.stderr
+    assert done.returncode == pytest.ExitCode.OK, out
+    assert "1 passed in" in out, out
