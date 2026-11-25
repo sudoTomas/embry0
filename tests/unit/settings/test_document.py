@@ -657,3 +657,46 @@ def test_a_yaml_message_keeps_its_line_column_and_a_one_character_quote() -> Non
         load_yaml("leads:\n\toffer_min: 4\n")
     (problem,) = caught.value.problems
     assert "line 2, column 1" in problem.msg and "'\\t'" in problem.msg, problem.msg
+
+
+# ---- a document's own entries of an added key, past what the key holds (#669) ------------------------------------
+
+#: Each key a document adds to that holds a bounded number of entries, and an entry of it, numbered.
+_ADDED_WITH_A_CAP = {("slop_meter", "ai_agents"): "agent-{}@", ("slop_meter", "bots"): "bot-{}"}
+
+
+def test_every_added_key_with_a_bound_is_covered() -> None:
+    from embry0.settings.document import cap_of
+    from embry0.settings.sections import CATALOG
+
+    sections = [section for name in CATALOG.names if (section := CATALOG.get(name)) is not None]
+    bounded = {
+        (section.name, key) for section in sections for key in section.added_keys if cap_of(section, key) is not None
+    }
+    assert bounded == set(_ADDED_WITH_A_CAP), f"an added key with a bound is not covered below: {bounded}"
+
+
+@pytest.mark.parametrize("layer", ["deployment", "organization"])
+@pytest.mark.parametrize(("section", "key"), sorted(_ADDED_WITH_A_CAP))
+def test_more_entries_than_an_added_key_holds_with_one_written_twice_is_a_problem_at_the_key(
+    section: str, key: str, layer: str
+) -> None:
+    """Counted with what it inherits, an entry written twice counts once, so the merged value fits; the
+    document's own entries, which are what is stored, do not. That is a problem at the key, never a crash."""
+    from embry0.settings.document import cap_of
+    from embry0.settings.sections import CATALOG
+
+    cap = cap_of(CATALOG.get(section), key)  # type: ignore[arg-type]
+    assert cap is not None
+    entries = [_ADDED_WITH_A_CAP[(section, key)].format(i) for i in range(cap)] + [
+        _ADDED_WITH_A_CAP[(section, key)].format(0)
+    ]
+    inherited = None if layer == "deployment" else {}
+    try:
+        check(CATALOG, {section: {key: entries}}, stored={}, layer=layer, inherited=inherited)
+        outcome: Any = "accepted"
+    except DocumentInvalid as exc:
+        outcome = [(p.loc, p.type) for p in exc.problems]
+    except Exception as exc:  # noqa: BLE001 - the test reports what escaped
+        outcome = f"raised {type(exc).__name__}"
+    assert outcome == [((section, key), "too_long")], f"{cap} entries and one written twice, at {layer}: {outcome}"

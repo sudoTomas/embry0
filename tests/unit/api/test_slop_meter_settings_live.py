@@ -364,3 +364,31 @@ async def test_a_tick_scores_with_an_organization_s_bots_while_its_copy_is_retri
     assert "deploy-bot" in second and "ci-bot" not in second, (
         f"after the copy, the owner's row is read again over its layer: {second}"
     )
+
+
+@pytest.mark.parametrize(("key", "entry"), [("bots", "bot-{}"), ("ai_agents", "agent-{}@")])
+async def test_more_entries_than_a_list_holds_with_one_written_twice_is_a_422_not_a_500(
+    app: Any, key: str, entry: str
+) -> None:
+    """#669: 200 distinct entries and one written twice fit once merged, and are more than the key holds as
+    written. A write is refused at the key, by PUT and by PATCH, and nothing is stored."""
+    entries = [entry.format(i) for i in range(200)] + [entry.format(0)]
+    body = json.dumps({"background": {"slop_meter": True}, "slop_meter": {"enabled": True, key: entries}})
+    writes = {
+        "PUT": ("PUT", URL, {"content": body, "headers": {"Content-Type": "application/json"}}),
+        "PATCH": (
+            "PATCH",
+            f"{URL}/slop_meter",
+            {"content": json.dumps({key: entries}), "headers": {"Content-Type": "application/json"}},
+        ),
+    }
+    for name, (method, url, kwargs) in writes.items():
+        try:
+            resp = await _call(app, method, url, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - what escaped is the answer a client gets as a 500
+            pytest.fail(f"{name}: the write raised {type(exc).__name__}, a 500")
+        assert resp.status_code == 422, f"{name}: {resp.status_code} {resp.text[:300]}"
+        assert [problem["type"] for problem in resp.json()["detail"]] == ["too_long"], resp.json()["detail"]
+        assert tuple(resp.json()["detail"][0]["loc"])[-1] == key, resp.json()["detail"]
+    stored = (await _call(app, "GET", URL)).json()
+    assert key not in stored["data"].get("slop_meter", {}), "nothing was stored"
