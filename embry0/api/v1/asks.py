@@ -291,18 +291,28 @@ class AnswerBody(BaseModel):
 
 async def _may_decide(request: Request, decision: dict[str, Any], person: str) -> bool:
     """The hand-off's person while one is open; else an owner (by GitHub login) or an admin. A decision nobody owns
-    that goes to a group (``asks.unowned_group``) is anyone's embry0 knows."""
+    that goes to a group (``asks.unowned_group``) is anyone's embry0 knows.
+
+    A disabled user decides nothing, by any of those. A decision whose owners
+    could not be read (``owners_unread``) is not one nobody owns: only an admin,
+    or its hand-off's person, answers it.
+    """
     users = getattr(request.app.state, "users_repo", None)
     me = await users.get_by_email(person) if users is not None else None
+    if me is not None and getattr(me, "disabled", False):
+        return False
+    admin = me is not None and me.tier == "admin"
     held = (decision.get("assigned_to") or {}).get("email")
     if held:
-        return held == person.lower() or (me is not None and me.tier == "admin")
+        return held == person.lower() or admin
     if me is None:
         return False
+    if decision.get("owners_unread"):
+        return admin
     owners = {str(o).lstrip("@").lower() for o in decision.get("owners") or []}
     if not owners and (await ask_policy(request)).deployment().unowned_group:
         return True
-    return me.tier == "admin" or (bool(me.github_login) and me.github_login.lower() in owners)
+    return admin or (bool(me.github_login) and me.github_login.lower() in owners)
 
 
 async def _do(request: Request, decision: dict[str, Any], body: AnswerBody) -> dict[str, Any]:
