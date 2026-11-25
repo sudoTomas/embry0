@@ -178,6 +178,38 @@ def test_a_problem_of_the_text_under_a_written_key_is_placed_at_the_first_key_th
     assert "zz" not in json.dumps(found), f"the problem repeats a key or value the operator wrote: {found}"
 
 
+@pytest.mark.parametrize(
+    ("body", "content_type", "loc", "kind"),
+    [
+        (f"areas:\n  - name: {_LONG}\n", "application/yaml", ["areas", 0, "name"], "number_too_long"),
+        (
+            f"areas:\n  - name: Web\n    paths: [{_LONG}]\n",
+            "application/yaml",
+            ["areas", 0, "paths", 0],
+            "number_too_long",
+        ),
+        ("areas:\n  - name: !!int abc\n", "application/yaml", ["areas", 0, "name"], "invalid_number"),
+        (f"version: {_LONG}\n", "application/yaml", ["version"], "number_too_long"),
+        (f'{{"areas": [{{"name": {_LONG}}}]}}', "application/json", ["areas", 0, "name"], "number_too_long"),
+        (
+            f'{{"areas": [{{"name": "Web", "paths": [{_LONG}]}}]}}',
+            "application/json",
+            ["areas", 0, "paths", 0],
+            "number_too_long",
+        ),
+    ],
+)
+def test_a_problem_of_the_text_at_a_key_the_document_takes_keeps_its_whole_place(
+    body: str, content_type: str, loc: list[object], kind: str
+) -> None:
+    """Only a key the operator wrote is cut away: at the document's own keys the place is the field itself."""
+    with pytest.raises(DocumentInvalid) as raised:
+        parse_body(body.encode(), content_type)
+    found = [p.to_dict() for p in raised.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(loc, kind)], found
+    assert "99999" not in json.dumps(found), f"the problem repeats the value: {found}"
+
+
 def test_a_body_is_yaml_kept_as_written_or_json_with_no_text() -> None:
     text, values = parse_body(b"areas:\n  - name: Web\n", "application/yaml")
     assert text == "areas:\n  - name: Web\n" and values == {"areas": [{"name": "Web"}]}

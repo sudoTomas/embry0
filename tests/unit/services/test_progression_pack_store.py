@@ -422,6 +422,31 @@ def test_a_problem_of_the_text_under_a_written_key_is_placed_where_the_pack_s_ow
     assert "zz" not in json.dumps(found), f"the problem repeats a key or value the author wrote: {found}"
 
 
+@pytest.mark.parametrize(
+    ("path", "written", "kind", "content_type"),
+    [
+        (("curve", "max_level"), _LONG, "number_too_long", "application/yaml"),
+        (("curve", "max_level"), _LONG, "number_too_long", "application/json"),
+        (("rates", "outcomes"), _LONG, "number_too_long", "application/yaml"),
+        (("rates", "outcomes"), _LONG, "number_too_long", "application/json"),
+        (("curve", "max_level"), "!!int abc", "invalid_number", "application/yaml"),
+    ],
+)
+def test_a_problem_of_the_text_at_a_key_the_pack_takes_keeps_its_whole_place(
+    path: tuple[str, ...], written: str, kind: str, content_type: str
+) -> None:
+    """Only a key the author wrote is cut away: at the pack's own keys the place is the field itself."""
+    data = _put(yaml.safe_load(DEFAULT), *path)
+    if content_type == "application/json":
+        body = json.dumps(data).replace(f'"{_TOKEN}"', written)
+    else:
+        body = yaml.safe_dump(data, sort_keys=False).replace(_TOKEN, written)
+    with pytest.raises(PackInvalid) as refused:
+        read_body(body.encode(), content_type)
+    found = [p.to_dict() for p in refused.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(list(path), kind)], found
+
+
 # ---- what Python accepts and the database does not ----
 
 

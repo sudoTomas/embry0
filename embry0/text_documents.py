@@ -26,7 +26,11 @@ The checks walk the composed YAML without recursion, so a deeply nested
 text is reported by the caller's own depth check rather than crashing
 here. Pure: no database and no web framework, so the offline CLI checks
 import it too. Each caller turns a :class:`StructureProblem` into its own
-problem type, whose shape (``loc``, ``type``, ``msg``) is the same.
+problem type, whose shape (``loc``, ``type``, ``msg``) is the same. A
+problem's place is the whole path to it, which may run through keys the
+operator wrote: this module cannot know the document's schema, so each
+caller cuts the place where the document's own words end, as it cuts its
+own problems. No message repeats a key or value.
 """
 
 from __future__ import annotations
@@ -118,18 +122,6 @@ def _line(node: yaml.Node) -> int:
     return int(getattr(node.start_mark, "line", -1)) + 1
 
 
-def holding_mapping(loc: Loc) -> Loc:
-    """The place of the mapping that holds the value at ``loc``: past the list positions it is in, and without the
-    key it is under, which is what the operator wrote. A problem of the value is placed there, and its line says
-    where, as a key written twice is."""
-    end = len(loc)
-    while end and isinstance(loc[end - 1], int):
-        end -= 1
-    if end and isinstance(loc[end - 1], str):
-        end -= 1
-    return tuple(loc[:end])
-
-
 def _at_line(line: int | None, sentence: str) -> str:
     return f"Line {line}: {sentence[0].lower()}{sentence[1:]}" if line is not None else sentence
 
@@ -138,14 +130,14 @@ def number_too_long(loc: Loc, *, key: bool = False, line: int | None = None) -> 
     """The problem of a whole number with more digits than the interpreter converts to or from text.
 
     ``key``: the number is a key of the mapping at ``loc``, which is not echoed back. Otherwise it is the value at
-    ``loc``, placed at the mapping that holds it (:func:`holding_mapping`), and said by its ``line`` when known.
+    ``loc``, the whole place, said by its ``line`` when known. This module cannot know a document's schema, so it
+    cannot tell a key the document takes from one the operator wrote: each reader cuts the place where its own
+    words end, as it cuts its own problems.
     """
     limit = sys.get_int_max_str_digits()
     if key:
         return StructureProblem(loc, "number_too_long", f"A key is a whole number of more than {limit} digits.")
-    return StructureProblem(
-        holding_mapping(loc), "number_too_long", _at_line(line, f"A whole number can have at most {limit} digits.")
-    )
+    return StructureProblem(loc, "number_too_long", _at_line(line, f"A whole number can have at most {limit} digits."))
 
 
 #: The scalar types YAML reads into something other than text, and the words for one it cannot read.
@@ -187,8 +179,8 @@ def _scalar_problem(
         type_, noun = kind
         if key:
             return StructureProblem(loc, type_, f"A key is not {noun} YAML can read.")
-        # At the mapping that holds it, by its line, as a key written twice: the key it is under was written.
-        return StructureProblem(holding_mapping(loc), type_, _at_line(line, f"Not {noun} YAML can read."))
+        # At its whole place, and by its line; its reader cuts the place where the document's own words end.
+        return StructureProblem(loc, type_, _at_line(line, f"Not {noun} YAML can read."))
     if isinstance(value, int) and not isinstance(value, bool):
         try:
             str(value)
