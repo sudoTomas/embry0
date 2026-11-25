@@ -89,6 +89,21 @@ describes what embry0 does rather than listing changes.
   starts with `EMBRY0_LLM_` is refused, and a stored one is no longer
   injected: the OpenAI-compatible providers' keys and base URL use that
   namespace in the sandbox. Rename such a variable before you upgrade.
+- **The custom provider has one route.** Every sandbox on the `custom`
+  provider reaches its own credential's server through the `local-llm-proxy`,
+  and no model server's host is an egress exception any more
+  ([ADR 0032](docs/adr/0032-custom-provider-through-the-local-llm-proxy.md)).
+  `LOCAL_LLM_UPSTREAM` and `LOCAL_LLM_API_KEY` route nothing: run
+  `embry0 credentials import-env` after the upgrade, which copies them into
+  the environment's custom credential (`custom/api-key`; pass `replace=true`
+  when that credential already names another server), then remove them. Every
+  other stored custom credential keeps its own address and key, so one that
+  carried a placeholder address while `LOCAL_LLM_UPSTREAM` stood in for it
+  must be pointed at its server. Startup logs `custom_credential_check_failed`
+  for each stored custom credential whose server cannot be reached or refuses
+  its key, and `settings_env_retired` while either variable is set
+  ([docs/providers.md](docs/providers.md#local-models)). The proxy image must
+  be rebuilt.
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

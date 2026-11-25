@@ -53,6 +53,7 @@ from embry0.execution.proxy.git_scope import (
     normalize_push_branch,
     normalize_upstream,
 )
+from embry0.execution.proxy.local_llm_proxy import LOCAL_LLM_FIELD, Upstream
 
 logger = structlog.get_logger(__name__)
 
@@ -287,8 +288,6 @@ class ProxyManager:
         log_redaction_fields: str = "",
         has_github_credential: bool | None = None,
         has_gitlab_credential: bool | None = None,
-        local_llm_upstream: str = "",
-        local_llm_api_key: str = "",
         local_llm_max_request_bytes: int = 0,
         model_proxy_max_request_bytes: int = 0,
     ) -> None:
@@ -303,9 +302,10 @@ class ProxyManager:
 
         ``has_*_credential`` come from the credential registry; None falls back to the token arguments.
 
-        ``local_llm_upstream`` launches the local-llm-proxy, which forwards a
-        sandbox's model calls to that one API root (the operator's model
-        server); ``local_llm_api_key`` is the key that server checks, if any.
+        The local-llm-proxy always runs: it forwards each sandbox on the custom
+        provider to the server its credential names (ADR 0032), which
+        ``enroll_sandbox`` gives it. ``local_llm_max_request_bytes`` caps its
+        request body; 0 keeps its default.
 
         ``model_proxy_max_request_bytes`` caps a request body at the auth- and
         xai-proxy (``model_request``); 0 keeps their default.
@@ -490,23 +490,22 @@ class ProxyManager:
         elif enable_context_proxy:
             logger.info("context_proxy_skipped", reason="CONTEXT_PROXY_CONTAINER_ALLOWLIST is empty")
 
-        # The operator's own model server, reached through one proxy instead of
-        # an egress exception that would open every port of its machine. It
-        # sits on sandbox-internet only for the route out of DinD; sandboxes
-        # reach it on sandbox-restricted, and only the ones enrolled for it.
-        if local_llm_upstream:
-            local_env = {
-                "PROXY_TYPE": "local_llm",
-                "UPSTREAM_URL": resolve_upstream_url(local_llm_upstream),
-                "UPSTREAM_API_KEY": local_llm_api_key,
-                "LISTEN_PORT": "9108",
-                "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
-            }
-            if local_llm_max_request_bytes > 0:
-                local_env["MAX_REQUEST_BYTES"] = str(local_llm_max_request_bytes)
-            await self._launch(name="local-llm-proxy", env=local_env, attach_internet=True)
-            self.local_llm_proxy_url = "http://local-llm-proxy:9108"
-            logger.info("local_llm_proxy_started")
+        # The operator's own model servers, reached through one proxy instead
+        # of an egress exception that would open every port of a server's
+        # machine (ADR 0032). Each sandbox on the custom provider is enrolled
+        # with its own server, so the proxy is configured with none. It sits on
+        # sandbox-internet only for the route out of DinD; sandboxes reach it
+        # on sandbox-restricted, and only the ones enrolled for it.
+        local_env = {
+            "PROXY_TYPE": "local_llm",
+            "LISTEN_PORT": "9108",
+            "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
+        }
+        if local_llm_max_request_bytes > 0:
+            local_env["MAX_REQUEST_BYTES"] = str(local_llm_max_request_bytes)
+        await self._launch(name="local-llm-proxy", env=local_env, attach_internet=True)
+        self.local_llm_proxy_url = "http://local-llm-proxy:9108"
+        logger.info("local_llm_proxy_started")
 
         # Only leftovers we did not just launch. A name in ``_launched`` is the
         # live shared proxy; the sweep must not remove it.
@@ -571,7 +570,7 @@ class ProxyManager:
         git_push: bool = False,
         git_push_branches: Sequence[str] = (),
         job_id: str | None = None,
-        local_llm: bool = False,
+        local_llm: Upstream | None = None,
     ) -> str:
         """Enroll a new sandbox with all running credential proxies.
 
@@ -619,8 +618,13 @@ class ProxyManager:
         would let the push touch any ref: refused the same way. ``job_id``
         goes to the git-proxy so its refusals name the job.
 
-        ``local_llm`` also enrolls the sandbox with the local-llm-proxy: only a
-        sandbox whose job resolved the operator's model server asks for it.
+        ``local_llm`` is the server a sandbox whose job resolved the custom
+        provider reaches: its credential's id, API root and key. The sandbox is
+        enrolled with the local-llm-proxy for that server alone (ADR 0032); a
+        host name in the root is sent as the address it resolves to here, since
+        DinD resolves none (``resolve_upstream_url``). A local-llm-proxy that
+        does not echo the server runs an image from before per-sandbox
+        servers: refused the same way as the git-proxy's grant.
 
         Raises RuntimeError if any enrollment exec fails, if such a stale
         proxy cannot be revoked, or if the git-proxy does not confirm its
@@ -669,7 +673,17 @@ class ProxyManager:
             targets.append(("auth-proxy", 9100))
         if self.xai_proxy_url:
             targets.append(("xai-proxy", 9106))
-        if self.local_llm_proxy_url and local_llm:
+        local_server: dict[str, str] | None = None
+        if local_llm is not None:
+            if not self.local_llm_proxy_url:
+                raise RuntimeError("the local-llm-proxy is not running: a sandbox on the custom provider has no route")
+            # A blocking lookup, off the event loop.
+            root = await asyncio.to_thread(resolve_upstream_url, local_llm.root)
+            local_server = {
+                "credential_id": local_llm.credential_id,
+                "upstream": root.rstrip("/"),
+                "api_key": local_llm.api_key,
+            }
             targets.append(("local-llm-proxy", 9108))
         # context-proxy is deliberately ABSENT from this broadcast: log access is
         # per-job opt-in (watcher analysis jobs only). init_node calls
@@ -692,6 +706,8 @@ class ProxyManager:
                 body.update(git_grant)
                 if job_id:
                     body[JOB_FIELD] = job_id
+            if name == "local-llm-proxy" and local_server is not None:
+                body[LOCAL_LLM_FIELD] = local_server
             response = await self._exec_admin_request(
                 container=name,
                 method="POST",
@@ -703,6 +719,8 @@ class ProxyManager:
                 await self._confirm_repo_scope(name, port, sandbox_id, scope, response)
             if name == "git-proxy":
                 await self._confirm_git_grant(port, sandbox_id, git_grant, response)
+            if name == "local-llm-proxy" and local_server is not None:
+                await self._confirm_local_server(port, sandbox_id, local_server, response)
 
         if xai_credential_id:
             logger.info("sandbox_xai_credential", sandbox_id=sandbox_id, credential_id=xai_credential_id)
@@ -790,6 +808,38 @@ class ProxyManager:
             accept_404=True,
         )
         raise RuntimeError("git-proxy did not confirm the repository grant (proxy image older than the orchestrator?)")
+
+    async def _confirm_local_server(
+        self, port: int, sandbox_id: str, server: dict[str, str], response: dict[str, Any]
+    ) -> None:
+        """Refuse a local-llm-proxy that did not echo ``server``: its image predates per-sandbox servers (ADR 0032)."""
+        echoed = (response if isinstance(response, dict) else {}).get(LOCAL_LLM_FIELD)
+        if (
+            isinstance(echoed, dict)
+            and echoed.get("credential_id") == server["credential_id"]
+            and echoed.get("upstream") == server["upstream"]
+        ):
+            return
+        logger.error(
+            "local_llm_proxy_server_unconfirmed",
+            sandbox_id=sandbox_id,
+            credential_id=server["credential_id"],
+            detail=(
+                "the local-llm-proxy did not confirm the sandbox's model server: its image predates per-sandbox "
+                "servers, so the sandbox is unenrolled there and refused; rebuild the proxy image"
+            ),
+        )
+        await self._exec_admin_request(
+            container="local-llm-proxy",
+            method="DELETE",
+            path=f"/admin/enroll/{sandbox_id}",
+            port=port,
+            body=None,
+            accept_404=True,
+        )
+        raise RuntimeError(
+            "local-llm-proxy did not confirm the sandbox's server (proxy image older than the orchestrator?)"
+        )
 
     async def set_git_push_branches(self, sandbox_id: str, branches: Sequence[str]) -> None:
         """Replace the branches an enrolled sandbox may push (#559): the developer's chosen branch.

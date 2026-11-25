@@ -1768,10 +1768,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         context_container_allowlist=config.context_proxy_container_allowlist,
         context_query_quota=config.context_proxy_query_quota,
         log_redaction_fields=config.log_redaction_fields,
-        # Local models (docs/providers.md): the one model server the
-        # local-llm-proxy forwards to. Empty launches no proxy.
-        local_llm_upstream=config.local_llm_upstream,
-        local_llm_api_key=config.local_llm_api_key,
+        # Local models (docs/providers.md): the local-llm-proxy always runs, each sandbox on the custom provider
+        # enrolled with its credential's server (ADR 0032).
         local_llm_max_request_bytes=config.local_llm_max_request_bytes,
         model_proxy_max_request_bytes=config.model_proxy_max_request_bytes,
     )
@@ -1864,6 +1862,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.background_tasks.add(_xai_task)
         _xai_task.add_done_callback(app.state.background_tasks.discard)
+
+    # ADR 0032: a custom credential is its server, reached at its own address with its own key. The two variables
+    # that once routed every custom run to one root route nothing; each stored custom credential that would not work
+    # now is named once, in the log, without holding up the start.
+    from embry0.services.local_model_servers import check_custom_servers, warn_retired_upstream
+
+    warn_retired_upstream(config)
+    custom_servers_task = asyncio.create_task(
+        check_custom_servers(app.state.credentials_repo, app.state.secrets_provider)
+    )
+    app.state.background_tasks.add(custom_servers_task)
+    custom_servers_task.add_done_callback(app.state.background_tasks.discard)
 
     # GitHub-comment outbound channel — used by ask-user fan-out when an issue
     # is GitHub-synced and "github" is in its notification_channels. The HTTP
@@ -2788,7 +2798,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         local_slots=CallSlots(
             slots=LocalSlots(LocalModelLeasesRepository(db)),
             cap=local_model_cap,
-            proxy_upstream=config.local_llm_upstream,
         ),
     )
 

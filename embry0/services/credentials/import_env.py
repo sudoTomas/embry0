@@ -33,6 +33,10 @@ logger = structlog.get_logger(__name__)
 # home, and that auth.json is a live refresh token.
 _ORCHESTRATOR_GROK_AUTH = "/home/orchestrator/.grok/auth.json"
 
+#: The key the environment's custom credential gets from ``LOCAL_LLM_UPSTREAM`` when no variable gives one: a
+#: credential needs a secret, and a server that checks no key ignores the one the proxy sends.
+PLACEHOLDER_KEY = "no-key"
+
 
 @dataclass
 class ImportReport:
@@ -219,14 +223,41 @@ async def _llm_entries(
     # resolver falls back to. A custom key is imported only with its base URL.
     from embry0.agents.providers import enabled_openai_compatible
 
+    upstream = str(getattr(config, "local_llm_upstream", "") or "").strip().rstrip("/")
     for provider in enabled_openai_compatible():
+        if provider.name == "custom" and upstream:
+            entry = _local_upstream_entry(upstream, env, config, report, key_env=provider.api_key_env)
+            if entry is not None:
+                out.append(entry)
+            continue
         fallback = env_fallback(provider.name, env, config)
         if fallback is None:
             continue
         metadata = env_fallback_metadata(provider.name, env)
         host = base_url_host(metadata["base_url"]) if "base_url" in metadata else default_host(provider.name)
         out.append((provider.name, "api-key", "llm_api_key", host, fallback[1], 0, metadata))
+    if upstream and not any(provider.name == "custom" for provider in enabled_openai_compatible()):
+        report.skipped.append("custom/api-key: LOCAL_LLM_UPSTREAM is set but the catalogue has the custom provider off")
     return out
+
+
+def _local_upstream_entry(
+    upstream: str, env: Mapping[str, str], config: Any, report: ImportReport, *, key_env: str
+) -> tuple[str, str, str, str, str, int, dict[str, Any]] | None:
+    """ADR 0032: ``LOCAL_LLM_UPSTREAM``, which sent every agent run on the custom provider to one server, becomes the
+    environment's custom credential (``custom/api-key``): that server's address, and ``LOCAL_LLM_API_KEY``, else
+    ``CUSTOM_LLM_API_KEY``, else :data:`PLACEHOLDER_KEY`. Only that credential: a stored one keeps its own address
+    and key. None, and a line in the report, for an address that is not an http(s) URL."""
+    host = base_url_host(upstream)
+    if not upstream.startswith(("http://", "https://")) or not host:
+        report.skipped.append("custom/api-key: LOCAL_LLM_UPSTREAM is not an http(s) URL with a host")
+        return None
+    key = (
+        str(getattr(config, "local_llm_api_key", "") or "").strip()
+        or (env.get(key_env) or "").strip()
+        or PLACEHOLDER_KEY
+    )
+    return ("custom", "api-key", "llm_api_key", host, key, 0, {"base_url": upstream})
 
 
 async def import_from_env(
@@ -312,19 +343,27 @@ async def import_from_env(
                 stored = await secrets.decrypt(str(row["secret_ciphertext"]))
             except InvalidToken:
                 stored = None
+            # A custom credential's address is the server it is (ADR 0032): one the environment names elsewhere is
+            # moved only as a different secret is, with replace.
+            stored_metadata = dict(row.get("metadata") or {})
+            address = str(metadata.get("base_url") or "")
+            moved = bool(address) and str(stored_metadata.get("base_url") or "").rstrip("/") != address
+            differs = [what for what, changed in (("secret", stored != secret), ("address", moved)) if changed]
+            if differs and not replace:
+                report.skipped.append(
+                    f"{name}: stored secret cannot be decrypted (pass replace=true to rotate)"
+                    if stored is None
+                    else f"{name}: exists with a different {' and '.join(differs)} (pass replace=true)"
+                )
+                continue
             if stored != secret:
-                if not replace:
-                    report.skipped.append(
-                        f"{name}: stored secret cannot be decrypted (pass replace=true to rotate)"
-                        if stored is None
-                        else f"{name}: exists with a different secret (pass replace=true)"
-                    )
-                    continue
                 await repo.rotate(
                     str(row["id"]),
                     secret_ciphertext=await secrets.encrypt(secret),
                     masked_preview=masked_preview(secret),
                 )
+            if moved:
+                await repo.set_address(str(row["id"]), host=host, metadata={**stored_metadata, "base_url": address})
         else:
             row = await repo.create(
                 kind=kind,

@@ -494,9 +494,11 @@ enabled providers in one line and names the ones that are not enabled.
 Until the provider catalogue answers it shows none.
 
 The sandbox receives the key as `EMBRY0_LLM_<PROVIDER>_API_KEY`
-(`EMBRY0_LLM_OPENAI_API_KEY`, …, `EMBRY0_LLM_CUSTOM_API_KEY`) and a custom
-root as `EMBRY0_LLM_CUSTOM_BASE_URL`, not under the usual names: a repository
-that sets its own `OPENAI_API_KEY` for its app keeps it. The `EMBRY0_LLM_`
+(`EMBRY0_LLM_OPENAI_API_KEY`, …), not under the usual names: a repository
+that sets its own `OPENAI_API_KEY` for its app keeps it. The custom provider is
+the exception: its key and its server's address never enter a sandbox, which
+gets the local-llm-proxy as `EMBRY0_LLM_CUSTOM_BASE_URL` instead
+([Local models](#local-models)). The `EMBRY0_LLM_`
 namespace is reserved, since a repository value there could swap the account
 an agent bills or send its conversation to another server. Like every LLM
 credential in a sandbox (ADR 0008), any code the job runs can read it: use a
@@ -527,12 +529,10 @@ needs a model with tool support, vLLM needs `--enable-auto-tool-choice` and a
 `--tool-call-parser` for the model, LM Studio needs a model with tool use. A
 server that ignores `tools` makes the agent answer in prose and stop; the run
 ends with no tool calls and nothing done. A custom server usually sits on the
-operator's network, which the sandbox egress drop blocks. With
-`LOCAL_LLM_UPSTREAM` set, sandboxes reach it through the local-llm-proxy and
-nothing is opened ([Local models](#local-models)). Without it, a job that runs
-on one declares that host as an egress exception for its sandbox. The
-exception is the whole address, every port: put the model server on a machine
-that serves nothing else.
+operator's network, which the sandbox egress drop blocks. Every sandbox reaches
+it through the local-llm-proxy, enrolled with its own credential's server, and
+nothing is opened: no model server's host is ever an egress exception
+([Local models](#local-models), ADR 0032).
 
 ### Mechanics and limits
 
@@ -792,37 +792,65 @@ at $0, with tool calling as the server and the model provide it
 usually shared hardware on the operator's network, so three things keep it
 safe to point embry0 at.
 
-**The local-llm-proxy.** `LOCAL_LLM_UPSTREAM` names the server's API root
-(`http://host:port/v1`). Set, the orchestrator starts `local-llm-proxy` on
-`sandbox-restricted`, which forwards to that one root and nowhere else:
+**A custom credential is its server** (ADR 0032): its API root
+(`metadata.base_url`, `http://host:port/v1`) and its key, in the registry, or
+`CUSTOM_LLM_BASE_URL` with `CUSTOM_LLM_API_KEY`. A server that checks no key
+still needs one stored, and any placeholder will do. Credentials bound to
+different repositories may name different servers: each job reaches the one
+its credential names.
+
+**The local-llm-proxy.** The orchestrator always starts `local-llm-proxy` on
+`sandbox-restricted`, configured with no server. It enrolls each sandbox whose
+job resolved the custom provider with that credential's id, API root and key,
+and forwards that sandbox to that server and nowhere else:
 
 - only `POST /v1/chat/completions` and `GET /v1/models`; any other path is
-  404 and never reaches the server;
-- only for a sandbox enrolled with it, which is a sandbox whose job resolved
-  the custom provider. Its bearer is checked and dropped there, and the
-  server's own key (`LOCAL_LLM_API_KEY`, when it checks one) is added by the
-  proxy, so neither the key nor the server's address is in the sandbox;
-- a request over `LOCAL_LLM_MAX_REQUEST_BYTES` (8 MiB) is refused with 413.
+  404 and never reaches a server;
+- only for a sandbox enrolled with it. Its bearer is checked and dropped
+  there, and the server's key is added by the proxy, so neither the key nor
+  the server's address is in the sandbox. A host name in the root is sent as
+  the address it resolves to on the orchestrator, since DinD resolves none;
+  an https root keeps its name, for the certificate;
+- a request over `LOCAL_LLM_MAX_REQUEST_BYTES` (8 MiB) is refused with 413,
+  saying `request_too_large`, so the run ends as
+  `ERR_CONTEXT_WINDOW_EXCEEDED`.
 
-No egress exception is declared for the server's machine, so a sandbox
-cannot reach anything else on it. The custom provider still needs an account
-(the registry or `CUSTOM_LLM_API_KEY` with `CUSTOM_LLM_BASE_URL`; for a
-server that checks no key any placeholder will do): it is what makes the
-provider ready, pinnable and quarantinable. With the proxy on, every custom
-run in a sandbox goes to `LOCAL_LLM_UPSTREAM`. Calls the orchestrator makes
-itself (proposal and job briefs, the Slop-O-Meter's judgments; see
-[Background models](#background-models)) still use the custom account's base
-URL and key, so keep them pointing at the same server.
+No egress exception is declared for a server's machine, so a sandbox cannot
+reach anything else on it. A job on the custom provider does not start
+without the proxy, or on a credential that names no server; a resumed job's
+sandbox is enrolled again with the server its credential names then. Calls the
+orchestrator makes itself (proposal and job briefs, the Slop-O-Meter's
+judgments; see [Background models](#background-models)) reach the same server
+directly, with the same address and key.
+
+**At startup** each stored custom credential that is not disabled is probed
+once (`GET <base_url>/models` with its key), and one that would not work is
+named in the log, `custom_credential_check_failed` with a `reason`:
+`no_server`, `unreachable`, `key_refused` (the server refused its key: a
+placeholder on a server that checks one), `unexpected_answer` or
+`unreadable`. The check only logs.
+
+**`LOCAL_LLM_UPSTREAM` and `LOCAL_LLM_API_KEY` route nothing.** Before ADR
+0032 they sent every custom run in a sandbox to one root with one key,
+whatever its credential named. `embry0 credentials import-env` copies them
+once into the environment's custom credential, `custom/api-key`: its address
+from `LOCAL_LLM_UPSTREAM`, its key from `LOCAL_LLM_API_KEY`, else
+`CUSTOM_LLM_API_KEY`, else the placeholder `no-key`. A `custom/api-key` that
+already names another address or key is left as it is and named in the
+report, unless the import is run with `replace=true`. Every other stored
+custom credential keeps the address and key it was written with: point it at
+its server if it carried a placeholder address before. While either variable
+is set, startup logs `settings_env_retired`, and `embry0 config` names it.
 
 **One run at a time, per server.** `local_max_runs` in the provider settings
 (default 1, at most 64) is how many calls embry0 sends each of the
 operator's servers at once. A server is the custom credential a call is
 made with, so two credentials bound to different repositories are two
 servers, each with its own slots; the environment's credential
-(`CUSTOM_LLM_API_KEY`) is one more. While `LOCAL_LLM_UPSTREAM` is set, every
-agent run on the custom provider goes to that one root whatever its
-credential, so every call on the custom provider shares its slots, a
-background call's included (below).
+(`CUSTOM_LLM_API_KEY`) is one more. One machine may go by several names (an
+address, a name, a trailing dot), so the credential, not the address, tells
+servers apart. A lease taken before ADR 0032 while `LOCAL_LLM_UPSTREAM` was
+set names `env:LOCAL_LLM_UPSTREAM`, and frees itself by its expiry.
 
 Each run on the custom provider holds a slot of its server, a row in
 `local_model_leases`, from just before it starts until it ends, however it
@@ -839,11 +867,7 @@ call. It never waits: with every slot taken the call is not made
 (`background_model_busy` in the log). A brief writer's tick stops there and
 the next one tries again; the Slop-O-Meter scores the repository without
 that judgment, provisionally, as when the caps refuse one. Background work
-never crowds out the runs the server is for. While `LOCAL_LLM_UPSTREAM` is
-set it holds one of that upstream's slots, as the agent runs do, although it
-reaches its credential's base URL itself: one machine may go by several
-names (an address, a name, a trailing dot), so the name a call uses never
-gives it slots of its own.
+never crowds out the runs the server is for.
 
 **Preferring the local model.** A background feature that prefers a model
 (the watcher's log analyses, scheduled context audits; see

@@ -644,23 +644,19 @@ async def _local_slots(config: Any) -> tuple[Any, int] | None:
 async def _local_server(state: dict[str, Any], configurable: dict[str, Any]) -> str:
     """The local model server a run on the custom provider reaches, whose slot it holds (``services.local_slots``).
 
-    While ``LOCAL_LLM_UPSTREAM`` routes every run through the local-llm-proxy,
-    that upstream. Else the custom credential the run's sandbox holds, as the
-    sandbox manager recorded it; for a sandbox it did not create (a resume
-    after a restart), the one the job resolves to. A server that cannot be
-    told is ``UNKNOWN_SERVER``, whose runs share one cap.
+    The custom credential the run's sandbox holds, as the sandbox manager
+    recorded it; for a sandbox it did not create (a resume after a restart),
+    the one the job resolves to. A server that cannot be told is
+    ``UNKNOWN_SERVER``, whose runs share one cap.
     """
-    from embry0.services.local_slots import UNKNOWN_SERVER, server_for
+    from embry0.services.local_slots import UNKNOWN_SERVER, server_of
     from embry0.storage.database import StoredValueTooDeep
 
-    upstream = str(getattr(configurable.get("embry0_config"), "local_llm_upstream", "") or "")
-    if upstream:
-        return server_for(None, proxy_upstream=upstream)
     known = getattr(configurable.get("sandbox_manager"), "last_llm_credentials", None)
     container = state.get("sandbox_container_id")
     held = known(container) if callable(known) and container else None
     if isinstance(held, dict) and held.get("custom") is not None:
-        return server_for(getattr(held["custom"], "id", None), proxy_upstream="")
+        return server_of(getattr(held["custom"], "id", None))
     resolver = configurable.get("credential_resolver")
     if resolver is None:
         return UNKNOWN_SERVER
@@ -673,7 +669,7 @@ async def _local_server(state: dict[str, Any], configurable: dict[str, Any]) -> 
     except Exception:  # noqa: BLE001 - the run takes its slot among those that cannot be told
         logger.warning("local_server_unresolved", exc_info=True)
         return UNKNOWN_SERVER
-    return server_for(getattr(credential, "id", None), proxy_upstream="")
+    return server_of(getattr(credential, "id", None))
 
 
 def _slot_wait_seconds(config: Any) -> float:

@@ -320,9 +320,12 @@ async def model_server(aiohttp_server) -> Any:
 
 
 async def _local(aiohttp_client: Any, server: Any, **kw: Any) -> TestClient:
-    client = await aiohttp_client(create_local_llm_proxy_app(f"http://127.0.0.1:{server.port}/v1", _ADMIN, **kw))
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, **kw))
+    server_of_sandbox = {"credential_id": "cred-a", "upstream": f"http://127.0.0.1:{server.port}/v1", "api_key": ""}
     enrolled = await client.post(
-        "/admin/enroll", json={"sandbox_id": "sbx-1", "sandbox_token": _TOKEN}, headers=_ADMIN_HEADERS
+        "/admin/enroll",
+        json={"sandbox_id": "sbx-1", "sandbox_token": _TOKEN, "local_llm": server_of_sandbox},
+        headers=_ADMIN_HEADERS,
     )
     assert enrolled.status == 200
     return client

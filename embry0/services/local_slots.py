@@ -16,13 +16,11 @@ for the length of the call, and its tick stops when none is free
 (:class:`CallSlots`).
 
 **Which server.** A server is the custom credential a call is made with
-(:func:`server_of`): its id, or :data:`ENV_SERVER` for the environment's.
-While ``LOCAL_LLM_UPSTREAM`` sends every agent run on the custom provider
-through the local-llm-proxy to that one root, every call on the custom
-provider, a background one included, is on :data:`PROXY_SERVER` whatever its
-credential (:func:`server_for`): one machine may go by several names (an
-address, a name, a trailing dot), so no name a call is made by tells it
-apart.
+(:func:`server_of`): its id, or :data:`ENV_SERVER` for the environment's. An
+agent run reaches it through the local-llm-proxy and a background call
+directly, at the address the credential names (ADR 0032); the credential, not
+the address, tells servers apart, since one machine may go by several names
+(an address, a name, a trailing dot).
 
 A lease expires by itself after the run's own time limit, so one left by a
 process that died frees its slot without anyone deleting it.
@@ -44,9 +42,6 @@ POLL_SECONDS = 5.0
 
 #: The server of the custom credential the environment gives (``CUSTOM_LLM_API_KEY``), which has no id.
 ENV_SERVER = "env"
-#: The server every agent run on the custom provider reaches while ``LOCAL_LLM_UPSTREAM`` routes them all through
-#: the local-llm-proxy to that one root.
-PROXY_SERVER = "env:LOCAL_LLM_UPSTREAM"
 #: A run whose credential could not be told: such runs share one cap among themselves.
 UNKNOWN_SERVER = ""
 
@@ -54,12 +49,6 @@ UNKNOWN_SERVER = ""
 def server_of(credential_id: str | None) -> str:
     """The server a custom credential names: its id, or :data:`ENV_SERVER` for the environment's."""
     return credential_id or ENV_SERVER
-
-
-def server_for(credential_id: str | None, *, proxy_upstream: str) -> str:
-    """The server a call on the custom provider with ``credential_id`` holds a slot of: :data:`PROXY_SERVER` while
-    the local-llm-proxy's upstream is set, for an agent run and a background call alike, else the credential's."""
-    return PROXY_SERVER if proxy_upstream else server_of(credential_id)
 
 
 def local_cap(provider_config: Mapping[str, Any] | None) -> int:
@@ -155,10 +144,8 @@ class CallSlots:
     """What a background call needs to hold a slot of the server it reaches (``BackgroundCalls``).
 
     ``cap`` reads how many calls each server takes now, and raises when it
-    cannot tell (no slot, then); ``proxy_upstream`` is ``LOCAL_LLM_UPSTREAM``,
-    whose host agent runs reach as :data:`PROXY_SERVER`.
+    cannot tell (no slot, then).
     """
 
     slots: LocalSlots
     cap: Callable[[], Awaitable[int]]
-    proxy_upstream: str = ""

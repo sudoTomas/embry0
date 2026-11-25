@@ -1,4 +1,5 @@
-"""The local-llm-proxy forwards an enrolled sandbox's model calls to one upstream, and nothing else."""
+"""The local-llm-proxy forwards an enrolled sandbox's model calls to the server it was enrolled with, and nothing else
+(ADR 0032)."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
-from embry0.execution.proxy.local_llm_proxy import create_local_llm_proxy_app
+from embry0.execution.proxy import local_llm_proxy
 from tests.fixtures.recording_upstream import is_test_request
 
 _ADMIN = "test-admin-secret-not-real"
@@ -19,66 +20,185 @@ _API_ROOT = "/v1/"
 
 
 @pytest.fixture
-async def upstream(aiohttp_server) -> Any:
-    """A fake model server recording the requests the proxy may send it.
+def make_upstream(aiohttp_server) -> Any:
+    """A factory of fake model servers recording the requests the proxy may send them.
 
     ``seen`` holds the requests under the API root the proxy forwards to, and
     any carrying the server key, wherever they go. Anything else that reaches
     its port, such as an unrelated client's ``GET /``, is answered the same way
-    and kept in ``ignored`` (#221).
+    and kept in ``ignored`` (#221). Each server answers with its own ``name``.
     """
-    seen: list[dict[str, Any]] = []
-    ignored: list[dict[str, Any]] = []
 
-    async def record(request: web.Request) -> web.Response:
-        counted = is_test_request(request.path, request.headers, paths=[_API_ROOT], credentials=[_SERVER_KEY])
-        (seen if counted else ignored).append(
-            {
-                "method": request.method,
-                "path": request.path,
-                "authorization": request.headers.get("Authorization"),
-                "body": await request.read(),
-            }
-        )
-        if request.path.endswith("/models"):
-            return web.json_response({"data": [{"id": "qwen", "max_model_len": 65536}]})
-        return web.json_response({"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+    async def make(name: str = "one") -> Any:
+        seen: list[dict[str, Any]] = []
+        ignored: list[dict[str, Any]] = []
 
-    app = web.Application()
-    app.router.add_route("*", "/{tail:.*}", record)
-    server = await aiohttp_server(app)
-    server.seen = seen
-    server.ignored = ignored
-    return server
+        async def record(request: web.Request) -> web.Response:
+            counted = is_test_request(request.path, request.headers, paths=[_API_ROOT], credentials=[_SERVER_KEY])
+            (seen if counted else ignored).append(
+                {
+                    "method": request.method,
+                    "path": request.path,
+                    "authorization": request.headers.get("Authorization"),
+                    "body": await request.read(),
+                }
+            )
+            if request.path.endswith("/models"):
+                return web.json_response({"data": [{"id": "qwen", "max_model_len": 65536}]})
+            return web.json_response({"choices": [{"message": {"role": "assistant", "content": name}}]})
+
+        app = web.Application()
+        app.router.add_route("*", "/{tail:.*}", record)
+        server = await aiohttp_server(app)
+        server.seen = seen
+        server.ignored = ignored
+        return server
+
+    return make
 
 
-async def _proxy(aiohttp_client, upstream: Any, **kwargs: Any) -> TestClient:
-    app = create_local_llm_proxy_app(f"http://127.0.0.1:{upstream.port}/v1", _ADMIN, **kwargs)
-    client = await aiohttp_client(app)
-    enrolled = await client.post(
+@pytest.fixture
+async def upstream(make_upstream) -> Any:
+    return await make_upstream()
+
+
+def _server(upstream: Any, *, api_key: str = "", credential_id: str = "cred-a") -> dict[str, str]:
+    return {"credential_id": credential_id, "upstream": f"http://127.0.0.1:{upstream.port}/v1/", "api_key": api_key}
+
+
+async def _enroll(client: TestClient, sandbox_id: str, token: str, server: Any) -> Any:
+    return await client.post(
         "/admin/enroll",
-        json={"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN},
+        json={"sandbox_id": sandbox_id, "sandbox_token": token, "local_llm": server},
         headers={"X-Admin-Token": _ADMIN},
     )
-    assert enrolled.status == 200
+
+
+def create_local_llm_proxy_app(admin_token: str, **kwargs: Any) -> web.Application:
+    """The proxy app, built as ADR 0032 builds it: with the admin token and no server of its own."""
+    try:
+        return local_llm_proxy.create_local_llm_proxy_app(admin_token, **kwargs)
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and (not admin_token or kwargs.get("max_request_bytes") == 0):
+            raise
+        pytest.fail(f"the local-llm-proxy must be built with no server of its own (ADR 0032): {exc}")
+
+
+async def _proxy(aiohttp_client, upstream: Any, *, api_key: str = "", **kwargs: Any) -> TestClient:
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, **kwargs))
+    enrolled = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream, api_key=api_key))
+    assert enrolled.status == 200, await enrolled.text()
     return client
 
 
 _AUTH = {"Authorization": f"Bearer {_SANDBOX_TOKEN}"}
 
 
-def test_the_upstream_must_be_an_http_url_and_the_admin_token_set():
+def test_the_admin_token_and_a_positive_cap_must_be_set():
     with pytest.raises(ValueError):
-        create_local_llm_proxy_app("file:///etc/passwd", _ADMIN)
+        create_local_llm_proxy_app("")
     with pytest.raises(ValueError):
-        create_local_llm_proxy_app("http://127.0.0.1:1/v1", "")
+        create_local_llm_proxy_app(_ADMIN, max_request_bytes=0)
 
 
-async def test_chat_completions_and_models_reach_the_one_upstream(aiohttp_client, upstream):
-    client = await _proxy(aiohttp_client, upstream, upstream_api_key=_SERVER_KEY)
+@pytest.mark.parametrize(
+    "server",
+    [
+        None,
+        "http://10.0.0.5:11434/v1",
+        {"credential_id": "cred-a", "api_key": "k"},
+        {"credential_id": "cred-a", "upstream": "file:///etc/passwd", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "ftp://10.0.0.5/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http:///v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://user:pw@10.0.0.5/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1?x=1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1", "api_key": "k\r\nX-Evil: 1"},
+        {"credential_id": 7, "upstream": "http://10.0.0.5/v1", "api_key": ""},
+    ],
+    ids=[
+        "none",
+        "a-string",
+        "no-upstream",
+        "not-http",
+        "ftp-with-host",
+        "no-host",
+        "credentials",
+        "query",
+        "header-break",
+        "bad-id",
+    ],
+)
+async def test_an_enrollment_without_a_valid_server_is_refused(aiohttp_client, server):
+    """Every sandbox is enrolled with its server; one that names none, or one the proxy cannot safely reach, gets no
+    bearer at all."""
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    body: dict[str, Any] = {"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN}
+    if server is not None:
+        body["local_llm"] = server
+    refused = await client.post("/admin/enroll", json=body, headers={"X-Admin-Token": _ADMIN})
+    assert refused.status == 400, f"an enrollment naming {server!r} was taken: {refused.status}"
+    assert (await client.post("/v1/chat/completions", json={}, headers=_AUTH)).status == 401, (
+        "a refused enrollment left a bearer the proxy accepts"
+    )
+
+
+async def test_the_enrollment_answer_confirms_the_server_and_never_the_key(aiohttp_client, upstream):
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    enrolled = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream, api_key=_SERVER_KEY))
+    answer = await enrolled.json()
+    assert answer["local_llm"] == {"credential_id": "cred-a", "upstream": f"http://127.0.0.1:{upstream.port}/v1"}, (
+        f"the answer must echo the server, without its trailing slash: {answer}"
+    )
+    assert _SERVER_KEY not in await enrolled.text(), "the enrollment answer carried the server's key"
+
+
+async def test_each_sandbox_reaches_its_own_server_only(aiohttp_client, make_upstream):
+    """Two jobs on two custom credentials: each sandbox's calls go to its credential's server, with its key."""
+    one, two = await make_upstream("one"), await make_upstream("two")
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    other_token = "another-sandbox-bearer-at-least-32-chars"
+    assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(one, api_key=_SERVER_KEY))).status == 200
+    assert (await _enroll(client, "sbx-2", other_token, _server(two, credential_id="cred-b"))).status == 200
+
+    first = await client.post("/v1/chat/completions", json={"messages": []}, headers=_AUTH)
+    second = await client.post(
+        "/v1/chat/completions", json={"messages": []}, headers={"Authorization": f"Bearer {other_token}"}
+    )
+    answers = [(await r.json())["choices"][0]["message"]["content"] for r in (first, second)]
+    assert answers == ["one", "two"], f"each sandbox must reach its own server: {answers}"
+    assert [r["authorization"] for r in one.seen] == [f"Bearer {_SERVER_KEY}"], (
+        f"the first server got other than its own key: {one.seen}"
+    )
+    assert [r["authorization"] for r in two.seen] == [None], (
+        f"the second server, whose credential has no key, got one: {two.seen}"
+    )
+
+
+async def test_an_enrollment_again_moves_the_sandbox_to_its_new_server(aiohttp_client, make_upstream):
+    one, two = await make_upstream("one"), await make_upstream("two")
+    client = await _proxy(aiohttp_client, one)
+    assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(two, credential_id="cred-b"))).status == 200
+    resp = await client.post("/v1/chat/completions", json={"messages": []}, headers=_AUTH)
+    assert (await resp.json())["choices"][0]["message"]["content"] == "two", "the sandbox kept its first server"
+    assert one.seen == [], f"the first server was still reached: {one.seen}"
+
+
+async def test_a_sandbox_whose_server_is_gone_is_answered_503(aiohttp_client, upstream):
+    """An enrolled bearer always has its server; were the two ever apart, nothing would be forwarded anywhere."""
+    client = await _proxy(aiohttp_client, upstream)
+    held = getattr(local_llm_proxy, "UPSTREAM_BY_SANDBOX", None)
+    assert held is not None, "the proxy keeps no server per sandbox (UPSTREAM_BY_SANDBOX)"
+    client.server.app[held].clear()
+    resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
+    assert resp.status == 503, f"a sandbox with no server was answered {resp.status}"
+    assert upstream.seen == []
+
+
+async def test_chat_completions_and_models_reach_the_sandbox_s_server(aiohttp_client, upstream):
+    client = await _proxy(aiohttp_client, upstream, api_key=_SERVER_KEY)
     chat = await client.post("/v1/chat/completions", json={"model": "qwen", "messages": []}, headers=_AUTH)
     assert chat.status == 200
-    assert (await chat.json())["choices"][0]["message"]["content"] == "ok"
+    assert (await chat.json())["choices"][0]["message"]["content"] == "one"
     models = await client.get("/v1/models", headers=_AUTH)
     assert (await models.json())["data"][0]["max_model_len"] == 65536
     assert [(r["method"], r["path"]) for r in upstream.seen] == [
@@ -134,6 +254,10 @@ async def test_a_revoked_sandbox_gets_nothing(aiohttp_client, upstream):
     assert revoked.status == 200
     assert (await client.post("/v1/chat/completions", json={}, headers=_AUTH)).status == 401
     assert upstream.seen == []
+    held = getattr(local_llm_proxy, "UPSTREAM_BY_SANDBOX", None)
+    assert held is not None and "sbx-1" not in client.server.app[held], (
+        "a revoked sandbox's server, and its key, stayed in the proxy's memory"
+    )
 
 
 async def test_a_request_over_the_size_limit_is_refused(aiohttp_client, upstream):
@@ -142,10 +266,30 @@ async def test_a_request_over_the_size_limit_is_refused(aiohttp_client, upstream
         "/v1/chat/completions", data=b"x" * 2048, headers={**_AUTH, "Content-Type": "application/json"}
     )
     assert resp.status == 413
-    assert "1024" in (await resp.json())["error"]["message"]
+    error = (await resp.json())["error"]
+    # The OpenAI error shape the chat-completions executor reads, saying what classifies as a context overflow.
+    assert error["code"] == "request_too_large" and error["message"].startswith("request_too_large"), error
+    assert "1024" in error["message"] and "LOCAL_LLM_MAX_REQUEST_BYTES" in error["message"], error
     assert upstream.seen == []
     ok = await client.post("/v1/chat/completions", data=b"{}", headers={**_AUTH, "Content-Type": "application/json"})
     assert ok.status == 200
+
+
+async def test_the_executor_reads_the_proxy_s_413_as_an_outgrown_conversation(aiohttp_client, upstream):
+    """The refusal reaches the chat-completions executor as a provider error; the run ends as
+    ERR_CONTEXT_WINDOW_EXCEEDED, not as an unexplained upstream failure."""
+    import httpx
+
+    from embry0.agents.executor_openai import ProviderHTTPError, _error_detail
+    from embry0.safety.error_codes import ErrorCode
+
+    client = await _proxy(aiohttp_client, upstream, max_request_bytes=1024)
+    resp = await client.post(
+        "/v1/chat/completions", data=b"x" * 2048, headers={**_AUTH, "Content-Type": "application/json"}
+    )
+    answered = httpx.Response(resp.status, content=await resp.read(), headers={"content-type": "application/json"})
+    failure = ProviderHTTPError("custom", answered.status_code, _error_detail(answered))
+    assert failure.error_code == ErrorCode.CONTEXT_WINDOW_EXCEEDED, f"the run would end as {failure.error_code}"
 
 
 async def _get_from_upstream(upstream: Any, path: str, **headers: str) -> int:
@@ -160,7 +304,7 @@ async def test_a_stray_request_to_the_model_server_changes_no_refusal(aiohttp_cl
     """Any process on the host can reach the model server's port. Counted, a
     ``GET /`` from one fails the refusal tests above, which expect nothing to
     reach it, or passes a test that expects something to (#221)."""
-    client = await _proxy(aiohttp_client, upstream, upstream_api_key=_SERVER_KEY)
+    client = await _proxy(aiohttp_client, upstream, api_key=_SERVER_KEY)
     assert await _get_from_upstream(upstream, "/") == 200, "the stray request did not reach the model server"
     bad = {"Authorization": "Bearer someone-elses-token-that-is-long-enough"}
     refused = await client.post("/v1/chat/completions", json={}, headers=bad)
@@ -189,12 +333,8 @@ async def test_a_request_carrying_the_server_key_counts_on_any_path(upstream):
 
 
 async def test_an_unreachable_server_is_a_502(aiohttp_client):
-    app = create_local_llm_proxy_app("http://127.0.0.1:9/v1", _ADMIN)
-    client = await aiohttp_client(app)
-    await client.post(
-        "/admin/enroll",
-        json={"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN},
-        headers={"X-Admin-Token": _ADMIN},
-    )
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    dead = {"credential_id": "cred-a", "upstream": "http://127.0.0.1:9/v1", "api_key": ""}
+    assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, dead)).status == 200
     resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
     assert resp.status == 502

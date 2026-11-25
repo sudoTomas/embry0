@@ -209,12 +209,12 @@ async def test_a_cloud_run_never_touches_the_slots() -> None:
 # ---- #174: the slot is the server's the run reaches ----
 
 
-def _server_names() -> Any:
+def _unknown_server() -> Any:
     from embry0.services import local_slots
 
-    names = [getattr(local_slots, name, None) for name in ("PROXY_SERVER", "UNKNOWN_SERVER")]
-    assert None not in names, "services.local_slots names no server a run can be on"
-    return names
+    name = getattr(local_slots, "UNKNOWN_SERVER", None)
+    assert name is not None, "services.local_slots names no server a run can be on"
+    return name
 
 
 class _Sandboxes:
@@ -278,10 +278,11 @@ async def test_without_the_sandbox_s_record_the_job_s_credential_names_the_serve
 
 
 @pytest.mark.asyncio
-async def test_every_run_through_the_environment_s_proxy_is_on_its_one_upstream() -> None:
+async def test_a_still_set_local_llm_upstream_moves_no_run_off_its_credential_s_server() -> None:
+    """ADR 0032: the variable that once sent every custom run to one root routes nothing; a run holds a slot of the
+    server its credential names."""
     from embry0.config import Embry0Config
 
-    PROXY_SERVER, _ = _server_names()
     slots = _Slots()
     await _run(
         slots=slots,
@@ -291,15 +292,15 @@ async def test_every_run_through_the_environment_s_proxy_is_on_its_one_upstream(
             "embry0_config": Embry0Config.model_construct(local_llm_upstream="http://models.test:8000/v1"),
         },
     )
-    assert [t.get("server") for t in slots.taken] == [PROXY_SERVER], (
-        "LOCAL_LLM_UPSTREAM sends every custom run to one root whatever its credential: one server, one cap"
+    assert [t.get("server") for t in slots.taken] == ["cred-box"], (
+        "a still-set LOCAL_LLM_UPSTREAM put the run on a server other than its credential's"
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resolver", [None, _Resolver(error=RuntimeError("registry down"))])
 async def test_a_server_that_cannot_be_told_shares_one_cap(resolver: _Resolver | None) -> None:
-    _, UNKNOWN_SERVER = _server_names()
+    UNKNOWN_SERVER = _unknown_server()
     slots = _Slots()
     extra = {"credential_resolver": resolver} if resolver is not None else {}
     model, *_ = await _run(slots=slots, state={"agent_models_override": {"*": _LOCAL}}, configurable=extra)

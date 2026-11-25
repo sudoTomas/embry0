@@ -53,7 +53,7 @@ import httpx
 import structlog
 
 from embry0.orchestration.budget_gate import DispatchDecision
-from embry0.services.local_slots import CallSlots, server_for
+from embry0.services.local_slots import CallSlots, server_of
 from embry0.settings.sections.background_models import (
     BACKGROUND_MODELS,
     FEATURES,
@@ -160,16 +160,13 @@ class LocalServerBusy(BackgroundCallRefused):
         self.args = (f"{feature} on {model}: every slot of its server is taken",)
 
 
-async def resolve_endpoint(
-    model: str, resolver: Any, repo: str = "", *, feature: str = "", proxy_upstream: str = ""
-) -> Endpoint | None:
+async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature: str = "") -> Endpoint | None:
     """The chat-completions endpoint ``model`` runs on for ``repo``, or None when it cannot be called from here.
 
     The key is the one a job of ``repo`` would get: the repository's binding,
     then its owner's, then the global pool, then the environment. A local
-    model's server is its credential's, or, while the local-llm-proxy's
-    upstream is set (``proxy_upstream``), that upstream's, as every agent run's
-    is (``local_slots.server_for``).
+    model's server is its credential's, as every agent run's is
+    (``local_slots.server_of``).
     """
     from embry0.agents.providers import provider_for_model, upstream_model
 
@@ -191,7 +188,7 @@ async def resolve_endpoint(
         key=cred.secret,
         upstream_model=upstream_model(provider, model),
         local=local,
-        server=server_for(getattr(cred, "id", None), proxy_upstream=proxy_upstream) if local else "",
+        server=server_of(getattr(cred, "id", None)) if local else "",
     )
 
 
@@ -359,8 +356,7 @@ class BackgroundCalls:
                 hint="a model with no price is never called: name a priced one in background_models",
             )
             return None
-        proxy_upstream = self._local_slots.proxy_upstream if self._local_slots is not None else ""
-        return await resolve_endpoint(model, self._resolver, repo or "", feature=feature, proxy_upstream=proxy_upstream)
+        return await resolve_endpoint(model, self._resolver, repo or "", feature=feature)
 
     async def ask(
         self,

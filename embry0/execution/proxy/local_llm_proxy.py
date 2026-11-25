@@ -1,18 +1,23 @@
-"""Local-model proxy: a sandbox's one way to the operator's own model server.
+"""Local-model proxy: a sandbox's one way to the operator's model servers (ADR 0032).
 
 A model server on the operator's network (vLLM, Ollama, LM Studio) sits in the
 private ranges the sandbox egress drop blocks. Declaring its host as an egress
-exception opens every port of that machine to the sandbox, which is more than
-a model call needs when the machine also runs other services. This proxy runs
-on ``sandbox-restricted`` like the git and xAI proxies, and forwards to exactly
-one upstream, the API root the operator configured (``LOCAL_LLM_UPSTREAM``):
+exception would open every port of that machine to the sandbox, which is more
+than a model call needs when the machine also runs other services, and would
+put the server's key in the sandbox. Every job on the custom provider reaches
+its server through this proxy instead. It runs on ``sandbox-restricted`` like
+the git and xAI proxies, and forwards each sandbox to the one server its job
+resolved, the custom credential the orchestrator enrolled it with
+(``local_llm``: the credential's id, its API root and its key), the way the
+git-proxy scopes an enrolment to one repository:
 
 - only ``POST /v1/chat/completions`` and ``GET /v1/models``; every other path
-  is 404 and never reaches the upstream;
-- only from an enrolled sandbox: the per-sandbox bearer is checked and
-  stripped, and the upstream's own key (``LOCAL_LLM_API_KEY``, when the server
-  checks one) is added here, so it never enters a sandbox;
-- a request body over ``MAX_REQUEST_BYTES`` is refused with 413;
+  is 404 and never reaches a server;
+- only from an enrolled sandbox, and only to its own server: the per-sandbox
+  bearer is checked and stripped, and the server's key (when it checks one) is
+  added here, so neither the key nor the server's address enters a sandbox;
+- a request body over ``MAX_REQUEST_BYTES`` (``LOCAL_LLM_MAX_REQUEST_BYTES``)
+  is refused with 413, in the OpenAI error shape (``model_request``);
 - every chat completion is metered (``metering``): its tokens count toward the
   run the orchestrator declared for the sandbox.
 
@@ -22,14 +27,16 @@ provider, so a sandbox with no local model has no bearer this proxy accepts.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
 from aiohttp import web
 
 from embry0.execution.proxy.app_keys import HTTP_CLIENT
-from embry0.execution.proxy.enrollment import check_bearer, register_admin_routes
+from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, register_admin_routes
 from embry0.execution.proxy.metering import (
     METER,
     Metered,
@@ -39,6 +46,7 @@ from embry0.execution.proxy.metering import (
     read_call,
     register_meter_routes,
 )
+from embry0.execution.proxy.model_request import openai_error, read_body
 
 logger = structlog.get_logger(__name__)
 
@@ -55,33 +63,85 @@ _FORWARDED_RESPONSE_HEADERS = ("content-type",)
 _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
 
+#: The enroll body's field naming the sandbox's server, and the field the answer confirms it under.
+LOCAL_LLM_FIELD = "local_llm"
+#: The longest API root and key an enrollment may name.
+_MAX_ROOT = 2048
+_MAX_KEY = 8192
+_MAX_CREDENTIAL_ID = 200
+
+
+@dataclass(frozen=True, slots=True)
+class Upstream:
+    """The model server one sandbox reaches: the custom credential's id (``''`` for the environment's), its API
+    root (``http://host:port/v1``) and its key (``''`` sends none)."""
+
+    credential_id: str
+    root: str
+    api_key: str
+
+    def __repr__(self) -> str:  # never the key in a log or a traceback
+        return f"Upstream(credential_id={self.credential_id!r}, root={self.root!r})"
+
+
 # This proxy's own state keys; those several proxies share are in ``app_keys``.
-UPSTREAM_ROOT = web.AppKey("upstream_root", str)
-UPSTREAM_API_KEY = web.AppKey("upstream_api_key", str)
-MAX_REQUEST_BYTES = web.AppKey("max_request_bytes", int)
+#: Per enrolled sandbox: the server it reaches.
+UPSTREAM_BY_SANDBOX: web.AppKey[dict[str, Upstream]] = web.AppKey("upstream_by_sandbox")
+
+
+def parse_upstream(value: Any) -> Upstream:
+    """The enroll body's ``local_llm`` object, checked; :class:`EnrollRejected` for anything else. A root is an
+    http(s) URL with a host and nothing past its path, kept without its trailing slash."""
+    if not isinstance(value, dict):
+        raise EnrollRejected("local_llm must be an object naming the sandbox's model server")
+    credential_id, root, api_key = value.get("credential_id", ""), value.get("upstream"), value.get("api_key", "")
+    if not isinstance(credential_id, str) or len(credential_id) > _MAX_CREDENTIAL_ID:
+        raise EnrollRejected("local_llm.credential_id must be a string")
+    if not isinstance(root, str) or not root or len(root) > _MAX_ROOT:
+        raise EnrollRejected("local_llm.upstream must be the server's API root")
+    parts = urlsplit(root)
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+    ):
+        raise EnrollRejected("local_llm.upstream must be an http(s) URL with a host and no credentials or query")
+    if not isinstance(api_key, str) or len(api_key) > _MAX_KEY or any(c in api_key for c in "\r\n"):
+        raise EnrollRejected("local_llm.api_key must be a string of one line")
+    return Upstream(credential_id=credential_id, root=root.rstrip("/"), api_key=api_key)
+
+
+class _UpstreamEnroll:
+    """Every enrollment names its sandbox's server (``local_llm``), and the answer confirms which one."""
+
+    def parse(self, app: web.Application, body: dict[str, Any]) -> Upstream:
+        if LOCAL_LLM_FIELD not in body:
+            raise EnrollRejected("an enrollment names the sandbox's model server (local_llm)")
+        return parse_upstream(body[LOCAL_LLM_FIELD])
+
+    def apply(self, app: web.Application, sandbox_id: str, parsed: Upstream) -> dict[str, Any]:
+        app[UPSTREAM_BY_SANDBOX][sandbox_id] = parsed
+        return {LOCAL_LLM_FIELD: {"credential_id": parsed.credential_id, "upstream": parsed.root}}
 
 
 def create_local_llm_proxy_app(
-    upstream_url: str,
     admin_token: str,
     *,
-    upstream_api_key: str = "",
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
     require_run: bool = False,
 ) -> web.Application:
-    """The proxy app forwarding to ``upstream_url``, an API root such as ``http://host:port/v1``. With
-    ``require_run`` a call from a sandbox with no declared run is refused."""
-    if not upstream_url.startswith(("http://", "https://")):
-        raise ValueError("UPSTREAM_URL must be an http(s) URL")
+    """The proxy app, forwarding each enrolled sandbox to the server it was enrolled with. With ``require_run`` a
+    call from a sandbox with no declared run is refused."""
     if max_request_bytes <= 0:
         raise ValueError("MAX_REQUEST_BYTES must be positive")
-    # One byte over the cap still reads, so the handler can answer 413 itself
-    # instead of aiohttp's bare error.
-    app = web.Application(client_max_size=max_request_bytes + 1)
-    app[UPSTREAM_ROOT] = upstream_url.rstrip("/")
-    app[UPSTREAM_API_KEY] = upstream_api_key
-    app[MAX_REQUEST_BYTES] = max_request_bytes
-    register_admin_routes(app, proxy_name=PROXY_NAME, admin_token=admin_token, on_unenroll=_end_tallies)
+    app = web.Application(client_max_size=max_request_bytes)
+    app[UPSTREAM_BY_SANDBOX] = {}
+    register_admin_routes(
+        app, proxy_name=PROXY_NAME, admin_token=admin_token, on_unenroll=_forget, enroll_extension=_UpstreamEnroll()
+    )
     register_meter_routes(app, proxy_name=PROXY_NAME, require_run=require_run)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
@@ -90,8 +150,9 @@ def create_local_llm_proxy_app(
     return app
 
 
-def _end_tallies(app: web.Application, sandbox_id: str) -> None:
-    """An enrollment ended: its tallies end, and stay for the orchestrator to read."""
+def _forget(app: web.Application, sandbox_id: str) -> None:
+    """An enrollment ended: drop its server, and end its tallies (they stay for the orchestrator to read)."""
+    app[UPSTREAM_BY_SANDBOX].pop(sandbox_id, None)
     app[METER].sandbox_gone(sandbox_id)
 
 
@@ -109,11 +170,10 @@ async def _health_handler(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "proxy": "local_llm"})
 
 
-def _upstream_headers(request: web.Request) -> dict[str, str]:
+def _upstream_headers(request: web.Request, server: Upstream) -> dict[str, str]:
     headers = {name: request.headers[name] for name in _FORWARDED_REQUEST_HEADERS if name in request.headers}
-    key = request.app[UPSTREAM_API_KEY]
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
+    if server.api_key:
+        headers["Authorization"] = f"Bearer {server.api_key}"
     return headers
 
 
@@ -128,17 +188,17 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if sandbox_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
 
+    upstream = request.app[UPSTREAM_BY_SANDBOX].get(sandbox_id)
+    if upstream is None:
+        logger.error("local_llm_proxy_no_server", sandbox_id=sandbox_id)
+        return openai_error("no_server", "no model server is enrolled for this sandbox", 503)
+
     body = b""
     if method == "POST":
-        limit: int = request.app[MAX_REQUEST_BYTES]
-        if request.content_length is not None and request.content_length > limit:
-            return _too_large(sandbox_id, request.content_length, limit)
-        try:
-            body = await request.read()
-        except web.HTTPRequestEntityTooLarge:
-            return _too_large(sandbox_id, None, limit)
-        if len(body) > limit:
-            return _too_large(sandbox_id, len(body), limit)
+        read = await read_body(request, "local-llm-proxy", setting="LOCAL_LLM_MAX_REQUEST_BYTES", shape="openai")
+        if isinstance(read, web.Response):
+            return read
+        body = read
 
     metered: Metered | None = None
     if method == "POST":
@@ -154,10 +214,16 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             return web.json_response({"error": "meter_full"}, status=503)
 
     client: httpx.AsyncClient = request.app[HTTP_CLIENT]
-    url = f"{request.app[UPSTREAM_ROOT]}/{path}"
-    logger.info("local_llm_proxy_forward", sandbox_id=sandbox_id, path=path, bytes=len(body))
+    url = f"{upstream.root}/{path}"
+    logger.info(
+        "local_llm_proxy_forward",
+        sandbox_id=sandbox_id,
+        credential_id=upstream.credential_id,
+        path=path,
+        bytes=len(body),
+    )
     try:
-        return await _forward(request, client, method, url, body, sandbox_id, metered)
+        return await _forward(request, client, method, url, body, sandbox_id, metered, upstream)
     finally:
         if metered is not None:
             metered.close()
@@ -171,11 +237,14 @@ async def _forward(
     body: bytes,
     sandbox_id: str,
     metered: Metered | None,
+    server: Upstream,
 ) -> web.StreamResponse:
     """Send the call upstream and stream its answer back through the meter. A call whose answer never came back
     after it was sent is charged its ceiling; one that never connected costs nothing."""
     try:
-        async with client.stream(method, url, headers=_upstream_headers(request), content=body or None) as upstream:
+        async with client.stream(
+            method, url, headers=_upstream_headers(request, server), content=body or None
+        ) as upstream:
             if metered is not None:
                 metered.answer(upstream.status_code, upstream.headers.get("content-type"))
             response = web.StreamResponse(status=upstream.status_code)
@@ -202,10 +271,3 @@ async def _forward(
         if metered is not None:
             metered.lost()
         raise
-
-
-def _too_large(sandbox_id: str, size: Any, limit: int) -> web.Response:
-    logger.warning("local_llm_proxy_request_too_large", sandbox_id=sandbox_id, size=size, limit=limit)
-    return web.json_response(
-        {"error": {"message": f"request body over the local model proxy's limit of {limit} bytes"}}, status=413
-    )

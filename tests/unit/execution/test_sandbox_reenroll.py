@@ -47,7 +47,9 @@ class Calls(list):
     def writes(self, marker: str) -> list[bytes | None]:
         """What each exec whose command line names ``marker`` got on stdin."""
         return [
-            data for cmd, data in zip(self, self.stdin, strict=True) if cmd[0] == "exec" and marker in " ".join(cmd)
+            data
+            for cmd, data in zip(self, self.stdin, strict=True)
+            if cmd and cmd[0] == "exec" and marker in " ".join(cmd)
         ]
 
 

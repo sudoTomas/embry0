@@ -27,7 +27,8 @@ ENVIRONMENTS: dict[str, dict[str, str]] = {
     "gitlab": {"PROXY_ADMIN_TOKEN": ADMIN, "GITLAB_TOKEN": "glpat-test"},
     "auth": {"PROXY_ADMIN_TOKEN": ADMIN, "ANTHROPIC_API_KEY": "sk-ant-test"},
     "xai": {"PROXY_ADMIN_TOKEN": ADMIN},
-    "local_llm": {"PROXY_ADMIN_TOKEN": ADMIN, "UPSTREAM_URL": "http://llm.invalid:8080"},
+    # ADR 0032: each sandbox's server comes with its enrollment; the proxy is configured with none.
+    "local_llm": {"PROXY_ADMIN_TOKEN": ADMIN},
     "context": {
         "PROXY_ADMIN_TOKEN": ADMIN,
         "UPSTREAM_URL": "http://orchestrator.invalid:8000",

@@ -304,6 +304,23 @@ def test_a_metered_proxy_requires_a_run_when_told_to(monkeypatch, proxy_type, se
 
     monkeypatch.setenv("PROXY_TYPE", proxy_type)
     monkeypatch.setenv("PROXY_ADMIN_TOKEN", "test-admin-tok")
-    monkeypatch.setenv("UPSTREAM_URL", "http://127.0.0.1:1/v1")
     monkeypatch.setenv("METER_REQUIRE_RUN", setting)
     assert server.build_app_from_env()[METER].require_run is required
+
+
+def test_the_local_proxy_starts_with_no_server_of_its_own(monkeypatch):
+    """ADR 0032: each sandbox is enrolled with its own server, so the container is given none, only its cap."""
+    from embry0.execution.proxy import local_llm_proxy
+
+    UPSTREAM_BY_SANDBOX = getattr(local_llm_proxy, "UPSTREAM_BY_SANDBOX", "upstream_by_sandbox")
+    monkeypatch.delenv("UPSTREAM_URL", raising=False)
+    monkeypatch.delenv("UPSTREAM_API_KEY", raising=False)
+    monkeypatch.setenv("PROXY_TYPE", "local_llm")
+    monkeypatch.setenv("PROXY_ADMIN_TOKEN", "test-admin-tok")
+    monkeypatch.setenv("MAX_REQUEST_BYTES", "4096")
+    try:
+        app = server.build_app_from_env()
+    except ValueError as exc:
+        pytest.fail(f"the local proxy does not start without a server of its own: {exc}")
+    assert app[UPSTREAM_BY_SANDBOX] == {}, "the proxy holds no server before a sandbox is enrolled"
+    assert app._client_max_size == 4096, "the cap the orchestrator hands it is the one it reads with"

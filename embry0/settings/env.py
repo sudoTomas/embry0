@@ -69,6 +69,13 @@ def warn_moved_variables(environ: Mapping[str, str] | None = None, env_file: str
     return names
 
 
+#: What replaced LOCAL_LLM_UPSTREAM and LOCAL_LLM_API_KEY (ADR 0032), said while either is set.
+LOCAL_UPSTREAM_RETIRED = (
+    "each custom credential names its own server, reached through the local-llm-proxy (ADR 0032), and "
+    "`embry0 credentials import-env` copies the two variables into the environment's (custom/api-key)"
+)
+
+
 def _retired() -> dict[str, str]:
     """Each ``Embry0Config`` attribute no longer read at all, with what runs instead. The config keeps each one
     release, so startup (``settings_env_retired``) and ``embry0 config`` can say so. Read from the constants that
@@ -81,6 +88,9 @@ def _retired() -> dict[str, str]:
         "proposal_brief_interval_seconds": f"{proposal_briefs.CADENCE}, constants",
         "job_briefs_per_tick": f"{job_briefs.CADENCE}, constants",
         "job_brief_interval_seconds": f"{job_briefs.CADENCE}, constants",
+        # ADR 0032: a custom credential is its server; nothing routes every custom run to one root any more.
+        "local_llm_upstream": LOCAL_UPSTREAM_RETIRED,
+        "local_llm_api_key": LOCAL_UPSTREAM_RETIRED,
     }
 
 
