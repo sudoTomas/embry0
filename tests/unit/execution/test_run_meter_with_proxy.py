@@ -132,7 +132,6 @@ async def test_a_run_declared_on_a_recreated_proxy_is_given_back_after_its_enrol
         port=proxy.port,
         body={"sandbox_id": "sbx-1", "sandbox_token": TOKEN},
     )
-    await mgr.declare_run("xai-proxy", "sbx-1", "run-2")
     held = list(mgr._admin_state["xai-proxy"])
     assert held.index("run:run-1") < held.index("enroll:sbx-1"), "not the case under test: the run held first"
     sent: list[str] = []
@@ -144,8 +143,7 @@ async def test_a_run_declared_on_a_recreated_proxy_is_given_back_after_its_enrol
     mgr._exec_admin_once = _record_once  # type: ignore[method-assign]
     restored, failed = await mgr._replay("xai-proxy")
     assert failed == 0
-    enroll = sent.index("POST /admin/enroll sbx-1")
-    assert all(sent.index(f"POST /admin/runs {run}") > enroll for run in ("run-1", "run-2")), sent
+    assert sent.index("POST /admin/runs run-1") > sent.index("POST /admin/enroll sbx-1"), sent
 
 
 async def test_a_run_whose_end_was_never_heard_is_not_replayed_forever(proxy: Any) -> None:
@@ -168,3 +166,68 @@ def test_only_the_metering_proxies_a_sandbox_is_enrolled_with_are_its_targets() 
     assert mgr.metered_proxies_for("sbx-2") == []
     mgr._remember("xai-proxy", "DELETE", "/admin/enroll/sbx-1", 9106, None)
     assert mgr.metered_proxies_for("sbx-1") == []
+
+
+async def test_a_run_whose_end_lost_its_answer_is_not_given_back_to_a_recreated_proxy(proxy: Any) -> None:
+    """The end reached the proxy, its answer did not reach the orchestrator: the run is over all the same."""
+    mgr = proxy.mgr
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-A")
+    real_once = mgr._exec_admin_once
+
+    async def _answer_lost(**kw: Any) -> dict[str, Any]:
+        response = await real_once(**kw)
+        if kw["method"] == "DELETE":
+            raise RuntimeError("docker exec xai-proxy for DELETE /admin/runs/run-A failed: timed out")
+        return response
+
+    mgr._exec_admin_once = _answer_lost  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await mgr.end_run("xai-proxy", "run-A")
+    assert "run-A" not in proxy.app[METER]._runs, "the end did not reach the proxy: not the case under test"
+    assert "run:run-A" not in mgr._admin_state["xai-proxy"], "an ended run would be replayed"
+
+
+async def test_a_stale_run_is_never_replayed_over_the_sandbox_s_next_one(proxy: Any) -> None:
+    """The review's case: run A's end was not heard, run B began, a recreated proxy was replayed meanwhile. B's call
+    counts under B, and B is charged it."""
+    mgr, meter_app = proxy.mgr, proxy.app[METER]
+    meter = RunMeter(mgr, _Repo())
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-A")
+    meter_app.end("run-A")  # A's end reached the proxy; the orchestrator never heard
+    window = await meter.begin("sbx-1", "run-B", "job-1")
+    assert "run:run-A" not in mgr._admin_state["xai-proxy"], "B's declaration left A held"
+    held = mgr._admin_state["xai-proxy"]
+    saved = held.pop("run:run-B")  # a replay whose list was taken before B's declaration was held
+    sent: list[str] = []
+
+    async def _to_a_recreated_proxy(**kw: Any) -> dict[str, Any]:
+        sent.append(f"{kw['method']} {kw['path']} {kw['body'].get('run_id', '')}")
+        return {}
+
+    real_once, mgr._exec_admin_once = mgr._exec_admin_once, _to_a_recreated_proxy  # type: ignore[method-assign]
+    await mgr._replay("xai-proxy")
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    held["run:run-B"] = saved
+    assert "POST /admin/runs run-A" not in sent, f"the replay gave the sandbox its old run: {sent}"
+    assert meter_app._current["sbx-1"] == "run-B"
+    await _sandbox_call(proxy)
+    metering = await meter.end(window)
+    cost = (1000 * 2.0 + 100 * 6.0 + 400 * 2.0 * 0.25) / 1e6
+    charge = charge_run(metering, _record(), sandbox_cost_usd=cost, sandbox_tokens=(1000, 100, 400, 0))
+    assert (charge.source, charge.metering["gap"]) == ("proxy", False)
+    assert charge.cost_usd == pytest.approx(cost), "B was charged less than its call"
+
+
+async def test_an_entry_dropped_while_a_replay_runs_is_not_sent(proxy: Any) -> None:
+    mgr = proxy.mgr
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
+    sent: list[str] = []
+
+    async def _drop_the_run_on_the_first_call(**kw: Any) -> dict[str, Any]:
+        sent.append(f"{kw['method']} {kw['path']}")
+        mgr._admin_state["xai-proxy"].pop("run:run-1", None)  # the run ended while the replay ran
+        return {}
+
+    mgr._exec_admin_once = _drop_the_run_on_the_first_call  # type: ignore[method-assign]
+    await mgr._replay("xai-proxy")
+    assert "POST /admin/runs" not in sent, f"an ended run was replayed: {sent}"

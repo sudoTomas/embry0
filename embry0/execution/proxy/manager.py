@@ -1012,6 +1012,13 @@ class ProxyManager:
         body: dict[str, Any] = {"sandbox_id": sandbox_id, "run_id": run_id}
         if job_id:
             body["job_id"] = job_id
+        # A sandbox runs one run at a time: whatever run it held before is over, so a recreated proxy must never
+        # be given it back (its calls would count under the old run).
+        held = self._admin_state.get(proxy, {})
+        for key in [
+            k for k, (_, _, b, _) in held.items() if k.startswith("run:") and b.get("sandbox_id") == sandbox_id
+        ]:
+            del held[key]
         response = await self._exec_admin_request(
             container=proxy, method="POST", path="/admin/runs", port=port, body=body
         )
@@ -1022,9 +1029,14 @@ class ProxyManager:
         when the proxy holds no such run (it was recreated and not given the run back). Raises RuntimeError when
         the proxy cannot be reached."""
         port = METERED_PROXIES[proxy][0]
-        response = await self._exec_admin_request(
-            container=proxy, method="DELETE", path=f"/admin/runs/{run_id}", port=port, body=None, accept_404=True
-        )
+        try:
+            response = await self._exec_admin_request(
+                container=proxy, method="DELETE", path=f"/admin/runs/{run_id}", port=port, body=None, accept_404=True
+            )
+        finally:
+            # Ended, or as good as: an end whose answer was lost may have reached the proxy, and a run given back to
+            # a recreated proxy after its end would take the calls of the sandbox's next run.
+            self._admin_state.get(proxy, {}).pop(f"run:{run_id}", None)
         if not isinstance(response.get("tally"), dict):
             return None
         return response
@@ -1140,7 +1152,10 @@ class ProxyManager:
         held = self._admin_state.get(name, {})
         now = time.monotonic()
         entries = sorted(held.items(), key=lambda item: _REPLAY_ORDER.get(item[0].split(":", 1)[0], 3))
-        for key, (path, port, body, expires) in entries:
+        for key, entry in entries:
+            if held.get(key) is not entry:
+                continue  # dropped or replaced since the replay began (a run ended, the sandbox's next one declared)
+            path, port, body, expires = entry
             if expires <= now:
                 del held[key]
                 continue

@@ -15,6 +15,22 @@ from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
 from tests.unit.orchestration.nodes.test_agent_node_provider_fallback import _ProviderRowDb
 
 
+class _Db(_ProviderRowDb):
+    """The provider row, and a settings table with no documents: a charged run reaches the per-job cap's check,
+    which reads the budget settings (#682)."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+
+    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+        if "FROM settings_documents" in sql:
+            return {"n": 0, "total": 0, "newest": None}
+        return await super().fetchrow(sql, *args)
+
+    async def fetch(self, sql: str, *_args: Any) -> list[dict[str, Any]]:
+        return []
+
+
 class _Traces:
     def __init__(self) -> None:
         self.created: list[dict[str, Any]] = []
@@ -72,7 +88,7 @@ async def _run(runner: Any, traces: _Traces, state: dict[str, Any] | None = None
         credentials={"api_key": "", "oauth_token": "oauth-xyz"},
         config={
             "configurable": {
-                "db": _ProviderRowDb([]),
+                "db": _Db(),
                 "traces_repo": traces,
                 "job_id": "job-1",
                 "llm_providers": ("anthropic", "xai"),

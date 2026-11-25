@@ -215,6 +215,11 @@ proxy's count (`embry0/agents/run_charge.py`):
 | the run's provider is carried by no metering proxy (Anthropic, a chat-completions provider) | the sandbox's figure, as above (`sandbox`) |
 | the record has no rates | the sandbox's figure (`sandbox_unpriced`) |
 
+A cancelled run is ended on the proxies in the background, so its declaration
+does not linger; what they counted is kept in `run_meter`, but the run is not
+charged from it, and its trace stays `running` like that of a run a restart
+interrupts (#694).
+
 A call still in flight when a tally was last read is charged its ceiling, as
 the proxy reported it: the request's size as input and its output limit as
 output. A proxy process that went away mid-run leaves its last read in
