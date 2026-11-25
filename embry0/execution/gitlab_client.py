@@ -18,11 +18,20 @@ different route and 404s.
 
 **Self-managed hosts.** There is no fixed API origin; ``GITLAB_URL`` supplies
 it and ``/api/v4`` is appended.
+
+Every write to a project, note, discussion or merge request goes through
+:meth:`GitLabClient.send_words`, which sends each field GitLab reads quick
+actions in (a note's or discussion's ``body``, a ``note``, a merge request's or
+issue's ``description``) through
+:func:`embry0.execution.gitlab_notes.without_quick_actions`: GitLab runs a
+line-start ``/merge``, ``/approve`` or ``/target_branch`` in them with the
+poster's rights, and their words are not embry0's own.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote, unquote
 
@@ -30,6 +39,7 @@ import httpx
 import structlog
 
 from embry0.execution.forge_client import ForgeClient, ForgeWrite, forge_write
+from embry0.execution.gitlab_notes import without_quick_actions
 from embry0.execution.gitlab_tokens import resolve_for_repo
 from embry0.execution.tls import build_ssl_context, load_ca_pem
 
@@ -56,6 +66,10 @@ def encode_project(repo: str) -> str:
     """
     return quote(repo, safe="")
 
+
+#: The fields of a write GitLab reads quick actions in: a note's or discussion's ``body``, a draft note's ``note``, a
+#: merge request's or issue's ``description``.
+WORDS_FIELDS = frozenset({"body", "note", "description"})
 
 #: A GitLab API path that names a project or a group, under the API's base (``/api/v4``) or not.
 _GITLAB_SCOPE_PATH = re.compile(r"(?:^|/)(?:projects|groups)/([^/?#]+)")
@@ -103,6 +117,26 @@ class GitLabClient(ForgeClient):
                 built["PRIVATE-TOKEN"] = token
         return built
 
+    # -- writes -----------------------------------------------------------
+
+    async def send_words(
+        self,
+        method: str,
+        path: str,
+        *,
+        repo: str,
+        json: Mapping[str, Any],
+        retry_transient: bool | None = None,
+    ) -> httpx.Response:
+        """The one way a write reaches a project's issues, merge requests, notes or discussions: each field GitLab
+        reads quick actions in (:data:`WORDS_FIELDS`) is sent through ``without_quick_actions``, every other field
+        as given. A test reads the source and fails on any other write to those paths."""
+        payload = {
+            key: without_quick_actions(value) if key in WORDS_FIELDS and isinstance(value, str) else value
+            for key, value in json.items()
+        }
+        return await self.request(method, path, repo=repo, json=payload, retry_transient=retry_transient)
+
     # -- convenience ------------------------------------------------------
 
     def project_path(self, repo: str, suffix: str = "") -> str:
@@ -149,10 +183,8 @@ class GitLabClient(ForgeClient):
 
     async def create_issue_note(self, repo: str, iid: int, body: str) -> bool:
         """Post a note (comment) on an issue. True when accepted."""
-        resp = await self.post(
-            self.project_path(repo, f"/issues/{iid}/notes"),
-            repo=repo,
-            json={"body": body},
+        resp = await self.send_words(
+            "POST", self.project_path(repo, f"/issues/{iid}/notes"), repo=repo, json={"body": body}
         )
         return resp.status_code in (200, 201)
 
@@ -186,7 +218,7 @@ class GitLabClient(ForgeClient):
         existing = await self._note_with(path, repo, marker)
         if existing is None:
             return False
-        resp = await self.put(f"{path}/{existing}", repo=repo, json={"body": body})
+        resp = await self.send_words("PUT", f"{path}/{existing}", repo=repo, json={"body": body})
         resp.raise_for_status()
         return True
 
@@ -213,11 +245,11 @@ class GitLabClient(ForgeClient):
         """Update the earliest note under ``path`` carrying ``marker``, or create one; the note id."""
         existing = await self._note_with(path, repo, marker)
         if existing is not None:
-            resp = await self.put(f"{path}/{existing}", repo=repo, json={"body": body})
+            resp = await self.send_words("PUT", f"{path}/{existing}", repo=repo, json={"body": body})
             resp.raise_for_status()
             return existing
         # Sent once: a note GitLab accepted and answered 502 must not be posted twice.
-        resp = await self.post(path, repo=repo, json={"body": body}, retry_transient=False)
+        resp = await self.send_words("POST", path, repo=repo, json={"body": body}, retry_transient=False)
         resp.raise_for_status()
         return int(resp.json()["id"])
 
@@ -227,7 +259,8 @@ class GitLabClient(ForgeClient):
         Sent again only when GitLab did not act on it (``ForgeClient.request``,
         #45): a note GitLab accepted and answered 502 must not be posted twice.
         """
-        resp = await self.post(
+        resp = await self.send_words(
+            "POST",
             self.project_path(repo, f"/merge_requests/{iid}/notes"),
             repo=repo,
             json={"body": body},
@@ -244,7 +277,8 @@ class GitLabClient(ForgeClient):
 
     async def create_mr_discussion(self, repo: str, iid: int, *, body: str, position: dict[str, Any]) -> ForgeWrite:
         """Start a diff discussion at ``position`` (#30); GitLab answers 400 for a line outside the diff."""
-        resp = await self.post(
+        resp = await self.send_words(
+            "POST",
             self.project_path(repo, f"/merge_requests/{iid}/discussions"),
             repo=repo,
             json={"body": body, "position": position},
@@ -271,7 +305,8 @@ class GitLabClient(ForgeClient):
 
     async def add_mr_labels(self, repo: str, iid: int, labels: list[str]) -> bool:
         """Add labels to a merge request without touching the ones it has."""
-        resp = await self.put(
+        resp = await self.send_words(
+            "PUT",
             self.project_path(repo, f"/merge_requests/{iid}"),
             repo=repo,
             json={"add_labels": ",".join(labels)},
