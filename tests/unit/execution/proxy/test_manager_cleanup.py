@@ -6,6 +6,7 @@ retried; other docker errors are not. A follow-up sweep may remove only known
 names this process failed to remove and that are not currently launched.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -236,3 +237,24 @@ async def test_failed_preclean_of_an_unlaunched_name_is_swept_later(no_sleep, mo
         assert name not in pm._launched
     assert pm._pending_removal == set()
     await pm.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_remainder_still_to_send(no_sleep):
+    """The proxies go: what a given-up replay did not send is moot, and its task must not outlive the manager."""
+    pm, _docker = _manager()
+    gate = asyncio.Event()
+
+    async def _send_remainder(proxy: str) -> None:
+        await gate.wait()
+
+    pm._send_remainder = _send_remainder  # type: ignore[method-assign]
+    pm._replay_abandoned.add("xai-proxy")
+    pm._resume_replay_soon("xai-proxy")
+    (task,) = pm._remainder_tasks
+    try:
+        await pm.stop()
+        await asyncio.wait({task}, timeout=1)
+        assert task.cancelled(), "a remainder still to send outlived stop"
+    finally:
+        gate.set()

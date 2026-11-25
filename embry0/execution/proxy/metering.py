@@ -46,7 +46,14 @@ from typing import Any, Literal
 import structlog
 from aiohttp import web
 
-from embry0.execution.proxy.enrollment import ENROLLMENT, guard_admin
+from embry0.execution.proxy.enrollment import (
+    ADMIN_SEQUENCE,
+    ENROLLMENT,
+    guard_admin,
+    json_or_empty,
+    request_seq,
+    stale_request,
+)
 from embry0.execution.proxy.model_request import anthropic_error
 
 __all__ = [
@@ -83,6 +90,10 @@ DEFAULT_RETENTION_SECONDS = 3600.0
 #: The most tallies held at once: two per enrolled sandbox (a run and its unattributed calls) at the enrollment cap.
 DEFAULT_MAX_TALLIES = 1000
 
+#: The longest model name a tally keeps, the catalogue's own limit: a longer one is cut to it, so a request or an
+#: answer cannot make a tally (or the trace that names its models) as large as it likes.
+MAX_MODEL_CHARS = 200
+
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _SANDBOX_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
@@ -118,6 +129,11 @@ class Usage:
         """Keep, for each count, the larger of this one and ``other``'s: a count only ever grows."""
         for f in fields(self):
             setattr(self, f.name, max(getattr(self, f.name), getattr(other, f.name)))
+
+
+def _model_name(value: Any) -> str | None:
+    """A model name, cut to :data:`MAX_MODEL_CHARS`; None when ``value`` is not one."""
+    return value[:MAX_MODEL_CHARS] if isinstance(value, str) and value else None
 
 
 def _count(value: Any) -> int | None:
@@ -159,8 +175,7 @@ def read_call(wire: Wire, body: bytes) -> Call:
     model: str | None = None
     limit: int | None = None
     if isinstance(payload, dict):
-        raw_model = payload.get("model")
-        model = raw_model if isinstance(raw_model, str) and raw_model else None
+        model = _model_name(payload.get("model"))
         keys = ("max_tokens",) if wire == "anthropic" else ("max_completion_tokens", "max_tokens")
         for key in keys:
             value = _count(payload.get(key))
@@ -319,8 +334,7 @@ class _JsonReader(_Reader):
             return reading
         if not isinstance(payload, dict):
             return reading
-        model = payload.get("model")
-        reading.model = model if isinstance(model, str) and model else None
+        reading.model = _model_name(payload.get("model"))
         if self._wire == "anthropic":
             reading.complete = _ANTHROPIC_COMPLETE <= _anthropic_usage(payload.get("usage"), reading.usage)
         else:
@@ -438,8 +452,7 @@ class _AnthropicEvents(_EventReader):
         if kind == "message_start":
             message = payload.get("message")
             if isinstance(message, dict):
-                model = message.get("model")
-                reading.model = model if isinstance(model, str) and model else reading.model
+                reading.model = _model_name(message.get("model")) or reading.model
                 laid = _anthropic_usage(message.get("usage"), reading.usage)
                 self._input_read = self._input_read or "input_tokens" in laid
         elif kind == "message_delta":
@@ -460,9 +473,7 @@ class _OpenAIEvents(_EventReader):
 
     def _event(self, payload: dict[str, Any]) -> bool:
         reading = self.reading
-        model = payload.get("model")
-        if isinstance(model, str) and model:
-            reading.model = model
+        reading.model = _model_name(payload.get("model")) or reading.model
         known = False
         groq = payload.get("x_groq")
         for raw in (payload.get("usage"), groq.get("usage") if isinstance(groq, dict) else None):
@@ -621,6 +632,11 @@ class Meter:
         if run_id is not None and run_id in self._runs and self._runs[run_id].ended is None:
             self._runs[run_id].ended = self._now()
 
+    def sandbox_of(self, run_id: str) -> str | None:
+        """The sandbox ``run_id`` was declared for, while its tally is held."""
+        tally = self._runs.get(run_id)
+        return tally.sandbox_id if tally is not None else None
+
     def end(self, run_id: str) -> dict[str, Any] | None:
         """End ``run_id`` and hand back its last snapshot; the tally is then dropped. None when it is not held."""
         tally = self._runs.pop(run_id, None)
@@ -766,8 +782,14 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "bad_request"}, status=400)
         if job_id is not None and not isinstance(job_id, str):
             return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(body)
+        if isinstance(seq, web.Response):
+            return seq
         if sandbox_id not in request.app[ENROLLMENT]:
             return web.json_response({"error": "not_enrolled"}, status=404)
+        stale = stale_request(request.app, proxy_name, f"sandbox:{sandbox_id}", seq)
+        if stale is not None:
+            return stale
         try:
             meter.declare(sandbox_id, run_id, job_id or None)
         except TalliesFullError:
@@ -775,8 +797,14 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "meter_full"}, status=429)
         except ValueError:
             return web.json_response({"error": "run_conflict"}, status=409)
+        if seq is not None:
+            request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
         logger.info(f"{proxy_name}_run_declared", sandbox_id=sandbox_id, run_id=run_id)
-        return web.json_response({"status": "declared", "boot_id": meter.boot_id})
+        # The number echoed says this proxy orders admin requests (an older image does not).
+        answer: dict[str, Any] = {"status": "declared", "boot_id": meter.boot_id}
+        if seq is not None:
+            answer["seq"] = seq
+        return web.json_response(answer)
 
     async def _end(request: web.Request) -> web.Response:
         denied = guard_admin(request, proxy_name)
@@ -785,9 +813,20 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         run_id = request.match_info["run_id"]
         if not _RUN_ID_RE.fullmatch(run_id):
             return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(await json_or_empty(request))
+        if isinstance(seq, web.Response):
+            return seq
+        sandbox_id = meter.sandbox_of(run_id)
+        if sandbox_id is None:
+            return web.json_response({"error": "unknown_run", "boot_id": meter.boot_id}, status=404)
+        stale = stale_request(request.app, proxy_name, f"sandbox:{sandbox_id}", seq)
+        if stale is not None:
+            return stale
         snapshot = meter.end(run_id)
         if snapshot is None:
             return web.json_response({"error": "unknown_run", "boot_id": meter.boot_id}, status=404)
+        if seq is not None:
+            request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
         logger.info(f"{proxy_name}_run_ended", run_id=run_id)
         return web.json_response({"boot_id": meter.boot_id, "tally": snapshot})
 
@@ -795,7 +834,8 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         denied = guard_admin(request, proxy_name)
         if denied is not None:
             return denied
-        return web.json_response(meter.snapshot())
+        # How many admin requests this proxy refused as older than the last it took (enrollment.AdminSequence).
+        return web.json_response({**meter.snapshot(), "stale_refused": request.app[ADMIN_SEQUENCE].refused})
 
     app.router.add_post("/admin/runs", _declare)
     app.router.add_delete("/admin/runs/{run_id}", _end)

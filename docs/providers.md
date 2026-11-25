@@ -193,6 +193,89 @@ chat-completions providers and grok's direct executor are then charged as
 above, an SDK run what its CLI reports). The records need the sandbox images
 rebuilt (`docs/ops/deploy.md`).
 
+### Metering at the proxies
+
+A run whose provider's calls all pass a model proxy is charged what that proxy
+counted, not what its sandbox reported: an xAI run through the `xai-proxy`
+(the SuperGrok account, or an API key the proxy holds) and a local model's run
+through the `local-llm-proxy`. Each proxy reads the usage of every answer it
+forwards (`embry0/execution/proxy/metering.py`); the orchestrator declares each
+run to the proxies its sandbox is enrolled with just before the run starts and
+ends it there after, so the calls count under the run, never under a run the
+sandbox names (`embry0/execution/run_meter.py`). It reads every proxy's tallies
+every 5 seconds into `run_meter`, and once more before the proxies stop.
+
+The charge is the run's provider record's rates, from the run's start, on the
+proxy's count (`embry0/agents/run_charge.py`):
+
+| The proxy's tally of the run | Charged |
+|---|---|
+| whole: declared, its end read, one proxy process all along | the proxy's count (`source: proxy`) |
+| not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
+| complete, but declared on a proxy image that does not order requests (see below) | the larger of the two (`proxy_unordered` or `sandbox_unordered`) |
+| the run's provider is carried by no metering proxy (Anthropic, a chat-completions provider) | the sandbox's figure, as above (`sandbox`) |
+| the record has no rates | the sandbox's figure (`sandbox_unpriced`) |
+
+A cancelled run is ended on the proxies in the background, so its declaration
+does not linger; what they counted is kept in `run_meter`, but the run is not
+charged from it, and its trace stays `running` like that of a run a restart
+interrupts (#694).
+
+A call still in flight when a tally was last read is charged its ceiling, as
+the proxy reported it: the request's size as input and its output limit as
+output. A proxy process that went away mid-run leaves its last read in
+`run_meter` with its calls in flight, and the recreated proxy is given the run
+back after the sandbox's enrollment, under a new process (`boot_id`), so the
+run's calls are the two tallies summed and the charge is the larger figure.
+
+**Every admin request is ordered.** The orchestrator numbers each request it
+sends a proxy (an enrollment, its end, a change of push branches, a run
+declared or ended, a token pushed) when it decides it, and a replay sends each
+held request with its own number again. A proxy takes a request only when its
+number is newer than the last it took for the same sandbox (or credential, for
+a token); an older one is refused (409, `stale_request`), logged and counted
+(`embry0_proxy_stale_admin_requests`). So a request that reaches the proxy
+late (a `docker exec` that ran after its client gave up) or a replayed older
+one can never take a sandbox from a newer run or enrollment, however late.
+"When it decides it" is meant exactly: a run's ends are numbered when the run
+ends (a cancelled run's before its end is handed to the background), so the
+sandbox's next run is always declared with a newer number, and a token push
+carries the number its token was fetched with, so of two pushes for one
+credential the proxy keeps the token fetched last. The numbers start at the
+wall clock and grow (`embry0/execution/admin_seq.py`); a clock that goes back
+across an orchestrator restart cannot lock a proxy out, because `start()`
+relaunches every proxy and a proxy never compares numbers of two processes.
+Keeping a proxy across restarts would need the counter seeded from the numbers
+the proxies last took.
+
+Metering never holds a run up for long: a replay that times out is given up
+at once, and a run's declaration or end waits at most 30 seconds for a replay
+before it goes ahead (the wait only spares it finding the sandbox not yet
+enrolled again, which would leave its tally not whole). What a given-up replay
+did not send is sent in the background once the proxy answers again, each
+entry only if still held as it was, so what a sandbox did since (enrolled
+again, began or ended a run) stands. `embry0_meter_replay_abandoned` is 1 while
+it waits, and `Embry0MeterReplayGivenUp` fires when it waits 15 minutes (the
+proxy is not answering). A proxy image that predates ordered requests does not
+echo a declaration's number, and a run declared on it is charged as one whose
+tally is not whole (`unordered` on its trace, `proxy_unordered` or
+`sandbox_unordered`), apart from a run whose tally was lost (`unreached`).
+
+The trace keeps both figures: `metering` (the source, whether the tally was
+whole, the proxy's cost, the sandbox's, each proxy's processes, calls, calls
+estimated, calls charged their ceiling and tokens by model) and
+`sandbox_cost_usd`; `cost_usd` and the token columns are the charge. When the
+two figures differ by more than 10% and $0.05, the orchestrator logs
+`run_meter_figures_disagree` and counts it
+(`embry0_run_meter_disagreements_total`). Three alerts watch it
+(`infra/prometheus/run-meter.rules.yml`, `docs/ops/metrics.md`):
+`Embry0RunMeterUnderCounted` (a sandbox reported more than its proxy counted),
+`Embry0MeterReadsFailing` (a proxy's tallies not read for 2 minutes),
+`Embry0MeterCallsOutsideRuns` (calls from a sandbox with no declared run; they
+are kept in `run_meter` and charged to no job), with
+`Embry0MeterReplayGivenUp` above. The proxies still forward a
+call from a sandbox with no declared run (`METER_REQUIRE_RUN` is not set).
+
 ### Changing the catalogue
 
 The shipped catalogue moves with each release. A deployment's changes are an

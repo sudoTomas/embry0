@@ -28,8 +28,9 @@ from __future__ import annotations
 
 import functools
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, cast
 
 import structlog
@@ -42,6 +43,35 @@ logger = structlog.get_logger(__name__)
 
 WATCHER_HEALTH_STATES = ("ok", "unverified", "invalid_logql", "missing_logql", "loki_misconfigured")
 QUEUE_STATUSES = ("pending", "running", "awaiting_input", "paused")
+
+
+class METER_CALLS(StrEnum):  # noqa: N801 — a label set, named as the others are
+    """The metering calls to a proxy (``embry0.execution.run_meter``)."""
+
+    DECLARE = "declare"
+    END = "end"
+    READ = "read"
+
+
+class METER_CHARGE_SOURCES(StrEnum):  # noqa: N801
+    """What a run's charge came from (``embry0.agents.run_charge``)."""
+
+    PROXY = "proxy"
+    PROXY_GAP = "proxy_gap"
+    SANDBOX_GAP = "sandbox_gap"
+    PROXY_UNORDERED = "proxy_unordered"
+    SANDBOX_UNORDERED = "sandbox_unordered"
+    SANDBOX = "sandbox"
+    SANDBOX_UNPRICED = "sandbox_unpriced"
+
+
+class METER_DISAGREEMENTS(StrEnum):  # noqa: N801
+    """Which of a metered run's two figures was higher when they disagreed."""
+
+    SANDBOX_HIGHER = "sandbox_higher"
+    PROXY_HIGHER = "proxy_higher"
+
+
 UNASSIGNED_PIPELINE = "unassigned"
 
 # A watcher analysis is minutes; a developer+review+QA pipeline is hours.
@@ -344,6 +374,68 @@ class LoopMetrics:
             registry=r,
         )
 
+        # ---- metering at the proxies --------------------------------------
+        # Seeded at construction (directions, sources) and for each metering
+        # proxy when the meter starts (meter_proxies), so every alert below
+        # reads a series from the first scrape (the first-increment trap).
+        self._meter_last_read = Gauge(
+            "embry0_meter_last_read_timestamp_seconds",
+            "Unix time a metering proxy's tallies were last read; 0 until the first read since the process started.",
+            ["proxy"],
+            registry=r,
+        )
+        self._meter_unattributed = Gauge(
+            "embry0_meter_unattributed_requests",
+            "Model calls a metering proxy counted under no declared run (a sandbox calling outside an agent run), "
+            "as of the last read; must stay 0 before the proxies refuse such calls.",
+            ["proxy"],
+            registry=r,
+        )
+        self._meter_replay_abandoned = Gauge(
+            "embry0_meter_replay_abandoned",
+            "1 while a metering proxy's last replay was given up and what it did not send waits for the proxy to answer "
+            "(the sandboxes it did not reach are refused meanwhile); 0 otherwise.",
+            ["proxy"],
+            registry=r,
+        )
+        self._proxy_stale_requests = Gauge(
+            "embry0_proxy_stale_admin_requests",
+            "Admin requests a metering proxy refused as older than the last it took for the same sandbox or credential "
+            "(a late or replayed request), since that proxy process started, as of the last read.",
+            ["proxy"],
+            registry=r,
+        )
+        self._meter_admin_failures = Counter(
+            "embry0_meter_admin_failures_total",
+            "Metering calls to a proxy that failed, by call (declare / end / read).",
+            ["proxy", "call"],
+            registry=r,
+        )
+        self._run_meter_charges = Counter(
+            "embry0_run_meter_charges_total",
+            "Agent runs charged, by what their charge came from (proxy, proxy_gap, sandbox_gap, proxy_unordered, "
+            "sandbox_unordered, sandbox, sandbox_unpriced; embry0.agents.run_charge).",
+            ["source"],
+            registry=r,
+        )
+        self._run_meter_disagreements = Counter(
+            "embry0_run_meter_disagreements_total",
+            "Metered runs whose proxy count and sandbox figure differ by more than 10% and $0.05, by which is higher.",
+            ["direction"],
+            registry=r,
+        )
+        self._run_meter_last_disagreement = Gauge(
+            "embry0_run_meter_last_disagreement_timestamp_seconds",
+            "Unix time a metered run's figures last disagreed, by which was higher; 0 when none has since the start.",
+            ["direction"],
+            registry=r,
+        )
+        for source in METER_CHARGE_SOURCES:
+            self._run_meter_charges.labels(source=source.value)
+        for direction in METER_DISAGREEMENTS:
+            self._run_meter_disagreements.labels(direction=direction.value)
+            self._run_meter_last_disagreement.labels(direction=direction.value).set(0)
+
         # ---- the DB snapshot itself ---------------------------------------
         self.snapshot_last_success = Gauge(
             "embry0_loop_snapshot_last_success_timestamp_seconds",
@@ -528,6 +620,44 @@ class LoopMetrics:
     def provider_catalogue_refused(self, parts: int) -> None:
         """How many parts of the stored provider catalogue this release refuses (#173); set at each install."""
         self._provider_catalogue_refused_parts.set(parts)
+
+    # ---- metering at the proxies -------------------------------------------
+
+    @_never_raises
+    def meter_proxies(self, proxies: Iterable[str]) -> None:
+        """Seed every metering proxy's series when the meter starts."""
+        for proxy in proxies:
+            self._meter_last_read.labels(proxy=proxy).set(0)
+            self._meter_unattributed.labels(proxy=proxy).set(0)
+            self._meter_replay_abandoned.labels(proxy=proxy).set(0)
+            self._proxy_stale_requests.labels(proxy=proxy).set(0)
+            for call in METER_CALLS:
+                self._meter_admin_failures.labels(proxy=proxy, call=call.value)
+
+    @_never_raises
+    def meter_read(self, proxy: str, unattributed_requests: int, stale_refused: int = 0) -> None:
+        """A metering proxy's tallies were read."""
+        self._meter_last_read.labels(proxy=proxy).set(time.time())
+        self._meter_unattributed.labels(proxy=proxy).set(unattributed_requests)
+        self._proxy_stale_requests.labels(proxy=proxy).set(stale_refused)
+
+    @_never_raises
+    def meter_replay_abandoned(self, proxy: str, abandoned: bool) -> None:
+        """Whether ``proxy``'s last replay was given up and a request of it may still reach it."""
+        self._meter_replay_abandoned.labels(proxy=proxy).set(1 if abandoned else 0)
+
+    @_never_raises
+    def meter_admin_failed(self, proxy: str, call: str) -> None:
+        """A metering call to ``proxy`` (declare, end or read) failed."""
+        self._meter_admin_failures.labels(proxy=proxy, call=enum_label(METER_CALLS, call)).inc()
+
+    @_never_raises
+    def run_charged(self, source: str, disagreement: str | None) -> None:
+        """A run was charged from ``source``; ``disagreement`` names the higher figure when the two disagreed."""
+        self._run_meter_charges.labels(source=enum_label(METER_CHARGE_SOURCES, source)).inc()
+        if disagreement is not None and disagreement in METER_DISAGREEMENTS._value2member_map_:
+            self._run_meter_disagreements.labels(direction=disagreement).inc()
+            self._run_meter_last_disagreement.labels(direction=disagreement).set(time.time())
 
     # ---- runner / infrastructure -------------------------------------------
 

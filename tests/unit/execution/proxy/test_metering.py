@@ -499,3 +499,33 @@ def test_a_line_with_no_end_is_not_held_past_the_bound() -> None:
     held = len(reader._line) + reader._pending  # type: ignore[attr-defined]
     assert held <= MAX_EVENT_LINE_BYTES, f"the reader holds {held} bytes"
     assert reader.finish().content_bytes >= MAX_EVENT_LINE_BYTES
+
+
+def test_a_model_name_is_kept_no_longer_than_the_catalogue_allows() -> None:
+    """A 5 MB model name, in the request or the answer, would make every read of the meter as large."""
+    from embry0.execution.proxy.metering import MAX_MODEL_CHARS
+
+    huge = "m" * 5_000_000
+    call = read_call("anthropic", json.dumps({"model": huge, "max_tokens": 10}).encode())
+    assert call.model is not None and len(call.model) == MAX_MODEL_CHARS
+    for wire, content_type, answer in (
+        ("anthropic", "application/json", {"model": huge, "usage": {"input_tokens": 1, "output_tokens": 1}}),
+        ("openai_chat", "application/json", {"model": huge, "usage": {"prompt_tokens": 1, "completion_tokens": 1}}),
+    ):
+        reader = reader_for(wire, content_type)
+        reader.feed(json.dumps(answer).encode())
+        assert len(reader.finish().model or "") == MAX_MODEL_CHARS, wire
+    long = "m" * 1_000_000  # a stream's event stays under its line bound
+    for wire, event in (
+        ("anthropic", {"type": "message_start", "message": {"model": long, "usage": {"input_tokens": 1}}}),
+        ("openai_chat", {"model": long, "choices": []}),
+    ):
+        reader = reader_for(wire, "text/event-stream")
+        reader.feed(_events(event))
+        assert len(reader.finish().model or "") == MAX_MODEL_CHARS, wire
+    meter = Meter()
+    meter.declare("sbx", "run-1")
+    metered = meter.open("sbx", call)
+    metered.lost()
+    metered.close()
+    assert len(json.dumps(meter.snapshot())) < 10_000

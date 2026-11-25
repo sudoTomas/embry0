@@ -779,7 +779,16 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > error answer is charged nothing. The xai-proxy forwards
 > no billed call it cannot meter: anything but a read, `/v1/messages`,
 > `/v1/messages/count_tokens` and `/v1/chat/completions` is refused (404,
-> `xai_proxy_path_refused`). The orchestrator does not read the meter yet.
+> `xai_proxy_path_refused`). The orchestrator declares each run to the metering proxies its sandbox is
+> enrolled with, reads their tallies every 5 seconds into `run_meter` and charges an xAI or local model's run
+> from them ([Metering at the proxies](providers.md#metering-at-the-proxies)); a recreated proxy is given
+> its runs back after the enrollments. Every admin request (an enrollment, its end, a change of push branches,
+> a run declared or ended, a token pushed) carries a number the orchestrator assigns when it decides it, and a
+> proxy refuses (409, `stale_request`) one not newer than the last it took for that sandbox or credential, so
+> a late or replayed older request never undoes a newer one (`execution/proxy/enrollment.py`). A run's ends are
+> numbered when it ends and a token push when its token is fetched (`execution/admin_seq.py`). The numbers start at
+> the wall clock; `start()` relaunches every proxy, so a clock that goes back across a restart cannot lock one out,
+> and keeping a proxy across restarts would need the counter seeded from what the proxies last took.
 
 **Where the forge tokens come from.** Accounts, bindings, the env fallback, the importer and the use ledger are described in [`docs/credentials.md`](credentials.md). The proxies never read the registry: `ProxyManager.enroll_sandbox(forge=…)` receives the token `CredentialResolver.resolve_forge` chose for the job's repo, so rotating or rebinding a credential takes effect for the next sandbox without restarting anything.
 
@@ -1429,6 +1438,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 153 | knowledge maps: each stored graph gets a copy of its `areas` list as `groups`, and each part of its `area` as `group`, the names `embry0.map/1` reads now, by text alone, since a stored graph may be text JSONB refuses; a graph that has the new names already, or none of the old ones, is left as it is (#180) | `knowledge_maps.graph` |
 | 154 | people and their identities (#179, spec 2026-11-23): a person (name, email, the user they sign in as, working hours, `disabled`) and their logins on a forge (`github`, `gitlab`) or handles in a chat (`telegram`, `slack`, `teams`, `discord`), one person's per kind whatever the case; each user becomes one person with their GitHub login as a `github` identity, audited as `person.created`. Nothing reads them yet: `users.github_login` is kept one of a linked person's `github` identities for a release | `people`, `person_identities` |
 | 155 | each agent run's pricing on its trace (ADR 0031, #173): the rates its provider record carried, resolved from the deployment's catalogue at the run's start, the cache factors, when they were resolved and what the run is charged from (Anthropic's CLI, or the catalogue's rates); NULL for a run that predates it | `traces.pricing` |
+| 156 | metering at the proxies: `run_meter`, each run's tally as a metering proxy process counted it (cumulative, the latest read or the final one at the run's end, per proxy and `boot_id`; a sandbox's calls under no run under `unattributed:<sandbox>:<started>`), and on `traces` how its charge was reached (`metering`) and what its sandbox reported (`sandbox_cost_usd`) |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 

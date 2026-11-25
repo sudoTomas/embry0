@@ -826,7 +826,7 @@ async def verify_credential(credential_id: str, request: Request) -> CredentialO
     try:
         if registry is not None:
             # The row holds the refresh payload. Probe with the minted access token.
-            secret, _expires_at = await registry.refresh_credential(credential_id)
+            secret = (await registry.refresh_credential(credential_id)).token
         if row["kind"] == "forge_token":
             login = await _probe_login(secret, row["provider"], st.config)
         else:

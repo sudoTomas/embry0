@@ -27,7 +27,15 @@ import structlog
 from aiohttp import web
 
 from embry0.execution.proxy.app_keys import HTTP_CLIENT
-from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, guard_admin, register_admin_routes
+from embry0.execution.proxy.enrollment import (
+    ADMIN_SEQUENCE,
+    EnrollRejected,
+    check_bearer,
+    guard_admin,
+    register_admin_routes,
+    request_seq,
+    stale_request,
+)
 from embry0.execution.proxy.metering import (
     METER,
     Metered,
@@ -239,9 +247,20 @@ async def _set_token_handler(request: web.Request) -> web.Response:
     if not access_token or not isinstance(access_token, str):
         return web.json_response({"error": "bad_request"}, status=400)
     credential_id = body.get("credential_id")
+    if credential_id and not isinstance(credential_id, str):
+        return web.json_response({"error": "bad_request"}, status=400)
+    seq = request_seq(body)
+    if isinstance(seq, web.Response):
+        return seq
+    # A credential's token pushes are ordered like a sandbox's requests: a late or replayed older token never
+    # replaces a newer one.
+    key = f"token:{credential_id or ''}"
+    stale = stale_request(request.app, "xai_proxy", key, seq)
+    if stale is not None:
+        return stale
+    if seq is not None:
+        request.app[ADMIN_SEQUENCE].take(key, seq)
     if credential_id:
-        if not isinstance(credential_id, str):
-            return web.json_response({"error": "bad_request"}, status=400)
         request.app[TOKENS][credential_id] = {
             "access_token": access_token,
             "expires_at": body.get("expires_at"),
@@ -250,7 +269,7 @@ async def _set_token_handler(request: web.Request) -> web.Response:
     else:
         request.app[TOKEN_HOLDER]["access_token"] = access_token
         logger.info("xai_proxy_token_set")
-    return web.json_response({"status": "ok"})
+    return web.json_response({"status": "ok", **({"seq": seq} if seq is not None else {})})
 
 
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:

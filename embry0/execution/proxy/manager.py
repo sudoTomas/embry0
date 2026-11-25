@@ -40,6 +40,7 @@ from typing import Any
 import aiohttp
 import structlog
 
+from embry0.execution.admin_seq import next_admin_seq
 from embry0.execution.docker_client import DockerClient
 from embry0.execution.image_registry import qualify_image
 from embry0.execution.proxy.forge_scope import SCOPE_FIELD, normalize_github_repo, normalize_gitlab_project
@@ -56,6 +57,30 @@ from embry0.execution.proxy.git_scope import (
 logger = structlog.get_logger(__name__)
 
 _BASE_IMAGE = "embry0-proxy:latest"
+
+#: The proxies that meter the model calls they forward (``proxy/metering.py``), each with its admin port and the
+#: provider whose calls it carries (the provider record's name).
+METERED_PROXIES: dict[str, tuple[int, str]] = {"xai-proxy": (9106, "xai"), "local-llm-proxy": (9108, "custom")}
+
+#: The order a recreated proxy is given back its state: an enrollment before the run declared for it.
+_REPLAY_ORDER = {"enroll": 0, "token": 1, "run": 2}
+#: The longest a run's declaration or end waits for a replay of its proxy's state: past it, it is sent anyway, and a
+#: run declared that way is charged as one whose tally is not whole (``declared_unordered``).
+REPLAY_WAIT_SECONDS = 30.0
+#: The admin requests that change what a proxy holds for a sandbox or a credential. Each is numbered (``seq``) when
+#: it is first sent, and the proxy takes it only when its number is newer than the last it took for that sandbox or
+#: credential (``enrollment.AdminSequence``): a late or replayed older request can then never undo a newer one.
+_ORDERED_PATHS = ("/admin/enroll", "/admin/git-push-branches/", "/admin/token", "/admin/runs")
+
+
+def _ordered(method: str, path: str) -> bool:
+    return method in ("POST", "PUT", "DELETE") and path.startswith(_ORDERED_PATHS)
+
+
+class StaleAdminRequest(RuntimeError):
+    """A proxy refused an admin request as older than the last it took for the same sandbox or credential."""
+
+
 _RESTRICTED = "sandbox-restricted"
 _INTERNET = "sandbox-internet"
 
@@ -221,6 +246,20 @@ class ProxyManager:
         # a recreated proxy: proxy -> key -> (path, port, body, monotonic expiry).
         self._admin_state: dict[str, dict[str, tuple[str, int, dict[str, Any], float]]] = {}
         self._revive_locks: dict[str, asyncio.Lock] = {}
+        # Held while a recreated proxy is given its state back; a run's declaration or end waits for it, so it
+        # reaches the proxy after whatever the replay sends (two docker execs at once arrive in either order).
+        self._replay_locks: dict[str, asyncio.Lock] = {}
+        # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
+        # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
+        self._unordered_runs: set[tuple[str, str]] = set()
+        # The proxies whose last replay was given up at a timeout, each with the entries it did not send: they are sent
+        # in the background once the proxy answers again (a request of the given-up replay that still lands is older
+        # than anything sent since, so the proxy refuses it).
+        self._replay_abandoned: set[str] = set()
+        self._replay_remainder: dict[str, list[tuple[str, tuple[str, int, dict[str, Any], float]]]] = {}
+        self._remainder_tasks: set[asyncio.Task[None]] = set()
+        # The last admin request number given: from the wall clock in nanoseconds, so a later process's numbers are
+        # newer than an earlier one's, and never less than the last plus one.
         self._on_recreated: Callable[[], Awaitable[None]] | None = None
         self.auth_proxy_url: str = ""
         self.xai_proxy_url: str = ""
@@ -917,6 +956,8 @@ class ProxyManager:
                         accept_404=True,
                     )
                     break
+                except StaleAdminRequest:
+                    break  # a newer request for the sandbox reached the proxy first: what it holds stands
                 except RuntimeError as exc:
                     if attempt < 2:
                         logger.warning("sandbox_unenroll_retrying", proxy=name, attempt=attempt + 1, error=str(exc))
@@ -935,12 +976,20 @@ class ProxyManager:
         credential_id: str,
         access_token: str | None = None,
         expires_at: str | None = None,
+        *,
+        seq: int | None = None,
     ) -> None:
         """Push a SuperGrok access token to the xai-proxy.
 
         ``push_xai_token(credential_id, access_token, expires_at)`` fills that
         credential's slot. The one-argument form ``push_xai_token(access_token)``
         fills the global holder the file-backed refresher still uses.
+
+        ``seq`` is the number the token was fetched with
+        (``XaiRefresherRegistry``): two pushes for one credential then leave
+        the proxy holding the value fetched last, whichever is sent last. A
+        push the proxy refuses as older is done: it holds a newer value.
+        Without ``seq`` the push is numbered when it is sent.
 
         No-op if the xai-proxy isn't running. Raises RuntimeError if the push
         fails so the caller's background loop can log and retry.
@@ -959,13 +1008,19 @@ class ProxyManager:
                 "access_token": access_token,
                 "expires_at": expires_at,
             }
-        await self._exec_admin_request(
-            container="xai-proxy",
-            method="POST",
-            path="/admin/token",
-            port=9106,
-            body=body,
-        )
+        if seq is not None:
+            body["seq"] = seq
+        try:
+            await self._exec_admin_request(
+                container="xai-proxy",
+                method="POST",
+                path="/admin/token",
+                port=9106,
+                body=body,
+            )
+        except StaleAdminRequest:
+            logger.info("xai_proxy_token_push_superseded", credential_id=credential_id if access_token else None)
+            return
         logger.info("xai_proxy_token_pushed", credential_id=credential_id if access_token is not None else None)
 
     async def xai_proxy_health(self) -> dict[str, Any]:
@@ -982,6 +1037,139 @@ class ProxyManager:
             body=None,
         )
         return report if isinstance(report, dict) else {}
+
+    def metered_proxies(self) -> list[str]:
+        """The metering proxies this process launched."""
+        launched = {"xai-proxy": self.xai_proxy_url, "local-llm-proxy": self.local_llm_proxy_url}
+        return [name for name in METERED_PROXIES if launched.get(name)]
+
+    def metered_proxies_for(self, sandbox_id: str) -> list[str]:
+        """The metering proxies ``sandbox_id`` is enrolled with now."""
+        now = time.monotonic()
+        held = self._admin_state
+        return [
+            name
+            for name in self.metered_proxies()
+            if (entry := held.get(name, {}).get(f"enroll:{sandbox_id}")) is not None and entry[3] > now
+        ]
+
+    async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str:
+        """Declare ``run_id`` as ``sandbox_id``'s run on ``proxy``, so the calls it forwards count under it.
+        Returns the proxy's boot id. Raises RuntimeError when the proxy refuses or cannot be reached."""
+        port = METERED_PROXIES[proxy][0]
+        seq = self._next_seq()
+        body: dict[str, Any] = {"sandbox_id": sandbox_id, "run_id": run_id, "seq": seq}
+        if job_id:
+            body["job_id"] = job_id
+        # A sandbox runs one run at a time: whatever run it held before is over, so a recreated proxy must never
+        # be given it back (its calls would count under the old run).
+        held = self._admin_state.get(proxy, {})
+        for key in [
+            k for k, (_, _, b, _) in held.items() if k.startswith("run:") and b.get("sandbox_id") == sandbox_id
+        ]:
+            del held[key]
+        await self._after_replay(proxy)
+        response = await self._exec_admin_request(
+            container=proxy, method="POST", path="/admin/runs", port=port, body=body
+        )
+        if response.get("seq") != seq:
+            # The proxy did not echo the number: its image predates ordered admin requests, so a late or replayed
+            # older request could take the sandbox from this run. Its tally there is not taken as whole.
+            self._unordered_runs.add((proxy, run_id))
+        return str(response.get("boot_id") or "")
+
+    async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
+        """End ``run_id`` on ``proxy``: its last tally and the proxy's boot id (``{"boot_id", "tally"}``), or None
+        when the proxy holds no such run (it was recreated and not given the run back). Raises RuntimeError when
+        the proxy cannot be reached.
+
+        ``seq`` is the number taken when the run ended; without one, the end is numbered now, before any wait, as a
+        declaration is: a number taken after the wait could be newer than the sandbox's next run's declaration, and
+        an end landing first would then have that declaration refused."""
+        port = METERED_PROXIES[proxy][0]
+        if seq is None:
+            seq = self._next_seq()
+        # Ended, or as good as, from now: an end whose answer is lost may still reach the proxy, and a run given back
+        # to a recreated proxy after its end would take the calls of the sandbox's next run.
+        self._admin_state.get(proxy, {}).pop(f"run:{run_id}", None)
+        await self._after_replay(proxy)
+        try:
+            response = await self._exec_admin_request(
+                container=proxy,
+                method="DELETE",
+                path=f"/admin/runs/{run_id}",
+                port=port,
+                body={"seq": seq},
+                accept_404=True,
+            )
+        except StaleAdminRequest:
+            return None  # a newer request for the sandbox came first (its next run ended this one): no final tally
+        if not isinstance(response.get("tally"), dict):
+            return None
+        return response
+
+    async def read_meter(self, proxy: str) -> dict[str, Any]:
+        """Every tally ``proxy`` holds, cumulative, with its boot id. Raises RuntimeError when it cannot be read."""
+        port = METERED_PROXIES[proxy][0]
+        response = await self._exec_admin_request(
+            container=proxy, method="GET", path="/admin/meter", port=port, body=None
+        )
+        if not isinstance(response.get("boot_id"), str) or not isinstance(response.get("tallies"), list):
+            raise RuntimeError(f"{proxy} answered its meter without a boot id or tallies")
+        return response
+
+    async def _after_replay(self, proxy: str) -> bool:
+        """Wait until no replay of ``proxy``'s state is under way, so a run is declared or ended on a proxy that holds
+        its sandbox's enrollment again (else it finds none, and the run falls to the gap rule). False when the wait
+        passed :data:`REPLAY_WAIT_SECONDS` and the caller goes ahead: metering never holds a run up longer. Ordering
+        does not depend on it: the proxy refuses a request older than the last it took for the sandbox."""
+        lock = self._replay_locks.get(proxy)
+        if lock is None:
+            return True
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=REPLAY_WAIT_SECONDS)
+        except TimeoutError:
+            logger.warning("proxy_replay_wait_expired", proxy=proxy, waited_seconds=REPLAY_WAIT_SECONDS)
+            return False
+        lock.release()
+        return True
+
+    def replay_abandoned(self, proxy: str) -> bool:
+        """Whether ``proxy``'s last replay was given up and what it did not send is still to be sent."""
+        return proxy in self._replay_abandoned
+
+    def _next_seq(self) -> int:
+        """The next admin request number (:func:`embry0.execution.admin_seq.next_admin_seq`)."""
+        return next_admin_seq()
+
+    def _resume_replay_soon(self, proxy: str) -> None:
+        """``proxy`` answered: send what its given-up replay did not, in the background, so the request that answered
+        is never held up by it; nothing when no replay is under way there or one already is."""
+        name = f"replay-remainder:{proxy}"
+        if proxy not in self._replay_abandoned or any(t.get_name() == name for t in self._remainder_tasks):
+            return
+        lock = self._replay_locks.get(proxy)
+        if lock is not None and lock.locked():
+            return
+        task = asyncio.ensure_future(self._send_remainder(proxy))
+        task.set_name(name)
+        self._remainder_tasks.add(task)
+        task.add_done_callback(self._remainder_tasks.discard)
+
+    async def _send_remainder(self, proxy: str) -> None:
+        async with self._replay_locks.setdefault(proxy, asyncio.Lock()):
+            if proxy not in self._replay_abandoned:
+                return  # sent by another caller meanwhile
+            restored, failed = await self._send_held(proxy, self._replay_remainder.get(proxy, []))
+        logger.warning("proxy_state_replay_finished", proxy=proxy, restored=restored, failed=failed)
+
+    def declared_unordered(self, proxy: str, run_id: str) -> bool:
+        """Whether ``run_id`` was declared on ``proxy`` without waiting a replay out (and forget it)."""
+        try:
+            self._unordered_runs.remove((proxy, run_id))
+        except KeyError:
+            return False
+        return True
 
     async def _exec_admin_request(
         self,
@@ -1011,6 +1199,9 @@ class ProxyManager:
             "body": body,
             "accept_404": accept_404,
         }
+        if _ordered(method, path) and "seq" not in (body or {}):
+            body = {**(body or {}), "seq": self._next_seq()}
+            kwargs["body"] = body
         try:
             response = await self._exec_admin_once(**kwargs)
         except RuntimeError as exc:
@@ -1018,21 +1209,40 @@ class ProxyManager:
                 raise
             response = await self._exec_admin_once(**kwargs)
         self._remember(container, method, path, port, body)
+        self._resume_replay_soon(container)
         return response
 
     def _remember(self, container: str, method: str, path: str, port: int, body: dict[str, Any] | None) -> None:
-        """Keep the admin state a proxy holds in memory, so a recreated proxy gets it back."""
+        """Keep the admin state a proxy holds in memory, so a recreated proxy gets it back.
+
+        Answers come back in any order: an entry is never replaced or dropped by a request older than the one it
+        holds, so what is held is what the proxy took last, and a replay gives back that."""
         held = self._admin_state.setdefault(container, {})
         now = time.monotonic()
         for key in [k for k, (_, _, _, expires) in held.items() if expires <= now]:
             del held[key]
+
+        def newer(key: str) -> bool:
+            entry = held.get(key)
+            mine, theirs = (body or {}).get("seq"), entry[2].get("seq") if entry is not None else None
+            return not (isinstance(mine, int) and isinstance(theirs, int) and mine < theirs)
+
         if method == "POST" and path == "/admin/enroll" and body and body.get("sandbox_id"):
             ttl = float(body.get("ttl_seconds") or self._enroll_ttl_seconds)
-            held[f"enroll:{body['sandbox_id']}"] = (path, port, dict(body), now + ttl)
+            if newer(key := f"enroll:{body['sandbox_id']}"):
+                held[key] = (path, port, dict(body), now + ttl)
         elif method == "DELETE" and path.startswith("/admin/enroll/"):
-            held.pop(f"enroll:{path.removeprefix('/admin/enroll/')}", None)
+            if newer(key := f"enroll:{path.removeprefix('/admin/enroll/')}"):
+                held.pop(key, None)
         elif method == "POST" and path == "/admin/token" and body:
-            held[f"token:{body.get('credential_id') or ''}"] = (path, port, dict(body), float("inf"))
+            if newer(key := f"token:{body.get('credential_id') or ''}"):
+                held[key] = (path, port, dict(body), float("inf"))
+        elif method == "POST" and path == "/admin/runs" and body and body.get("run_id"):
+            # Lives no longer than an enrollment: a run whose end was never heard of is not replayed forever.
+            if newer(key := f"run:{body['run_id']}"):
+                held[key] = (path, port, dict(body), now + self._enroll_ttl_seconds)
+        elif method == "DELETE" and path.startswith("/admin/runs/"):
+            held.pop(f"run:{path.removeprefix('/admin/runs/')}", None)
 
     async def _revive(self, name: str) -> bool:
         """Recreate the stopped proxy ``name`` and replay its admin state. True when it runs again.
@@ -1070,14 +1280,31 @@ class ProxyManager:
         return str(out).strip() == "true"
 
     async def _replay(self, name: str) -> tuple[int, int]:
-        """Send a recreated proxy the enrollments and tokens it held. Returns (restored, failed).
+        """Send a recreated proxy the enrollments, tokens and run declarations it held. Returns (restored, failed).
 
-        An enrollment keeps the expiry it had; one already expired is dropped.
+        An enrollment keeps the expiry it had; one already expired is dropped. Every enrollment goes back before any
+        run, since a proxy takes a run only for an enrolled sandbox.
         """
+        async with self._replay_locks.setdefault(name, asyncio.Lock()):
+            return await self._replay_held(name)
+
+    async def _replay_held(self, name: str) -> tuple[int, int]:
+        held = self._admin_state.get(name, {})
+        entries = sorted(held.items(), key=lambda item: _REPLAY_ORDER.get(item[0].split(":", 1)[0], 3))
+        return await self._send_held(name, entries)
+
+    async def _send_held(
+        self, name: str, entries: list[tuple[str, tuple[str, int, dict[str, Any], float]]]
+    ) -> tuple[int, int]:
+        """Send ``name`` each of ``entries`` still held as it was (not dropped, replaced or expired since), in order;
+        give up at the first timeout, keeping what was not sent for when no request of it can still arrive."""
         restored = failed = 0
         held = self._admin_state.get(name, {})
         now = time.monotonic()
-        for key, (path, port, body, expires) in list(held.items()):
+        for index, (key, entry) in enumerate(entries):
+            if held.get(key) is not entry:
+                continue  # dropped or replaced since the replay began (a run ended, the sandbox's next one declared)
+            path, port, body, expires = entry
             if expires <= now:
                 del held[key]
                 continue
@@ -1089,9 +1316,28 @@ class ProxyManager:
                     container=name, method="POST", path=path, port=port, body=replay, accept_404=False
                 )
                 restored += 1
+            except TimeoutError:
+                # A proxy that does not answer in time is given up on at once: the rest would each wait as long, and
+                # every declaration and end on it waits for the replay. What it holds is kept, so the next time it is
+                # recreated it is given all of it again; a run on it meanwhile falls to the gap rule (its tally there
+                # is from another process, or none).
+                left = len(entries) - index
+                failed += left
+                self._replay_abandoned.add(name)
+                # The one that timed out too: it may never have arrived. A replay sends each again only if it is
+                # still held as it was, so what the sandboxes did since (enrolled again, began or ended a run) stands.
+                self._replay_remainder[name] = list(entries[index:])
+                logger.error("proxy_state_replay_abandoned", proxy=name, entry=key.split(":", 1)[0], left=left)
+                return restored, failed
+            except StaleAdminRequest:
+                # A newer request for the sandbox or credential reached the proxy first: what it holds stands.
+                logger.info("proxy_state_replay_superseded", proxy=name, entry=key.split(":", 1)[0])
             except RuntimeError as exc:
                 failed += 1
                 logger.error("proxy_state_replay_failed", proxy=name, entry=key.split(":", 1)[0], error=str(exc))
+        # Every entry was sent and answered (or refused): nothing of an earlier, given-up replay is still on its way.
+        self._replay_abandoned.discard(name)
+        self._replay_remainder.pop(name, None)
         return restored, failed
 
     async def _exec_admin_once(
@@ -1137,10 +1383,13 @@ class ProxyManager:
                 "try:",
                 "    resp = urllib.request.urlopen(req, timeout=10)",
                 # Body first, marker last: the status is parsed from the final marker.
-                "    sys.stdout.write(resp.read(65536).decode('utf-8', 'replace'))",
+                # The whole answer: a meter's snapshot can be large, and a cut one would not parse.
+                "    sys.stdout.write(resp.read().decode('utf-8', 'replace'))",
                 "    sys.stdout.write(f'\\nHTTP_CODE={resp.status}')",
                 "except urllib.error.HTTPError as e:",
-                "    sys.stdout.write(f'HTTP_CODE={e.code}')",
+                # The error's own body too: a 409 says whether the request was refused as stale.
+                "    sys.stdout.write(e.read(4096).decode('utf-8', 'replace'))",
+                "    sys.stdout.write(f'\\nHTTP_CODE={e.code}')",
                 "except Exception as e:",
                 "    sys.stderr.write(f'ERR:{type(e).__name__}:{e}')",
                 "    sys.exit(2)",
@@ -1169,6 +1418,13 @@ class ProxyManager:
             return parsed if isinstance(parsed, dict) else {}
         if accept_404 and status == 404:
             return {}
+        if status == 409:
+            try:
+                refused = json.loads(output[:idx])
+            except ValueError:
+                refused = {}
+            if isinstance(refused, dict) and refused.get("error") == "stale_request":
+                raise StaleAdminRequest(f"{container} {method} {path}: refused as older than the last it took")
         raise RuntimeError(f"enroll {container} {path} returned HTTP {status}")
 
     async def stop(self) -> None:
@@ -1182,6 +1438,8 @@ class ProxyManager:
         """
         self._stopping = True
         await self._cancel_sweep()
+        for task in list(self._remainder_tasks):
+            task.cancel()  # the proxies go: what a given-up replay did not send is moot
         failed = await self._remove_proxies(list(self._launched), phase="stop")
         # Record only so a caller that keeps the process up can sweep them.
         # Do not schedule that sweep here: this process is shutting down, and

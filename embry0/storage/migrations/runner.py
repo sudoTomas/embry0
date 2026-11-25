@@ -4992,6 +4992,43 @@ deliverable under an "Assumptions" heading.$seed$
             '{"provider", "model", "rates": {"in", "out"} | null, "cache": {"read", "write"}, "resolved_at", "charged_from"}: what the run was priced with; NULL before #173 PR 3.';
         """,
     ),
+    (
+        156,
+        "run_meter: each run's tally as the model proxies count it; traces.metering and traces.sandbox_cost_usd",
+        # Metering at the proxies (PR 2). The orchestrator reads every metering
+        # proxy's tallies every 5 s and keeps each run's latest, per proxy and
+        # per proxy process (boot_id): a proxy recreated mid-run starts a new
+        # tally, and the earlier one's last read stays here with the calls it
+        # had in flight. A run's end writes the proxy's final tally (final).
+        # A tally of calls under no declared run is kept too, under its
+        # sandbox. The trace records how its cost was reached (metering) and
+        # what the sandbox reported (sandbox_cost_usd); cost_usd is the charge.
+        """
+        CREATE TABLE IF NOT EXISTS run_meter (
+            proxy      TEXT NOT NULL CHECK (proxy <> ''),
+            boot_id    TEXT NOT NULL CHECK (boot_id <> ''),
+            tally_key  TEXT NOT NULL CHECK (tally_key <> ''),
+            run_id     TEXT,
+            sandbox_id TEXT NOT NULL,
+            snapshot   JSONB NOT NULL CHECK (jsonb_typeof(snapshot) = 'object'),
+            final      BOOLEAN NOT NULL DEFAULT FALSE,
+            read_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (proxy, boot_id, tally_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_meter_run ON run_meter (run_id) WHERE run_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_run_meter_read_at ON run_meter (read_at);
+        COMMENT ON TABLE run_meter IS
+            'A run''s tally of model calls as one metering proxy process counted it (cumulative; the latest read, or the final one at the run''s end). tally_key is the run id, or unattributed:<sandbox>:<started> for calls under no run.';
+
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS metering JSONB
+            CHECK (metering IS NULL OR jsonb_typeof(metering) = 'object');
+        ALTER TABLE traces ADD COLUMN IF NOT EXISTS sandbox_cost_usd DOUBLE PRECISION;
+        COMMENT ON COLUMN traces.metering IS
+            '{"source", "expected", "gap", "proxy_cost_usd", "sandbox_cost_usd", "disagreement", "proxies": {...}}: how the run''s charge was reached from the metering proxies'' tallies; NULL before metering.';
+        COMMENT ON COLUMN traces.sandbox_cost_usd IS
+            'The cost the sandbox reported for the run, kept beside the charge (cost_usd); NULL before metering.';
+        """,
+    ),
 ]
 
 

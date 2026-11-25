@@ -38,13 +38,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 from urllib.parse import urlsplit
 
 import httpx
 import structlog
 from cryptography.fernet import InvalidToken
 
+from embry0.execution.admin_seq import next_admin_seq
 from embry0.storage.encryption import FernetSecretsProvider
 
 logger = structlog.get_logger(__name__)
@@ -435,6 +436,18 @@ class RegistryXaiStore:
         )
 
 
+class FreshToken(NamedTuple):
+    """An account's access token, its wall-clock expiry, and the admin-request number it was fetched with.
+
+    ``seq`` is taken the moment the refresher hands the token over (:func:`embry0.execution.admin_seq.next_admin_seq`),
+    so a token fetched later always carries a newer number, and a push of it to the xai-proxy is never undone by a
+    push of an older one that happens to be sent last."""
+
+    token: str
+    expires_at: str
+    seq: int
+
+
 def _iso_expiry(refresher: XaiTokenRefresher) -> str:
     """Wall-clock expiry. ``_access_expiry`` is a monotonic reading, not a timestamp."""
     remaining = refresher._access_expiry - refresher._clock()
@@ -480,7 +493,7 @@ class XaiRefresherRegistry:
             self._http = httpx.AsyncClient(timeout=30.0)
         return self._http
 
-    async def refresh_all(self) -> dict[str, tuple[str, str]]:
+    async def refresh_all(self) -> dict[str, FreshToken]:
         from embry0.services.credentials.resolver import CredentialResolver
 
         rows = await self._repo.list_all()
@@ -501,7 +514,7 @@ class XaiRefresherRegistry:
         if not usable:
             return {}
 
-        refreshed: dict[str, tuple[str, str]] = {}
+        refreshed: dict[str, FreshToken] = {}
         for credential_id in usable:
             try:
                 refreshed[credential_id] = await self._ensure(credential_id)
@@ -509,7 +522,7 @@ class XaiRefresherRegistry:
                 continue
         return refreshed
 
-    async def refresh_credential(self, credential_id: str, *, force: bool = False) -> tuple[str, str]:
+    async def refresh_credential(self, credential_id: str, *, force: bool = False) -> FreshToken:
         """Mint one account's access token. Does not refresh any other row.
 
         ``force`` refreshes even a token that is not near expiry (a stale-token 403).
@@ -523,7 +536,7 @@ class XaiRefresherRegistry:
             raise XaiCredentialError(f"xAI credential {credential_id} is not usable")
         return await self._ensure(credential_id, force=force)
 
-    async def _ensure(self, credential_id: str, *, force: bool = False) -> tuple[str, str]:
+    async def _ensure(self, credential_id: str, *, force: bool = False) -> FreshToken:
         from embry0.safety.redaction import register_known_secrets
 
         refresher = self._refreshers.get(credential_id)
@@ -540,8 +553,10 @@ class XaiRefresherRegistry:
         except XaiCredentialError as exc:
             await self._note_failure(credential_id, exc)
             raise
+        # Numbered before anything else can run: the refresher hands tokens over in the order it fetched them.
+        seq = next_admin_seq()
         register_known_secrets([token])
-        return token, _iso_expiry(refresher)
+        return FreshToken(token, _iso_expiry(refresher), seq)
 
     async def _note_failure(self, credential_id: str, exc: XaiCredentialError) -> None:
         from embry0.safety.error_codes import ErrorCode

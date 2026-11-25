@@ -1,0 +1,135 @@
+# promtool test rules run-meter.rules.test.yml
+# Series carry the labels a real scrape of the orchestrator gives them, one
+# sample a minute. time() is seconds from the test's start, so a timestamp
+# gauge is written in those seconds.
+rule_files:
+  - run-meter.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Seeded 0 and no disagreement: quiet, early and late.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_run_meter_last_disagreement_timestamp_seconds{direction="sandbox_higher",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x300'
+      - series: 'embry0_run_meter_last_disagreement_timestamp_seconds{direction="proxy_higher",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x200 12000x100'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: Embry0RunMeterUnderCounted
+        exp_alerts: []
+      - eval_time: 4h
+        alertname: Embry0RunMeterUnderCounted
+        exp_alerts: []
+
+  # The sandbox reported more at 3h (10800 s): fires for 30 minutes, then clears. This is the rule shown able to fire.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_run_meter_last_disagreement_timestamp_seconds{direction="sandbox_higher",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x180 10800x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: Embry0RunMeterUnderCounted
+        exp_alerts: []
+      - eval_time: 3h10m
+        alertname: Embry0RunMeterUnderCounted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "A metered run's sandbox reported more than its proxy counted"
+              description: "An agent run's sandbox reported a higher cost than the metering proxy counted for it (by more than 10% and $0.05). The run's trace has both figures (metering, sandbox_cost_usd); the orchestrator logs run_meter_figures_disagree with the run id. docs/providers.md, \"Metering at the proxies\"."
+      - eval_time: 3h40m
+        alertname: Embry0RunMeterUnderCounted
+        exp_alerts: []
+
+  # Read every minute: quiet. Reads stop after minute 60: fires once 2 minutes have passed and 5 more held.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_meter_last_read_timestamp_seconds{proxy="xai-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0+60x60 3600x60'
+      - series: 'embry0_meter_last_read_timestamp_seconds{proxy="local-llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0+60x120'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: Embry0MeterReadsFailing
+        exp_alerts: []
+      - eval_time: 64m
+        alertname: Embry0MeterReadsFailing
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: Embry0MeterReadsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              proxy: xai-proxy
+            exp_annotations:
+              summary: "A metering proxy's tallies are not being read"
+              description: "The orchestrator has not read xai-proxy's tallies for over 2 minutes (embry0_meter_admin_failures_total{call=\"read\"} counts the failures; the orchestrator logs run_meter_read_failed). Runs still end and are charged, but a proxy that goes away now loses what it counted since the last read. docs/providers.md, \"Metering at the proxies\"."
+
+  # Seeded 0 and never read since the start: fires once 2 + 5 minutes have passed.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_meter_last_read_timestamp_seconds{proxy="xai-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: Embry0MeterReadsFailing
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: Embry0MeterReadsFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              proxy: xai-proxy
+            exp_annotations:
+              summary: "A metering proxy's tallies are not being read"
+              description: "The orchestrator has not read xai-proxy's tallies for over 2 minutes (embry0_meter_admin_failures_total{call=\"read\"} counts the failures; the orchestrator logs run_meter_read_failed). Runs still end and are charged, but a proxy that goes away now loses what it counted since the last read. docs/providers.md, \"Metering at the proxies\"."
+
+  # Seeded 0: quiet. Calls under no run from minute 20: quiet for 15 minutes, then fires.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_meter_unattributed_requests{proxy="local-llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x20 3x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: Embry0MeterCallsOutsideRuns
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: Embry0MeterCallsOutsideRuns
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              proxy: local-llm-proxy
+            exp_annotations:
+              summary: "A metering proxy counts model calls under no run"
+              description: "local-llm-proxy forwarded model calls from a sandbox with no declared run. They are kept in run_meter (tally_key unattributed:<sandbox>:<started>) and charged to no job. docs/providers.md, \"Metering at the proxies\"."
+
+  # Seeded 0: quiet. Given up from minute 10, never answered again: fires once 15 minutes have held, then clears
+  # once the proxy answers (0 from minute 40). This is the rule shown able to fire.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_meter_replay_abandoned{proxy="xai-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x10 1x30 0x30'
+      - series: 'embry0_meter_replay_abandoned{proxy="local-llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x70'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              proxy: xai-proxy
+            exp_annotations:
+              summary: "A metering proxy has not taken back its state"
+              description: "xai-proxy was recreated and the replay of its enrollments and runs was given up at a timeout; the proxy has not answered a request since (the orchestrator logs proxy_state_replay_abandoned), so the sandboxes it was not given back are refused. docs/providers.md, \"Metering at the proxies\"."
+      - eval_time: 50m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts: []

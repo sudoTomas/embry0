@@ -252,6 +252,44 @@ install of a stored overlay and seeded 0 when the process starts. The rule
 `infra/prometheus/provider-catalogue.rules*.yml`; it fires after 5 minutes
 above 0, since only a person writing the catalogue again clears it.
 
+## Metering at the proxies
+
+| Metric | Type | Labels |
+|---|---|---|
+| `embry0_meter_last_read_timestamp_seconds` | gauge | `proxy` |
+| `embry0_meter_unattributed_requests` | gauge | `proxy` |
+| `embry0_meter_replay_abandoned` | gauge | `proxy` |
+| `embry0_proxy_stale_admin_requests` | gauge | `proxy` |
+| `embry0_meter_admin_failures_total` | counter | `proxy`, `call` (`declare`, `end`, `read`) |
+| `embry0_run_meter_charges_total` | counter | `source` (`proxy`, `proxy_gap`, `sandbox_gap`, `proxy_unordered`, `sandbox_unordered`, `sandbox`, `sandbox_unpriced`) |
+| `embry0_run_meter_disagreements_total` | counter | `direction` (`sandbox_higher`, `proxy_higher`) |
+| `embry0_run_meter_last_disagreement_timestamp_seconds` | gauge | `direction` |
+
+What the orchestrator's meter does with the model proxies' tallies
+([Metering at the proxies](../providers.md#metering-at-the-proxies)): when it
+last read each metering proxy's tallies, how many calls that read counted under
+no declared run, whether a proxy's last replay was given up and what it did not send waits for
+the proxy to answer, how many admin requests a proxy refused as older than the
+last it took (a late or replayed one; since that proxy process started), the
+metering calls to a proxy that failed, what each run's
+charge came from, and how often a metered run's two figures (the proxy's count,
+the sandbox's figure) differed by more than 10% and $0.05. The direction and
+source series are seeded when the process starts, the proxy ones when the meter
+starts (0, and 0 for the read time), so every rule reads a series from the
+first scrape.
+
+The rules and their `promtool` tests are in `infra/prometheus/run-meter.rules*.yml`:
+- `Embry0RunMeterUnderCounted` fires for 30 minutes after a metered run's
+  sandbox reported more than its proxy counted (the seeded 0 is left out);
+- `Embry0MeterReadsFailing` fires when a proxy's tallies have not been read for
+  2 minutes, held 5 minutes (a proxy never read since the start counts);
+- `Embry0MeterCallsOutsideRuns` fires when a proxy counted calls under no run,
+  held 15 minutes. It must stay quiet before the proxies are set to refuse such
+  calls;
+- `Embry0MeterReplayGivenUp` fires when what a proxy's given-up replay did not
+  send has waited 15 minutes: it goes the moment the proxy answers, so the proxy
+  is not answering.
+
 ## The snapshot itself
 
 | Metric | Type | Labels |
