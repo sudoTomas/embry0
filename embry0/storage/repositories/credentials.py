@@ -9,6 +9,7 @@ API is not the only guard.
 
 from __future__ import annotations
 
+import re
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
@@ -24,21 +25,13 @@ from embry0.storage.database import DatabasePool
 logger = structlog.get_logger(__name__)
 
 KINDS = ("forge_token", "llm_oauth", "llm_api_key", "ssh_key", "tailnet_api_key")
-PROVIDERS = (
-    "github",
-    "gitlab",
-    "anthropic",
-    "xai",
-    "ssh",
-    "tailscale",
-    # The OpenAI-compatible LLM providers (embry0/agents/providers.py OPENAI_COMPATIBLE).
-    "openai",
-    "openrouter",
-    "google",
-    "groq",
-    "deepseek",
-    "custom",
-)
+#: The kinds of an LLM provider's credential. Its provider is one of the provider catalogue's (#173), which names
+#: the LLM providers, so none is listed here: the API checks it against the catalogue in force.
+LLM_KINDS = ("llm_oauth", "llm_api_key")
+#: Every provider a credential of another kind can be for. No LLM provider takes one of these names.
+NOT_LLM_PROVIDERS = ("github", "gitlab", "ssh", "tailscale")
+#: An LLM provider's name: the provider catalogue's rule (``embry0.agents.catalogue.Name``).
+LLM_PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 FORGE_PROVIDERS = ("github", "gitlab")
 ROLES = ("forge", "llm", "deploy", "tailnet")
 SCOPE_KINDS = ("repo", "owner", "host", "global")
@@ -55,6 +48,14 @@ SCOPES_FOR_ROLE: dict[str, set[str]] = {
     "deploy": {"host"},
     "tailnet": {"global"},
 }
+
+
+def known_provider(kind: str, provider: str) -> bool:
+    """Whether a credential of ``kind`` may be for ``provider``, as ``credentials_provider_check`` says (migration
+    158): an LLM kind's provider is any name the catalogue's rule allows but those of the other kinds."""
+    if kind in LLM_KINDS:
+        return provider not in NOT_LLM_PROVIDERS and LLM_PROVIDER_NAME.fullmatch(provider) is not None
+    return provider in NOT_LLM_PROVIDERS
 
 
 class _Keep:
@@ -158,8 +159,8 @@ class CredentialsRepository:
         created it, when one did, which is what decides whether it is that key's (key names are not unique)."""
         if kind not in KINDS:
             raise ValueError(f"unknown credential kind {kind!r}")
-        if provider not in PROVIDERS:
-            raise ValueError(f"unknown provider {provider!r}")
+        if not known_provider(kind, provider):
+            raise ValueError(f"unknown provider {provider!r} for a {kind} credential")
         cid = new_credential_id()
         row = await self._db.fetchrow(
             f"""

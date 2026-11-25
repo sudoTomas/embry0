@@ -5045,6 +5045,25 @@ deliverable under an "Assumptions" heading.$seed$
             'the server the lease holds a slot of: a custom credential id, env (the environment''s credential), env:LOCAL_LLM_UPSTREAM (every agent run through the local-llm-proxy), or '''' (not told)';
         """,
     ),
+    (
+        158,
+        "credentials.provider: the LLM providers are the provider catalogue's, not a list (#173)",
+        # The provider catalogue names the LLM providers (ADR 0031): a provider a
+        # release or a deployment adds needs no migration, and the API checks a
+        # new credential's provider against the catalogue in force. The table
+        # keeps the rest: the other kinds' four providers, and an LLM provider's
+        # name by the catalogue's rule for one (catalogue.Name), never one of
+        # those four. Every row the old CHECK allowed and the API wrote keeps.
+        """
+        ALTER TABLE credentials DROP CONSTRAINT IF EXISTS credentials_provider_check;
+        ALTER TABLE credentials ADD CONSTRAINT credentials_provider_check CHECK (
+            CASE WHEN kind IN ('llm_oauth', 'llm_api_key')
+                THEN provider ~ '^[a-z][a-z0-9_-]{0,39}$' AND provider NOT IN ('github', 'gitlab', 'ssh', 'tailscale')
+                ELSE provider IN ('github', 'gitlab', 'ssh', 'tailscale')
+            END
+        );
+        """,
+    ),
 ]
 
 

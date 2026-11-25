@@ -71,8 +71,13 @@ async def test_no_key_anywhere_is_credential_missing() -> None:
 
 async def test_a_provider_that_is_not_enabled_is_never_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
     enable_providers(monkeypatch)
-    with pytest.raises(ValueError, match="unknown llm provider 'openai'"):
+    with pytest.raises(ValueError, match=r"'openai' is not enabled in this deployment: turn it on in the provider"):
         await _llm(env={"OPENAI_API_KEY": "sk-env"}).resolve_llm("acme/widgets", "openai")
+
+
+async def test_a_provider_the_catalogue_does_not_list_is_said_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(ValueError, match=r"^provider 'mistral' is not in the provider catalogue$"):
+        await _llm(env={}).resolve_llm("acme/widgets", "mistral")
 
 
 async def test_import_env_moves_enabled_keys_into_the_registry(monkeypatch) -> None:

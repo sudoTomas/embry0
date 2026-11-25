@@ -52,7 +52,10 @@ async def test_create_stores_the_tailnet_and_never_returns_the_key(client: Async
     [
         (_body(provider="github"), "tailnet_api_key credentials use provider tailscale"),
         (_body(kind="forge_token"), "forge_token credentials must use provider github or gitlab"),
-        (_body(kind="llm_api_key"), "llm_api_key credentials must use provider anthropic or xai"),
+        (
+            _body(kind="llm_api_key"),
+            "llm_api_key credentials must use a provider of the provider catalogue this deployment enables: anthropic or xai",
+        ),
         (_body(metadata={"tailnet": "has space"}), "metadata.tailnet"),
         (_body(metadata={"tailnet": "../other"}), "metadata.tailnet"),
         (_body(metadata={"tailnet": "example.com", "org": "acme"}), "takes only 'tailnet'"),

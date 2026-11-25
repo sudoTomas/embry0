@@ -50,7 +50,7 @@ One binding per scope, role and provider. `acme/widgets` bound to the credential
 
 ## LLM accounts
 
-An LLM account is `llm_oauth` or `llm_api_key` on `anthropic` or `xai`, or `llm_api_key` on an OpenAI-compatible provider the deployment enables (`docs/providers.md`). The resolver picks one per provider before the sandbox exists, records it on `credential_uses`, and reuses that row for the rest of the job. Precedence, for one provider:
+An LLM account is `llm_oauth` or `llm_api_key` on `anthropic` or `xai`, or `llm_api_key` on an OpenAI-compatible provider the deployment enables (`docs/providers.md`). The provider catalogue names the LLM providers: `POST /credentials` checks an `llm_*` credential's provider against the catalogue in force, and the table holds only the other kinds' providers (`github`, `gitlab`, `ssh`, `tailscale`) and the catalogue's rule for a provider's name (migration 158), so a provider a release adds takes a key with no other change. The resolver picks one per provider before the sandbox exists, records it on `credential_uses`, and reuses that row for the rest of the job. Precedence, for one provider:
 
 ```
 the job's chosen key > repo > owner > global pool > env

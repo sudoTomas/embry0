@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from embry0.api.schemas.repo_preferences import validate_git_author_email
 
 _LABEL = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+#: A provider's name: the provider catalogue's rule for its providers' names (``embry0.agents.catalogue.Name``).
+PROVIDER_NAME = r"^[a-z][a-z0-9_-]{0,39}$"
 # A tailnet's name as the tailnet API takes it in a path: "-" (the key's own
 # tailnet) or an organization name such as "example.com".
 _TAILNET = re.compile(r"^(-|[A-Za-z0-9][A-Za-z0-9._@+-]{0,252})$")
@@ -52,19 +54,9 @@ class CredentialCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["forge_token", "llm_oauth", "llm_api_key", "tailnet_api_key"]  # ssh_key opens in a later slice
-    provider: Literal[
-        "github",
-        "gitlab",
-        "anthropic",
-        "xai",
-        "tailscale",
-        "openai",
-        "openrouter",
-        "google",
-        "groq",
-        "deepseek",
-        "custom",
-    ]
+    # github, gitlab or tailscale; or, for an llm_* credential, a provider of the provider catalogue (#173), which
+    # names the LLM providers: a provider a release or the deployment adds needs no change here.
+    provider: str = Field(pattern=PROVIDER_NAME)
     host: str = ""  # "" means the provider's default host
     label: str = Field(min_length=1, max_length=64, pattern=_LABEL)
     secret: str = Field(min_length=1)
@@ -87,24 +79,30 @@ class CredentialCreate(BaseModel):
 
     @model_validator(mode="after")
     def _kind_matches_provider(self) -> CredentialCreate:
-        from embry0.agents.providers import OPENAI_COMPATIBLE
-        from embry0.services.credentials.providers import llm_providers
+        from embry0.agents.providers import provider_named
+        from embry0.services.credentials.providers import llm_provider_refusal, llm_providers
+        from embry0.storage.repositories.credentials import NOT_LLM_PROVIDERS
 
         forge = self.provider in ("github", "gitlab")
         enabled = list(llm_providers())
-        family = self.provider in {p.name for p in OPENAI_COMPATIBLE}
-        if family and self.provider not in enabled:
-            raise ValueError(
-                f"provider {self.provider!r} is not enabled in this deployment: turn it on in the provider catalogue "
-                "(PUT /api/v1/config/providers/catalog)"
-            )
+        # A provider of the catalogue in force, enabled or not; the names that are not LLM providers are not in it.
+        named = None if self.provider in NOT_LLM_PROVIDERS else provider_named(self.provider)
+        # The chat-completions providers (the OpenAI-compatible family) take an API key only.
+        family = named is not None and named.runtime == "chat_completions"
         if self.kind == "forge_token" and not forge:
             raise ValueError("forge_token credentials must use provider github or gitlab")
-        if self.kind in ("llm_oauth", "llm_api_key") and self.provider not in enabled:
-            names = ", ".join(enabled[:-1]) + f" or {enabled[-1]}"
-            raise ValueError(f"{self.kind} credentials must use provider {names}")
-        if family and self.kind != "llm_api_key":
-            raise ValueError(f"{self.provider} credentials are llm_api_key: the provider takes an API key only")
+        if self.kind in ("llm_oauth", "llm_api_key"):
+            # The kind first: a provider is told to turn it on only for a kind it takes.
+            if family and self.kind != "llm_api_key":
+                raise ValueError(f"{self.provider} credentials are llm_api_key: the provider takes an API key only")
+            if named is not None and self.provider not in enabled:
+                raise ValueError(llm_provider_refusal(self.provider))
+            if self.provider not in enabled:
+                names = ", ".join(enabled[:-1]) + f" or {enabled[-1]}"
+                raise ValueError(
+                    f"{self.kind} credentials must use a provider of the provider catalogue this deployment "
+                    f"enables: {names}"
+                )
         if (self.kind == "tailnet_api_key") != (self.provider == "tailscale"):
             raise ValueError("tailnet_api_key credentials use provider tailscale, and tailscale takes no other kind")
         if self.kind == "tailnet_api_key":

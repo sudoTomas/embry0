@@ -4,6 +4,7 @@ import type {
   ProviderConfigUpdate,
   ConnectionTestResult,
   ModelsCatalog,
+  CatalogueProvider,
   ProviderProbeResult,
   ProviderCatalogStatus,
 } from "@/lib/types/provider";
@@ -29,6 +30,20 @@ export async function testProviderConnection(): Promise<ConnectionTestResult> {
 export async function fetchModelsCatalog(): Promise<ModelsCatalog> {
   const { data } = await api.get<ModelsCatalog>("/config/models");
   return data;
+}
+
+/**
+ * Every provider of the provider catalogue in force, in its order, with whether it is enabled
+ * (GET /config/providers/catalog, which any key reads). The LLM providers a credential can be for.
+ */
+export async function fetchCatalogueProviders(): Promise<CatalogueProvider[]> {
+  const { data } = await api.get<{ catalogue?: { providers?: Record<string, { enabled?: boolean }> } }>(
+    "/config/providers/catalog",
+  );
+  return Object.entries(data.catalogue?.providers ?? {}).map(([name, provider]) => ({
+    name,
+    enabled: provider.enabled === true,
+  }));
 }
 
 export async function testCatalogProvider(name: string): Promise<ProviderProbeResult> {
