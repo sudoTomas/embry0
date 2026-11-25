@@ -225,3 +225,31 @@ def test_malformed_counts_in_a_tally_count_as_nothing_not_as_an_error() -> None:
     snapshot["open"] = ["not a call", {"model": None, "output_tokens": True}]
     charge = charge_run(_whole(snapshot), _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
     assert (charge.input_tokens, charge.output_tokens) == (0, 0)
+
+
+def test_a_run_declared_out_of_order_is_a_gap_of_its_own_kind() -> None:
+    """Its tally is complete but may miss calls an older run took: charged the larger figure, under its own source."""
+    snapshot = _snapshot({"grok-4.7": _usage(3000, 400, 400, 500)})
+    unordered = RunMetering(
+        run_id="run-1",
+        targets=("xai-proxy",),
+        declared={"xai-proxy": "b1"},
+        tallies=(BootTally("xai-proxy", "b1", snapshot, final=True),),
+        unordered=("xai-proxy",),
+    )
+    charge = charge_run(unordered, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert (charge.source, charge.metering["gap"], charge.metering["unordered"]) == (
+        "proxy_unordered",
+        True,
+        ["xai-proxy"],
+    )
+    charge = charge_run(unordered, _record(), sandbox_cost_usd=1.0, sandbox_tokens=(1, 1, 0, 0))
+    assert (charge.source, charge.cost_usd) == ("sandbox_unordered", 1.0)
+    lost = RunMetering(
+        run_id="run-1",
+        targets=("xai-proxy",),
+        declared={"xai-proxy": "b1"},
+        unreached=("xai-proxy",),
+        unordered=("xai-proxy",),
+    )
+    assert charge_run(lost, _record(), sandbox_cost_usd=1.0, sandbox_tokens=(1, 1, 0, 0)).source == "sandbox_gap"

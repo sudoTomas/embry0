@@ -66,6 +66,11 @@ _REPLAY_ORDER = {"enroll": 0, "token": 1, "run": 2}
 #: The longest a run's declaration or end waits for a replay of its proxy's state: past it, it is sent anyway, and a
 #: run declared that way is charged as one whose tally is not whole (``declared_unordered``).
 REPLAY_WAIT_SECONDS = 30.0
+#: How long after a replay is given up a request of it can still reach the proxy: it runs there as a 10-second
+#: ``urlopen`` inside a ``docker exec`` killed at 15 seconds. A request sent later than this and answered was
+#: handled after it (the proxy's one event loop answers what it received first first), so nothing of the replay is
+#: on its way any more.
+LATE_REQUEST_SECONDS = 30.0
 _RESTRICTED = "sandbox-restricted"
 _INTERNET = "sandbox-internet"
 
@@ -237,10 +242,11 @@ class ProxyManager:
         # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
         # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
         self._unordered_runs: set[tuple[str, str]] = set()
-        # The proxies whose last replay was given up: a request of it that timed out may still reach the proxy later
-        # (killing the client does not stop the exec), so until a replay completes there, nothing sent to it is
-        # known to land after what the replay sent.
-        self._replay_abandoned: set[str] = set()
+        # The proxies whose last replay was given up, with when: a request of it that timed out may still reach the
+        # proxy for LATE_REQUEST_SECONDS (killing the client does not stop the exec), so until then nothing sent to
+        # it is known to land after what the replay sent. With each, the entries the replay did not send.
+        self._replay_abandoned: dict[str, float] = {}
+        self._replay_remainder: dict[str, list[tuple[str, tuple[str, int, dict[str, Any], float]]]] = {}
         self._on_recreated: Callable[[], Awaitable[None]] | None = None
         self.auth_proxy_url: str = ""
         self.xai_proxy_url: str = ""
@@ -1084,6 +1090,22 @@ class ProxyManager:
         lock.release()
         return proxy not in self._replay_abandoned
 
+    def replay_abandoned(self, proxy: str) -> bool:
+        """Whether ``proxy``'s last replay was given up and a request of it may still reach it."""
+        return proxy in self._replay_abandoned
+
+    async def _late_requests_over(self, proxy: str, sent_at: float) -> None:
+        """A request to ``proxy`` sent at ``sent_at`` was answered: when that was late enough after a given-up replay,
+        nothing of the replay can still arrive, so send what it did not and let runs there count as ordered again."""
+        given_up = self._replay_abandoned.get(proxy)
+        if given_up is None or sent_at < given_up + LATE_REQUEST_SECONDS:
+            return
+        async with self._replay_locks.setdefault(proxy, asyncio.Lock()):
+            if self._replay_abandoned.get(proxy) != given_up:
+                return  # finished, or given up again, by another caller meanwhile
+            restored, failed = await self._send_held(proxy, self._replay_remainder.get(proxy, []))
+        logger.warning("proxy_state_replay_finished", proxy=proxy, restored=restored, failed=failed)
+
     def declared_unordered(self, proxy: str, run_id: str) -> bool:
         """Whether ``run_id`` was declared on ``proxy`` without waiting a replay out (and forget it)."""
         try:
@@ -1120,6 +1142,7 @@ class ProxyManager:
             "body": body,
             "accept_404": accept_404,
         }
+        sent_at = time.monotonic()
         try:
             response = await self._exec_admin_once(**kwargs)
         except RuntimeError as exc:
@@ -1127,6 +1150,7 @@ class ProxyManager:
                 raise
             response = await self._exec_admin_once(**kwargs)
         self._remember(container, method, path, port, body)
+        await self._late_requests_over(container, sent_at)
         return response
 
     def _remember(self, container: str, method: str, path: str, port: int, body: dict[str, Any] | None) -> None:
@@ -1193,10 +1217,18 @@ class ProxyManager:
             return await self._replay_held(name)
 
     async def _replay_held(self, name: str) -> tuple[int, int]:
+        held = self._admin_state.get(name, {})
+        entries = sorted(held.items(), key=lambda item: _REPLAY_ORDER.get(item[0].split(":", 1)[0], 3))
+        return await self._send_held(name, entries)
+
+    async def _send_held(
+        self, name: str, entries: list[tuple[str, tuple[str, int, dict[str, Any], float]]]
+    ) -> tuple[int, int]:
+        """Send ``name`` each of ``entries`` still held as it was (not dropped, replaced or expired since), in order;
+        give up at the first timeout, keeping what was not sent for when no request of it can still arrive."""
         restored = failed = 0
         held = self._admin_state.get(name, {})
         now = time.monotonic()
-        entries = sorted(held.items(), key=lambda item: _REPLAY_ORDER.get(item[0].split(":", 1)[0], 3))
         for index, (key, entry) in enumerate(entries):
             if held.get(key) is not entry:
                 continue  # dropped or replaced since the replay began (a run ended, the sandbox's next one declared)
@@ -1219,14 +1251,18 @@ class ProxyManager:
                 # is from another process, or none).
                 left = len(entries) - index
                 failed += left
-                self._replay_abandoned.add(name)
+                self._replay_abandoned[name] = time.monotonic()
+                # The one that timed out too: it may never have arrived. A replay sends each again only if it is
+                # still held as it was, so what the sandboxes did since (enrolled again, began or ended a run) stands.
+                self._replay_remainder[name] = list(entries[index:])
                 logger.error("proxy_state_replay_abandoned", proxy=name, entry=key.split(":", 1)[0], left=left)
                 return restored, failed
             except RuntimeError as exc:
                 failed += 1
                 logger.error("proxy_state_replay_failed", proxy=name, entry=key.split(":", 1)[0], error=str(exc))
         # Every entry was sent and answered (or refused): nothing of an earlier, given-up replay is still on its way.
-        self._replay_abandoned.discard(name)
+        self._replay_abandoned.pop(name, None)
+        self._replay_remainder.pop(name, None)
         return restored, failed
 
     async def _exec_admin_once(

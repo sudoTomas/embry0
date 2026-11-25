@@ -44,6 +44,7 @@ class MeteringProxies(Protocol):
     async def end_run(self, proxy: str, run_id: str) -> dict[str, Any] | None: ...
     async def read_meter(self, proxy: str) -> dict[str, Any]: ...
     def declared_unordered(self, proxy: str, run_id: str) -> bool: ...
+    def replay_abandoned(self, proxy: str) -> bool: ...
 
 
 @dataclass
@@ -106,11 +107,12 @@ class RunMeter:
         """End the run on every proxy it was declared on, keep each proxy's final tally, and gather what is known."""
         finals: dict[tuple[str, str], BootTally] = {}
         unreached: list[str] = []
+        unordered: list[str] = []
         for proxy in window.declared:
             if self._proxies.declared_unordered(proxy, window.run_id):
                 # Declared without waiting out a replay of the proxy: it may have landed before an older run's, so
                 # its tally there is not taken as whole (the run is charged at least what its sandbox reported).
-                unreached.append(proxy)
+                unordered.append(proxy)
             try:
                 ended = await self._proxies.end_run(proxy, window.run_id)
             except Exception as exc:  # noqa: BLE001 — a lost end is a gap, never a failed run
@@ -119,8 +121,7 @@ class RunMeter:
                 unreached.append(proxy)
                 continue
             if ended is None:
-                if proxy not in unreached:
-                    unreached.append(proxy)
+                unreached.append(proxy)
                 continue
             boot_id, tally = str(ended.get("boot_id") or ""), ended["tally"]
             finals[(proxy, boot_id)] = BootTally(proxy, boot_id, tally, final=True)
@@ -140,6 +141,7 @@ class RunMeter:
             declared=dict(window.declared),
             tallies=tuple(kept.values()),
             unreached=tuple(unreached),
+            unordered=tuple(unordered),
         )
 
     async def _keep(self, proxy: str, boot_id: str, tallies: list[Any], *, final: bool = False) -> None:
@@ -178,6 +180,9 @@ class RunMeter:
             tallies = [t for t in meter["tallies"] if isinstance(t, dict)]
             await self._keep(proxy, meter["boot_id"], tallies)
             self._metrics.meter_read(proxy, _unattributed_requests(tallies))
+        for proxy in self._proxies.metered_proxies():
+            # After the reads: a read sent long enough after a given-up replay is what ends that mode.
+            self._metrics.meter_replay_abandoned(proxy, self._proxies.replay_abandoned(proxy))
         await self._prune_now_and_then()
 
     async def _prune_now_and_then(self) -> None:

@@ -60,3 +60,24 @@ groups:
             declared run. They are kept in run_meter (tally_key
             unattributed:<sandbox>:<started>) and charged to no job.
             docs/providers.md, "Metering at the proxies".
+      # A metering proxy whose last replay was given up has stayed in that
+      # mode for 15 minutes: a given-up request can arrive for 30 seconds at
+      # most, and the first answer to a request sent after that ends the mode,
+      # so this one is not answering. Every run declared there meanwhile is
+      # charged the larger of the proxy's count and its sandbox's figure.
+      - alert: Embry0MeterReplayGivenUp
+        expr: |
+          max by (proxy) (embry0_meter_replay_abandoned) == 1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A metering proxy has not taken back its state"
+          description: >-
+            {{ $labels.proxy }} was recreated and the replay of its enrollments
+            and runs was given up at a timeout; the proxy has not answered a
+            request since (the orchestrator logs proxy_state_replay_abandoned).
+            Sandboxes it was not given back are refused, and every run declared
+            on it is charged as one whose tally is not whole
+            (proxy_unordered / sandbox_unordered). docs/providers.md,
+            "Metering at the proxies".

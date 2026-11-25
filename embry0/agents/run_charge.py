@@ -8,7 +8,9 @@ before. Counting fails toward more, never less:
 - a call in flight when its tally was last read (at the run's end, or before its proxy process went away) is
   charged its ceiling, as the proxy reported it;
 - a run whose proxy's tally is not whole (the proxy process changed during the run, the run's end could not be
-  read, or the run was never declared on it) is charged the larger of the proxy's count and the sandbox's figure.
+  read, the run was never declared on it, or it was declared there out of order) is charged the larger of the
+  proxy's count and the sandbox's figure. A run that is not whole only because it was declared out of order is
+  charged ``proxy_unordered`` / ``sandbox_unordered``, so it can be told from a run whose tally was lost.
 
 Pure: :class:`RunMetering` is what ``embry0.execution.run_meter`` gathered; nothing here reads or writes.
 """
@@ -64,6 +66,9 @@ class RunMetering:
     tallies: tuple[BootTally, ...] = ()
     #: Declared proxies whose final tally could not be read at the run's end.
     unreached: tuple[str, ...] = ()
+    #: Declared proxies the run was declared on out of order: without waiting a replay of the proxy out, or while a
+    #: request of a given-up replay could still reach it. Its tally there may miss calls an older run took.
+    unordered: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -116,18 +121,22 @@ def _account(proxy: str, tallies: list[BootTally], metering: RunMetering) -> dic
             open_calls += 1
     boots = sorted({t.boot_id for t in tallies})
     finals = [t for t in tallies if t.final]
-    # Whole: declared, its end read, and one process all along: the one the run was declared under (a process that
-    # went away before any read leaves no tally, only a final from another boot).
-    whole = (
+    # Complete: declared, its end read, and one process all along: the one the run was declared under (a process
+    # that went away before any read leaves no tally, only a final from another boot). Whole: complete, and declared
+    # in order.
+    complete = (
         proxy in metering.declared
         and proxy not in metering.unreached
         and len(finals) == 1
         and boots == [finals[0].boot_id]
         and metering.declared[proxy] == finals[0].boot_id
     )
+    ordered = proxy not in metering.unordered
     return {
         "boots": boots,
-        "whole": whole,
+        "whole": complete and ordered,
+        "complete": complete,
+        "ordered": ordered,
         "requests": requests,
         "estimated": estimated,
         "errors": errors,
@@ -167,6 +176,8 @@ def charge_run(
         "proxy_cost_usd": None,
         "sandbox_cost_usd": sandbox_cost,
         "disagreement": None,
+        "unreached": list(metering.unreached) if metering is not None else [],
+        "unordered": list(metering.unordered) if metering is not None else [],
         "proxies": proxies,
     }
 
@@ -193,14 +204,16 @@ def charge_run(
     if proxy_cost is None:
         return _sandbox("sandbox_unpriced")
     gap = not account["whole"]
+    # Not whole only because of the order it was declared in: its own source, apart from a lost tally.
+    reason = "unordered" if gap and account["complete"] else "gap"
     report["proxy_cost_usd"] = proxy_cost
     report["gap"] = gap
     difference = sandbox_cost - proxy_cost
     if abs(difference) > max(DISAGREEMENT_FLOOR_USD, DISAGREEMENT_SHARE * max(sandbox_cost, proxy_cost)):
         report["disagreement"] = "sandbox_higher" if difference > 0 else "proxy_higher"
     if gap and sandbox_cost > proxy_cost:
-        return _sandbox("sandbox_gap")
-    report["source"] = "proxy_gap" if gap else "proxy"
+        return _sandbox(f"sandbox_{reason}")
+    report["source"] = f"proxy_{reason}" if gap else "proxy"
     return Charge(
         proxy_cost,
         totals["input_tokens"],

@@ -509,3 +509,109 @@ async def test_a_declaration_that_fails_leaves_no_mark(proxy: Any, monkeypatch: 
     finally:
         slow.cancel()
     assert mgr._unordered_runs == set(), "a run that was never declared kept its mark"
+
+
+async def _give_up_replay(mgr: Any, match: Any = lambda kw: True) -> list[str]:
+    """Replay the xai-proxy's state over a transport whose first request ``match`` picks times out; what was sent."""
+    sent: list[str] = []
+    real_once = mgr._exec_admin_once
+    box: dict[str, bool] = {}
+
+    async def _once(**kw: Any) -> dict[str, Any]:
+        sent.append(kw["path"])
+        if match(kw) and "done" not in box:
+            box["done"] = True
+            raise TimeoutError
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _once  # type: ignore[method-assign]
+    try:
+        await mgr._replay("xai-proxy")
+    finally:
+        mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    return sent
+
+
+async def test_runs_declared_out_of_order_are_told_from_runs_whose_tally_was_lost(proxy: Any) -> None:
+    """While a given-up replay may still land, a healthy run is charged ``*_unordered``; a run whose end is lost is a
+    gap like any other, and its trace says which."""
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/token")
+    assert mgr.replay_abandoned("xai-proxy")
+    healthy = await meter.begin("sbx-1", "run-1", "job-1")
+    await _sandbox_call(proxy)
+    metering = await meter.end(healthy)
+    assert (metering.unordered, metering.unreached) == (("xai-proxy",), ()), "an ordered failure was recorded"
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert charge.source == "proxy_unordered" and charge.metering["unordered"] == ["xai-proxy"]
+    lost = await meter.begin("sbx-1", "run-2", "job-1")
+    real_once = mgr._exec_admin_once
+
+    async def _end_lost(**kw: Any) -> dict[str, Any]:
+        if kw["method"] == "DELETE":
+            raise RuntimeError("docker exec xai-proxy failed")
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _end_lost  # type: ignore[method-assign]
+    metering = await meter.end(lost)
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    assert metering.unreached == ("xai-proxy",)
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.01, sandbox_tokens=(1, 1, 0, 0))
+    assert charge.source == "sandbox_gap" and charge.metering["unreached"] == ["xai-proxy"]
+
+
+async def test_the_mode_ends_with_the_first_answer_to_a_request_sent_late_enough(proxy: Any, monkeypatch: Any) -> None:
+    """A request of the given-up replay can arrive no later than LATE_REQUEST_SECONDS after it; an answer to one sent
+    after that means nothing of the replay is on its way. A proxy that does not answer stays in the mode."""
+    monkeypatch.setattr(manager_module, "LATE_REQUEST_SECONDS", 0.3, raising=False)
+    mgr = proxy.mgr
+    await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/token")
+    await mgr.read_meter("xai-proxy")
+    assert mgr.replay_abandoned("xai-proxy"), "the mode ended before a late request could no longer arrive"
+    await asyncio.sleep(0.35)
+    real_once = mgr._exec_admin_once
+
+    async def _stuck(**kw: Any) -> dict[str, Any]:
+        raise TimeoutError
+
+    mgr._exec_admin_once = _stuck  # type: ignore[method-assign]
+    with pytest.raises(TimeoutError):
+        await mgr.read_meter("xai-proxy")
+    assert mgr.replay_abandoned("xai-proxy"), "a proxy that answered nothing left the mode"
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    await mgr.read_meter("xai-proxy")
+    assert not mgr.replay_abandoned("xai-proxy"), "the mode outlasted every late request"
+    assert await mgr._after_replay("xai-proxy") is True
+
+
+async def test_what_a_given_up_replay_did_not_send_is_sent_when_the_mode_ends(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """Else the sandboxes it did not reach are refused until they enroll again or the proxy is recreated. What was
+    done since (a token pushed again) is not sent a second time."""
+    monkeypatch.setattr(manager_module, "LATE_REQUEST_SECONDS", 0.2, raising=False)
+    mgr = proxy.mgr
+    await mgr.declare_run("xai-proxy", "sbx-1", "run-1")
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    assert await _give_up_replay(mgr, lambda kw: kw["path"] == "/admin/enroll") == ["/admin/enroll"]
+    port = manager_module.METERED_PROXIES["xai-proxy"][0]
+    await mgr._exec_admin_request(
+        container="xai-proxy", method="POST", path="/admin/token", port=port, body={"access_token": "at-2"}
+    )
+    await asyncio.sleep(0.25)
+    sent: list[str] = []
+    real_once = mgr._exec_admin_once
+
+    async def _recording(**kw: Any) -> dict[str, Any]:
+        sent.append(f"{kw['method']} {kw['path']}")
+        return await real_once(**kw)
+
+    mgr._exec_admin_once = _recording  # type: ignore[method-assign]
+    await mgr.read_meter("xai-proxy")
+    mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    assert sent == ["GET /admin/meter", "POST /admin/enroll", "POST /admin/runs"], sent
+    assert not mgr.replay_abandoned("xai-proxy")
+    assert new.app[METER]._current["sbx-1"] == "run-1", "the sandbox's run was not given back"
+    await _call_to(new)
+    assert new.app[METER].snapshot()["tallies"][0]["models"], "the sandbox's call was refused"

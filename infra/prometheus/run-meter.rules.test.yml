@@ -105,3 +105,31 @@ tests:
             exp_annotations:
               summary: "A metering proxy counts model calls under no run"
               description: "local-llm-proxy forwarded model calls from a sandbox with no declared run. They are kept in run_meter (tally_key unattributed:<sandbox>:<started>) and charged to no job. docs/providers.md, \"Metering at the proxies\"."
+
+  # Seeded 0: quiet. Given up from minute 10, never answered again: fires once 15 minutes have held, then clears
+  # once the proxy answers (0 from minute 40). This is the rule shown able to fire.
+  - interval: 1m
+    input_series:
+      - series: 'embry0_meter_replay_abandoned{proxy="xai-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x10 1x30 0x30'
+      - series: 'embry0_meter_replay_abandoned{proxy="local-llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+        values: '0x70'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              proxy: xai-proxy
+            exp_annotations:
+              summary: "A metering proxy has not taken back its state"
+              description: "xai-proxy was recreated and the replay of its enrollments and runs was given up at a timeout; the proxy has not answered a request since (the orchestrator logs proxy_state_replay_abandoned). Sandboxes it was not given back are refused, and every run declared on it is charged as one whose tally is not whole (proxy_unordered / sandbox_unordered). docs/providers.md, \"Metering at the proxies\"."
+      - eval_time: 50m
+        alertname: Embry0MeterReplayGivenUp
+        exp_alerts: []

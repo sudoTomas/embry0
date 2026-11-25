@@ -59,6 +59,8 @@ class METER_CHARGE_SOURCES(StrEnum):  # noqa: N801
     PROXY = "proxy"
     PROXY_GAP = "proxy_gap"
     SANDBOX_GAP = "sandbox_gap"
+    PROXY_UNORDERED = "proxy_unordered"
+    SANDBOX_UNORDERED = "sandbox_unordered"
     SANDBOX = "sandbox"
     SANDBOX_UNPRICED = "sandbox_unpriced"
 
@@ -389,6 +391,13 @@ class LoopMetrics:
             ["proxy"],
             registry=r,
         )
+        self._meter_replay_abandoned = Gauge(
+            "embry0_meter_replay_abandoned",
+            "1 while a metering proxy's last replay was given up and a request of it may still reach the proxy: every "
+            "run declared there meanwhile is charged as one whose tally is not whole; 0 otherwise.",
+            ["proxy"],
+            registry=r,
+        )
         self._meter_admin_failures = Counter(
             "embry0_meter_admin_failures_total",
             "Metering calls to a proxy that failed, by call (declare / end / read).",
@@ -397,8 +406,8 @@ class LoopMetrics:
         )
         self._run_meter_charges = Counter(
             "embry0_run_meter_charges_total",
-            "Agent runs charged, by what their charge came from (proxy, proxy_gap, sandbox_gap, sandbox, "
-            "sandbox_unpriced; embry0.agents.run_charge).",
+            "Agent runs charged, by what their charge came from (proxy, proxy_gap, sandbox_gap, proxy_unordered, "
+            "sandbox_unordered, sandbox, sandbox_unpriced; embry0.agents.run_charge).",
             ["source"],
             registry=r,
         )
@@ -613,6 +622,7 @@ class LoopMetrics:
         for proxy in proxies:
             self._meter_last_read.labels(proxy=proxy).set(0)
             self._meter_unattributed.labels(proxy=proxy).set(0)
+            self._meter_replay_abandoned.labels(proxy=proxy).set(0)
             for call in METER_CALLS:
                 self._meter_admin_failures.labels(proxy=proxy, call=call.value)
 
@@ -621,6 +631,11 @@ class LoopMetrics:
         """A metering proxy's tallies were read."""
         self._meter_last_read.labels(proxy=proxy).set(time.time())
         self._meter_unattributed.labels(proxy=proxy).set(unattributed_requests)
+
+    @_never_raises
+    def meter_replay_abandoned(self, proxy: str, abandoned: bool) -> None:
+        """Whether ``proxy``'s last replay was given up and a request of it may still reach it."""
+        self._meter_replay_abandoned.labels(proxy=proxy).set(1 if abandoned else 0)
 
     @_never_raises
     def meter_admin_failed(self, proxy: str, call: str) -> None:

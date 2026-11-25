@@ -212,6 +212,7 @@ proxy's count (`embry0/agents/run_charge.py`):
 |---|---|
 | whole: declared, its end read, one proxy process all along | the proxy's count (`source: proxy`) |
 | not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
+| complete, but declared out of order (see below) | the larger of the two (`proxy_unordered` or `sandbox_unordered`) |
 | the run's provider is carried by no metering proxy (Anthropic, a chat-completions provider) | the sandbox's figure, as above (`sandbox`) |
 | the record has no rates | the sandbox's figure (`sandbox_unpriced`) |
 
@@ -230,8 +231,16 @@ Metering never holds a run up for long: a replay that times out is given up
 at once (the next recreation gives the proxy everything again), and a run's
 declaration or end waits at most 30 seconds for a replay before it goes
 ahead, the run then charged as one whose tally is not whole. A request of a
-given-up replay may still reach the proxy later, so until a replay of that
-proxy completes, every run declared on it is charged that way too.
+given-up replay may still reach the proxy for 30 seconds (it runs there as a
+10-second request inside a `docker exec` killed at 15), so until the proxy
+answers a request sent after that, every run declared on it is charged that
+way too: `unordered` on its trace, apart from a run whose tally was lost
+(`unreached`). The first such answer, from the next 5-second read, ends the
+mode and sends the proxy what the replay did not: each entry still held as it
+was, so what a sandbox did since (enrolled again, began or ended a run)
+stands. `embry0_meter_replay_abandoned` is 1 while a proxy is in the mode, and
+`Embry0MeterReplayGivenUp` fires when it stays 15 minutes (the proxy is not
+answering).
 
 The trace keeps both figures: `metering` (the source, whether the tally was
 whole, the proxy's cost, the sandbox's, each proxy's processes, calls, calls
@@ -242,9 +251,10 @@ two figures differ by more than 10% and $0.05, the orchestrator logs
 (`embry0_run_meter_disagreements_total`). Three alerts watch it
 (`infra/prometheus/run-meter.rules.yml`, `docs/ops/metrics.md`):
 `Embry0RunMeterUnderCounted` (a sandbox reported more than its proxy counted),
-`Embry0MeterReadsFailing` (a proxy's tallies not read for 2 minutes) and
+`Embry0MeterReadsFailing` (a proxy's tallies not read for 2 minutes),
 `Embry0MeterCallsOutsideRuns` (calls from a sandbox with no declared run; they
-are kept in `run_meter` and charged to no job). The proxies still forward a
+are kept in `run_meter` and charged to no job), with
+`Embry0MeterReplayGivenUp` above. The proxies still forward a
 call from a sandbox with no declared run (`METER_REQUIRE_RUN` is not set).
 
 ### Changing the catalogue

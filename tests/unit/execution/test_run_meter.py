@@ -88,6 +88,9 @@ class _Proxies:
     def declared_unordered(self, proxy: str, run_id: str) -> bool:
         return (proxy, run_id) in getattr(self, "unordered", set())
 
+    def replay_abandoned(self, proxy: str) -> bool:
+        return proxy in getattr(self, "abandoned", set())
+
     async def read_meter(self, proxy: str) -> dict[str, Any]:
         self._maybe_fail(proxy, "read")
         return {"boot_id": self.boot[proxy], "tallies": list(self.tallies[proxy].values())}
@@ -193,6 +196,7 @@ async def test_the_meter_s_series_are_seeded_when_it_starts() -> None:
         for proxy in ("xai-proxy", "local-llm-proxy"):
             assert sample(registry, "embry0_meter_last_read_timestamp_seconds", {"proxy": proxy}) is not None
             assert sample(registry, "embry0_meter_unattributed_requests", {"proxy": proxy}) == 0
+            assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": proxy}) == 0
             for call in ("declare", "end", "read"):
                 assert sample(registry, "embry0_meter_admin_failures_total", {"proxy": proxy, "call": call}) == 0
     finally:
@@ -259,3 +263,18 @@ async def test_stop_reads_every_proxy_once_more_before_the_proxies_go() -> None:
     await meter.stop()
     assert len([c for c in proxies.calls if c[1] == "read"]) > len(reads_before)
     assert repo.rows[("xai-proxy", "b1", "run-1")]["snapshot"]["models"] == _calls(9), "stop did not read again"
+
+
+async def test_the_replay_mode_is_a_gauge_seeded_0() -> None:
+    proxies = _Proxies({})
+    meter, registry = _meter(proxies, _Repo())
+    meter.start()
+    await meter.stop()
+    assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "xai-proxy"}) == 0
+    proxies.abandoned = {"xai-proxy"}  # type: ignore[attr-defined]
+    await meter.poll_once()
+    assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "xai-proxy"}) == 1
+    assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "local-llm-proxy"}) == 0
+    proxies.abandoned = set()  # type: ignore[attr-defined]
+    await meter.poll_once()
+    assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "xai-proxy"}) == 0
