@@ -74,7 +74,8 @@ async def test_enrolled_but_unprovisioned_is_503(xai_client: TestClient):
 
 
 async def test_full_provision_then_forward_attempt(xai_client: TestClient):
-    """Enroll + push token → a valid bearer reaches the forward path (502 offline / not 401/503)."""
+    """Enroll + push token → a valid bearer reaches the forward path, which sends the call to xAI with the pushed
+    token. The upstream is a stand-in: no unit test reaches api.x.ai (#702)."""
     await xai_client.post(
         "/admin/enroll",
         json={"sandbox_id": "s1", "sandbox_token": _SANDBOX_TOKEN},
@@ -84,14 +85,38 @@ async def test_full_provision_then_forward_attempt(xai_client: TestClient):
     assert tok.status == 200
     health = await (await xai_client.get("/health")).json()
     assert health["provisioned"] is True
+    sent: dict = {}
+
+    class _Upstream:
+        def __init__(self, **kw):
+            sent.update(kw)
+            self.status_code = 200
+            self.headers = {"content-type": "application/json"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def aiter_bytes(self):
+            yield b"{}"
+
+    class _Client:
+        def stream(self, **kw):
+            return _Upstream(**kw)
+
+        async def aclose(self):
+            return None
+
+    route_upstream(xai_client.app, _Client())
     resp = await xai_client.post(
         "/v1/messages",
         json={"model": "grok-4.5"},
         headers={"Authorization": f"Bearer {_SANDBOX_TOKEN}"},
     )
-    # Provisioning gate passed: never 503. (Offline → 502; online → an upstream status.
-    # Upstream may itself return 401 for the fake token, so 401 is not asserted against.)
-    assert resp.status != 503
+    assert resp.status == 200, "the provisioned proxy did not forward the call"
+    assert sent["url"] == "https://api.x.ai/v1/messages" and sent["headers"]["Authorization"] == "Bearer at-1", sent
 
 
 async def test_unenroll_revokes_bearer(xai_client: TestClient):
