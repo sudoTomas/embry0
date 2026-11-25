@@ -58,6 +58,7 @@ from embry0.services.progression_pack import (
     load_text,
     pack_hash,
     parse,
+    structure_placed,
     warnings,
 )
 from embry0.storage.repositories.progression_packs import (
@@ -198,7 +199,7 @@ def read_body(body: bytes, content_type: str) -> Submitted:
     except RecursionError:
         raise PackInvalid([Problem((), "too_deep", "the document is nested too deeply")]) from None
     if too_long:
-        raise PackInvalid([Problem(p.loc, p.type, p.msg) for p in too_long])
+        raise PackInvalid(structure_placed(too_long))
     if not isinstance(data, dict):
         raise PackInvalid([Problem((), "dict_type", "a pack is a mapping of sections")])
     pack = parse(data)

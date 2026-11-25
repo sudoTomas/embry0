@@ -20,6 +20,7 @@ from embry0.services.provider_catalogue_store import (
     NotUndoable,
     RevisionNotFound,
     held_catalogue,
+    load_text,
 )
 from embry0.storage.database import DatabasePool
 
@@ -135,6 +136,45 @@ async def test_a_text_that_is_not_a_catalogue_is_refused(store: CatalogueStore, 
     if kind is not None:
         assert [p.type for p in refused.value.problems] == [kind]
     assert (await store.document()).yaml_text == ""
+
+
+_LONG = "9" * 5_000
+
+
+@pytest.mark.parametrize(
+    ("text", "loc", "kind"),
+    [
+        (
+            f"providers:\n  deepseek:\n    models:\n      zz-model:\n        prices: [{{in: {_LONG}, out: 1}}]\n",
+            ["providers"],
+            "number_too_long",
+        ),
+        (
+            "providers:\n  zz-prov:\n    models:\n      zz-model: {free: true, free: false}\n",
+            ["providers"],
+            "duplicate_key",
+        ),
+        ("providers:\n  zz-prov:\n    refresh_hours: !!int zzBAD\n", ["providers"], "invalid_number"),
+        (
+            f'{{"providers": {{"zz-prov": {{"models": {{"zz-model": {{"prices": [{{"in": {_LONG}}}]}}}}}}}}}}',
+            ["providers"],
+            "number_too_long",
+        ),
+        (f"version: {_LONG}\n", ["version"], "number_too_long"),
+        (f"zz-top:\n  a: {_LONG}\n", [], "number_too_long"),
+    ],
+    ids=["a long price", "a key written twice in a model", "!!int", "JSON", "the version", "a key it does not take"],
+)
+def test_a_problem_of_the_text_is_never_placed_at_a_provider_s_or_a_model_s_id(
+    text: str, loc: list[object], kind: str
+) -> None:
+    """Below ``providers`` every key is a provider's or a model's id, which the operator wrote: a problem of the
+    text there is placed at ``providers``, and its line says where."""
+    with pytest.raises(CatalogueInvalid) as refused:
+        load_text(text)
+    found = [p.to_dict() for p in refused.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(loc, kind)], found
+    assert "zz" not in json.dumps(found), f"the problem repeats an id or a key the operator wrote: {found}"
 
 
 async def test_a_text_past_the_bound_is_refused(store: CatalogueStore) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -56,7 +57,9 @@ def test_an_empty_document_names_no_areas(text: str) -> None:
     assert check(load_yaml(text)) == {"areas": []}
 
 
-def test_every_problem_is_named_at_its_key_at_once_and_no_value_is_echoed() -> None:
+def test_every_problem_is_placed_at_once_and_no_value_or_written_key_is_echoed() -> None:
+    """Each problem at its key, but a key the document does not take at the mapping that holds it: the key is
+    what the operator wrote, and the message says the keys there are, with the nearest."""
     text = """
 versoin: 1
 areas:
@@ -74,9 +77,9 @@ areas:
     found = _problems(text)
     locs = [(".".join(map(str, p["loc"])), p["type"]) for p in found]
     assert locs == [
-        ("versoin", "extra_forbidden"),
+        ("", "extra_forbidden"),
         ("areas.0.name", "missing"),
-        ("areas.1.teams", "extra_forbidden"),
+        ("areas.1", "extra_forbidden"),
         ("areas.1.paths.0", "invalid_glob"),
         ("areas.1.paths.1", "invalid_glob"),
         ("areas.1.paths.2", "invalid_glob"),
@@ -91,14 +94,15 @@ areas:
     ], locs
     assert "Did you mean 'version'?" in found[0]["msg"]
     said = json.dumps(found)
-    for value in ("services/billing**", "octo cat", "payments", "c/[x", "Plain string"):
-        assert value not in said, f"a refused value is echoed: {value}"
+    for value in ("services/billing**", "octo cat", "payments", "c/[x", "Plain string", "versoin", "teams"):
+        assert value not in said, f"a refused value or a key written is echoed: {value}"
 
 
 def test_two_areas_cannot_share_a_label() -> None:
     found = _problems("areas:\n  - name: Web App\n  - name: web-app\n")
     assert [(p["loc"], p["type"]) for p in found] == [(["areas", 1, "name"], "duplicate_slug")]
-    assert "area:web-app" in str(found[0]["msg"])
+    assert "the same label as area 0's name" in str(found[0]["msg"]), found
+    assert "web" not in str(found[0]["msg"]).lower(), "the name the operator wrote is never repeated"
 
 
 @pytest.mark.parametrize(
@@ -138,6 +142,72 @@ def test_a_key_written_twice_is_placed_at_the_mapping_that_holds_it(text: str, l
     found = [p.to_dict() for p in raised.value.problems]
     assert [(p["loc"], p["type"]) for p in found] == [(loc, "duplicate_key")], found
     assert "zz-written-key" not in json.dumps(found), f"the problem repeats the key written: {found}"
+
+
+_LONG = "9" * (sys.get_int_max_str_digits() + 1)
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type", "loc", "kind"),
+    [
+        (f"zzA: {{name: {_LONG}}}\n", "application/yaml", [], "number_too_long"),
+        (f"zzA: [{{name: {_LONG}}}]\n", "application/yaml", [], "number_too_long"),
+        (f"areas:\n  - name: Web\n    zzA: {{k: {_LONG}}}\n", "application/yaml", ["areas", 0], "number_too_long"),
+        ("areas:\n  - name: Web\n    zzA: {k: !!int zzBAD}\n", "application/yaml", ["areas", 0], "invalid_number"),
+        ("areas:\n  - name: Web\n    zzA: {b: 1, b: 2}\n", "application/yaml", ["areas", 0], "duplicate_key"),
+        (
+            f"areas:\n  - name: Web\n    paths: [{{zzA: {_LONG}}}]\n",
+            "application/yaml",
+            ["areas", 0, "paths", 0],
+            "number_too_long",
+        ),
+        (f'{{"zzA": {{"name": {_LONG}}}}}', "application/json", [], "number_too_long"),
+        (f'{{"zzA": [{{"name": {_LONG}}}]}}', "application/json", [], "number_too_long"),
+        (f'{{"areas": [{{"name": "Web", "zzA": [{_LONG}]}}]}}', "application/json", ["areas", 0], "number_too_long"),
+    ],
+)
+def test_a_problem_of_the_text_under_a_written_key_is_placed_at_the_first_key_the_document_does_not_take(
+    body: str, content_type: str, loc: list[object], kind: str
+) -> None:
+    """A number too long or unreadable, or a key written twice, under a key the operator wrote is placed at the
+    mapping that holds that key, as an unknown key is, so the place never repeats it; YAML's line says where."""
+    with pytest.raises(DocumentInvalid) as raised:
+        parse_body(body.encode(), content_type)
+    found = [p.to_dict() for p in raised.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(loc, kind)], found
+    assert "zz" not in json.dumps(found), f"the problem repeats a key or value the operator wrote: {found}"
+
+
+@pytest.mark.parametrize(
+    ("body", "content_type", "loc", "kind"),
+    [
+        (f"areas:\n  - name: {_LONG}\n", "application/yaml", ["areas", 0, "name"], "number_too_long"),
+        (
+            f"areas:\n  - name: Web\n    paths: [{_LONG}]\n",
+            "application/yaml",
+            ["areas", 0, "paths", 0],
+            "number_too_long",
+        ),
+        ("areas:\n  - name: !!int abc\n", "application/yaml", ["areas", 0, "name"], "invalid_number"),
+        (f"version: {_LONG}\n", "application/yaml", ["version"], "number_too_long"),
+        (f'{{"areas": [{{"name": {_LONG}}}]}}', "application/json", ["areas", 0, "name"], "number_too_long"),
+        (
+            f'{{"areas": [{{"name": "Web", "paths": [{_LONG}]}}]}}',
+            "application/json",
+            ["areas", 0, "paths", 0],
+            "number_too_long",
+        ),
+    ],
+)
+def test_a_problem_of_the_text_at_a_key_the_document_takes_keeps_its_whole_place(
+    body: str, content_type: str, loc: list[object], kind: str
+) -> None:
+    """Only a key the operator wrote is cut away: at the document's own keys the place is the field itself."""
+    with pytest.raises(DocumentInvalid) as raised:
+        parse_body(body.encode(), content_type)
+    found = [p.to_dict() for p in raised.value.problems]
+    assert [(p["loc"], p["type"]) for p in found] == [(loc, kind)], found
+    assert "99999" not in json.dumps(found), f"the problem repeats the value: {found}"
 
 
 def test_a_body_is_yaml_kept_as_written_or_json_with_no_text() -> None:
@@ -262,3 +332,51 @@ def test_lookalike_spellings_of_a_name_are_one_area() -> None:
             assert [p.type for p in exc.problems] == ["duplicate_slug"], exc.problems
     data = check(load_yaml("areas:\n  - name: Caf\u00e9\n  - name: Cafe\n"))
     assert [a.slug for a in areas_of(data)] == ["caf\u00e9", "cafe"], "an accent still tells two names apart"
+
+
+#: What an operator wrote as a key, a tag or an alias name: no problem's place or message may repeat it.
+_WRITTEN = "zz-written"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"{_WRITTEN}: 1\nareas: []\n",
+        f"areas:\n  - name: web\n    {_WRITTEN}: 1\n",
+        f"areas: !{_WRITTEN} []\n",
+        f"areas: !{_WRITTEN}'x []\n",
+        f"areas: !<tag:{_WRITTEN}> []\n",
+        f"%TAG !e! tag:{_WRITTEN}:\n---\nareas: !e!x []\n",
+        f"areas: *{_WRITTEN}\n",
+        f"areas: [{{name: web}}]\nareas: [{{name: {_WRITTEN}}}]\n",
+    ],
+    ids=[
+        "unknown top key",
+        "unknown area key",
+        "tag",
+        "tag with a quote",
+        "verbatim tag",
+        "expanded tag",
+        "undefined alias",
+        "key written twice",
+    ],
+)
+def test_no_problem_repeats_a_key_a_tag_or_an_alias_the_operator_wrote(text: str) -> None:
+    with pytest.raises(DocumentInvalid) as raised:
+        check(load_yaml(text))
+    found = [p.to_dict() for p in raised.value.problems]
+    assert found, text
+    assert _WRITTEN not in json.dumps(found), f"a problem repeats what was written: {found}"
+
+
+def test_a_yaml_message_keeps_its_line_column_and_pyyaml_s_token_names() -> None:
+    with pytest.raises(DocumentInvalid) as raised:
+        load_yaml("areas:\n  - name: a\n b: 1\n")
+    assert [p.msg for p in raised.value.problems] == [
+        "The YAML cannot be read: line 3, column 2: expected <block end>, but found '<block mapping start>'"
+    ]
+
+
+def test_two_keys_an_area_does_not_take_are_one_problem_at_the_area() -> None:
+    found = _problems("areas:\n  - name: web\n    zz-one: 1\n    zz-two: 2\n")
+    assert [(p["loc"], p["type"]) for p in found] == [(["areas", 0], "extra_forbidden")], found

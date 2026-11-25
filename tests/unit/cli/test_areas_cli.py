@@ -75,7 +75,7 @@ def test_check_lists_every_problem_by_key_and_echoes_no_value(
     err = capsys.readouterr().err
     assert "areas.1.paths.0: A glob starts at the repository's root" in err
     assert "areas.1.owners.0: An owner is a login" in err
-    assert "areas.2.name: This name labels work as area 'area:web'" in err
+    assert "areas.2.name: This name labels work with the same label as area " in err
     assert "no way" not in err and "/api," not in err
 
 

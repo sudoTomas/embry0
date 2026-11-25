@@ -35,7 +35,7 @@ import yaml
 
 from embry0.forge_logins import GITHUB_LOGIN_RE
 from embry0.services.areas import Area, slug_of
-from embry0.text_documents import DuplicateKey, load_json, structure_problems
+from embry0.text_documents import DuplicateKey, load_json, structure_problems, yaml_problem_text
 from embry0.text_documents import text_diff as shared_text_diff
 from embry0.workflows.qa._glob_match import GlobPatternError, compile_glob
 
@@ -70,11 +70,44 @@ class Problem:
 
 
 class DocumentInvalid(ValueError):
-    """The document has problems; ``problems`` lists every one."""
+    """The document has problems; ``problems`` lists every one, each once. No place or message repeats a key, a
+    tag or an alias name the operator wrote: a key the document does not take is placed at the mapping that
+    holds it and said by the keys that mapping takes, a key written twice by its lines, a problem of the text's
+    structure under a written key at the mapping that holds that key (:func:`_placed`), and a YAML message's
+    quoted text by ``…`` (:func:`embry0.text_documents.unquoted`)."""
 
     def __init__(self, problems: list[Problem]) -> None:
-        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in problems))
-        self.problems = problems
+        said = list(dict.fromkeys(problems))
+        super().__init__("; ".join(f"{'.'.join(map(str, p.loc)) or 'document'}: {p.msg}" for p in said))
+        self.problems = said
+
+
+#: The document's own words at each place: a mapping of the keys it takes, a list's one entry (what each item is),
+#: or None for a value, which takes no key.
+_SHAPE: Final[Mapping[str, Any]] = {
+    "version": None,
+    "areas": [{"name": None, "paths": [None], "logs": [None], "owners": [None]}],
+}
+
+
+def _placed(loc: Loc) -> Loc:
+    """``loc`` cut at the first key the document does not take there, which the operator wrote: a problem of the
+    text's structure inside it (a number too long, a key written twice) is placed at the mapping that holds that
+    key, and its line says where, as an unknown key is."""
+    shape: Any = _SHAPE
+    for i, part in enumerate(loc):
+        if isinstance(shape, Mapping) and isinstance(part, str) and part in shape:
+            shape = shape[part]
+        elif isinstance(shape, list) and isinstance(part, int):
+            shape = shape[0]
+        else:
+            return loc[:i]
+    return loc
+
+
+def _structure(found: Iterable[Any]) -> list[Problem]:
+    """The problems of a text's structure (:mod:`embry0.text_documents`), each placed by :func:`_placed`."""
+    return [Problem(_placed(p.loc), p.type, p.msg) for p in found]
 
 
 class DocumentTooLarge(ValueError):
@@ -95,10 +128,7 @@ def problem_list(exc: DocumentInvalid | DocumentTooLarge) -> list[dict[str, Any]
 
 
 def _yaml_problem(exc: yaml.YAMLError) -> Problem:
-    mark = getattr(exc, "problem_mark", None)
-    where = f"line {mark.line + 1}, column {mark.column + 1}: " if mark is not None else ""
-    problem = getattr(exc, "problem", None) or "it is not YAML"
-    return Problem((), "yaml_syntax", f"The YAML cannot be read: {where}{problem}")
+    return Problem((), "yaml_syntax", f"The YAML cannot be read: {yaml_problem_text(exc)}")
 
 
 _TOO_DEEP: Final = Problem((), "too_deep", "The document is nested too deeply.")
@@ -122,7 +152,7 @@ def load_yaml(text: str) -> Any:
         raise DocumentInvalid([_yaml_problem(exc)]) from None
     except RecursionError:
         raise DocumentInvalid([_TOO_DEEP]) from None
-    problems = [Problem(p.loc, p.type, p.msg) for p in structure_problems(root, what="an areas document")]
+    problems = _structure(structure_problems(root, what="an areas document"))
     if problems:
         raise DocumentInvalid(problems)
     try:
@@ -145,7 +175,7 @@ def _json(text: str) -> Any:
     except RecursionError:
         raise DocumentInvalid([_TOO_DEEP]) from None
     if too_long:
-        raise DocumentInvalid([Problem(p.loc, p.type, p.msg) for p in too_long])
+        raise DocumentInvalid(_structure(too_long))
     return values
 
 
@@ -176,11 +206,12 @@ def _near(word: str, options: Iterable[str]) -> str:
 
 
 def _unknown(loc: Loc, key: Any, options: Sequence[str], what: str) -> Problem:
+    """A key of the mapping at ``loc`` that it does not take: placed there and said by the keys it takes, with
+    the nearest one, never by the key, which is what the operator wrote."""
     if not isinstance(key, str):
         return Problem(loc, "extra_forbidden", f"A key of {what} must be text.")
-    return Problem(
-        (*loc, key), "extra_forbidden", f"'{key}' is not a key of {what}: {', '.join(options)}.{_near(key, options)}"
-    )
+    takes = f"{what[0].upper()}{what[1:]} takes no such key; its keys are {', '.join(options)}."
+    return Problem(loc, "extra_forbidden", takes + _near(key, options))
 
 
 def glob_problem(pattern: str) -> str | None:
@@ -335,7 +366,7 @@ def check(values: Any) -> dict[str, Any]:
                 Problem(
                     ("areas", index, "name"),
                     "duplicate_slug",
-                    f"This name labels work as area 'area:{slug}', as area {first_by_slug[slug]}'s does: "
+                    f"This name labels work with the same label as area {first_by_slug[slug]}'s name: "
                     "each area needs a name of its own.",
                 )
             )

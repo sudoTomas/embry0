@@ -45,8 +45,7 @@ async def test_put_qa_config_auto_registers_and_serves(api_client) -> None:
 async def test_put_qa_config_rejects_invalid_yaml(api_client) -> None:
     r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content="version: 1\n")
     assert r.status_code == 422
-    assert r.json()["detail"].startswith("Input should be 2 (version)\n\nTechnical details:\n")
-    assert "1 validation error for QAYamlConfigV2" in r.json()["detail"]
+    assert r.json()["detail"] == "Input should be 2 (version)", "one plain sentence, and no parser output after it"
 
 
 @pytest.mark.asyncio
@@ -75,13 +74,81 @@ async def test_put_qa_config_refuses_a_glob_that_starts_with_an_exclamation_mark
 
 
 @pytest.mark.asyncio
-async def test_put_qa_config_explains_a_typo_before_the_technical_details(api_client) -> None:
+async def test_put_qa_config_explains_a_typo_by_the_nearest_setting_and_the_app_s_position(api_client) -> None:
     text = _V2_MIN + "apps:\n  web:\n    boot_comand: npm run dev\n    frontend_url: http://localhost:3000\n"
     r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=text)
     assert r.status_code == 422
-    plain, technical = r.json()["detail"].split("\n\nTechnical details:\n")
-    assert plain == "'boot_comand' is not a setting embry0 knows. Did you mean 'boot_command'? (app web)"
-    assert "extra_forbidden" in technical
+    assert r.json()["detail"] == "Not a setting embry0 knows. Did you mean 'boot_command'? (app 1)", r.json()
+
+
+#: What a refused test setup holds in a key, a name or a value: no 422 may repeat it.
+_WRITTEN = "zz-written"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "where"),
+    [
+        (_V2_MIN + f"apps:\n  {_WRITTEN}:\n    boot_comand: x\n    frontend_url: http://localhost:3000\n", "(app 1)"),
+        (
+            _V2_MIN + "apps:\n  web:\n    boot_command: x\n    frontend_url: http://localhost:3000\n"
+            f"  {_WRITTEN}:\n    boot_command: x\n    frontend_url: ftp://{_WRITTEN}.example\n",
+            "(app 2)",
+        ),
+        (
+            _V2_MIN + f"apps:\n  {_WRITTEN}:\n    target: deployed\n    frontend_url: http://127.0.0.1:9/{_WRITTEN}\n",
+            "(app 1)",
+        ),
+        (
+            _V2_MIN + f"apps:\n  {_WRITTEN}:\n    boot_command: x\n    frontend_url: http://localhost:3000\n"
+            "    ready_checks:\n      - http: http://localhost:3000\n        expect_status: 777\n",
+            "(app 1, ready_checks 1, expect_status)",
+        ),
+        (
+            _V2_MIN + "conditional_acceptance_criteria:\n  - name: docs\n    when:\n"
+            f"      changed_paths: ['../{_WRITTEN}']\n    criteria:\n      - The docs open\n",
+            "(conditional_acceptance_criteria 1, when, changed_paths)",
+        ),
+        (
+            _V2_MIN + f"conditional_acceptance_criteria:\n  - name: '{_WRITTEN}!'\n    when:\n"
+            "      changed_paths: ['docs/**']\n    criteria:\n      - The docs open\n",
+            "(conditional_acceptance_criteria 1, name)",
+        ),
+        (
+            "version: 2\napps:\n  " + _WRITTEN + ":\n    boot_command: x\n    frontend_url: http://localhost:3000\n",
+            "need workspace topology",
+        ),
+        (_V2_MIN + f"app_local:\n  {_WRITTEN}:\n    boot_command: x\n", "(app_local entry 1)"),
+        (
+            _V2_MIN + "apps:\n  web:\n    boot_command: x\n    frontend_url: http://localhost:3000\n"
+            "    auth:\n      storage_state_from:\n        secret: " + _WRITTEN.upper().replace("-", "_") + "\n",
+            "(app 1, auth, storage_state_from, secret)",
+        ),
+    ],
+    ids=[
+        "unknown key in a named app",
+        "address of the second app",
+        "deployed app on loopback",
+        "status code out of range",
+        "glob",
+        "group name",
+        "managed app names",
+        "app_local entry",
+        "secret name",
+    ],
+)
+async def test_a_refused_setup_is_answered_by_place_and_kind_repeating_nothing_it_holds(
+    api_client, text: str, where: str
+) -> None:
+    """A 422 says where (the setup's own words, an app by its position) and what kind of problem, one sentence
+    per error. It repeats no key, name or value written in the text, and no parser output (which quotes the
+    input)."""
+    r = await api_client.put("/api/v1/repos/acme/widgets/-/qa-config", content=text)
+    assert r.status_code == 422, f"the setup was stored: {r.status_code} {r.text[:300]}"
+    detail = r.json()["detail"]
+    assert where in detail, f"the answer does not say where: {detail!r}"
+    for written in (_WRITTEN, _WRITTEN.upper().replace("-", "_"), "777"):
+        assert written not in detail, f"the 422 repeats what the setup holds ({written!r}): {detail!r}"
 
 
 _V2_ON = (

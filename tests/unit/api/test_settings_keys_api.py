@@ -391,7 +391,9 @@ async def test_a_whole_number_too_long_to_convert_is_a_422_at_its_key(app: Any) 
             f"{URL}/sample", content='{"per_tick": ' + "9" * 5_000 + "}", headers={"Content-Type": "application/json"}
         )
     assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
-    assert [(d["loc"], d["type"]) for d in resp.json()["detail"]] == [(["sample", "per_tick"], "number_too_long")]
+    assert [(d["loc"], d["type"]) for d in resp.json()["detail"]] == [(["sample", "per_tick"], "number_too_long")], (
+        "placed at its field, the catalog's word"
+    )
     assert "99999" not in resp.text, "the rejected value is never echoed"
 
 

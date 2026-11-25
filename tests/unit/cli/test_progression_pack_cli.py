@@ -16,7 +16,7 @@ from embry0.services.progression_pack_store import read_text
 
 DEFAULT = default_text()
 COPPER = DEFAULT.replace("{id: bronze, name: Bronze,", "{id: bronze, name: Copper,")
-#: Two problems at once: a level past the bounds and an unknown section.
+#: Two problems at once: a level past the bounds and an unknown section, placed at the document.
 BAD = COPPER.replace("max_level: 99", "max_level: 9999").replace("version: 1\n", "version: 1\nmystery: 1\n")
 #: A key written twice, which YAML alone would silently keep the second of.
 TWICE = COPPER + "\ntimezone: UTC\n"
@@ -57,13 +57,13 @@ def test_check_passes_the_shipped_default(tmp_path: Path, capsys: pytest.Capture
 
 
 @pytest.mark.parametrize(
-    ("text", "keys"), [(BAD, ["curve.max_level", "mystery"]), (TWICE, [None])], ids=["invalid", "twice"]
+    ("text", "keys"), [(BAD, ["curve.max_level", None]), (TWICE, [None])], ids=["invalid", "twice"]
 )
 def test_check_exits_1_with_the_messages_a_write_is_refused_with(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str, keys: list[str | None]
 ) -> None:
-    """``keys`` is each line's place, None for a problem placed at the document (a key written twice is placed at
-    the mapping that holds it, here the document, and told by its lines)."""
+    """``keys`` is each line's place, None for a problem placed at the document: a key written twice, or one the
+    pack does not take, is placed at the mapping that holds it, here the document, and never named."""
     with pytest.raises(PackInvalid) as refused:  # the API's own validator, as a write meets it
         read_text(text)
     expected = [str(p) for p in refused.value.problems]

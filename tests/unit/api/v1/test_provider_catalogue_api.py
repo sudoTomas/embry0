@@ -200,6 +200,14 @@ async def test_a_text_past_the_bound_is_a_413(client: AsyncClient) -> None:
     assert (await client.get(CATALOG)).json()["yaml_text"] == ""
 
 
+async def test_a_problem_of_the_text_in_a_model_is_a_422_that_names_no_id(client: AsyncClient) -> None:
+    text = "providers:\n  deepseek:\n    models:\n      zz-model: {free: true, free: false}\n"
+    resp = await _put(client, text)
+    assert resp.status_code == 422, resp.text
+    assert [(p["loc"], p["type"]) for p in resp.json()["detail"]] == [(["providers"], "duplicate_key")], resp.text
+    assert "zz-model" not in resp.text, "the 422 repeats the model's id the operator wrote"
+
+
 async def test_a_body_that_is_not_utf8_is_a_422(client: AsyncClient) -> None:
     resp = await _put(client, b"providers: {deepseek: {enabled: true}} # \xff\n")
     assert resp.status_code == 422 and resp.json()["detail"][0]["type"] == "encoding"

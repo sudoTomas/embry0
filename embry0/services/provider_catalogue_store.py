@@ -46,7 +46,7 @@ counted by ``embry0_provider_catalogue_refused_parts`` (alert
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -59,6 +59,7 @@ import yaml
 from embry0.agents.catalogue import (
     Catalogue,
     CatalogueInvalid,
+    CatalogueOverlay,
     Problem,
     StoredRead,
     current,
@@ -75,7 +76,7 @@ from embry0.audit.helpers import emit_audit
 from embry0.metrics.loop import NULL_METRICS
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.config_revisions import ConfigRevisionsRepository, RevisionSource
-from embry0.text_documents import structure_problems, text_diff
+from embry0.text_documents import StructureProblem, structure_problems, text_diff
 
 logger = structlog.get_logger(__name__)
 
@@ -113,13 +114,30 @@ class NotUndoable(Exception):
 # ---- reading a text ----
 
 
+def _structure_placed(found: Iterable[StructureProblem]) -> list[Problem]:
+    """Each problem of the text's structure (:mod:`embry0.text_documents`) cut where the catalogue's own words end:
+    at the top-level key it is under when the overlay takes that key (``version``, ``providers``), else at the
+    document. Below ``providers`` every key is a provider's or a model's id, which the operator wrote, so a number
+    too long or a key written twice inside a model is placed at ``providers``; its line says where."""
+    return [
+        Problem(
+            problem.loc[:1] if problem.loc and problem.loc[0] in CatalogueOverlay.model_fields else (),
+            problem.type,
+            problem.msg,
+        )
+        for problem in found
+    ]
+
+
 def load_text(text: str) -> dict[str, Any]:
     """The overlay ``text`` holds, as a mapping; an empty or comment-only text is ``{}``.
 
     Refuses what every document an operator writes refuses
     (:mod:`embry0.text_documents`: an alias, a merge key, a key that is not
     text, a key written twice), a syntax error, a document nested too
-    deeply, and a top level that is not a mapping: :class:`CatalogueInvalid`.
+    deeply, and a top level that is not a mapping: :class:`CatalogueInvalid`,
+    the structure's problems placed by :func:`_structure_placed`, never at a
+    provider's or a model's id.
     Past :data:`MAX_TEXT_BYTES`, :class:`CatalogueTooLarge`.
     """
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
@@ -130,7 +148,7 @@ def load_text(text: str) -> dict[str, Any]:
         root = yaml.compose(text, Loader=yaml.SafeLoader)
         structure = structure_problems(root, what="the provider catalogue")
         if structure:
-            raise CatalogueInvalid([Problem(p.loc, p.type, p.msg) for p in structure])
+            raise CatalogueInvalid(_structure_placed(structure))
         loaded = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)

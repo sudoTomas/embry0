@@ -201,7 +201,8 @@ async def test_a_number_yaml_or_json_cannot_read_is_a_422_that_names_the_key(
     """#424: reading a whole number past the interpreter's digit limit raised a plain ValueError past the
     document's "invalid" path, a 500; a hex number that long read, and could not be stored. A typed scalar
     the safe loader cannot read (``!!int ""``, ``!!float abc``, ``!!bool abc``, ``!!timestamp abc``) raised
-    ``IndexError``, ``ValueError``, ``KeyError`` or ``AttributeError``, a 500 too."""
+    ``IndexError``, ``ValueError``, ``KeyError`` or ``AttributeError``, a 500 too. Each is placed at its field,
+    the catalog's word, and a YAML one says its line."""
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test", headers=_as(ADMIN)) as client:
         for dry_run in (1, 0):

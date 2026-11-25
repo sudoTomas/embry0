@@ -269,8 +269,9 @@ async def test_an_invalid_pack_is_refused_by_key_without_its_values(client: Asyn
         detail = resp.json()["detail"]
         assert all(set(item) == {"loc", "type", "msg"} for item in detail), detail
         locs = [tuple(item["loc"]) for item in detail]
-        assert ("curve", "max_level") in locs and ("secret_sauce",) in locs, locs
-        assert "hunter2-value" not in resp.text and "9999" not in resp.text, "a refusal never echoes a value"
+        assert ("curve", "max_level") in locs and () in locs, f"the unknown key is placed at the document: {locs}"
+        for written in ("hunter2-value", "9999", "secret_sauce"):
+            assert written not in resp.text, f"a refusal never echoes a value or a key written: {written}"
     dry = await client.put(PACK, params={"dry_run": 1}, content=bad, headers=YAML)
     assert dry.status_code == 422, "a dry run is refused the same way"
     assert (await client.get(PACK)).json()["version"] == 0 and (await client.get(f"{PACK}/draft")).status_code == 404
@@ -364,7 +365,9 @@ async def test_a_stored_pack_this_release_refuses_is_reported_and_never_served(c
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["fallback"] and body["hash"] == body["default_hash"], "the shipped default is in effect, and says why"
-    assert ["x"] in [p["loc"] for p in body["fallback"]], "the fallback names the key this release refuses"
+    assert ([], "extra_forbidden") in [(p["loc"], p["type"]) for p in body["fallback"]], (
+        f"the fallback says the pack holds a key this release does not take, placed at the document: {body}"
+    )
     progression = await client.get("/api/v1/progression")
     assert progression.status_code == 200 and _tier(progression.json()) == "Bronze"
     in_effect = await client.get(PACK, params={"format": "yaml"})
