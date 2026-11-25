@@ -24,6 +24,7 @@ const AgentFormPage = lazy(() => import("../pages/AgentFormPage").then(m => ({ d
 const SandboxesPage = lazy(() => import("../pages/SandboxesPage").then(m => ({ default: m.SandboxesPage })));
 const SandboxFormPage = lazy(() => import("../pages/SandboxFormPage").then(m => ({ default: m.SandboxFormPage })));
 const HostsPage = lazy(() => import("../pages/HostsPage").then(m => ({ default: m.HostsPage })));
+const PeoplePage = lazy(() => import("../pages/PeoplePage").then(m => ({ default: m.PeoplePage })));
 const PipelinesPage = lazy(() => import("../pages/PipelinesPage").then(m => ({ default: m.PipelinesPage })));
 const SettingsPage = lazy(() => import("../pages/SettingsPage").then(m => ({ default: m.SettingsPage })));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage").then(m => ({ default: m.NotFoundPage })));
@@ -89,6 +90,7 @@ export const router = createBrowserRouter([
       { path: "sandboxes/new", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
       { path: "sandboxes/:name", element: <ErrorBoundary inline><Suspense fallback={fallback}><SandboxFormPage /></Suspense></ErrorBoundary> },
       { path: "hosts", element: <ErrorBoundary inline><Suspense fallback={fallback}><HostsPage /></Suspense></ErrorBoundary> },
+      { path: "people", element: <ErrorBoundary inline><Suspense fallback={fallback}><PeoplePage /></Suspense></ErrorBoundary> },
       { path: "pipelines", element: <ErrorBoundary inline><Suspense fallback={fallback}><PipelinesPage /></Suspense></ErrorBoundary> },
       { path: "decisions", element: <ErrorBoundary inline><Suspense fallback={fallback}><DecisionsPage /></Suspense></ErrorBoundary> },
       // Owner proposals became the decisions' quests on offer (spec 2026-10-27); old links keep working.

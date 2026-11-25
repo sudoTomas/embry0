@@ -166,12 +166,12 @@ describe("Sidebar — unified IA (ticket 011)", () => {
     ]);
   });
 
-  it("Settings section contains Settings, LLM providers", () => {
+  it("Settings section contains Settings, LLM providers, People", () => {
     renderSidebar();
     const section = screen.getByRole("heading", { level: 3, name: "Settings" })
       .parentElement as HTMLElement;
     const links = within(section).getAllByRole("link");
-    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM providers"]);
+    expect(links.map((a) => a.textContent?.trim())).toEqual(["Settings", "LLM providers", "People"]);
   });
 
   it("Overview section holds the guild (the home screen), the Overview, then the instance's Achievements", () => {
@@ -229,6 +229,7 @@ describe("Sidebar — unified IA (ticket 011)", () => {
       Environments: "/environments",
       Credentials: "/credentials",
       Settings: "/settings",
+      People: "/people",
     };
     for (const [label, href] of Object.entries(expectedHrefs)) {
       const link = screen.getByRole("link", { name: label });

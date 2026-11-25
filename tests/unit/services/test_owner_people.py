@@ -149,3 +149,25 @@ def test_a_caller_is_every_person_their_email_and_sign_in_name_and_owns_only_as_
     assert [p.id for p in claimants("u@x.example", "usr-u")] == [stand_in.id]
     assert not d.owns(stand_in, decision), "the same login on a user standing in owns nothing a person holds"
     assert d.owns(holder, decision)
+
+
+def test_an_owner_login_nobody_holds_is_suggested_on_its_repository_s_forge() -> None:
+    """The People page's suggestions (#179): an owner login is offered on the forge its repository's organization is
+    on, and is no suggestion once a person holds it there; holding the same text on another forge does not count."""
+    from embry0.services import owner_people
+
+    unheld_owners = getattr(owner_people, "unheld_owners", None)
+    assert unheld_owners is not None, "the suggestions say no owner's forge: there is no unheld_owners"
+    rows = [
+        {"repo": "acme/web", "owner": "@Ada"},  # gitlab:ada, Ada's
+        {"repo": "acme/web", "owner": "cy"},
+        {"repo": "acme/api", "owner": "CY"},
+        {"repo": "globex/gizmos", "owner": "ada"},  # github:ada: nobody's
+        {"repo": "globex/gizmos", "owner": "gone"},  # a disabled person's: held all the same
+        {"repo": "globex/gizmos", "owner": ""},
+    ]
+    d = Directory(people=(ADA, BO, GONE), forges={**FORGES, "acme/api": "gitlab"})
+    assert unheld_owners(rows, d) == [
+        {"forge": "github", "login": "ada", "repos": ["globex/gizmos"]},
+        {"forge": "gitlab", "login": "cy", "repos": ["acme/api", "acme/web"]},
+    ]

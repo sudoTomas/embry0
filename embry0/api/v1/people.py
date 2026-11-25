@@ -109,10 +109,15 @@ async def list_people(request: Request, include_disabled: bool = Query(default=F
 @router.get("/people/suggestions", dependencies=[require_operator])
 async def people_suggestions(request: Request) -> dict[str, Any]:
     """Who could be added as a person (embry0 adds nobody by itself, D6): each user who signs in with no person, and
-    each owner login embry0 keeps that no person holds. To a key with an allowlist: nobody."""
+    each owner login embry0 keeps that no person holds, on its repository's organization's forge (``{forge, login,
+    repos}``). To a key with an allowlist: nobody."""
+    from embry0.services.owner_people import directory_of, unheld_owners
+
     if deployment_hidden(request):
         return {"users": [], "owners": []}
-    return await _repo(request).suggestions()
+    found = await _repo(request).suggestions()
+    directory = await directory_of(request.app.state, (row["repo"] for row in found["owners"]))
+    return {"users": found["users"], "owners": unheld_owners(found["owners"], directory)}
 
 
 @router.get("/people/{person_id}", dependencies=[require_operator])

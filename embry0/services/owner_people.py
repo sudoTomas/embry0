@@ -173,6 +173,20 @@ def _stand_ins(users: Iterable[Any], linked: set[str]) -> tuple[Person, ...]:
     )
 
 
+def unheld_owners(owners: Iterable[Mapping[str, Any]], directory: Directory) -> list[dict[str, Any]]:
+    """The owner logins no person holds, from ``owners`` (``{repo, owner}`` each, as stored): each login on its
+    forge, ``{forge, login, repos}``, with the repositories naming it, by forge and login. What the People page
+    offers to add (D6)."""
+    found: dict[tuple[str, str], set[str]] = {}
+    for row in owners:
+        repo, owner = str(row.get("repo") or ""), row.get("owner")
+        login = login_of(owner)
+        if not login or directory.holder(repo, owner) is not None:
+            continue
+        found.setdefault((directory.forge_of(repo), login), set()).add(repo)
+    return [{"forge": forge, "login": login, "repos": sorted(repos)} for (forge, login), repos in sorted(found.items())]
+
+
 async def read_directory(
     people: Any, organizations: Any, repos: Any, asked_about: Iterable[str | None], users: Any = None
 ) -> Directory:
