@@ -550,9 +550,12 @@ class PeopleRepository:
 
     async def suggestions(self) -> dict[str, list[dict[str, Any]]]:
         """Who could be added as a person (D6: embry0 adds nobody by itself): each user who signs in, not disabled,
-        that no person is linked to; and each owner login embry0 keeps (a repository's ``owners`` preference, an
-        area's owners) that no person holds as a ``github`` identity, with the repositories that name it. A
-        ``CODEOWNERS`` owner is read from the forge and is not listed."""
+        that no person is linked to (``users``); and each owner embry0 keeps (a repository's ``owners`` preference,
+        an area's owners), as stored, with the repository that names it (``owners``, ``{repo, owner}`` each, in no
+        order: their reader sorts what it answers). Which
+        forge an owner is a login on, and whether a person holds it, is the people's directory's to say
+        (:func:`embry0.services.owner_people.unheld_owners`). A ``CODEOWNERS`` owner is read from the forge and is
+        not listed."""
         async with self._db.transaction() as conn:
             users = await conn.fetch(
                 "SELECT u.id, u.email, u.name, u.github_login FROM users u "
@@ -561,7 +564,7 @@ class PeopleRepository:
             )
             owners = await conn.fetch(
                 """
-                SELECT LOWER(o.login) AS login, array_agg(DISTINCT o.repo) AS repos
+                SELECT DISTINCT o.repo, o.login
                   FROM (
                       SELECT rp.repo, jsonb_array_elements_text(rp.owners) AS login
                         FROM repo_preferences rp WHERE jsonb_typeof(rp.owners) = 'array'
@@ -572,11 +575,7 @@ class PeopleRepository:
                         ) a
                        WHERE jsonb_typeof(a -> 'owners') = 'array'
                   ) o
-                 WHERE o.login <> '' AND NOT EXISTS (
-                     SELECT 1 FROM person_identities i WHERE i.kind = 'github' AND LOWER(i.value) = LOWER(o.login)
-                 )
-                 GROUP BY LOWER(o.login)
-                 ORDER BY LOWER(o.login)
+                 WHERE o.login <> ''
                 """
             )
         return {
@@ -584,5 +583,5 @@ class PeopleRepository:
                 {"user_id": r["id"], "email": r["email"], "name": r["name"], "github_login": r["github_login"]}
                 for r in users
             ],
-            "owners": [{"login": r["login"], "repos": sorted(r["repos"])} for r in owners],
+            "owners": [{"repo": r["repo"], "owner": r["login"]} for r in owners],
         }

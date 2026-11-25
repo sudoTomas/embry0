@@ -201,8 +201,10 @@ async def test_suggestions_list_users_with_no_person_and_owner_logins_nobody_hol
     )
     suggested = (await _call(app, "GET", f"{PEOPLE}/suggestions", MASTER)).json()
     assert "usr-ed" in [u["user_id"] for u in suggested["users"]]
-    owners = {o["login"]: o["repos"] for o in suggested["owners"]}
-    assert (owners.get("owner-one"), owners.get("owner-two")) == ([COVERED], [COVERED]), owners
+    owners = {o["login"]: (o.get("forge"), o["repos"]) for o in suggested["owners"]}
+    assert (owners.get("owner-one"), owners.get("owner-two")) == (("github", [COVERED]), ("github", [COVERED])), (
+        f"each owner login on its repository's forge, with the repositories naming it: {owners}"
+    )
     await _call(
         app,
         "POST",
@@ -214,6 +216,33 @@ async def test_suggestions_list_users_with_no_person_and_owner_logins_nobody_hol
     assert "usr-ed" not in [u["user_id"] for u in after["users"]], "a user who is a person is no suggestion"
     still = [o["login"] for o in after["owners"]]
     assert "owner-one" not in still and "owner-two" in still, f"an owner a person holds is no suggestion: {still}"
+
+
+async def test_suggestions_read_an_owner_on_its_organization_s_forge(people_app: tuple[Any, Any]) -> None:
+    """An owner login is suggested on the forge of its repository's organization, through the deployment's own
+    organizations: a GitLab organization's owner is a GitLab login, which a person's GitHub login of the same text
+    does not hold and their GitLab login does."""
+    app, _keys = people_app
+    await app.state.organizations_repo.register(COVERED.split("/")[0], "gitlab", created_by="tests")
+    await app.state.db.execute(
+        "INSERT INTO repo_preferences (repo, owners) VALUES ($1, $2) ON CONFLICT (repo) DO UPDATE SET owners = $2",
+        COVERED,
+        ["lab-owner"],
+    )
+    await _call(app, "POST", PEOPLE, MASTER, {"name": "Hub", "identities": [{"kind": "github", "value": "lab-owner"}]})
+    owners = {o["login"]: (o.get("forge"), o["repos"]) for o in (await _suggested(app))["owners"]}
+    assert owners.get("lab-owner") == ("gitlab", [COVERED]), (
+        f"the owner of a GitLab organization's repository is suggested as a GitLab login: {owners}"
+    )
+    await _call(app, "POST", PEOPLE, MASTER, {"name": "Lab", "identities": [{"kind": "gitlab", "value": "lab-owner"}]})
+    still = [(o.get("forge"), o["login"]) for o in (await _suggested(app))["owners"]]
+    assert ("gitlab", "lab-owner") not in still, f"a person's GitLab login holds the GitLab owner: {still}"
+
+
+async def _suggested(app: Any) -> dict[str, Any]:
+    answer = await _call(app, "GET", f"{PEOPLE}/suggestions", MASTER)
+    assert answer.status_code == 200, f"the suggestions are read: {answer.status_code} {answer.text}"
+    return dict(answer.json())
 
 
 async def test_a_login_route_makes_no_person_and_says_when_a_cleared_login_falls_back(

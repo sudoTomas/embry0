@@ -3,6 +3,7 @@ import {
   Castle,
   Building2,
   CircleDot,
+  Contact,
   Container,
   Cpu,
   Eye,
@@ -122,6 +123,8 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       // The LLM provider catalog — availability, connection
       // tests, per-model enablement, tier assignment.
       { path: "/providers", label: "LLM providers", icon: Cpu },
+      // Who embry0 asks and names as owners (#179): operators read it, admins change it.
+      { path: "/people", label: "People", icon: Contact },
       { path: "/admin/users", label: "Users", icon: UsersRound, adminOnly: true },
     ],
   },
