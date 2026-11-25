@@ -101,6 +101,38 @@ any `custom/` model is priced at $0 instead of refused, and a job's
 `budget_usd` does not bound it. A `custom/` id is not listed, so it cannot be
 the default model; an agent definition or a job's `agent_models` can name it.
 
+### Gemini's thinking tokens
+
+Google bills a Gemini model's thinking as output: its thinking documentation
+says that when thinking is on, a response is priced as the sum of its output
+tokens and its thinking tokens. Whether its OpenAI-compatible endpoint, the one
+embry0 calls, counts those thinking tokens in `usage.completion_tokens` is
+**unconfirmed** (#653). Google's page on OpenAI compatibility does not say, and
+embry0 has not measured it. The endpoint may count them there, report them
+apart (as OpenAI's own API does, in
+`usage.completion_tokens_details.reasoning_tokens`), or not report them at all.
+
+embry0 reads three fields of a chat completion's usage: `prompt_tokens`,
+`completion_tokens` and `prompt_tokens_details.cached_tokens`. The agent
+executor (`embry0/agents/executor_openai.py`) and the background features'
+direct calls (`embry0/services/background_models.py`) read the same three. No
+model proxy carries a chat-completions provider, so a Gemini run is charged
+what its sandbox read (the `sandbox` row of
+[Metering at the proxies](#metering-at-the-proxies)).
+
+What that means for a Gemini run:
+
+- If `completion_tokens` counts the thinking tokens, the run is metered as
+  Google bills it.
+- If it leaves them out, a run in which the model thinks is metered below what
+  Google bills: by its thinking tokens, at the output rate. The gap grows with
+  how much the model thinks, most with a high `reasoning_effort`, and the job's
+  recorded spend, which its `budget_usd` is checked against, under-counts by as
+  much.
+
+Until that is settled, take a Gemini run's recorded cost as a lower bound when
+its model thinks, and check it against Google's own billing.
+
 ### OpenRouter's live model list
 
 OpenRouter serves several hundred models, and its own list says which take
