@@ -89,6 +89,8 @@ AuditAction = Literal[
     "repo.setup_rejected",
     "repo.areas_set",
     "repo.areas_imported",
+    # The startup check found registered repositories whose old areas file was never read (#175)
+    "repo.areas_import_skipped",
     "repo.areas_map_applied",
     "repo.areas_map_rejected",
     "organization.register",
@@ -230,6 +232,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "repo.setup_rejected": "Test setup proposal turned down",
     "repo.areas_set": "Repository areas saved",
     "repo.areas_imported": "Repository areas imported from its old file",
+    "repo.areas_import_skipped": "Repositories' old areas files never imported",
     "repo.areas_map_applied": "Areas map applied",
     "repo.areas_map_rejected": "Areas map rejected",
     "organization.register": "Organization registered",
@@ -304,10 +307,10 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))
 
-#: Registered actions nothing writes any more: the one-time imports that wrote them are gone (#168). Kept so the
-#: rows already written still read with their label and match a filter; never written again.
+#: Registered actions nothing writes any more: the one-time imports that wrote them are gone (#168, #175). Kept so
+#: the rows already written still read with their label and match a filter; never written again.
 NO_LONGER_WRITTEN: Final[frozenset[str]] = frozenset(
-    {"background_enrollment.blocked", "provider_catalogue.bootstrapped"}
+    {"background_enrollment.blocked", "provider_catalogue.bootstrapped", "repo.areas_imported"}
 )
 
 #: Names that older rows carry and nothing writes any more, each with the name that replaced it.
