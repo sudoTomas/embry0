@@ -21,7 +21,7 @@ import structlog
 
 from embry0.agents.claude_cli_session import canonical_session_path_for
 from embry0.agents.session import MAX_RESUME_BLOB_BYTES
-from embry0.execution.docker_client import DockerClient, ExecStdinTimeoutError
+from embry0.execution.docker_client import PKILL_NOTHING_MATCHED, DockerClient, ExecStdinTimeoutError
 from embry0.execution.events import AGENT_RUN_TYPES, ORCHESTRATOR_STAMPED, parse_event
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
 from embry0.safety.redaction import redact_secrets, redacted_log_field, redacted_stderr_tail, secret_env_values
@@ -756,6 +756,7 @@ class AgentRunner:
             await self._docker.run_cmd(
                 self._docker.build_exec_cmd(container, ["pkill", "-f", "embry0.sandbox.runner"]),
                 timeout=10,
+                quiet_exits=(PKILL_NOTHING_MATCHED,),
             )
         except Exception:
             return False
