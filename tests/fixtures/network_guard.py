@@ -18,7 +18,16 @@ the session. A thread started during a test carries that test: if it connects
 after its test ended, the session fails naming it, and the test running then is
 not blamed (a thread started outside any test is blamed on the test running
 when it connects). A process forked from a guarded one keeps the guard, and its
-refusals are reported by its parent.
+refusals are reported by its parent, through a file in a directory of the
+guard's own.
+
+**Kept.** Before and after each test the hooks check that ``socket.socket`` is
+still the class the guard patched and that the seven attributes it replaced are
+still its own. A test that leaves one changed (assigns the C method back,
+deletes the attribute, reloads ``socket``) would take the guard away from every
+test after it: it fails, naming what changed, and the guard is put back. A
+change outside any test fails the session. A patch that is undone before the
+test ends (``monkeypatch``, a fixture that restores what it saved) is fine.
 
 **What.** It patches, in Python, ``socket.socket.connect``, ``connect_ex``,
 ``sendto`` and ``sendmsg`` (an address given there is a UDP datagram or a TCP
@@ -45,10 +54,12 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import shutil
 import socket
+import sys
 import tempfile
 import threading
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -123,6 +134,39 @@ class Refusal:
 
 
 @dataclass
+class Patched:
+    """One attribute the guard replaced: the object it lives on (looked up again each time, as a reload replaces
+    it), what that was when the guard patched it, the attribute and the guard's value."""
+
+    label: str
+    owner_of: Callable[[], Any]
+    owner: Any
+    name: str
+    value: Any
+
+    def changed(self) -> str | None:
+        """What is no longer the guard's, named; None while it all is."""
+        try:
+            owner = self.owner_of()
+        except (KeyError, AttributeError):
+            return f"{self.label} (gone)"
+        if owner is not self.owner:
+            return f"{self.label} (replaced, as a reload does)"
+        if owner.__dict__.get(self.name, _ABSENT) is not self.value:
+            return f"{self.label}.{self.name}"
+        return None
+
+    def put_back(self) -> None:
+        """The guard's value on the object it lives on now (a reloaded module's new class, too)."""
+        try:
+            owner = self.owner_of()
+        except (KeyError, AttributeError):
+            return
+        setattr(owner, self.name, self.value)
+        self.owner = owner
+
+
+@dataclass
 class Guard:
     """The addresses a process may connect to, the test running in it, and every connection it refused."""
 
@@ -132,9 +176,12 @@ class Guard:
     #: Whether the test running now is marked ``allow_network``.
     allowing: bool = False
     refused: list[Refusal] = field(default_factory=list)
-    #: Where a process forked from this one writes its refusals, for this one to report.
-    children: Path = field(default_factory=lambda: Path(tempfile.gettempdir()) / f"embry0-net-{os.getpid()}.log")
+    #: Where a process forked from this one writes its refusals, for this one to report: a file in a directory
+    #: of the guard's own (``mkdtemp``: private, its name not known in advance), made when it is installed.
+    children: Path | None = None
     pid: int = field(default_factory=os.getpid)
+    #: What install() replaced, checked between tests.
+    patched: list[Patched] = field(default_factory=list)
 
     def permits(self, host: str) -> bool:
         return is_loopback(host) or host in self.allowed
@@ -176,13 +223,17 @@ class Guard:
             test, name = None, f"{thread.name}, started by {origin}"
         refusal = Refusal(where, test, name, os.getpid())
         if os.getpid() != self.pid:
-            with self.children.open("a", encoding="utf-8") as log:  # a forked child: its parent reports it
-                log.write(f"{where}\t{refusal.thread}\t{refusal.pid}\n")
+            if self.children is not None:
+                try:
+                    with self.children.open("a", encoding="utf-8") as log:  # a forked child: its parent reports it
+                        log.write(f"{where}\t{refusal.thread}\t{refusal.pid}\n")
+                except OSError:
+                    pass  # its parent has ended; the refusal is still raised
             return
         self.refused.append(refusal)
 
     def _children(self) -> list[Refusal]:
-        if not self.children.exists():
+        if self.children is None or not self.children.exists():
             return []
         lines = self.children.read_text(encoding="utf-8").splitlines()
         self.children.unlink(missing_ok=True)
@@ -191,6 +242,11 @@ class Guard:
             where, thread, pid = (line.split("\t") + ["", ""])[:3]
             found.append(Refusal(where, self.current, f"{thread} (forked process {pid})", self.pid))
         return found
+
+    def remove_children(self) -> None:
+        """Remove the directory forked children report in; only the process that made it does."""
+        if self.children is not None and os.getpid() == self.pid:
+            shutil.rmtree(self.children.parent, ignore_errors=True)
 
     def take(self, test: str) -> list[Refusal]:
         """The refusals during ``test``, a forked child's included, removed from what is left to report."""
@@ -203,6 +259,15 @@ class Guard:
         """The refusals during no test: imports, collection, a thread between tests."""
         self.refused.extend(self._children())
         return [r for r in self.refused if r.test is None]
+
+    def changed(self) -> list[str]:
+        """What no longer holds the guard (``socket.socket`` replaced, an attribute it patched reassigned or
+        deleted), named, after putting it back."""
+        changed = [what for what in (patched.changed() for patched in self.patched) if what is not None]
+        if changed:
+            for patched in self.patched:
+                patched.put_back()
+        return sorted(set(changed))
 
     def stamp_threads(self) -> None:
         """Mark each thread started during a test with that test, so a refusal from a thread that outlives it is
@@ -230,10 +295,13 @@ class Guard:
         """Patch the socket class and psycopg; return what restores them."""
         guard = self
         restore: list[tuple[Any, str, Any]] = []
+        self.children = Path(tempfile.mkdtemp(prefix="embry0-net-")) / "children.log"
 
-        def patch(owner: Any, name: str, value: Any) -> None:
+        def patch(label: str, owner_of: Callable[[], Any], name: str, value: Any) -> None:
+            owner = owner_of()
             restore.append((owner, name, owner.__dict__.get(name, _ABSENT)))
             setattr(owner, name, value)
+            self.patched.append(Patched(label, owner_of, owner, name, value))
 
         real = {name: getattr(socket.socket, name) for name in ("connect", "connect_ex", "sendto", "sendmsg")}
 
@@ -257,7 +325,7 @@ class Guard:
             return real["sendmsg"](sock, buffers, *args, **kwargs)  # type: ignore[no-any-return]
 
         for name, value in (("connect", connect), ("connect_ex", connect_ex), ("sendto", sendto), ("sendmsg", sendmsg)):
-            patch(socket.socket, name, value)
+            patch("socket.socket", lambda: sys.modules["socket"].socket, name, value)
         self._install_psycopg(patch)
 
         def undo() -> None:
@@ -266,6 +334,8 @@ class Guard:
                     delattr(owner, name)  # it was inherited (socket.socket's connect is _socket.socket's)
                 else:
                     setattr(owner, name, value)
+            self.patched.clear()
+            self.remove_children()
 
         return undo
 
@@ -286,9 +356,11 @@ class Guard:
             guard.check_conninfo(conninfo, kwargs)
             return await async_connect(cls, conninfo, **kwargs)
 
-        patch(psycopg.Connection, "connect", classmethod(connect))
-        patch(psycopg.AsyncConnection, "connect", classmethod(aconnect))
-        patch(psycopg, "connect", psycopg.Connection.connect)
+        patch("psycopg.Connection", lambda: sys.modules["psycopg"].Connection, "connect", classmethod(connect))
+        patch(
+            "psycopg.AsyncConnection", lambda: sys.modules["psycopg"].AsyncConnection, "connect", classmethod(aconnect)
+        )
+        patch("psycopg", lambda: sys.modules["psycopg"], "connect", psycopg.Connection.connect)
 
 
 @contextmanager

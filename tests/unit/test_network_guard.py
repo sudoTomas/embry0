@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import os
 import socket
 import subprocess
 import sys
@@ -313,3 +314,99 @@ def test_a_forked_process_s_refusal_is_reported_by_its_parent(tmp_path: Path) ->
     assert "test_fork.py::test_forks tried to connect to 192.0.2.1:9 (thread MainThread (forked process" in (
         done.stdout
     ), done.stdout[-1500:]
+
+
+_TAMPERS = {
+    "assigns the C method back": (
+        "import _socket\nsocket.socket.connect = _socket.socket.connect\n",
+        "socket.socket.connect",
+    ),
+    "deletes the patched method": ("del socket.socket.connect\n", "socket.socket.connect"),
+    "reloads socket": ("import importlib\nimportlib.reload(socket)\n", "socket.socket (replaced, as a reload does)"),
+    "assigns sendto": ("socket.socket.sendto = lambda *a: 0\n", "socket.socket.sendto"),
+    "assigns psycopg.connect": ("import psycopg\npsycopg.connect = print\n", "psycopg.connect"),
+    "assigns Connection.connect": (
+        "import psycopg\npsycopg.Connection.connect = print\n",
+        "psycopg.Connection.connect",
+    ),
+}
+
+
+@pytest.mark.parametrize("tamper", sorted(_TAMPERS))
+def test_a_test_that_leaves_the_guard_changed_fails_and_it_is_put_back(tmp_path: Path, tamper: str) -> None:
+    """One line in a test would take the guard away from every test after it: that test fails, naming what it
+    changed, and the next one is still refused."""
+    _guard()
+    code, changed = _TAMPERS[tamper]
+    done = _pytest_of(
+        tmp_path,
+        {
+            "test_tamper.py": _SWALLOW
+            + "def test_a_changes_it():\n"
+            + "".join(f"    {line}\n" for line in code.splitlines())
+            + "def test_b_reaches():\n    reach()\n"
+        },
+        "-p",
+        "no:randomly",
+    )
+    out = done.stdout
+    assert f"test_tamper.py::test_a_changes_it left {changed} changed" in out, out[-1500:]
+    assert "test_tamper.py::test_b_reaches tried to connect to 192.0.2.1:9" in out, out[-1500:]
+    assert "test_b_reaches left" not in out, f"the guard was not put back whole: {out[-1500:]}"
+    assert "2 passed, 2 errors" in out, out[-600:]
+
+
+def test_a_patch_undone_before_the_test_ends_is_fine(tmp_path: Path) -> None:
+    _guard()
+    done = _pytest_of(
+        tmp_path,
+        {
+            "test_undone.py": "import socket\nimport pytest\n"
+            "def test_monkeypatch(monkeypatch):\n"
+            "    monkeypatch.setattr(socket.socket, 'connect', lambda s, a: None)\n"
+            "@pytest.fixture\n"
+            "def saved():\n"
+            "    kept = socket.socket.connect\n"
+            "    socket.socket.connect = lambda s, a: None\n"
+            "    yield\n"
+            "    socket.socket.connect = kept\n"
+            "def test_fixture_restores(saved):\n    pass\n"
+        },
+    )
+    assert "2 passed in" in done.stdout and done.returncode == 0, done.stdout[-1500:]
+
+
+def test_a_change_outside_any_test_fails_the_session_and_is_put_back(tmp_path: Path) -> None:
+    _guard()
+    done = _pytest_of(
+        tmp_path,
+        {
+            "test_imports.py": _SWALLOW + "import _socket\n"
+            "socket.socket.connect = _socket.socket.connect\n"
+            "def test_reaches():\n    reach()\n"
+        },
+    )
+    out = done.stdout
+    assert "outside any test, socket.socket.connect was changed and put back" in out, out[-1500:]
+    assert "test_imports.py::test_reaches tried to connect to 192.0.2.1:9" in out, out[-1500:]
+    assert done.returncode != 0, out[-600:]
+
+
+def test_a_refusal_outside_any_test_is_said_on_its_own_line_and_in_the_summary(tmp_path: Path) -> None:
+    _guard()
+    done = _pytest_of(tmp_path, {"test_imports.py": _SWALLOW + "reach()\ndef test_nothing():\n    pass\n"})
+    lines = done.stdout.splitlines()
+    assert any(line.startswith("the unit suite reaches no network: outside any test") for line in lines), lines[-12:]
+    assert "1 passed, 1 refused outside a test" in lines[-1], lines[-3:]
+    assert done.returncode == pytest.ExitCode.TESTS_FAILED, lines[-3:]
+
+
+def test_a_forked_child_reports_in_a_private_directory_of_the_guard_s_own() -> None:
+    """Not a name known in advance in the shared temporary directory, which another user could plant a link at."""
+    guard_mod = _guard()
+    with guard_mod.refusing_network(set()) as guard:
+        children = guard.children
+        assert children is not None, "the guard has nowhere for a forked child to report"
+        assert children.parent.stat().st_mode & 0o777 == 0o700, oct(children.parent.stat().st_mode)
+        assert str(os.getpid()) not in str(children), children
+    assert not children.parent.exists(), "the guard's directory outlived it"
