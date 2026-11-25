@@ -79,6 +79,13 @@ def _fallback_trigger_labels() -> ResolvedTriggerLabels:
     return ResolvedTriggerLabels(list(_HARDCODED_TRIGGER_LABELS), "default")
 
 
+def resolved_trigger_labels(stored: Any) -> ResolvedTriggerLabels:
+    """The effective trigger labels from the row's stored ``trigger_labels``: those, else env, else the default."""
+    if stored:
+        return ResolvedTriggerLabels([str(label) for label in stored], "db")
+    return _fallback_trigger_labels()
+
+
 def _env_derived_defaults() -> dict[str, Any]:
     """Read defaults from env at call time. Returns the same masked-secret shape as get()."""
     webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
@@ -179,10 +186,7 @@ class IntegrationConfigRepository:
         was actually matching against.
         """
         row = await self._db.fetchrow("SELECT trigger_labels FROM integration_config WHERE id = 'default'")
-        stored = row["trigger_labels"] if row else None
-        if stored:
-            return ResolvedTriggerLabels([str(label) for label in stored], "db")
-        return _fallback_trigger_labels()
+        return resolved_trigger_labels(row["trigger_labels"] if row else None)
 
     async def log_effective_trigger_labels(self) -> None:
         """Startup line: the label dispatch matches on, and where it came from.

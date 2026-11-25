@@ -469,3 +469,16 @@ async def test_only_a_write_that_may_change_slop_policy_waits_on_a_template(db_w
     assert slop_waited, "a slop_policy write reads the templates FOR SHARE, so it waits for the held row"
     for task in tasks:
         task.result()
+
+
+async def test_a_route_template_made_unfit_where_nothing_guards_it_is_skipped_and_audited(app: Any) -> None:
+    """#664 review: a start-up seed rewrites a built-in with no guard. A job judged slop then takes the route its kind
+    defaults to, as it did, and the skip is audited, which it was not."""
+    tidy = await _tidy_up(app)
+    assert (await _patch(app, {"route_template": "tidy-up"}, owner="acme")).status_code == 200
+    await app.state.db.execute("UPDATE pipeline_templates SET job_kind = 'research' WHERE id = $1", tidy)
+    assert (await _route(app, "acme/widgets"))[0] != "tidy-up", "a template that takes no code job ran a code job"
+    rows = await app.state.db.fetch("SELECT actor, details FROM audit_log WHERE action = 'job.slop_route.skipped'")
+    assert [(r["actor"], r["details"]["template"], r["details"]["job_id"]) for r in rows] == [
+        ("embry0:slop", "tidy-up", "job-acme/widgets")
+    ], f"the slop route not taken must be audited: {rows}"

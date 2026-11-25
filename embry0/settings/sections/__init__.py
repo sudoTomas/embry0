@@ -23,6 +23,7 @@ from embry0.settings.sections.budget import BUDGET
 from embry0.settings.sections.context_audit import CONTEXT_AUDIT
 from embry0.settings.sections.done_when import DONE_WHEN
 from embry0.settings.sections.leads import LEADS
+from embry0.settings.sections.maps import MAPS
 from embry0.settings.sections.salvage import SALVAGE
 from embry0.settings.sections.scout import SCOUT
 from embry0.settings.sections.slop_meter import SLOP_METER
@@ -39,6 +40,7 @@ CATALOG: Catalog = Catalog(
         CONTEXT_AUDIT,
         DONE_WHEN,
         LEADS,
+        MAPS,
         SALVAGE,
         SCOUT,
         SLOP_METER,

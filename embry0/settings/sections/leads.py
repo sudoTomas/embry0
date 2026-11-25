@@ -70,6 +70,12 @@ from pydantic import Field, field_validator
 
 from embry0.services.lead_kinds import rated
 from embry0.settings.registry import UNPRINTABLE_CATEGORIES, EnvImport, ReliedOn, Section, SectionModel
+from embry0.settings.sections.maps import (
+    MAX_ISSUE_LABEL_LENGTH,
+    MAX_ISSUE_LABELS,
+    IssueLabel,
+    issue_label_list,
+)
 
 #: A finder the leads loop runs: each stores leads of its own kind.
 Finder = Literal["ticket", "ci", "alert", "flaky", "review"]
@@ -289,6 +295,17 @@ class LeadsSettings(SectionModel):
         le=8760,
         description="Hours between backlog intakes (ticket), which read Linear once for every repository.",
     )
+    labels: tuple[IssueLabel, ...] = Field(
+        default=("embry0-lead",),
+        description=(
+            "The labels on the issue a lead opens when a person accepts it (every kind but ticket and review, which "
+            f"run on their own ticket or pull request), beside the one naming its kind, such as lead:ci. At most "
+            f"{MAX_ISSUE_LABELS}, each at most "
+            f"{MAX_ISSUE_LABEL_LENGTH} "
+            "characters; none may be one of the deployment's trigger labels, so an issue embry0 runs itself never "
+            "starts a job again."
+        ),
+    )
     max_new_per_repo_per_day: int = Field(
         default=5,
         ge=0,
@@ -393,6 +410,11 @@ class LeadsSettings(SectionModel):
             "that reads as both small and large has the effort of a large one."
         ),
     )
+
+    @field_validator("labels", mode="before")
+    @classmethod
+    def _labels(cls, value: Any) -> Any:
+        return issue_label_list(value)
 
     @field_validator("finders")
     @classmethod
@@ -580,6 +602,7 @@ LEADS = Section(
             "epic_title_words",
             "small_estimate_max",
             "large_estimate_min",
+            "labels",
         }
     ),
     repo_keys=frozenset(),

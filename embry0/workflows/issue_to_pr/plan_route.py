@@ -254,6 +254,24 @@ def build_pipeline_graph(
     }
 
 
+async def _audit_slop_route_skipped(config: Any, state: dict[str, Any], template: str, problem: str) -> None:
+    """The audit row of a slop route not taken because its template no longer fits; never stops the job."""
+    from embry0.audit.helpers import emit_audit
+
+    configurable = (config or {}).get("configurable") or {}
+    app_config = configurable.get("embry0_config")
+    try:
+        await emit_audit(
+            configurable.get("db"),
+            "job.slop_route.skipped",
+            actor="embry0:slop",
+            details={"job_id": str(state.get("job_id") or ""), "template": template, "problem": problem},
+            audit_log_path=getattr(app_config, "audit_log_path", None),
+        )
+    except Exception:  # noqa: BLE001 - a lost audit row never stops the job
+        logger.warning("plan_route_slop_audit_failed", job_id=state.get("job_id"), exc_info=True)
+
+
 async def _find_template(
     templates_repo: Any, *, name: str | None = None, kind: str | None = None
 ) -> dict[str, Any] | None:
@@ -486,7 +504,11 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                 if unfit is None and state.get("pin_full_pipeline"):
                     unfit = full_pipeline_problem(row)
                 if unfit is not None:
+                    # A write checked the template, and the guard keeps an operator's change from making it unfit;
+                    # a start-up seed rewriting a built-in's graph is not guarded (#664 review). The job takes the
+                    # route its kind defaults to, logged and audited.
                     logger.warning("plan_route_slop_template_unfit", template=row["name"], problem=unfit)
+                    await _audit_slop_route_skipped(config, state, str(row["name"]), unfit)
                     continue
             graph = row.get("graph_definition") or {}
             problems = validate_graph_definition(row["name"], graph, agent_types)

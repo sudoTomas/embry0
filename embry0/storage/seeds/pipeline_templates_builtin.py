@@ -352,8 +352,26 @@ for _seed in BUILTIN_PIPELINE_TEMPLATES.values():
         _seed.setdefault(_key, _default)
 
 
-async def seed_builtin_pipeline_templates(repo: PipelineTemplatesRepository) -> None:
-    """Idempotently upsert all builtin pipeline templates."""
+async def seed_builtin_pipeline_templates(repo: PipelineTemplatesRepository, *, settings_db: Any = None) -> None:
+    """Idempotently upsert all builtin pipeline templates.
+
+    A seed rewrites a built-in's graph with no guard, so a release that changes one could leave a template a
+    settings document names (``slop_policy.route_template``, ``maps.analysis_template``) unfit for it. With
+    ``settings_db``, each such template is logged after the seed (``pipeline_template_seed_unfit``); its use falls
+    back, logged and audited, until the document names another (#664 review).
+    """
     for name, fields in BUILTIN_PIPELINE_TEMPLATES.items():
         await repo.upsert_builtin(name=name, **fields)
         logger.info("pipeline_template_seeded", name=name)
+    if settings_db is None:
+        return
+    from embry0.services.slop_routing import unfit_named_templates
+    from embry0.settings.sections import CATALOG
+
+    try:
+        unfit = await unfit_named_templates(settings_db, CATALOG)
+    except Exception:  # noqa: BLE001 - the check never stops a start
+        logger.warning("pipeline_template_seed_check_failed", exc_info=True)
+        return
+    for each in unfit:
+        logger.warning("pipeline_template_seed_unfit", **each)

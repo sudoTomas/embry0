@@ -236,3 +236,17 @@ async def test_a_pass_by_hand_runs_the_loop_for_one_repository(app: FastAPI) -> 
         response = await client.post("/api/v1/leads/run", json={"repo": "acme/web", "backlog": True}, headers=HEADERS)
     assert response.json() == {"repos": {"acme/web": {"ci": {"found": 1}}}}
     app.state.leads_loop.tick.assert_awaited_once_with(["acme/web"], backlog=True)
+
+
+async def test_a_leads_issue_is_labelled_as_its_organization_says_and_never_with_a_trigger_label(
+    app: FastAPI,
+) -> None:
+    """#180: leads.labels as the lead's organization reads it; a label that became a trigger label after it was
+    written, and a keyed one that is one, are left off."""
+    app.state.settings = MemorySettings(organizations={"acme": {"labels": ["team-lead", "later"]}})
+    app.state.integration_repo = SimpleNamespace(get_trigger_labels=AsyncMock(return_value=["LATER", "area:billing"]))
+    async with await _client(app) as client:
+        response = await client.post("/api/v1/proposals/ci:1/accept", json={"by": "octo"}, headers=HEADERS)
+    assert response.status_code == 202, response.text
+    labels = app.state.issues_repo.create.await_args.kwargs["labels"]
+    assert labels == ["team-lead", "lead:ci"], f"the organization's labels, without a trigger label: {labels}"

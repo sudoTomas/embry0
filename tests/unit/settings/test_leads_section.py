@@ -84,6 +84,7 @@ def test_nothing_written_is_how_leads_ran_before_the_section_but_off() -> None:
         "finders": ["ticket", "ci", "alert", "flaky", "review"],
         "interval_hours": 6.0,
         "backlog_interval_hours": 24.0,
+        "labels": ["embry0-lead"],
         "max_new_per_repo_per_day": 5,
         "review_stale_days": 3,
         "flaky_commits": 10,
@@ -395,6 +396,7 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
     section = leads_section()
     assert section.org_keys == {
         "finders",
+        "labels",
         "max_new_per_repo_per_day",
         "review_stale_days",
         "flaky_commits",
@@ -408,7 +410,8 @@ def test_what_an_organization_may_override_and_where_each_key_came_from() -> Non
         "small_estimate_max",
         "large_estimate_min",
     }, (
-        "an organization chooses what one of its repositories' passes does: its finders, its daily cap, "
+        "an organization chooses what one of its repositories' passes does: its finders, its issues' labels, "
+        "its daily cap, "
         "when a review is stale, how far flakiness is read, which tickets are offered and asked, the words "
         "its tickets' readiness is read in, and which severities of a kind its people are asked about in "
         "chat; whether the one loop runs and how often stay the deployment's"

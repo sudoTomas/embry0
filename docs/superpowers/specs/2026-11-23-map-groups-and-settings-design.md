@@ -53,6 +53,12 @@ the settings. Refs #159, #175, #180. Line numbers are at `cc117333`.
     it so that it stops recording analysis jobs is refused with 409 naming the documents, as
     `services/slop_routing.py` does for a route template; the write reads the templates `FOR SHARE`, so the two
     cannot race.
+  - **At use.** A start-up seed rewrites a built-in's route with no guard, and ten built-ins record analysis jobs
+    by their route alone. So a part sent for analysis checks the template again: one that no longer records
+    analysis jobs is replaced by `analysis-default`, logged and audited (`map.analysis_template.replaced`), and the
+    send is refused when that one cannot run it either. `slop_policy.route_template` already falls back to the
+    kind's route at its use; that skip is audited too (`job.slop_route.skipped`). After each seed, a template a
+    document names that fails its check is logged (`pipeline_template_seed_unfit`).
   - `labels` (default `["embry0-map"]`): the labels on the issue a map's send opens, beside `map:<slug>`.
 - **`leads.labels`** (default `["embry0-lead"]`) goes in the `leads` section: the labels on a lead's issue, beside
   `lead:<kind>`. Like the other leads keys, an organization's layer may set it.
