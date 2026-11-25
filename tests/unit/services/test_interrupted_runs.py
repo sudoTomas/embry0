@@ -35,16 +35,23 @@ class _Traces:
     ):
         self.rows, self.already_closed, self.fail = rows, set(already_closed), set(fail)
         self.closed: dict[str, dict[str, Any]] = {}
+        # What the close added to each job's total, and the cost_update it kept: one transaction in the repository.
+        self.added: dict[str, float] = {}
+        self.updates: dict[str, dict[str, Any]] = {}
 
     async def running(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.rows]
 
-    async def close_running(self, trace_id: str, **fields: Any) -> bool:
+    async def close_running(self, trace_id: str, *, cost_update: dict[str, Any] | None = None, **fields: Any) -> bool:
         if trace_id in self.fail:
             raise RuntimeError("database went away")
         if trace_id in self.already_closed:
             return False
         self.closed[trace_id] = fields
+        if cost_update is not None:
+            job_id = next(str(r["job_id"]) for r in self.rows if r["trace_id"] == trace_id)
+            self.added[job_id] = self.added.get(job_id, 0.0) + float(cost_update["cost_usd"])
+            self.updates[job_id] = cost_update
         return True
 
 
@@ -59,21 +66,9 @@ class _Tallies:
 class _Jobs:
     def __init__(self, by_run: dict[str, list[dict[str, Any]]]) -> None:
         self.by_run = by_run
-        self.appended: list[tuple[str, dict[str, Any]]] = []
-        self.added: dict[str, float] = {}
 
     async def run_events(self, run_id: str, event_types: Any) -> list[dict[str, Any]]:
         return [e for e in self.by_run.get(run_id, []) if e.get("type") in set(event_types)]
-
-    async def append_log_event(self, job_id: str, event: dict[str, Any]) -> int:
-        self.appended.append((job_id, event))
-        return len(self.appended)
-
-    async def increment_cost(self, job_id: str, cost_delta: float) -> None:
-        self.added[job_id] = self.added.get(job_id, 0.0) + cost_delta
-
-    async def get(self, job_id: str) -> dict[str, Any] | None:
-        return {"job_id": job_id}
 
 
 class _Metrics:
@@ -121,8 +116,8 @@ async def test_each_run_left_running_is_closed_and_charged_what_is_known_of_it()
     traces = _Traces([_trace("run-metered", "job-1"), _trace("run-sandbox", "job-2"), _trace("run-blank", "job-3")])
     jobs = _Jobs({"run-sandbox": [_usage("run-sandbox", 0.25), {"type": "text", "run_id": "run-sandbox"}]})
     metrics = _Metrics()
-    closed = await close_interrupted_runs(traces, _Tallies({"run-metered": [_kept()]}), jobs, metrics)
-    assert closed == 3
+    sweep = await close_interrupted_runs(traces, _Tallies({"run-metered": [_kept()]}), jobs, metrics)
+    assert (sweep.found, sweep.closed, sweep.left) == (3, 3, [])
     metered, sandbox, blank = (traces.closed[r] for r in ("run-metered", "run-sandbox", "run-blank"))
     assert metered["cost_usd"] == pytest.approx(PROXY_COST) and metered["metering"]["closed"]["charged_from"] == "proxy"
     assert sandbox["cost_usd"] == pytest.approx(0.25) and sandbox["metering"]["closed"]["charged_from"] == "sandbox"
@@ -133,9 +128,9 @@ async def test_each_run_left_running_is_closed_and_charged_what_is_known_of_it()
         assert 80_000 <= fields["duration_ms"] <= 200_000, fields["duration_ms"]
     assert sorted(metrics.closed) == [("restart", "nothing"), ("restart", "proxy"), ("restart", "sandbox")]
     # The charge reaches the job's total as the run's cost_update would have; nothing is added for a $0 close.
-    assert jobs.added == {"job-1": pytest.approx(PROXY_COST), "job-2": pytest.approx(0.25)}
-    updates = {job: e for job, e in jobs.appended if e["type"] == "cost_update"}
-    assert set(updates) == {"job-1", "job-2"} and updates["job-2"]["run_id"] == "run-sandbox"
+    assert traces.added == {"job-1": pytest.approx(PROXY_COST), "job-2": pytest.approx(0.25)}
+    assert set(traces.updates) == {"job-1", "job-2"}
+    assert (traces.updates["job-2"]["type"], traces.updates["job-2"]["run_id"]) == ("cost_update", "run-sandbox")
 
 
 async def test_a_run_whose_cost_update_came_is_not_added_to_its_job_twice() -> None:
@@ -155,7 +150,7 @@ async def test_a_run_whose_cost_update_came_is_not_added_to_its_job_twice() -> N
     traces, jobs = _Traces([_trace("run-1", "job-1")]), _Jobs({"run-1": [update]})
     await close_interrupted_runs(traces, _Tallies({}), jobs, _Metrics())
     assert traces.closed["run-1"]["cost_usd"] == pytest.approx(0.4)
-    assert jobs.added == {} and jobs.appended == [], "the run's cost was added to its job again"
+    assert traces.added == {}, "the run's cost was added to its job again"
 
 
 async def test_a_trace_closed_meanwhile_or_failing_to_close_is_left_and_the_rest_closed() -> None:
@@ -165,10 +160,10 @@ async def test_a_trace_closed_meanwhile_or_failing_to_close_is_left_and_the_rest
         fail={"run-fails"},
     )
     jobs, metrics = _Jobs({r: [_usage(r, 0.1)] for r in ("run-gone", "run-fails", "run-ok")}), _Metrics()
-    assert await close_interrupted_runs(traces, _Tallies({}), jobs, metrics) == 1
+    assert (await close_interrupted_runs(traces, _Tallies({}), jobs, metrics)).closed == 1
     assert set(traces.closed) == {"run-ok"}
     assert metrics.closed == [("restart", "sandbox")], "a trace this did not close was counted"
-    assert set(jobs.added) == {"job-3"}, "a run this did not close was added to its job"
+    assert set(traces.added) == {"job-3"}, "a run this did not close was added to its job"
 
 
 async def test_a_run_whose_trace_kept_no_pricing_is_charged_its_reported_costs() -> None:
@@ -182,4 +177,32 @@ async def test_a_scan_that_fails_closes_nothing_and_does_not_raise() -> None:
         async def running(self) -> list[dict[str, Any]]:
             raise RuntimeError("database went away")
 
-    assert await close_interrupted_runs(_Broken([]), _Tallies({}), _Jobs({}), _Metrics()) == 0
+    assert (await close_interrupted_runs(_Broken([]), _Tallies({}), _Jobs({}), _Metrics())).closed == 0
+
+
+async def test_runs_the_budget_does_not_reach_are_left_for_the_background() -> None:
+    """A start-up that finds many runs left running goes on after its budget; the rest are closed after, each only
+    while still running, and a run this process began meanwhile is never among them."""
+    from embry0.services.interrupted_runs import close_runs
+
+    traces = _Traces([_trace(f"run-{n}", f"job-{n}") for n in range(3)])
+    jobs = _Jobs({f"run-{n}": [_usage(f"run-{n}", 0.1)] for n in range(3)})
+    sweep = await close_interrupted_runs(traces, _Tallies({}), jobs, None, budget_seconds=0)
+    assert (sweep.found, sweep.closed, [r["trace_id"] for r in sweep.left]) == (3, 0, ["run-0", "run-1", "run-2"])
+    traces.rows.append(_trace("run-new", "job-new"))  # this process's own run, begun after the sweep took its list
+    assert await close_runs(sweep.left, traces, _Tallies({}), jobs, None) == 3
+    assert set(traces.closed) == {"run-0", "run-1", "run-2"}, "a run of this process was closed"
+
+
+async def test_the_sweep_reads_where_one_call_ends_and_the_next_begins() -> None:
+    """Two real calls with the same figures, a tool_result between them, are two calls (not one)."""
+    run = "run-1"
+    result = events.tool_result(
+        tool_id="t", content="ok", is_error=False, run_id=run, node="developer", agent="developer"
+    )
+    traces = _Traces([_trace(run, "job-1")])
+    await close_interrupted_runs(
+        traces, _Tallies({}), _Jobs({run: [_usage(run, 0.25), result, _usage(run, 0.25)]}), None
+    )
+    closed = traces.closed[run]
+    assert (closed["cost_usd"], closed["metering"]["closed"]["calls"]) == (pytest.approx(0.5), 2)

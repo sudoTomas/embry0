@@ -278,10 +278,12 @@ call from a sandbox with no declared run (`METER_REQUIRE_RUN` is not set).
 
 **A run that never ended** (#694). A run's trace is written `running` before
 its exec and finished after it. A run the orchestrator stopped in the middle of
-(a restart, a deploy, a crash) is closed at the next start-up, before any run
-of the new process begins; a run that was cancelled (its job cancelled, or a
-shutdown that could not wait for it) is closed at the cancel, waiting at most
-3 seconds before its cancellation goes on. Either is closed `error` with
+(a restart, a deploy, a crash) is closed at the next start-up: the traces still
+`running` are taken before any run of the new process begins, closed for up to
+10 seconds before recovery, and the rest in the background. A run that was
+cancelled (its job cancelled, or a shutdown that could not wait for it), from
+its exec to its own finish, is closed at the cancel, waiting at most 3 seconds
+before its cancellation goes on. Either is closed `error` with
 `ERR_RUN_INTERRUPTED` and charged what is known of it
 (`embry0/agents/run_close.py`):
 - a run the metering proxies counted: the tallies kept of it in `run_meter`,
@@ -289,17 +291,21 @@ shutdown that could not wait for it) is closed at the cancel, waiting at most
   never read, so the tally is not whole, and the larger of that and the
   sandbox's figure is charged;
 - any other run: the sandbox's last figure, from the run's own events: its
-  `cost_update` when one came, else its `turn_usage` events. The CLI sends a
-  message's usage again with each of its content blocks, so consecutive events
-  with the same input side count as one call, at the most output any carries;
-  a call with no cost is priced at the run's provider record (`traces.pricing`);
+  `cost_update` when one came, else its `turn_usage` events, put together into
+  model calls. A call's events are those of one parent (the run, or a subagent)
+  up to that parent's next `tool_result`, which always lies between two calls.
+  Within a call, an event with the call's own input side is an older image's
+  repeat of the whole response, counted at its largest, and one adding no input
+  is what a newer image's later block adds (#676), summed. A call with no cost is
+  priced at the run's provider record (`traces.pricing`);
 - a run with neither is closed at $0, and says so.
 
 `traces.metering.closed` records the cause, what the run was charged from and
 why; the closing is logged (`interrupted_run_closed`, a warning when nothing
 was known) and counted (`embry0_interrupted_runs_closed_total`). The charge
 reaches the job's total as the run's `cost_update` would have, less what one
-that came had already added. A run whose exec crashed is charged the same
+that came had already added, in the same transaction as the close: neither is
+ever written without the other. A run whose exec crashed is charged the same
 sandbox figure, not $0.
 
 ### Changing the catalogue

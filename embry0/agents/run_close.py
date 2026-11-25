@@ -68,13 +68,23 @@ def _cost(value: Any) -> float | None:
 def sandbox_figure(events: Iterable[Mapping[str, Any]], record: ProviderRecord | None) -> SandboxFigure:
     """The sandbox's last figure of a run from its events, in the order they came.
 
-    A ``cost_update`` is the run's own total and settles it. Without one, each ``turn_usage`` is a model call's usage,
-    but the CLI sends a message's usage again with each of its content blocks: consecutive events with the same input
-    side (model, input, cache read and cache creation tokens, under the same parent) are one call, at the most output
-    and cost any of them carries. A call whose event has no cost is priced at ``record``'s rates when it has some.
+    A ``cost_update`` is the run's own total and settles it. Without one, the ``turn_usage`` events are put together
+    into model calls. One call's events are those of one parent (the run, or a subagent under its tool call) up to
+    that parent's next ``tool_result``: a model call's answer comes before the result of the tool it asked for, and
+    the next call after it, so a ``tool_result`` always lies between two calls of one parent. A sandbox sends one
+    call's usage in one of two forms:
+
+    - an image since #676 sends what each message adds to the response's usage, so the call's events sum to it and
+      its later blocks add no input;
+    - an older image sent each content block's message with the whole response's usage again: the same input side
+      (model, input, cache read and cache creation tokens), at the most output and cost any of them carries.
+
+    So within a call an event with the call's own input side (never all zero for a real call) is a repeat, folded
+    at its largest; one adding no input is an addition, summed; one with another input side is the next call. A call
+    whose events do not all carry a cost is priced at ``record``'s rates when it has some.
     """
     calls: list[dict[str, Any]] = []
-    last_key: tuple[Any, ...] | None = None
+    open_call: dict[str, dict[str, Any]] = {}
     for event in events:
         kind = event.get("type")
         if kind == "cost_update":
@@ -92,28 +102,36 @@ def sandbox_figure(events: Iterable[Mapping[str, Any]], record: ProviderRecord |
                 reported_usd=reported,
                 source="cost_update",
             )
+        parent = str(event.get("parent_tool_use_id") or "")
+        if kind == "tool_result":
+            open_call.pop(parent, None)  # that parent's call is answered; its next usage is its next call
+            continue
         if kind != "turn_usage":
             continue
-        key = (
-            event.get("parent_tool_use_id") or "",
-            str(event.get("model") or ""),
+        model = str(event.get("model") or "")
+        side = (
             _count(event.get("input_tokens")),
             _count(event.get("cache_read_tokens")),
             _count(event.get("cache_creation_tokens")),
         )
         output, cost = _count(event.get("output_tokens")), _cost(event.get("cost_usd"))
-        if key == last_key and calls:
-            call = calls[-1]
-            call["output"] = max(call["output"], output)
-            call["cost"] = cost if call["cost"] is None else max(call["cost"], cost or 0.0)
+        call = open_call.get(parent)
+        if call is not None and any(side) and (model, side) == (call["model"], call["side"]):
+            call["output"] = max(call["output"], output)  # an older image's repeat of the whole response
+            call["cost"] = None if cost is None or call["cost"] is None else max(call["cost"], cost)
             continue
-        calls.append({"key": key, "output": output, "cost": cost})
-        last_key = key
+        if call is not None and not any(side):
+            call["output"] += output  # what one more block of the response adds
+            call["cost"] = None if cost is None or call["cost"] is None else call["cost"] + cost
+            continue
+        call = {"model": model, "side": side, "output": output, "cost": cost}
+        calls.append(call)
+        open_call[parent] = call
     total = 0.0
     tokens = [0, 0, 0, 0]
     unpriced = 0
     for call in calls:
-        _parent, _model, input_tokens, cache_read, cache_creation = call["key"]
+        input_tokens, cache_read, cache_creation = call["side"]
         for index, value in enumerate((input_tokens, call["output"], cache_read, cache_creation)):
             tokens[index] += value
         cost = call["cost"]

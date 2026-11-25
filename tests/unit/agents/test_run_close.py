@@ -49,6 +49,74 @@ def test_a_call_s_usage_sent_again_with_each_content_block_counts_once() -> None
     assert (figure.source, figure.unpriced_calls, figure.reported_usd) == ("turn_usage", 0, None)
 
 
+def test_what_each_message_adds_is_summed_never_folded() -> None:
+    """Since #676 a sandbox sends what each message adds to its response: the later blocks add no input, so equal
+    zero-input events are different additions, all counted (two of them were folded into one)."""
+    figure = sandbox_figure(
+        [_usage(1000, 5, 0.0103), _usage(0, 10, 0.00006), _usage(0, 10, 0.00006), _usage(1300, 40, 0.0028)], XAI
+    )
+    assert figure.tokens == (2300, 65, 0, 0), f"what a message added was folded away: {figure.tokens}"
+    assert figure.cost_usd == pytest.approx(0.0103 + 0.00012 + 0.0028)
+
+
+def _result(parent: str | None = None) -> dict[str, Any]:
+    return events.tool_result(
+        tool_id="t",
+        content="ok",
+        is_error=False,
+        run_id="run-1",
+        node="developer",
+        agent="developer",
+        parent_tool_use_id=parent,
+    )
+
+
+ONE = (1000 * 2.0 + 1 * 6.0 + 400 * 2.0 * 0.25) / 1e6
+
+
+def test_two_real_calls_with_the_same_figures_are_two_calls_on_either_image() -> None:
+    """The review's case: a tool_result lies between two calls, never between one response's blocks."""
+    newer = sandbox_figure([_usage(1000, 1, None, cache=400), _result(), _usage(1000, 1, None, cache=400)], XAI)
+    assert (newer.calls, newer.cost_usd) == (2, pytest.approx(2 * ONE)), "two real calls were counted as one"
+    older = sandbox_figure(
+        [
+            _usage(1000, 1, None, cache=400),
+            _usage(1000, 1, None, cache=400),
+            _result(),
+            _usage(1000, 1, None, cache=400),
+        ],
+        XAI,
+    )
+    assert (older.calls, older.cost_usd) == (2, pytest.approx(2 * ONE)), "an older image's repeat was counted again"
+
+
+def test_a_newer_image_s_added_output_is_part_of_its_call() -> None:
+    """Since #676 a later block sends only what it adds: its output belongs to the call, which stays one call."""
+    figure = sandbox_figure([_usage(1000, 1, None, cache=400), _usage(0, 39, None), _result()], XAI)
+    assert (figure.calls, figure.tokens) == (1, (1000, 40, 400, 0)), figure
+    assert figure.cost_usd == pytest.approx((1000 * 2.0 + 40 * 6.0 + 400 * 2.0 * 0.25) / 1e6)
+
+
+def test_a_subagent_s_calls_are_its_own_and_do_not_end_its_parent_s() -> None:
+    """The parent asks for the Task tool; the subagent's calls and results ride under it; the parent's next call
+    comes after the Task's own result."""
+    figure = sandbox_figure(
+        [
+            _usage(1000, 5, None),
+            _usage(1000, 5, None),  # an older image's repeat: the Task call's block
+            _usage(500, 5, None, parent="task-1"),
+            _result("task-1"),
+            _usage(500, 5, None, parent="task-1"),  # the subagent's second call, same figures
+            _usage(1000, 5, None),  # the parent's repeat again, before the Task's result: still its first call
+            _result(),
+            _usage(1000, 5, None),
+        ],
+        XAI,
+    )
+    assert figure.calls == 4, f"calls: {figure.calls}"
+    assert figure.tokens == (3000, 20, 0, 0)
+
+
 def test_calls_under_different_parents_or_inputs_are_not_merged() -> None:
     figure = sandbox_figure(
         [_usage(1000, 5, 0.01), _usage(1000, 5, 0.01, parent="tool-1"), _usage(1000, 5, 0.01, cache=10)], XAI

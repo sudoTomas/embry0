@@ -382,3 +382,65 @@ async def test_running_traces_are_listed_and_closed_only_while_still_running(db_
     assert closed["metering"] == {"closed": {"cause": "restart"}}
     assert spent == [("grok-4.7", 0.75)], f"the close must count the spend exactly once, got {spent}"
     assert [r["trace_id"] for r in await traces_repo.running()] == ["run-2"]
+
+
+@pytest.mark.asyncio
+async def test_a_close_adds_its_charge_to_the_job_in_the_same_transaction(db_with_migrations: DatabasePool):
+    """#694: the close, its cost_update and the job's total go together or not at all."""
+    import contextlib
+    from typing import Any
+
+    jobs_repo = JobsRepository(db_with_migrations)
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+    update = {"type": "cost_update", "cost_usd": 0.25, "run_id": "run-1", "node": "developer", "agent": "developer"}
+    fields: dict[str, Any] = {
+        "result": "error",
+        "cost_usd": 0.25,
+        "duration_ms": 1,
+        "result_summary": "closed",
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "error_code": "ERR_RUN_INTERRUPTED",
+        "stderr_tail": None,
+        "metering": None,
+        "sandbox_cost_usd": 0.25,
+    }
+
+    class _Conn:
+        def __init__(self, conn: Any) -> None:
+            self._conn = conn
+
+        async def fetchrow(self, *args: Any) -> Any:
+            return await self._conn.fetchrow(*args)
+
+        async def execute(self, sql: str, *args: Any) -> Any:
+            if "INSERT INTO job_logs" in sql:
+                raise RuntimeError("the log write failed")
+            return await self._conn.execute(sql, *args)
+
+    class _LogFails:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(db_with_migrations, name)
+
+        @contextlib.asynccontextmanager
+        async def transaction(self) -> Any:
+            async with db_with_migrations.transaction() as conn:
+                yield _Conn(conn)
+
+    traces_repo = TracesRepository(db_with_migrations)
+    for run_id in ("run-1", "run-2"):
+        await traces_repo.create(job_id=job_id, agent_type="developer", model="m", result="running", trace_id=run_id)
+    with pytest.raises(RuntimeError):
+        await TracesRepository(_LogFails()).close_running("run-1", **fields, cost_update=update)  # type: ignore[arg-type]
+    still = await traces_repo.get("run-1")
+    assert still is not None and still["result"] == "running", "the close stayed when its charge was not added"
+    assert (await jobs_repo.get(job_id) or {})["total_cost_usd"] == 0.0
+
+    assert await traces_repo.close_running("run-1", **fields, cost_update=update) is True
+    assert await traces_repo.close_running("run-2", **fields, cost_update=None) is True
+    assert (await jobs_repo.get(job_id) or {})["total_cost_usd"] == pytest.approx(0.25), "added once, for run-1"
+    kept = await jobs_repo.run_events("run-1", ("cost_update",))
+    assert [(e["cost_usd"], e["job_id"]) for e in kept] == [(0.25, job_id)]
+    assert await jobs_repo.run_events("run-2", ("cost_update",)) == []
