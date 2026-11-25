@@ -399,3 +399,103 @@ def test_an_output_count_with_no_input_count_anywhere_is_not_the_answer_s_whole_
     call = _call()
     usage, estimated = charge(call, reading)
     assert estimated and usage.input_tokens == call.input_estimate and usage.output_tokens >= 300
+
+
+def _events(*events: dict[str, Any]) -> bytes:
+    return b"".join(b"data: " + json.dumps(e).encode() + b"\n\n" for e in events)
+
+
+_START = {
+    "type": "message_start",
+    "message": {"model": "m", "usage": {"input_tokens": 1000, "cache_read_input_tokens": 500, "output_tokens": 1}},
+}
+
+
+@pytest.mark.parametrize(
+    ("later", "expected"),
+    [
+        ({"input_tokens": 0, "output_tokens": 50}, Usage(input_tokens=1000, output_tokens=50, cache_read_tokens=500)),
+        (
+            {"input_tokens": 1000, "cache_read_input_tokens": 0, "output_tokens": 50},
+            Usage(input_tokens=1000, output_tokens=50, cache_read_tokens=500),
+        ),
+    ],
+    ids=["input reported again as 0", "cache read reported again as 0"],
+)
+def test_a_count_reported_again_lower_keeps_the_larger(later: dict[str, Any], expected: Usage) -> None:
+    reader = reader_for("anthropic", "text/event-stream")
+    reader.feed(_events(_START, {"type": "message_delta", "usage": later}))
+    reading = reader.finish()
+    assert reading.complete
+    assert reading.usage == expected, "a later, lower report replaced an earlier count"
+
+
+def test_a_chat_stream_reporting_its_usage_twice_keeps_the_larger_counts() -> None:
+    def chunk(prompt: int, completion: int, cached: int = 0) -> dict[str, Any]:
+        details = {"cached_tokens": cached}
+        usage = {"prompt_tokens": prompt, "completion_tokens": completion, "prompt_tokens_details": details}
+        return {"model": "m", "choices": [], "usage": usage}
+
+    reader = reader_for("openai_chat", "text/event-stream")
+    reader.feed(_events(chunk(100, 50, cached=40), chunk(100, 5, cached=0)))
+    assert reader.finish().usage == Usage(input_tokens=100, output_tokens=50, cache_read_tokens=40)
+
+
+def test_a_stream_past_the_bound_still_counts_every_byte_it_carries() -> None:
+    reader = reader_for("anthropic", "text/event-stream")
+    reader.feed(b"data: " + b"z" * (MAX_EVENT_LINE_BYTES + 10))
+    after = [b"x" * 100_000 for _ in range(30)]
+    for piece in after:
+        reader.feed(piece)
+    assert reader.finish().content_bytes >= MAX_EVENT_LINE_BYTES + sum(len(p) for p in after)
+
+
+@pytest.mark.parametrize(
+    ("wire", "event"),
+    [
+        ("anthropic", {"type": "message_novelty", "text": "q" * 900}),
+        ("openai_chat", {"id": "c", "object": "chat.completion.novelty", "text": "q" * 900}),
+    ],
+    ids=["an Anthropic event of an unknown type", "a chat chunk with neither choices nor usage"],
+)
+def test_an_event_of_a_shape_this_release_does_not_know_counts_its_bytes(wire: Any, event: dict[str, Any]) -> None:
+    reader = reader_for(wire, "text/event-stream")
+    data = json.dumps(event).encode()
+    reader.feed(b"data: " + data + b"\n\n")
+    reading = reader.finish()
+    assert not reading.complete
+    assert reading.content_bytes == len(data), "an unknown event was not counted toward the estimate"
+
+
+def test_an_event_past_the_bound_in_one_chunk_is_not_read_either() -> None:
+    """The bound holds for a line that arrives whole: nothing after it is read, and its bytes still count."""
+    reader = reader_for("anthropic", "text/event-stream")
+    huge = b"data: " + b"y" * (MAX_EVENT_LINE_BYTES + 10) + b"\n\n"
+    tail = _events({"type": "message_delta", "usage": {"input_tokens": 9, "output_tokens": 999_999}})
+    reader.feed(_events(_START) + huge + tail)
+    reading = reader.finish()
+    assert not reading.complete, "the stream was read past an event over the bound"
+    assert reading.content_bytes >= MAX_EVENT_LINE_BYTES + len(tail)
+
+
+def test_a_chat_stream_without_usage_is_estimated_from_its_content_not_its_framing() -> None:
+    """Each chunk's JSON around its delta is framing, not output the model produced."""
+    chunks = [{"id": "c", "model": "m", "choices": [{"index": 0, "delta": {"content": "z" * 30}}]} for _ in range(10)]
+    reader = reader_for("openai_chat", "text/event-stream")
+    reader.feed(_events(*chunks) + b"data: [DONE]\n\n")
+    reading = reader.finish()
+    assert not reading.complete
+    assert reading.content_bytes == 300
+
+
+def test_a_line_with_no_end_is_not_held_past_the_bound() -> None:
+    """A stream that never ends its line cannot make the proxy hold more than the bound (64 KiB pieces, as httpx
+    reads them)."""
+    reader = reader_for("anthropic", "text/event-stream")
+    piece = b"y" * 65536
+    reader.feed(b"data: ")
+    for _ in range(MAX_EVENT_LINE_BYTES // len(piece) + 4):
+        reader.feed(piece)
+    held = len(reader._line) + reader._pending  # type: ignore[attr-defined]
+    assert held <= MAX_EVENT_LINE_BYTES, f"the reader holds {held} bytes"
+    assert reader.finish().content_bytes >= MAX_EVENT_LINE_BYTES

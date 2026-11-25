@@ -171,9 +171,13 @@ async def test_a_streaming_chat_call_goes_upstream_asking_for_its_usage(aiohttp_
     assert (model["input_tokens"], model["output_tokens"], model["cache_read_tokens"]) == (1376, 64, 1024)
 
 
-async def test_an_answer_that_times_out_is_charged_its_ceiling(aiohttp_client):
+@pytest.mark.parametrize(
+    "timeout", [httpx.ReadTimeout("slow"), httpx.ConnectTimeout("no connection yet")], ids=["read", "connect"]
+)
+async def test_an_answer_that_times_out_is_charged_its_ceiling(aiohttp_client, timeout):
+    """A connect timeout too: the proxy cannot tell whether the request left, so it counts the most it could cost."""
     upstream = _Upstream()
-    upstream.answers.append(_Answer(fail=httpx.ReadTimeout("slow")))
+    upstream.answers.append(_Answer(fail=timeout))
     client = await _xai(aiohttp_client, upstream)
     await _declare(client)
     body = _messages(max_tokens=4000)

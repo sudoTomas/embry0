@@ -114,6 +114,39 @@ def test_admin_guard_success_clears_failure_window():
         assert guard.check("wrong") == "unauthorized"  # counter restarted
 
 
+def test_one_address_s_guesses_lock_out_only_that_address():
+    """A sandbox that guesses the admin token locks itself out, never the orchestrator's address."""
+    clock = Clock()
+    guard = AdminGuard("secret", now=clock)
+    for _ in range(9):
+        assert guard.check("wrong", "10.0.0.5") == "unauthorized"
+    assert guard.check("wrong", "10.0.0.5") == "locked"
+    assert guard.check("secret", "127.0.0.1") == "ok", "the orchestrator was locked out by a sandbox's guesses"
+    assert guard.check("wrong", "127.0.0.1") == "unauthorized", "another address's failures were counted here"
+    assert guard.check("secret", "10.0.0.5") == "locked", "the guessing address got through its own lock"
+    clock.t += 61
+    assert guard.check("secret", "10.0.0.5") == "ok"
+
+
+def test_each_address_s_failures_are_counted_apart():
+    """Five wrong guesses from each of two addresses lock neither: ten in all is not ten from one."""
+    guard = AdminGuard("secret", now=Clock())
+    for _ in range(5):
+        assert guard.check("wrong", "10.0.0.5") == "unauthorized"
+    for _ in range(5):
+        assert guard.check("wrong", "10.0.0.6") == "unauthorized", "another address's failures counted here"
+
+
+def test_the_addresses_remembered_are_bounded():
+    """Past the bound the address remembered longest gives way, so its count starts again."""
+    clock = Clock()
+    guard = AdminGuard("secret", now=clock, max_sources=1)
+    for _ in range(9):
+        guard.check("wrong", "10.0.0.5")
+    guard.check("wrong", "10.0.0.6")
+    assert guard.check("wrong", "10.0.0.5") == "unauthorized"
+
+
 def test_admin_guard_empty_token_required():
     with pytest.raises(ValueError):
         AdminGuard("")
@@ -180,6 +213,34 @@ async def test_admin_backoff_over_http(client):
         headers={"X-Admin-Token": ADMIN},
     )
     assert also_locked.status == 429
+
+
+async def test_a_sandbox_s_guesses_never_lock_the_orchestrator_out_over_http(aiohttp_client):
+    """The orchestrator reaches a proxy's admin routes from the proxy's loopback (docker exec); a sandbox, from its
+    own address. Ten wrong guesses from the sandbox's address leave the orchestrator's declare and reads working."""
+    import aiohttp
+
+    from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
+
+    orchestrator = await aiohttp_client(create_xai_proxy_app(ADMIN))
+    assert (
+        await orchestrator.post(
+            "/admin/enroll", json={"sandbox_id": "s1", "sandbox_token": TOK}, headers={"X-Admin-Token": ADMIN}
+        )
+    ).status == 200
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(local_addr=("127.0.0.2", 0))) as sandbox:
+        statuses = []
+        for _ in range(10):
+            async with sandbox.get(orchestrator.make_url("/admin/meter"), headers={"X-Admin-Token": "guess"}) as r:
+                statuses.append(r.status)
+        assert statuses[-1] == 429, f"the guessing address was never locked: {statuses}"
+        async with sandbox.get(orchestrator.make_url("/admin/meter"), headers={"X-Admin-Token": ADMIN}) as r:
+            assert r.status == 429, "the guessing address got through its own lock"
+    declared = await orchestrator.post(
+        "/admin/runs", json={"sandbox_id": "s1", "run_id": "run-1"}, headers={"X-Admin-Token": ADMIN}
+    )
+    assert declared.status == 200, f"the orchestrator was locked out by a sandbox's guesses (HTTP {declared.status})"
+    assert (await orchestrator.get("/admin/meter", headers={"X-Admin-Token": ADMIN})).status == 200
 
 
 async def test_registry_full_maps_to_429(client):

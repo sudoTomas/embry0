@@ -772,9 +772,11 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > (403); without it, the call counts in that sandbox's unattributed tally.
 > Counting fails toward more, never less: an answer whose usage cannot be read
 > is charged an estimate from its bytes (two bytes a token, above what the
-> providers count for ordinary text), one lost after the request went upstream
-> is charged its ceiling (the request's size as input, its output limit as
-> output), and only an error answer is charged nothing. The xai-proxy forwards
+> providers count for ordinary text), one lost after the request may have gone
+> upstream (a timeout, a connect timeout included, or a failure past the
+> connect) is charged its ceiling (the request's size as input, its output
+> limit as output), a count reported again lower never lowers it, and only an
+> error answer is charged nothing. The xai-proxy forwards
 > no billed call it cannot meter: anything but a read, `/v1/messages`,
 > `/v1/messages/count_tokens` and `/v1/chat/completions` is refused (404,
 > `xai_proxy_path_refused`). The orchestrator does not read the meter yet.

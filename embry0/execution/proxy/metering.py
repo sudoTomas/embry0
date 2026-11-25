@@ -14,13 +14,16 @@ Everything here fails toward counting more, never less:
   a shape this release does not know) is charged an estimate from the bytes it
   carried, above what the provider counts for ordinary text, and marked
   ``estimated``;
-- a call whose answer never arrived (an upstream timeout after the request was
-  sent) is charged its ceiling: the request's size as input and the most output
-  it asked for;
+- a call whose answer never arrived (a timeout, a connect timeout included,
+  since the proxy cannot tell whether the request left; or a failure past the
+  connect) is charged its ceiling: the request's size as input and the most
+  output it asked for;
 - a call still in flight shows in every snapshot with that ceiling, so a reader
   that loses the proxy (a restart) can charge it;
 - an error answer (no 2xx) is counted as an error and charged nothing: the
-  providers bill no tokens for one.
+  providers bill no tokens for one;
+- a count an answer reports again lower than before (a later stream event)
+  never lowers it: every counter keeps the largest value reported.
 
 Two wire formats are read: Anthropic's Messages API (``anthropic``, which
 xAI's compat endpoint also speaks) and OpenAI's chat completions
@@ -110,6 +113,11 @@ class Usage:
     def inputs(self) -> int:
         """Every input token, cached or not."""
         return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
+
+    def raise_to(self, other: Usage) -> None:
+        """Keep, for each count, the larger of this one and ``other``'s: a count only ever grows."""
+        for f in fields(self):
+            setattr(self, f.name, max(getattr(self, f.name), getattr(other, f.name)))
 
 
 def _count(value: Any) -> int | None:
@@ -207,8 +215,9 @@ class _Reader:
 
 
 def _anthropic_usage(raw: Any, into: Usage) -> frozenset[str]:
-    """Lay the readable fields of an Anthropic ``usage`` over ``into``; the names of those it laid. A field present
-    with a value that is not a count makes the whole usage unreadable (nothing laid)."""
+    """Raise ``into`` to the readable fields of an Anthropic ``usage`` (a count lower than the one held leaves it as
+    it was); the names of those read. A field present with a value that is not a count makes the whole usage
+    unreadable (nothing read)."""
     if not isinstance(raw, dict):
         return frozenset()
     found: dict[str, int] = {}
@@ -239,7 +248,7 @@ def _anthropic_usage(raw: Any, into: Usage) -> frozenset[str]:
                     return frozenset()
                 found[key] = value
     for name, value in found.items():
-        setattr(into, name, value)
+        setattr(into, name, max(getattr(into, name), value))
     return frozenset(found)
 
 
@@ -333,22 +342,30 @@ class _EventReader(_Reader):
 
     def feed(self, chunk: bytes) -> None:
         if self._broken:
+            # No longer read, still counted: the estimate grows with what the stream carries.
+            self.reading.content_bytes += len(chunk)
             return
         self._line.extend(chunk)
-        while True:
+        while not self._broken:
             end = self._line.find(b"\n")
             if end < 0:
                 break
             line = bytes(self._line[:end]).rstrip(b"\r")
             del self._line[: end + 1]
             self._take_line(line)
-        if len(self._line) + self._pending > MAX_EVENT_LINE_BYTES:
-            # Nothing more of this stream is read; what it carried still counts toward the estimate.
-            self.reading.content_bytes += len(self._line) + self._pending
+        if not self._broken and len(self._line) + self._pending > MAX_EVENT_LINE_BYTES:
+            self._break()
+        if self._broken:
+            self.reading.content_bytes += len(self._line)
             self._line.clear()
-            self._data.clear()
-            self._pending = 0
-            self._broken = True
+
+    def _break(self, extra: int = 0) -> None:
+        """An event past :data:`MAX_EVENT_LINE_BYTES`: nothing more of this stream is read, and what it carried,
+        ``extra`` bytes besides the event held, still counts toward the estimate."""
+        self.reading.content_bytes += self._pending + extra
+        self._data.clear()
+        self._pending = 0
+        self._broken = True
 
     def _take_line(self, line: bytes) -> None:
         if not line:
@@ -359,6 +376,9 @@ class _EventReader(_Reader):
         if line.startswith(b"data:"):
             value = line[5:]
             value = value[1:] if value.startswith(b" ") else value
+            if self._pending + len(value) > MAX_EVENT_LINE_BYTES:
+                self._break(len(value))
+                return
             self._data.append(value)
             self._pending += len(value)
 
@@ -370,10 +390,12 @@ class _EventReader(_Reader):
         except (ValueError, RecursionError):
             self.reading.content_bytes += len(data)
             return
-        if isinstance(payload, dict):
-            self._event(payload)
+        if not isinstance(payload, dict) or not self._event(payload):
+            # A shape this reader does not know: its bytes count toward the estimate.
+            self.reading.content_bytes += len(data)
 
-    def _event(self, payload: dict[str, Any]) -> None:
+    def _event(self, payload: dict[str, Any]) -> bool:
+        """Read one event; whether its shape was one this reader knows."""
         raise NotImplementedError
 
     def finish(self) -> Reading:
@@ -390,14 +412,29 @@ class _AnthropicEvents(_EventReader):
     (the output above all); the last of them is the answer's usage."""
 
     _TEXT_KEYS = frozenset({"type", "id", "signature", "index"})
+    #: The event types of Anthropic's stream. Any other is a shape this release does not know.
+    _KNOWN = frozenset(
+        {
+            "message_start",
+            "message_delta",
+            "message_stop",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "ping",
+            "error",
+        }
+    )
 
     def __init__(self) -> None:
         super().__init__()
         self._input_read = False
 
-    def _event(self, payload: dict[str, Any]) -> None:
+    def _event(self, payload: dict[str, Any]) -> bool:
         kind = payload.get("type")
         reading = self.reading
+        if kind not in self._KNOWN:
+            return False
         if kind == "message_start":
             message = payload.get("message")
             if isinstance(message, dict):
@@ -415,26 +452,31 @@ class _AnthropicEvents(_EventReader):
             reading.content_bytes += _string_bytes(payload.get("delta"), self._TEXT_KEYS)
         elif kind == "content_block_start":
             reading.content_bytes += _string_bytes(payload.get("content_block"), self._TEXT_KEYS)
+        return True
 
 
 class _OpenAIEvents(_EventReader):
     """OpenAI's stream: the usage arrives in a last chunk (``include_usage``), or in ``x_groq`` (Groq)."""
 
-    def _event(self, payload: dict[str, Any]) -> None:
+    def _event(self, payload: dict[str, Any]) -> bool:
         reading = self.reading
         model = payload.get("model")
         if isinstance(model, str) and model:
             reading.model = model
+        known = False
         groq = payload.get("x_groq")
         for raw in (payload.get("usage"), groq.get("usage") if isinstance(groq, dict) else None):
             usage = _openai_usage(raw) if raw is not None else None
             if usage is not None:
-                reading.usage, reading.complete = usage, True
+                reading.usage.raise_to(usage)
+                reading.complete = known = True
         choices = payload.get("choices")
         if isinstance(choices, list):
+            known = True
             for choice in choices:
                 if isinstance(choice, dict):
                     reading.content_bytes += _string_bytes(choice.get("delta"), frozenset({"role"}))
+        return known
 
 
 def reader_for(wire: Wire, content_type: str | None) -> _Reader:
@@ -652,7 +694,8 @@ class Metered:
             self._reader.feed(chunk)
 
     def lost(self) -> None:
-        """The request went upstream and no answer came back (a timeout): it is charged its ceiling."""
+        """No answer came back for a request that may have gone upstream (a timeout, a connect timeout included,
+        or a failure past the connect): it is charged its ceiling."""
         self._lost = True
 
     def close(self) -> None:
