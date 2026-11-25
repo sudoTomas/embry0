@@ -189,9 +189,10 @@ async def with_reports(request: Request, shown: Sequence[dict[str, Any]]) -> lis
     ]
 
 
-async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, list[str]] | None:
     """Each finished quest's owners, as a quest on offer's are (:func:`embry0.services.owners.owners_for`): its
-    area's, else its repository's, else CODEOWNERS'."""
+    area's, else its repository's, else CODEOWNERS'. None when they could not be read, which is not "no owners": a
+    list may show the card without them, but who may answer it cannot be decided on them (:func:`read_decision`)."""
     from embry0.api.v1.proposals import owner_sources
     from embry0.services.owners import Owners, owners_for
 
@@ -200,9 +201,9 @@ async def owners_of(request: Request, rows: list[dict[str, Any]]) -> dict[str, l
     repos = {str(r.get("repo") or "").lower() for r in rows if r.get("repo")}
     try:
         repository, areas = await owner_sources(request, repos)
-    except Exception:  # noqa: BLE001 - a card without owners is asked of nobody, and still shown
+    except Exception:  # noqa: BLE001 - unread, not empty: the caller says what that means for it
         logger.warning("decisions_owners_unread", exc_info=True)
-        return {}
+        return None
     out: dict[str, list[str]] = {}
     for r in rows:
         name = str(r.get("repo") or "").lower()
@@ -230,7 +231,9 @@ async def _reviews(request: Request, *, repo: str | None, report_chars: int) -> 
     inputs, owners = await asyncio.gather(
         done_inputs(request, rows, report_chars=report_chars), owners_of(request, rows)
     )
-    return [done({**q, "owners": owners.get(str(q["job_id"]), [])}, game=game) for q in inputs]
+    # Owners that could not be read leave the cards without them: asked of nobody, and still shown.
+    owned = owners or {}
+    return [done({**q, "owners": owned.get(str(q["job_id"]), [])}, game=game) for q in inputs]
 
 
 async def with_assignees(request: Request, shown: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -356,6 +359,9 @@ async def read_decision(request: Request, decision_id: str, *, action: str | Non
         game = (await ui_settings(request)).game
         # Its owners, as the feed reads them (_reviews): who may answer it from a chat is decided on them.
         inputs, owners = await asyncio.gather(done_inputs(request, [quest]), owners_of(request, [quest]))
-        found = done({**inputs[0], "owners": owners.get(str(quest["job_id"]), [])}, game=game).to_dict()
+        found = done({**inputs[0], "owners": (owners or {}).get(str(quest["job_id"]), [])}, game=game).to_dict()
+        if owners is None:
+            # Not "nobody owns it": who may answer it is not decided on owners that could not be read.
+            found["owners_unread"] = True
         return (await with_assignees(request, [found]))[0]
     raise HTTPException(status_code=404, detail="a decision id is offer:<proposal id> or done:<job id>")
