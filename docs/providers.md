@@ -229,7 +229,9 @@ run's calls are the two tallies summed and the charge is the larger figure.
 Metering never holds a run up for long: a replay that times out is given up
 at once (the next recreation gives the proxy everything again), and a run's
 declaration or end waits at most 30 seconds for a replay before it goes
-ahead, the run then charged as one whose tally is not whole.
+ahead, the run then charged as one whose tally is not whole. A request of a
+given-up replay may still reach the proxy later, so until a replay of that
+proxy completes, every run declared on it is charged that way too.
 
 The trace keeps both figures: `metering` (the source, whether the tally was
 whole, the proxy's cost, the sandbox's, each proxy's processes, calls, calls

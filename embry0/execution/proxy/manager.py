@@ -237,6 +237,10 @@ class ProxyManager:
         # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
         # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
         self._unordered_runs: set[tuple[str, str]] = set()
+        # The proxies whose last replay was given up: a request of it that timed out may still reach the proxy later
+        # (killing the client does not stop the exec), so until a replay completes there, nothing sent to it is
+        # known to land after what the replay sent.
+        self._replay_abandoned: set[str] = set()
         self._on_recreated: Callable[[], Awaitable[None]] | None = None
         self.auth_proxy_url: str = ""
         self.xai_proxy_url: str = ""
@@ -1030,9 +1034,13 @@ class ProxyManager:
             del held[key]
         if not await self._after_replay(proxy):
             self._unordered_runs.add((proxy, run_id))
-        response = await self._exec_admin_request(
-            container=proxy, method="POST", path="/admin/runs", port=port, body=body
-        )
+        try:
+            response = await self._exec_admin_request(
+                container=proxy, method="POST", path="/admin/runs", port=port, body=body
+            )
+        except BaseException:
+            self._unordered_runs.discard((proxy, run_id))  # not declared: nothing to take back at its end
+            raise
         return str(response.get("boot_id") or "")
 
     async def end_run(self, proxy: str, run_id: str) -> dict[str, Any] | None:
@@ -1063,7 +1071,8 @@ class ProxyManager:
 
     async def _after_replay(self, proxy: str) -> bool:
         """Wait until no replay of ``proxy``'s state is under way, so what the caller sends lands after it. False when
-        the wait passed :data:`REPLAY_WAIT_SECONDS` and the caller goes ahead: metering never holds a run up longer."""
+        the wait passed :data:`REPLAY_WAIT_SECONDS` and the caller goes ahead (metering never holds a run up longer),
+        and while the proxy's last replay was given up, since a request of it may still land later."""
         lock = self._replay_locks.get(proxy)
         if lock is None:
             return True
@@ -1073,7 +1082,7 @@ class ProxyManager:
             logger.warning("proxy_replay_wait_expired", proxy=proxy, waited_seconds=REPLAY_WAIT_SECONDS)
             return False
         lock.release()
-        return True
+        return proxy not in self._replay_abandoned
 
     def declared_unordered(self, proxy: str, run_id: str) -> bool:
         """Whether ``run_id`` was declared on ``proxy`` without waiting a replay out (and forget it)."""
@@ -1210,11 +1219,14 @@ class ProxyManager:
                 # is from another process, or none).
                 left = len(entries) - index
                 failed += left
+                self._replay_abandoned.add(name)
                 logger.error("proxy_state_replay_abandoned", proxy=name, entry=key.split(":", 1)[0], left=left)
-                break
+                return restored, failed
             except RuntimeError as exc:
                 failed += 1
                 logger.error("proxy_state_replay_failed", proxy=name, entry=key.split(":", 1)[0], error=str(exc))
+        # Every entry was sent and answered (or refused): nothing of an earlier, given-up replay is still on its way.
+        self._replay_abandoned.discard(name)
         return restored, failed
 
     async def _exec_admin_once(
