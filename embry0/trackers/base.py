@@ -1,9 +1,10 @@
 """IssueTracker Protocol and the per-delivery trigger context (#160).
 
-The Protocol is deliberately narrow: it names exactly the two surfaces
+The Protocol is deliberately narrow: it names exactly the surfaces
 tracker consumers share. Webhook routes call ``handle_webhook_event`` with
 one signature regardless of forge; outbound write-back calls
-``post_issue_comment`` with one ref shape. Webhook *verification* is
+``post_issue_comment`` with one ref shape; the backlog intake (leads)
+calls ``list_backlog`` with the repositories it reads. Webhook *verification* is
 deliberately absent — #159 centralized the three per-forge signature
 shapes in ``embry0/api/webhook_ingress.py``, and a ``verify_signature``
 method here would re-fragment what that unified.
@@ -11,10 +12,11 @@ method here would re-fragment what that unified.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from embry0.trackers.models import TrackerIssueRef
+from embry0.trackers.models import BacklogRead, TrackerIssueRef
 
 
 @dataclass
@@ -78,4 +80,13 @@ class IssueTracker(Protocol):
 
     async def post_issue_comment(self, ref: TrackerIssueRef, body: str) -> bool:
         """Best-effort comment on the tracker's issue. Never raises."""
+        ...
+
+    async def list_backlog(
+        self, repos: Sequence[str], *, client_for: Callable[[str], Awaitable[Any]] | None = None
+    ) -> BacklogRead:
+        """The open tickets nobody holds about ``repos`` (the backlog intake, leads #181), and which of them were
+        read whole. GitHub and GitLab read each repository's issues, with the client ``client_for`` gives for it
+        when given (none: not read), their own otherwise; Linear reads its backlog once, with its own key, and
+        keeps the tickets whose project resolves to one of ``repos``. Raises when nothing could be read."""
         ...

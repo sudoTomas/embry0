@@ -23,11 +23,12 @@ from typing import Any
 import pytest
 
 from embry0.execution.forge_client import Listing
+from embry0.services.github_sync import GitHubSyncService
 from embry0.services.leads import FinderResult
 from embry0.services.leads.loop import LeadsLoop
 from tests.fixtures.areas import no_areas_for
 from tests.fixtures.leads import MemorySettings, leads_section
-from tests.unit.services.leads.fakes import FakeForge, MemoryLeads
+from tests.unit.services.leads.fakes import FakeForge, MemoryLeads, linear_tracker
 from tests.unit.services.leads.test_backlog import READY_BODY
 
 T0 = datetime(2026, 10, 30, 12, tzinfo=UTC)
@@ -99,8 +100,14 @@ def _loop(
     async def client_for(repo: str) -> Any:
         return client
 
-    async def get_linear() -> Any:
-        return linear
+    async def forge_of(repo: str) -> str | None:
+        return "github"
+
+    async def trackers() -> dict[str, Any]:
+        # GitHub's own client serves nothing: the backlog is read with the organization's (``client_for``). No
+        # organization's client, no GitHub tracker: these passes read Linear alone.
+        found: dict[str, Any] = {} if client is None else {"github": GitHubSyncService(client=SimpleNamespace())}
+        return found | ({} if linear is None else {"linear": linear_tracker(linear)})
 
     async def tracked(tracker: str, repo: str, key: str) -> bool:
         return False
@@ -113,7 +120,8 @@ def _loop(
         leads=store,
         targets=targets,
         client_for=client_for,
-        linear=get_linear,
+        forge_of=forge_of,
+        trackers=trackers,
         tracked=tracked,
         trigger_labels=triggers,
         areas_for=no_areas_for,

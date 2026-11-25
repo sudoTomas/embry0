@@ -19,6 +19,7 @@ import os
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -410,8 +411,8 @@ async def test_an_inactive_repository_is_no_longer_read_and_loses_nothing(
 
 
 def _leads(app: Any) -> Any:
-    """The production leads loop, its readers of the settings documents and its targets kept, with no forge,
-    no Linear and no trigger labels: each finder skips, and the pass says which repositories it read."""
+    """The production leads loop, its readers of the settings documents and its targets kept, with no forge
+    client, no tracker and no trigger labels: each finder skips, and the pass says which repositories it read."""
     from embry0.services.leads.loop import LeadsLoop
 
     production: LeadsLoop = app.state.leads_loop
@@ -422,11 +423,14 @@ def _leads(app: Any) -> Any:
     async def no_labels() -> list[str]:
         return []
 
+    async def no_trackers() -> dict[str, Any]:
+        return {}
+
     async def untracked(tracker: str, repo: str, key: str) -> bool:
         return False
 
     return dataclasses.replace(
-        production, client_for=nothing, linear=nothing, trigger_labels=no_labels, tracked=untracked
+        production, client_for=nothing, trackers=no_trackers, trigger_labels=no_labels, tracked=untracked
     )
 
 
@@ -445,6 +449,38 @@ async def test_a_repository_or_an_organization_opted_out_of_leads_is_not_read_on
         "on the next pass, with no restart, acme's layer takes its repositories out of leads and acme/gadgets's "
         "own layer brings it back"
     )
+
+
+async def test_the_production_leads_read_each_repository_with_its_own_forge_s_client(
+    app: Any, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#181: what the lifespan hands the loop. A repository's forge is its registration's; its client is its
+    organization's own forge's, with the organization's credential, and none when the two forges differ; the
+    trackers are the registry's."""
+    from embry0.api.v1 import organizations as organizations_api
+
+    async def token_for(request: Any, owner: str, forge: str, credential_id: Any, **kwargs: Any) -> tuple[str, str]:
+        return f"token-of-{owner}", "env:TEST"
+
+    built: list[tuple[str, str, str]] = []
+
+    def client(request: Any, org: Any, token: str) -> Any:
+        built.append((org.owner, org.forge, token))
+        return SimpleNamespace(forge=org.forge)
+
+    monkeypatch.setattr(organizations_api, "_token_for", token_for)
+    monkeypatch.setattr(organizations_api, "make_pull_request_client", client)
+    await app.state.organizations_repo.register("initech", "gitlab")
+    await app.state.repos_repo.register("initech/sub/web", forge="gitlab")
+    await app.state.repos_repo.register("initech/stray", forge="github")
+    loop = app.state.leads_loop
+    assert [await loop.forge_of(r) for r in ("initech/sub/web", "acme/widgets")] == ["gitlab", "github"]
+    assert (await loop.client_for("initech/sub/web")).forge == "gitlab"
+    assert (await loop.client_for("acme/widgets")).forge == "github"
+    assert await loop.client_for("initech/stray") is None, "a repository on another forge than its organization's"
+    assert built == [("initech", "gitlab", "token-of-initech"), ("acme", "github", "token-of-acme")]
+    trackers = await loop.trackers()
+    assert trackers["github"] is app.state.trackers.get("github") and set(trackers) == set(app.state.trackers.names())
 
 
 async def test_one_leads_pass_reads_its_policy_and_its_repositories_from_one_snapshot(

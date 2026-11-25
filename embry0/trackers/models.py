@@ -38,6 +38,56 @@ class TrackerIssue:
     state: str = ""
 
 
+#: Pages of 100 issues a forge's backlog read takes per repository, newest-updated first: a repository with more
+#: open issues is read in part (not whole).
+BACKLOG_ISSUE_PAGES = 3
+
+
+@dataclass(frozen=True)
+class BacklogItem:
+    """An open ticket of a tracker's backlog that nobody holds, for the backlog intake (leads, #181).
+
+    ``tracker`` and ``key`` are as :class:`TrackerIssue` names them; ``repo`` is the repository the ticket is
+    about (a Linear ticket's resolves through its project). ``priority`` is the tracker's own, 0 when it has
+    none (Linear: 1 urgent .. 4 low); ``estimate`` its points, if any.
+    """
+
+    tracker: str
+    repo: str
+    key: str
+    title: str
+    body: str
+    url: str | None
+    labels: tuple[str, ...] = ()
+    priority: int = 0
+    estimate: float | None = None
+
+
+@dataclass(frozen=True)
+class BacklogRead:
+    """What one tracker's backlog read found: its items, the repositories it read whole, and why it did not read
+    the others it was asked about (``unread``, by repository, when it can say).
+
+    A repository the read named but did not read whole (a page cap, a refused request) is not in ``whole``:
+    the intake closes none of that tracker's leads there, since what it did not see may still be open.
+    """
+
+    items: list[BacklogItem] = field(default_factory=list)
+    whole: frozenset[str] = frozenset()
+    unread: Mapping[str, str] = field(default_factory=dict)
+
+
+#: Why a backlog read stopped short of a repository's whole backlog.
+BACKLOG_CUT_SHORT = "the read stopped before the end (its page cap, or a page refused)"
+#: Why a backlog was not read for a repository with no client of its organization's own.
+BACKLOG_NO_CLIENT = "no client with the organization's credential"
+
+
+def read_failed(exc: BaseException) -> str:
+    """Why a read that raised read nothing: its error's type, never its text (a URL, a token's owner)."""
+    return f"the read failed ({type(exc).__name__})"
+
+
 @dataclass(frozen=True)
 class TrackerIssueRef:
     """The address of an issue for outbound write-back.

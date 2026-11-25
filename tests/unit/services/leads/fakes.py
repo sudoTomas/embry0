@@ -51,6 +51,7 @@ class FakeForge:
         return resp.json() if resp.status_code == 200 else None
 
     async def paginate_listing(self, path: str, **kwargs: Any) -> Listing:
+        self.asked.append((path, dict(kwargs.get("params") or {})))
         answer = self.answers.get(path)
         if isinstance(answer, Listing):
             return answer
@@ -102,3 +103,44 @@ class MemoryLeads:
 
     def open(self, kind: str | None = None) -> list[dict[str, Any]]:
         return [r for r in self.rows.values() if r["state"] == "open" and (kind is None or r["kind"] == kind)]
+
+
+def fake_gitlab(answers: dict[str, Any], asked: list[str] | None = None, *, transport: Any = None) -> Any:
+    """A real ``GitLabClient`` whose GitLab is faked: each GET answered by its path (as sent, the project
+    URL-encoded, without the query), a path not in the table is a 404. ``asked`` keeps every path asked;
+    ``transport`` answers every request instead (one that raises, say)."""
+    from embry0.execution.gitlab_client import GitLabClient
+
+    def forge(request: httpx.Request) -> httpx.Response:
+        path = request.url.raw_path.decode().split("?")[0].removeprefix("/api/v4")
+        if asked is not None:
+            asked.append(path)
+        if path not in answers:
+            return httpx.Response(404, json={"message": "404 Not Found"})
+        return httpx.Response(200, json=answers[path])
+
+    return GitLabClient(
+        default_token="key-000000000001",
+        gitlab_url="https://gitlab.example.test",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport or forge)),
+        max_attempts=1,
+        owner_env_tokens=False,
+        token_owner="acme",
+    )
+
+
+def linear_tracker(backlog: Any) -> Any:
+    """Linear's tracker with its real ``list_backlog`` over ``backlog``: anything with ``list_backlog_tickets()``
+    answering as Linear's does (the tickets, and whether the backlog was read whole)."""
+    from embry0.services.linear_sync import LinearSyncService
+
+    class _Linear:
+        name = "linear"
+
+        async def list_backlog_tickets(self) -> Any:
+            return await backlog.list_backlog_tickets()
+
+        async def list_backlog(self, repos: Sequence[str], *, client_for: Any = None) -> Any:
+            return await LinearSyncService.list_backlog(self, repos, client_for=client_for)  # type: ignore[arg-type]
+
+    return _Linear()

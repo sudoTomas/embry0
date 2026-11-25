@@ -5,7 +5,14 @@ owners in its preferences or is a watched stack: work is only found where
 someone will be asked about it. Each pass runs the enabled finders on each
 such repository with its organization's credential, stores what they see,
 and closes what a whole read no longer sees. The backlog intake runs on its
-own, longer interval; it reads Linear once per pass for every repository.
+own, longer interval; it asks every tracker of the registry for the backlog
+of the repositories it serves (Linear: every repository, once per pass;
+GitHub and GitLab: the repositories on that forge).
+
+Each finder reads the forges it declares (:data:`FINDER_FORGES`): a finder
+enabled for a repository on another forge is skipped, and the reason is
+recorded on the pass and on the leads status (:meth:`LeadsLoop.status`),
+never silently.
 
 Each finder adds at most ``max_new_per_repo_per_day`` new leads per
 repository a day, the worst first; a lead already stored is always kept up
@@ -26,7 +33,7 @@ before the next look, the loop sleeps only until then.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -34,15 +41,17 @@ from typing import Any
 import structlog
 
 from embry0.services.areas import Area, area_of_labels, area_of_logs, area_of_paths
-from embry0.services.leads import FinderResult, Lead, by_severity
+from embry0.services.leads import FinderResult, Lead, by_severity, skipped
 from embry0.services.leads.alerts import find_alerts
-from embry0.services.leads.backlog import Tracked, find_github_tickets, linear_leads
+from embry0.services.leads.backlog import Tracked, backlog_leads
 from embry0.services.leads.ci import find_failing_checks
 from embry0.services.leads.flaky import find_flaky_checks
+from embry0.services.leads.gitlab_ci import find_failing_jobs, find_flaky_jobs
 from embry0.services.leads.readiness import Readiness
 from embry0.services.leads.reviews import find_unanswered_reviews
 from embry0.settings.layers import SnapshotSection
 from embry0.settings.sections.leads import LeadsSettings
+from embry0.trackers.models import BacklogItem, BacklogRead, read_failed
 
 logger = structlog.get_logger(__name__)
 
@@ -50,6 +59,25 @@ logger = structlog.get_logger(__name__)
 STARTUP_DELAY_SECONDS = 300.0
 #: The longest the schedule sleeps between looks: how soon turning leads on, or a new interval, applies.
 TICK_SECONDS = 300.0
+
+#: The forges each finder reads a repository on (#181). ``ticket`` is read on every repository: Linear's backlog
+#: serves any, and GitHub's or GitLab's backlog the repositories on that forge.
+FINDER_FORGES: dict[str, frozenset[str]] = {
+    "ticket": frozenset({"github", "gitlab"}),
+    "ci": frozenset({"github", "gitlab"}),
+    "flaky": frozenset({"github", "gitlab"}),
+    "alert": frozenset({"github"}),
+    "review": frozenset({"github"}),
+}
+
+#: The trackers that read a repository's backlog by the forge it is on; any other (Linear) serves every repository.
+FORGE_TRACKERS = frozenset({"github", "gitlab"})
+
+
+def not_supported(kind: str, forge: str | None) -> str:
+    """Why ``kind`` reads nothing on a repository on ``forge``."""
+    reads = " and ".join(sorted(FINDER_FORGES[kind]))
+    return f"{kind} reads {reads} repositories; this one is on {forge or 'a forge embry0 does not know'}"
 
 
 def lead_area(areas: Sequence[Area], lead: Lead) -> str | None:
@@ -67,6 +95,9 @@ class _Pass:
     capped: int = 0
     gone: int = 0
     skipped: str | None = None
+    #: The backlog intake only: each tracker that did not read the repository whole, and why
+    #: (``github: the read failed (ReadTimeout)``); none of its leads there closed.
+    unread: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v}
@@ -81,10 +112,13 @@ class LeadsLoop:
     #: The repositories to read, registered and active, with owners or a watched stack, and enrolled in
     #: ``background.leads``: given the section the pass read, so they come from its snapshot (#165).
     targets: Callable[[SnapshotSection[LeadsSettings]], Awaitable[list[str]]]
-    #: The forge client for a repository with its organization's credential; None when there is none.
+    #: The client of a repository's forge (GitHub's or GitLab's) with its organization's credential; None when
+    #: there is none.
     client_for: Callable[[str], Awaitable[Any]]
-    #: The Linear service, or None when Linear is not configured.
-    linear: Callable[[], Awaitable[Any]]
+    #: The forge a repository is on (``github``, ``gitlab``), or None when nothing says.
+    forge_of: Callable[[str], Awaitable[str | None]]
+    #: The trackers whose backlogs the intake reads, by name (the tracker registry's, Linear's resolved fresh).
+    trackers: Callable[[], Awaitable[Mapping[str, Any]]]
     tracked: Tracked
     trigger_labels: Callable[[], Awaitable[Iterable[str]]]
     #: A repository's areas as embry0 keeps them (``AreasStore.areas_for`` in production), read once per store.
@@ -99,16 +133,20 @@ class LeadsLoop:
     _due: datetime | None = None
     #: Whether the last look found leads on; None before the first.
     _enabled: bool | None = None
-    _noted: dict[tuple[str, str], str] = field(default_factory=dict)
+    _noted: dict[tuple[str, str, str], str] = field(default_factory=dict)
+    #: What the last pass did on each repository, by kind, and when (the leads status).
+    _status: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _status_at: datetime | None = None
 
-    def _note(self, repo: str, kind: str, reason: str | None) -> None:
-        """One log line per standing reason a finder read nothing, not one per pass."""
-        key = (repo, kind)
+    def _note(self, repo: str, kind: str, reason: str | None, *, event: str = "leads_finder_skipped") -> None:
+        """One log line per standing reason a finder read nothing (or a backlog was not read whole), not one per
+        pass."""
+        key = (repo, kind, event)
         if reason is None:
             self._noted.pop(key, None)
         elif self._noted.get(key) != reason:
             self._noted[key] = reason
-            logger.info("leads_finder_skipped", repo=repo, kind=kind, reason=reason)
+            logger.info(event, repo=repo, kind=kind, reason=reason)
 
     def backlog_due(self, now: datetime, policy: LeadsSettings) -> bool:
         return self._last_backlog is None or now - self._last_backlog >= timedelta(hours=policy.backlog_interval_hours)
@@ -165,22 +203,18 @@ class LeadsLoop:
         now = self.clock()
         targets = list(repos) if repos is not None else await self.targets(section)
         policies = {repo: section.repo(repo) for repo in targets}
-        wanted = any("ticket" in policy.finders for policy in policies.values())
-        run_backlog = wanted and (self.backlog_due(now, section.deployment()) if backlog is None else backlog)
-        tickets: list[Any] = []
-        linear_read = False
+        forges = {repo: await self._forge(repo) for repo in targets}
+        wanted = [repo for repo in targets if "ticket" in policies[repo].finders]
+        run_backlog = bool(wanted) and (self.backlog_due(now, section.deployment()) if backlog is None else backlog)
+        read: dict[str, BacklogRead] = {}
         if run_backlog:
             self._last_backlog = now
-            linear = await self.linear()
-            if linear is not None:
-                try:
-                    tickets, linear_read = await linear.list_backlog_tickets()
-                except Exception as exc:  # noqa: BLE001 - GitHub's backlog still goes
-                    logger.warning("leads_linear_unread", error=type(exc).__name__, detail=str(exc)[:200])
+            read = await self._backlogs(wanted, forges)
         triggers = list(await self.trigger_labels()) if run_backlog else []
         summary: dict[str, Any] = {}
         for repo in targets:
             policy = policies[repo]
+            forge = forges[repo]
             try:
                 client = await self.client_for(repo)
             except Exception as exc:  # noqa: BLE001 - one repository's credential is its own problem
@@ -188,77 +222,128 @@ class LeadsLoop:
                 client = None
             done: dict[str, Any] = {}
             if run_backlog and "ticket" in policy.finders:
-                result, keep = await self._tickets(repo, client, tickets, linear_read, triggers, policy)
+                result, keep, unread = await self._tickets(repo, read, triggers, policy)
                 done["ticket"] = await self._store(repo, "ticket", result, now, policy, keep_open=keep)
-            for kind, find in self._github_finders(repo, client, now, policy):
+                self._note(repo, "ticket", unread, event="leads_backlog_not_whole")
+                if unread:
+                    done["ticket"]["unread"] = unread
+            for kind, by_forge in self._finders(repo, now, policy).items():
                 if kind not in policy.finders:
+                    continue
+                find = by_forge.get(forge or "")
+                if find is None:
+                    reason = not_supported(kind, forge)
+                    self._note(repo, kind, reason)
+                    done[kind] = _Pass(skipped=reason).to_dict()
                     continue
                 if client is None:
                     self._note(repo, kind, "no forge client with the organization's credential")
                     done[kind] = _Pass(skipped="no forge client").to_dict()
                     continue
                 try:
-                    result = await find()
+                    result = await find(client)
                 except Exception as exc:  # noqa: BLE001 - one finder's failure is its own log line
                     logger.warning("leads_finder_failed", repo=repo, kind=kind, error=type(exc).__name__)
-                    result = FinderResult([], complete=False)
+                    # Skipped with why, so the pass and the status say it; nothing of it closes.
+                    result = skipped(read_failed(exc))
                 done[kind] = await self._store(repo, kind, result, now, policy)
             summary[repo] = done
+            self._status[repo] = {"forge": forge, "at": now.isoformat(), "kinds": done}
+        if repos is None:
+            # A whole pass: a repository that left the leads leaves the status too.
+            self._status = {repo: entry for repo, entry in self._status.items() if repo in policies}
+        self._status_at = now
         logger.info("leads_pass", repos=len(targets), backlog=run_backlog)
         return summary
 
-    def _github_finders(
-        self, repo: str, client: Any, now: datetime, policy: LeadsSettings
-    ) -> list[tuple[str, Callable[[], Awaitable[FinderResult]]]]:
-        return [
-            ("ci", lambda: find_failing_checks(client, repo)),
-            ("alert", lambda: find_alerts(client, repo)),
-            ("flaky", lambda: find_flaky_checks(client, repo, commits=policy.flaky_commits)),
-            ("review", lambda: find_unanswered_reviews(client, repo, now=now, stale_days=policy.review_stale_days)),
-        ]
+    def status(self) -> dict[str, Any]:
+        """The leads status: when a pass last ran, and what it did on each repository it read, by kind, a skipped
+        finder with the reason (``skipped``). Each repository keeps the last pass that read it."""
+        return {
+            "last_pass_at": self._status_at.isoformat() if self._status_at else None,
+            "repos": {repo: dict(entry) for repo, entry in self._status.items()},
+        }
+
+    async def _forge(self, repo: str) -> str | None:
+        try:
+            return await self.forge_of(repo)
+        except Exception as exc:  # noqa: BLE001 - an unknown forge is skipped by name, not fatal
+            logger.info("leads_forge_unread", repo=repo, error=type(exc).__name__)
+            return None
+
+    def _finders(
+        self, repo: str, now: datetime, policy: LeadsSettings
+    ) -> dict[str, dict[str, Callable[[Any], Awaitable[FinderResult]]]]:
+        """Each finder but ``ticket``, by the forge it reads (:data:`FINDER_FORGES`), given the forge's client."""
+        finders: dict[str, dict[str, Callable[[Any], Awaitable[FinderResult]]]] = {
+            "ci": {
+                "github": lambda c: find_failing_checks(c, repo),
+                "gitlab": lambda c: find_failing_jobs(c, repo),
+            },
+            "alert": {"github": lambda c: find_alerts(c, repo)},
+            "flaky": {
+                "github": lambda c: find_flaky_checks(c, repo, commits=policy.flaky_commits),
+                "gitlab": lambda c: find_flaky_jobs(c, repo, commits=policy.flaky_commits),
+            },
+            "review": {
+                "github": lambda c: find_unanswered_reviews(c, repo, now=now, stale_days=policy.review_stale_days)
+            },
+        }
+        return finders
+
+    async def _backlogs(self, repos: Sequence[str], forges: Mapping[str, str | None]) -> dict[str, BacklogRead]:
+        """Each tracker's backlog read, for the repositories it serves: Linear (any tracker not a forge) every one,
+        GitHub and GitLab those on their forge. A tracker whose read fails reads nothing whole, and says why.
+
+        Linear is read first, then the forges by name: the order their tickets of one severity are stored in when a
+        day's cap cuts them, as before the registry (Linear's, then GitHub's)."""
+        trackers = await self.trackers()
+        read: dict[str, BacklogRead] = {}
+        for name, tracker in sorted(trackers.items(), key=lambda pair: (pair[0] in FORGE_TRACKERS, pair[0])):
+            serves = [repo for repo in repos if name not in FORGE_TRACKERS or forges.get(repo) == name]
+            if not serves or tracker is None:
+                continue
+            try:
+                # A forge's issues are read with the organization's own credential, as its finders read.
+                read[name] = await tracker.list_backlog(serves, client_for=self.client_for)
+            except Exception as exc:  # noqa: BLE001 - the other trackers' backlogs still go
+                logger.warning("leads_backlog_unread", tracker=name, error=type(exc).__name__, detail=str(exc)[:200])
+                read[name] = BacklogRead(unread=dict.fromkeys(serves, read_failed(exc)))
+        return read
 
     async def _tickets(
         self,
         repo: str,
-        client: Any,
-        tickets: Sequence[Any],
-        linear_read: bool,
+        read: Mapping[str, BacklogRead],
         triggers: Sequence[str],
         policy: LeadsSettings,
-    ) -> tuple[FinderResult, set[str]]:
+    ) -> tuple[FinderResult, set[str], str | None]:
         """The repository's backlog leads, read in its organization's words (``policy``'s vocabulary) and
-        scoring its ``offer_min`` or more, and the open ones a source not read whole keeps open."""
-        readiness = Readiness.of(policy)
-        leads = await linear_leads(
-            repo,
-            tickets,
+        scoring its ``offer_min`` or more; the open ones a tracker that did not read it whole keeps open; and each
+        such tracker with why (``github: the read failed (ReadTimeout)``), or None when every tracker that serves
+        the repository read it whole."""
+        items: list[BacklogItem] = [
+            item for backlog in read.values() for item in backlog.items if item.repo.lower() == repo.lower()
+        ]
+        leads = await backlog_leads(
+            items,
             trigger_labels=triggers,
             tracked=self.tracked,
             min_score=policy.offer_min,
-            readiness=readiness,
+            readiness=Readiness.of(policy),
         )
-        github_read = False
-        if client is not None:
-            try:
-                github = await find_github_tickets(
-                    client,
-                    repo,
-                    trigger_labels=triggers,
-                    tracked=self.tracked,
-                    min_score=policy.offer_min,
-                    readiness=readiness,
-                )
-                leads += github.leads
-                github_read = github.complete
-            except Exception as exc:  # noqa: BLE001 - Linear's leads still count
-                logger.warning("leads_github_issues_unread", repo=repo, error=type(exc).__name__)
-        unread = {prefix for prefix, read in (("linear:", linear_read), ("github:", github_read)) if not read}
+        read_whole = {name for name, backlog in read.items() if repo in backlog.whole}
         keep = {
             lead_id
             for lead_id, source in (await self.leads.open_sources(repo, "ticket")).items()
-            if any(source.startswith(prefix) for prefix in unread)
+            if source.split(":", 1)[0] not in read_whole
         }
-        return FinderResult(leads, complete=True), keep
+        unread = [
+            f"{name}: {backlog.unread[repo]}"
+            for name, backlog in read.items()
+            if repo not in backlog.whole and repo in backlog.unread
+        ]
+        return FinderResult(leads, complete=True), keep, "; ".join(unread) or None
 
     async def _store(
         self,

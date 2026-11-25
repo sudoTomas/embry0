@@ -816,6 +816,11 @@ class _FakeTracker:
     async def handle_webhook_event(self, payload, ctx):
         return {"status": "ignored"}
 
+    async def list_backlog(self, repos, *, client_for=None):
+        from embry0.trackers import BacklogRead
+
+        return BacklogRead()
+
     async def post_issue_comment(self, ref, body):
         self.posts.append((ref, body))
         return True

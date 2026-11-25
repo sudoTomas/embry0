@@ -2,7 +2,7 @@
 
 Until leads, work reached embry0 in three ways: a person put the trigger label on a ticket, the watcher drafted one from production logs, or the context audit read the files that steer coding agents. Everything else waited for someone to think of embry0. Leads are the work embry0 finds on its own and offers to a repository's owners as [owner proposals](api.md#owner-proposals): a person only says yes. The design is in [the spec](superpowers/specs/2026-10-25-leads-design.md).
 
-The backlog intake and the lead client work only with Linear and GitHub today; other forges and trackers are tracked in #181.
+Leads read repositories on GitHub and GitLab, and backlogs on GitHub, GitLab and Linear. Each finder reads the forges it says it reads ([below](#where-it-looks)); one enabled for a repository on another forge is skipped, with the reason on the [leads status](#api).
 
 ## Turning leads on
 
@@ -32,24 +32,26 @@ Those are the defaults, except `enabled`, which is `false`; the words a backlog 
 
 ## Where it looks
 
-A repository is read when it is registered and active and someone answers for it: its preferences name owners, or it is a watched stack. An organization's or a repository's [layer](configuration.md#which-repositories-background-features-read) can take it out (`background: {leads: false}`), and a repository's own layer bring it back; the next pass follows. `POST /api/v1/leads/run` with a `repo` reads that repository whatever its layer says. Each finder reads it with its organization's credential and adds at most `leads.max_new_per_repo_per_day` new leads a day, the most severe first.
+A repository is read when it is registered and active and someone answers for it: its preferences name owners, or it is a watched stack. An organization's or a repository's [layer](configuration.md#which-repositories-background-features-read) can take it out (`background: {leads: false}`), and a repository's own layer bring it back; the next pass follows. `POST /api/v1/leads/run` with a `repo` reads that repository whatever its layer says. Each finder reads it with its organization's credential, on the forge the repository is registered on, and adds at most `leads.max_new_per_repo_per_day` new leads a day, the most severe first. A repository registered on another forge than its organization's is read by no finder.
 
-| Kind | Finder | What it reads | Severity, effort | Accepting starts |
-|---|---|---|---|---|
-| `ticket` | Backlog intake, every `leads.backlog_interval_hours` | Linear tickets nobody started (unassigned, or assigned to the account embry0's key acts as) whose project resolves to the repository, and the repository's open GitHub issues nobody is assigned | From Linear priority or the labels; from size labels or the estimate | Its tracker's own path: on Linear the trigger label goes on and the ticket is dispatched, on GitHub the issue is brought into embry0 and dispatched |
-| `ci` | Failing CI | Check runs and commit statuses on the newest commit of the default branch | high, medium | A fix job for that check |
-| `alert` | Alerts | Open Dependabot alerts and open code-scanning alerts | The alert's, small for a dependency with a fixed version | An upgrade or fix job |
-| `flaky` | Flaky checks | Every run of every check on the newest `leads.flaky_commits` commits of the default branch | medium, high from 3 commits; medium | A job that finds and fixes the cause |
-| `review` | Unanswered reviews | Open, non-draft pull requests from the repository itself, not from its default branch, with review threads a reviewer started, neither resolved nor outdated, and unanswered for `leads.review_stale_days` days | low, medium from 3 threads; small | A follow-up job on the pull request's branch |
-| `crack` | The scout (below) | A finished `kintsugi-trace` job's ledger: one lead per row | break high, fracture medium, hairline low; the seal's size | A job that checks the evidence still holds, then fixes the cause |
-| `weed` | The scout (below) | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
-| `weed` | A [knowledge map](maps.md) | A part someone marked bloat on a map, while anyone does | low, small | A job that removes the part and what only it uses, without re-assessing the mark |
+| Kind | Finder | Forges | What it reads | Severity, effort | Accepting starts |
+|---|---|---|---|---|---|
+| `ticket` | Backlog intake, every `leads.backlog_interval_hours` | GitHub, GitLab; Linear for any | Each tracker's backlog, through the tracker registry: Linear tickets nobody started (unassigned, or assigned to the account embry0's key acts as) whose project resolves to the repository, and the repository's open issues nobody is assigned on its own forge | From Linear priority or the labels; from size labels or the estimate | Its tracker's own path: on Linear the trigger label goes on and the ticket is dispatched, on GitHub and GitLab the issue is read again (GitLab's with the organization's own credential, as its backlog was read), brought into embry0 and dispatched |
+| `ci` | Failing CI | GitHub, GitLab | On GitHub, check runs and commit statuses on the newest commit of the default branch; on GitLab, the jobs of the default branch's newest pipeline (a job allowed to fail is no failure) | high, medium | A fix job for that check |
+| `alert` | Alerts | GitHub | Open Dependabot alerts and open code-scanning alerts | The alert's, small for a dependency with a fixed version | An upgrade or fix job |
+| `flaky` | Flaky checks | GitHub, GitLab | On GitHub, every run of every check on the newest `leads.flaky_commits` commits of the default branch; on GitLab, every run of every job in the default branch's newest `leads.flaky_commits` pipelines, a job that failed and then passed in one pipeline | medium, high from 3 commits; medium | A job that finds and fixes the cause |
+| `review` | Unanswered reviews | GitHub | Open, non-draft pull requests from the repository itself, not from its default branch, with review threads a reviewer started, neither resolved nor outdated, and unanswered for `leads.review_stale_days` days | low, medium from 3 threads; small | A follow-up job on the pull request's branch |
+| `crack` | The scout (below) | any | A finished `kintsugi-trace` job's ledger: one lead per row | break high, fracture medium, hairline low; the seal's size | A job that checks the evidence still holds, then fixes the cause |
+| `weed` | The scout (below) | any | A finished `garden` job's weed card | low, small | A job that removes it with the checked diff and changes no behavior |
+| `weed` | A [knowledge map](maps.md) | any | A part someone marked bloat on a map, while anyone does | low, small | A job that removes the part and what only it uses, without re-assessing the mark |
 
 A yes to any kind but `ticket` and `review` files the job's task as an issue in embry0 and runs it. The issue is labelled `leads.labels` (`embry0-lead` by default, an organization's layer may name its own) and `lead:<kind>`, with `area:<slug>` when the lead has an area. None of them may be one of the deployment's trigger labels: a write naming one is refused, and a label that has become one since is left off the issue, logged as `issue_label_skipped`.
 
 Every kind, these and the ones read from other features (a watcher case, an open issue, a context audit finding, slop), is one entry in `embry0/services/lead_kinds.py`: its names, what a yes starts, its verb, creature, leader and starting level. It is content, kept in the code. The leads loop, the proposals feed, the world, decision cards and briefs read it, and the dashboard gets each kind's plain names from `GET /api/v1/lead-kinds`, which answers with the game off too; the verb, creature, leader and level are the game's, carried by each quest of `GET /world`. The places that must still spell kinds out on their own (the world's art manifest, the MCP tools' descriptions, the stored kinds' database checks) are each held equal to it by a test. Which severities of a kind are asked in chat is the operator's: `leads.ask_severities`, below.
 
-A ticket that already carries the trigger label, or that embry0 already tracks, is left to the path that has it. A source the credential cannot read (alerts without the scope, a forge other than GitHub) is skipped quietly, one log line per reason.
+A ticket that already carries the trigger label, or that embry0 already tracks, is left to the path that has it. A finder enabled for a repository on a forge it does not read is skipped, and so is a source the credential cannot read (alerts without the scope): never silently. So is a finder whose read failed (`the read failed (ReadTimeout)`). The reason is on the [leads status](#api) and in the pass's answer (`skipped`), and is logged once while it stands (`leads_finder_skipped`); nothing of that finder closes. A tracker that could not read a repository's backlog whole closes none of its leads there, and the `ticket` answer names it with why (`unread`: `github: the read failed (ReadTimeout)`, or `no client with the organization's credential`; logged once as `leads_backlog_not_whole`). A forge's backlog is read with the organization's own credential only, never the deployment's.
+
+When a day's cap cuts backlog tickets of one severity, Linear's are kept first, then the forges' by name.
 
 ## The scout: cracks and weeds
 
@@ -166,6 +168,7 @@ Owners answer leads like every proposal: accept, decline with a reason, or snooz
 
 - `GET /api/v1/leads?repo=&kind=&state=open|gone|all&limit=` (read): the stored leads, most recently seen first, with what a person or a game-like view needs (kind, area, severity, effort, first and last seen).
 - `POST /api/v1/leads/run` (`{"repo": "...", "backlog": true}`, both optional): one pass now, and what each finder found, stored, capped and closed per repository.
+- `GET /api/v1/leads/status` (read): when the last pass ran, and what it did on each repository the caller's key covers: its forge, and by kind what was found, stored, capped and closed, or why the finder was skipped (`skipped`, for one: `review reads github repositories; this one is on gitlab`), and for `ticket` which trackers did not read the backlog whole (`unread`).
 - Answers go through `POST /api/v1/proposals/{id}/accept|decline|snooze`.
 
 Settings: the `leads` section of the [settings document](configuration.md#settings-reference); the `LEADS_*` variables are only read once, at the upgrade ([configuration.md](configuration.md#leads)).

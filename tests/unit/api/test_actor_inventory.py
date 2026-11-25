@@ -120,6 +120,8 @@ NO_ACTOR_ROUTES: dict[str, tuple[str, ...]] = {
         "/api/v1/config/settings/schema",
         "/api/v1/config/ui",
         "/api/v1/lead-kinds",
+        # What the last leads pass did on each repository: counts by kind and why a finder was skipped.
+        "/api/v1/leads/status",
         "/api/v1/progression/pack/default",
         "/api/v1/progression/pack/default/diff",
         "/api/v1/progression/pack/vocabulary",

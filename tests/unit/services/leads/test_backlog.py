@@ -7,15 +7,16 @@ Each ticket is read with the ``leads`` section's default vocabulary here;
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from embry0.execution.forge_client import Listing
 from embry0.services.leads import Lead, lead_id
-from embry0.services.leads.backlog import find_github_tickets, linear_leads, paths_in, ticket_lead
+from embry0.services.leads.backlog import backlog_leads, paths_in, ticket_lead
 from embry0.services.leads.readiness import Readiness
 from embry0.settings.sections.leads import LeadsSettings
-from tests.unit.services.leads.fakes import FakeForge
+from tests.unit.services.leads.fakes import FakeForge, linear_tracker
 
 #: The reading the default section gives: the vocabulary the intake held in its code before #168.
 DEFAULT = Readiness.of(LeadsSettings())
@@ -120,6 +121,13 @@ def _ticket(key: str, *, repo: str = "acme/web", labels: tuple[str, ...] = ("bug
     return SimpleNamespace(issue=issue, repo=repo, assigned=assigned, mine=mine, priority=0, estimate=None)
 
 
+def _linear_tracker(tickets: list[Any]) -> Any:
+    async def list_backlog_tickets() -> tuple[list[Any], bool]:
+        return tickets, True
+
+    return linear_tracker(SimpleNamespace(list_backlog_tickets=list_backlog_tickets))
+
+
 async def test_linear_tickets_someone_holds_labelled_or_tracked_are_left_alone():
     async def tracked(tracker: str, repo: str, key: str) -> bool:
         return key == "ENG-4"
@@ -132,13 +140,16 @@ async def test_linear_tickets_someone_holds_labelled_or_tracked_are_left_alone()
         _ticket("ENG-5", labels=("bug", "Embry0")),
         _ticket("ENG-6", assigned=True, mine=True),
     ]
-    leads = await linear_leads(
-        "acme/web", tickets, trigger_labels=["embry0"], tracked=tracked, min_score=40, readiness=DEFAULT
-    )
+    read = await _linear_tracker(tickets).list_backlog(["ACME/web"])
+    assert read.whole == frozenset({"ACME/web"}), "Linear is read whole for every repository it was asked about"
+    assert {item.repo for item in read.items} == {"acme/web"}, "an item keeps Linear's name for its repository"
+    leads = await backlog_leads(read.items, trigger_labels=["embry0"], tracked=tracked, min_score=40, readiness=DEFAULT)
     assert [lead.data["key"] for lead in leads] == ["ENG-1", "ENG-6"]
 
 
 async def test_github_issues_nobody_holds_and_not_yet_tracked_become_leads():
+    from embry0.services.github_sync import GitHubSyncService
+
     issues = [
         {
             "number": 1,
@@ -152,14 +163,114 @@ async def test_github_issues_nobody_holds_and_not_yet_tracked_become_leads():
         {"number": 4, "title": "Export fails for embry0 already", "body": READY_BODY, "labels": [{"name": "embry0"}]},
         {"number": 5, "title": "Rethink billing", "body": "", "labels": [{"name": "epic"}]},
     ]
-    client = FakeForge({"/repos/acme/web/issues": Listing(issues, complete=True)})
-    result = await find_github_tickets(
-        client, "acme/web", trigger_labels=["embry0"], tracked=_untracked, min_score=40, readiness=DEFAULT
+    github = GitHubSyncService(client=FakeForge({"/repos/acme/web/issues": Listing(issues, complete=True)}))
+    read = await github.list_backlog(["acme/web"])
+    leads = await backlog_leads(
+        read.items, trigger_labels=["embry0"], tracked=_untracked, min_score=40, readiness=DEFAULT
     )
-    assert [lead.data["key"] for lead in result.leads] == ["1"] and result.complete
-    partial = FakeForge({"/repos/acme/web/issues": Listing(issues, complete=False)})
-    assert not (
-        await find_github_tickets(
-            partial, "acme/web", trigger_labels=[], tracked=_untracked, min_score=40, readiness=DEFAULT
-        )
-    ).complete
+    assert [lead.data["key"] for lead in leads] == ["1"] and read.whole == frozenset({"acme/web"})
+    partial = GitHubSyncService(client=FakeForge({"/repos/acme/web/issues": Listing(issues, complete=False)}))
+    assert (await partial.list_backlog(["acme/web"])).whole == frozenset()
+
+
+async def test_a_forge_tracker_reads_with_the_client_it_is_given_for_each_repository():
+    """The leads read a backlog with the organization's own credential: the client ``client_for`` gives, never the
+    tracker's own; a repository it gives none for is not read."""
+    from embry0.services.github_sync import GitHubSyncService
+
+    issue = {"number": 1, "title": "Export fails on an empty start date", "body": READY_BODY, "labels": []}
+    own = FakeForge({"/repos/acme/web/issues": Listing([{**issue, "number": 99}], complete=True)})
+    given = FakeForge({"/repos/acme/web/issues": Listing([issue], complete=True)})
+
+    async def client_for(repo: str) -> Any:
+        return given if repo == "acme/web" else None
+
+    read = await GitHubSyncService(client=own).list_backlog(["acme/web", "acme/api"], client_for=client_for)
+    assert [item.key for item in read.items] == ["1"] and read.whole == frozenset({"acme/web"})
+    assert own.asked == [], "the tracker's own client reads nothing"
+
+
+async def test_gitlab_issues_nobody_holds_become_leads_read_from_its_own_projects():
+    """The GitLab tracker reads each project's open issues over the real client (GitLab faked by its answers)."""
+    import httpx
+
+    from embry0.execution.gitlab_client import GitLabClient
+    from embry0.services.gitlab_sync import GitLabSyncService
+
+    issues = [
+        {
+            "iid": 7,
+            "title": "Export fails on an empty start date",
+            "description": READY_BODY,
+            "labels": ["bug"],
+            "web_url": "https://gitlab.example.test/acme/sub/web/-/issues/7",
+        },
+        {"iid": 8, "title": "Export fails again somewhere", "description": READY_BODY, "assignees": [{"id": 1}]},
+        {"iid": 9, "title": "Export fails for embry0 already", "description": READY_BODY, "labels": ["embry0"]},
+    ]
+    asked: list[str] = []
+
+    def forge(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.raw_path.decode())
+        if request.url.raw_path.decode().split("?")[0].endswith("/projects/acme%2Fsub%2Fweb/issues"):
+            return httpx.Response(200, json=issues)
+        return httpx.Response(404, json={"message": "404 Not Found"})
+
+    client = GitLabClient(
+        default_token="key-000000000001",
+        gitlab_url="https://gitlab.example.test",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(forge)),
+    )
+    read = await GitLabSyncService(client).list_backlog(["acme/sub/web", "acme/gone"])
+    leads = await backlog_leads(
+        read.items, trigger_labels=["embry0"], tracked=_untracked, min_score=40, readiness=DEFAULT
+    )
+    assert [(lead.data["tracker"], lead.data["key"]) for lead in leads] == [("gitlab", "7")]
+    assert leads[0].url == "https://gitlab.example.test/acme/sub/web/-/issues/7"
+    assert read.whole == frozenset({"acme/sub/web"}), "a project whose read failed is not read whole"
+    assert "state=opened" in asked[0] and "order_by=updated_at" in asked[0]
+
+
+async def test_a_repository_given_no_client_is_not_read_with_the_tracker_s_own():
+    """The leads read a backlog with the organization's credential alone: a repository its organization gives no
+    client for is not read, though the tracker's own client (the deployment's credential) would answer."""
+    from embry0.services.github_sync import GitHubSyncService
+    from embry0.services.gitlab_sync import GitLabSyncService
+    from tests.unit.services.leads.fakes import fake_gitlab
+
+    issue = {"number": 1, "iid": 1, "title": "Export fails on an empty start date", "body": READY_BODY, "labels": []}
+    own_github = FakeForge({"/repos/acme/web/issues": Listing([issue], complete=True)})
+    own_gitlab = fake_gitlab({"/projects/acme%2Fweb/issues": [{**issue, "description": READY_BODY}]})
+
+    async def no_client(repo: str) -> Any:
+        return None
+
+    for tracker in (GitHubSyncService(client=own_github), GitLabSyncService(own_gitlab)):
+        read = await tracker.list_backlog(["acme/web"], client_for=no_client)
+        assert (read.items, read.whole) == ([], frozenset()), f"{tracker.name} fell back to its own client: {read}"
+        assert read.unread == {"acme/web": "no client with the organization's credential"}
+    assert own_github.asked == [], "the deployment's credential is never asked"
+
+
+async def test_a_backlog_read_that_fails_or_stops_short_says_why():
+    from embry0.services.github_sync import GitHubSyncService
+
+    class Refusing(FakeForge):
+        async def paginate_listing(self, path: str, **kwargs: Any) -> Listing:
+            if "/broken/" in path:
+                raise TimeoutError("read timed out")
+            return await super().paginate_listing(path, **kwargs)
+
+    issue = {"number": 1, "title": "Export fails on an empty start date", "body": READY_BODY, "labels": []}
+    client = Refusing(
+        {
+            "/repos/acme/web/issues": Listing([issue], complete=True),
+            "/repos/acme/big/issues": Listing([issue], complete=False),
+        }
+    )
+    read = await GitHubSyncService(client=client).list_backlog(["acme/web", "acme/big", "acme/broken"])
+    assert read.whole == frozenset({"acme/web"})
+    assert read.unread == {
+        "acme/big": "the read stopped before the end (its page cap, or a page refused)",
+        "acme/broken": "the read failed (TimeoutError)",
+    }

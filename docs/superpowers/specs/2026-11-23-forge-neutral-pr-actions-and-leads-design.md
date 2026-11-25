@@ -102,8 +102,9 @@ An address on another host still parses, so a refusal can name it: `github at gh
   | `alert` | github |
   | `review` | github |
 
-- A finder enabled for a repository on a forge it does not support is skipped, and the reason (`finder_forge_not_supported`) is recorded on the leads status.
-- The lead client is made per forge, so a GitLab organization gets leads.
+- A finder enabled for a repository on a forge it does not support is skipped, and the reason (`<kind> reads <forges> repositories; this one is on <forge>`) is recorded on the leads status (`GET /api/v1/leads/status`) and logged once while it stands (`leads_finder_skipped`).
+- The lead client is made per forge, so a GitLab organization gets leads. A repository's forge is its registration's; one registered on another forge than its organization's gets no client.
+- A forge tracker reads each repository's backlog with the organization's own credential, as the finders do (`list_backlog(repos, client_for=...)`); Linear reads with its key.
 
 ### Owners (PR 6, with #179)
 
