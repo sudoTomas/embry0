@@ -56,6 +56,7 @@ const PROBE_STATUS_LABELS: Record<string, string> = {
   unreachable: "Unreachable",
   not_configured: "Not configured",
   error: "Error",
+  refused: "Refused: this machine or link-local",
 };
 
 function fmtPrice(v: number | null): string {

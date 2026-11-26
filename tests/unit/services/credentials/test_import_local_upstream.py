@@ -12,6 +12,7 @@ from embry0.services.credentials import import_env
 from embry0.services.credentials.import_env import import_from_env
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.credentials import CredentialsRepository
+from tests.fixtures.model_servers import fake_dns
 from tests.fixtures.provider_catalogue import enable_providers
 
 pytestmark = [pytest.mark.requires_postgres]
@@ -157,10 +158,27 @@ async def test_an_upstream_that_is_no_http_url_is_not_imported(db_with_migration
     )
 
 
-@pytest.mark.parametrize("upstream", ["http://127.0.0.1:8000/v1", "http://169.254.169.254/v1", "http://localhost/v1"])
+#: Names the import looks up: two resolve to this machine or a metadata service.
+NAMES = {"localtest.me": ["127.0.0.1"], "metadata.google.internal": ["169.254.169.254"]}
+
+
+@pytest.mark.parametrize(
+    "upstream",
+    [
+        "http://127.0.0.1:8000/v1",
+        "http://169.254.169.254/v1",
+        "http://localhost/v1",
+        "http://2130706433:8000/v1",
+        "http://0x7f.0.0.1/v1",
+        "http://2852039166/v1",
+        "http://localtest.me:8000/v1",
+        "http://metadata.google.internal/v1",
+    ],
+)
 async def test_an_upstream_on_this_machine_or_link_local_is_not_imported(
-    db_with_migrations: DatabasePool, upstream: str
+    db_with_migrations: DatabasePool, upstream: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    fake_dns(monkeypatch, NAMES)
     repo = CredentialsRepository(db_with_migrations)
     report = await _import(repo, _config(upstream=upstream))
     assert await repo.find_by_label("custom", "api-key") is None, f"{upstream!r} was imported as a model server"
@@ -169,9 +187,15 @@ async def test_an_upstream_on_this_machine_or_link_local_is_not_imported(
     ), f"the report must say why nothing was imported: {report.as_dict()}"
 
 
-async def test_a_custom_base_url_on_link_local_is_not_imported(db_with_migrations: DatabasePool) -> None:
+@pytest.mark.parametrize(
+    "base_url", ["http://169.254.169.254/v1", "http://0xa9fea9fe/v1", "http://metadata.google.internal/v1"]
+)
+async def test_a_custom_base_url_on_link_local_is_not_imported(
+    db_with_migrations: DatabasePool, base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_dns(monkeypatch, NAMES)
     repo = CredentialsRepository(db_with_migrations)
-    env = {"CUSTOM_LLM_API_KEY": "k", "CUSTOM_LLM_BASE_URL": "http://169.254.169.254/v1"}
+    env = {"CUSTOM_LLM_API_KEY": "k", "CUSTOM_LLM_BASE_URL": base_url}
     report = await _import(repo, SimpleNamespace(gitlab_url=""), env)
     assert await repo.find_by_label("custom", "api-key") is None, "a link-local CUSTOM_LLM_BASE_URL was imported"
     assert any(line.startswith("custom/api-key: its base URL may not be a model server") for line in report.skipped), (

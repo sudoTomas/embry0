@@ -23,10 +23,17 @@ except ImportError:
     pytest.fail("a background call holds no slot: services.local_slots names no server and no CallSlots", pytrace=False)
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
+from tests.fixtures.model_servers import fake_dns
 from tests.fixtures.provider_catalogue import enable_providers
 from tests.unit.services.test_background_calls import GOOD, T0, Gate, Spend
 
 LOCAL = "custom/qwen"
+
+
+@pytest.fixture(autouse=True)
+def _servers_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The custom servers these calls reach: one machine by two names."""
+    fake_dns(monkeypatch, {"models.test": ["10.0.0.5"], "models.lan": ["10.0.0.5"]})
 
 
 @pytest.fixture(autouse=True)
@@ -215,8 +222,45 @@ async def test_a_local_endpoint_names_the_server_its_credential_is(
     assert endpoint.root == base_url.rstrip("/"), f"a background call reaches its credential's own address: {endpoint}"
 
 
-@pytest.mark.parametrize("base_url", ["http://169.254.169.254/v1", "http://127.0.0.1:8000/v1"])
-async def test_no_background_call_goes_to_this_machine_or_link_local(base_url: str) -> None:
-    """A custom credential written before the check (ADR 0032) may still name one: no call is made there."""
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://169.254.169.254/v1",
+        "http://127.0.0.1:8000/v1",
+        "http://2130706433:8000/v1",
+        "http://0x7f000001/v1",
+        "http://127.1:8000/v1",
+        "http://169.254.43518/v1",
+        "http://localtest.me:8000/v1",
+        "http://metadata.google.internal/v1",
+        "http://nowhere.test/v1",
+    ],
+)
+async def test_no_background_call_goes_to_this_machine_or_link_local(
+    base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A custom credential written before the check (ADR 0032) may still name one, in any spelling or by a name that
+    resolves there, or a name that resolves to nothing: no call is made, so its key goes nowhere."""
+    fake_dns(monkeypatch, {"localtest.me": ["127.0.0.1"], "metadata.google.internal": ["169.254.169.254"]})
     endpoint = await resolve_endpoint(LOCAL, Resolver("cred-local", base_url), "acme/widgets")
     assert endpoint is None, f"a background call would go to {base_url}, with the credential's key: {endpoint}"
+
+
+async def test_a_background_call_connects_to_the_checked_address_and_names_the_server_in_host() -> None:
+    """The server's name was resolved and checked once; the call goes to that address, never to the name again."""
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(GOOD)}}], "usage": {}})
+
+    calls = _calls(Leases(), cap=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+        endpoint = await calls.endpoint("slop_judge", LOCAL, "acme/widgets")
+        assert endpoint is not None and endpoint.address == "10.0.0.5", (
+            f"the endpoint names no checked address: {endpoint}"
+        )
+        await calls.ask("slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j")
+    [request] = seen
+    assert (request.url.host, request.url.port) == ("10.0.0.5", 8000), f"the call went elsewhere: {request.url}"
+    assert request.headers["host"] == "models.test:8000", f"the server's own name, in Host: {request.headers}"

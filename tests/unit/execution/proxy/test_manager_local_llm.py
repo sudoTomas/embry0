@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from embry0.execution.proxy import local_llm_proxy
-from embry0.execution.proxy.manager import ProxyManager, resolve_upstream_url
+from embry0.execution.proxy.manager import ProxyManager
 
 _ADMIN_TOKEN = "test-admin-token"
 
@@ -85,20 +85,13 @@ async def test_no_cap_keeps_the_proxy_s_default(docker_mock, pm):
     )
 
 
-def test_the_upstream_keeps_what_it_cannot_or_must_not_resolve():
-    assert resolve_upstream_url("http://10.0.0.5:8000/v1") == "http://10.0.0.5:8000/v1"
-    assert resolve_upstream_url("http://model-box/v1") == "http://10.99.0.7/v1"
-    assert resolve_upstream_url("https://model-box:8443/v1") == "https://model-box:8443/v1", "the name is the cert's"
-    assert resolve_upstream_url("http://nowhere.invalid:1/v1") == "http://nowhere.invalid:1/v1"
-
-
 def _server() -> object:
     upstream = getattr(local_llm_proxy, "Upstream", None)
     assert upstream is not None, "a sandbox's server has no shape to be enrolled with (local_llm_proxy.Upstream)"
-    return upstream(credential_id="cred-a", root="http://model-box:8000/v1/", api_key="server-key")
+    return upstream(credential_id="cred-a", root="http://model-box:8000/v1/", api_key="server-key", address="10.99.0.7")
 
 
-async def _enrolling_manager(monkeypatch, *, echo: bool | str = True):
+async def _enrolling_manager(monkeypatch, *, echo: bool | dict = True):
     pm = ProxyManager(docker=AsyncMock(), proxy_admin_token="x" * 20)
     pm._http = object()
     pm.xai_proxy_url = "http://xai-proxy:9106"
@@ -110,8 +103,10 @@ async def _enrolling_manager(monkeypatch, *, echo: bool | str = True):
         body = kwargs.get("body") or {}
         if echo and kwargs["container"] == "local-llm-proxy" and kwargs["method"] == "POST":
             server = body["local_llm"]
-            upstream = echo if isinstance(echo, str) else server["upstream"]
-            return {"local_llm": {"credential_id": server["credential_id"], "upstream": upstream}}
+            echoed = {k: server[k] for k in ("credential_id", "upstream", "address")}
+            if isinstance(echo, dict):
+                echoed.update(echo)
+            return {"local_llm": echoed}
         return {}
 
     monkeypatch.setattr(pm, "_exec_admin_request", fake_exec)
@@ -130,10 +125,11 @@ async def test_only_a_sandbox_on_the_custom_provider_is_enrolled_with_the_local_
     assert [c["container"] for c in captured] == ["xai-proxy", "local-llm-proxy"]
     local = next(c for c in captured if c["container"] == "local-llm-proxy")
     assert (local["port"], local["path"], local["body"]["sandbox_token"]) == (9108, "/admin/enroll", token)
-    # DinD resolves no name the orchestrator's networks know: the address goes in its place.
+    # The name stays in the root, for Host and TLS; the proxy connects to the checked address (DinD resolves none).
     assert local["body"]["local_llm"] == {
         "credential_id": "cred-a",
-        "upstream": "http://10.99.0.7:8000/v1",
+        "upstream": "http://model-box:8000/v1",
+        "address": "10.99.0.7",
         "api_key": "server-key",
     }, f"the server the sandbox was enrolled with: {local['body']['local_llm']}"
     xai = next(c for c in captured if c["container"] == "xai-proxy")
@@ -141,7 +137,11 @@ async def test_only_a_sandbox_on_the_custom_provider_is_enrolled_with_the_local_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("echo", [False, "http://10.99.0.8:8000/v1"], ids=["no-echo", "another-server"])
+@pytest.mark.parametrize(
+    "echo",
+    [False, {"upstream": "http://10.99.0.8:8000/v1"}, {"address": "10.99.0.8"}],
+    ids=["no-echo", "another-server", "another-address"],
+)
 async def test_a_local_proxy_that_does_not_confirm_the_server_is_refused(monkeypatch, echo):
     """An image from before per-sandbox servers would take the enrollment and forward nowhere it was told, and one
     that holds another server would send the sandbox there: the sandbox is unenrolled there and its creation fails."""

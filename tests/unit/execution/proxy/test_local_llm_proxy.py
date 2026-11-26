@@ -11,6 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient
 
 from embry0.execution.proxy import local_llm_proxy
+from tests.fixtures.model_servers import allow_loopback_test_servers
 from tests.fixtures.recording_upstream import is_test_request
 
 _ADMIN = "test-admin-secret-not-real"
@@ -24,11 +25,7 @@ def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fake model servers here listen on 127.0.0.1, which no real enrollment may name (ADR 0032): these tests
     let that one address through, and every other refused host stays refused
     (tests/unit/execution/proxy/test_model_server_hosts.py refuses 127.0.0.1 itself)."""
-    refused = getattr(local_llm_proxy, "refused_server_host", None)
-    if refused is not None:
-        monkeypatch.setattr(
-            local_llm_proxy, "refused_server_host", lambda host: None if host == "127.0.0.1" else refused(host)
-        )
+    allow_loopback_test_servers(monkeypatch)
 
 
 @pytest.fixture
@@ -52,6 +49,7 @@ def make_upstream(aiohttp_server) -> Any:
                     "method": request.method,
                     "path": request.path,
                     "authorization": request.headers.get("Authorization"),
+                    "host": request.headers.get("Host"),
                     "body": await request.read(),
                 }
             )
@@ -74,8 +72,16 @@ async def upstream(make_upstream) -> Any:
     return await make_upstream()
 
 
-def _server(upstream: Any, *, api_key: str = "", credential_id: str = "cred-a") -> dict[str, str]:
-    return {"credential_id": credential_id, "upstream": f"http://127.0.0.1:{upstream.port}/v1/", "api_key": api_key}
+def _server(
+    upstream: Any, *, api_key: str = "", credential_id: str = "cred-a", name: str = "127.0.0.1"
+) -> dict[str, str]:
+    """An enrollment's server: the fake server's root under ``name``, and the address it was checked at."""
+    return {
+        "credential_id": credential_id,
+        "upstream": f"http://{name}:{upstream.port}/v1/",
+        "api_key": api_key,
+        "address": "127.0.0.1",
+    }
 
 
 async def _enroll(client: TestClient, sandbox_id: str, token: str, server: Any) -> Any:
@@ -119,19 +125,32 @@ def test_the_admin_token_and_a_positive_cap_must_be_set():
         None,
         "http://10.0.0.5:11434/v1",
         {"credential_id": "cred-a", "api_key": "k"},
-        {"credential_id": "cred-a", "upstream": "file:///etc/passwd", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "ftp://10.0.0.5/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http:///v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://user:pw@10.0.0.5/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1?x=1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1", "api_key": "k\r\nX-Evil: 1"},
-        {"credential_id": 7, "upstream": "http://10.0.0.5/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://127.0.0.2:8000/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://[::1]:8000/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://localhost:8000/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://169.254.169.254/latest", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://[fe80::1]:8000/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://0.0.0.0:8000/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "file:///etc/passwd", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "ftp://10.0.0.5/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http:///v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://user:pw@10.0.0.5/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1?x=1", "api_key": "", "address": "10.0.0.5"},
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://10.0.0.5/v1",
+            "api_key": "k\r\nX-Evil: 1",
+            "address": "10.0.0.5",
+        },
+        {"credential_id": 7, "upstream": "http://10.0.0.5/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://127.0.0.2:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://[::1]:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://localhost:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://169.254.169.254/latest", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://[fe80::1]:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://0.0.0.0:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://2130706434:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://0xa9fea9fe/v1", "api_key": "", "address": "10.0.0.5"},
+        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": ""},
+        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "models.test"},
+        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "2130706433"},
+        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "127.0.0.2"},
+        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "169.254.169.254"},
+        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "::ffff:127.0.0.3"},
     ],
     ids=[
         "none",
@@ -150,6 +169,14 @@ def test_the_admin_token_and_a_positive_cap_must_be_set():
         "metadata-service",
         "link-local-v6",
         "unspecified",
+        "loopback-as-a-number",
+        "metadata-in-hex",
+        "no-address",
+        "address-a-name",
+        "address-a-number",
+        "address-loopback",
+        "address-metadata",
+        "address-mapped-loopback",
     ],
 )
 async def test_an_enrollment_without_a_valid_server_is_refused(aiohttp_client, server):
@@ -170,9 +197,11 @@ async def test_the_enrollment_answer_confirms_the_server_and_never_the_key(aioht
     client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
     enrolled = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream, api_key=_SERVER_KEY))
     answer = await enrolled.json()
-    assert answer["local_llm"] == {"credential_id": "cred-a", "upstream": f"http://127.0.0.1:{upstream.port}/v1"}, (
-        f"the answer must echo the server, without its trailing slash: {answer}"
-    )
+    assert answer["local_llm"] == {
+        "credential_id": "cred-a",
+        "upstream": f"http://127.0.0.1:{upstream.port}/v1",
+        "address": "127.0.0.1",
+    }, f"the answer must echo the server, without its trailing slash: {answer}"
     assert _SERVER_KEY not in await enrolled.text(), "the enrollment answer carried the server's key"
 
 
@@ -216,6 +245,50 @@ async def test_a_sandbox_whose_server_is_gone_is_answered_503(aiohttp_client, up
     resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
     assert resp.status == 503, f"a sandbox with no server was answered {resp.status}"
     assert upstream.seen == []
+
+
+async def test_a_call_connects_to_the_checked_address_and_names_the_server_in_host(aiohttp_client, upstream):
+    """The orchestrator resolved and checked the server's name; the proxy connects to that address, never to the
+    name again (no second lookup to answer otherwise), and the server still reads its own name."""
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    server = _server(upstream, name="models.test")
+    assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, server)).status == 200
+    resp = await client.post("/v1/chat/completions", json={"messages": []}, headers=_AUTH)
+    assert resp.status == 200, f"the call did not reach the checked address: {resp.status} {await resp.text()}"
+    assert [r["host"] for r in upstream.seen] == [f"models.test:{upstream.port}"], (
+        f"the server must be named in Host, as the credential names it: {upstream.seen}"
+    )
+
+
+async def test_an_https_server_keeps_its_name_for_tls(aiohttp_client, monkeypatch):
+    """Connecting to the address leaves the certificate to be checked for the name: the call carries it as SNI."""
+    import httpx
+
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={"choices": []})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        local_llm_proxy.httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(answer), **kw)
+    )
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    server = {
+        "credential_id": "cred-a",
+        "upstream": "https://models.test:8443/v1",
+        "api_key": "",
+        "address": "10.0.0.7",
+    }
+    assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, server)).status == 200
+    assert (await client.post("/v1/chat/completions", json={"messages": []}, headers=_AUTH)).status == 200
+    [request] = sent
+    assert (request.url.scheme, request.url.host, request.url.port) == ("https", "10.0.0.7", 8443), request.url
+    assert request.headers["host"] == "models.test:8443", f"the server's own name, in Host: {request.headers}"
+    assert request.extensions.get("sni_hostname") == "models.test", (
+        f"the TLS server name must be the credential's, so its certificate is checked for it: {request.extensions}"
+    )
 
 
 async def test_chat_completions_and_models_reach_the_sandbox_s_server(aiohttp_client, upstream):
@@ -358,7 +431,7 @@ async def test_a_request_carrying_the_server_key_counts_on_any_path(upstream):
 
 async def test_an_unreachable_server_is_a_502(aiohttp_client):
     client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
-    dead = {"credential_id": "cred-a", "upstream": "http://127.0.0.1:9/v1", "api_key": ""}
+    dead = {"credential_id": "cred-a", "upstream": "http://127.0.0.1:9/v1", "api_key": "", "address": "127.0.0.1"}
     assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, dead)).status == 200
     resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
     assert resp.status == 502

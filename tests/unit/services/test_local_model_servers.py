@@ -23,6 +23,8 @@ except ImportError:  # the check's own message says what is missing, test by tes
         pytest.fail("startup names no retired LOCAL_LLM_* variable (services.local_model_servers)")
 
 
+from tests.fixtures.model_servers import allow_loopback_test_servers, fake_dns
+
 SECRET = "server-key-under-test"
 
 
@@ -65,22 +67,11 @@ def _row(cid: str, base_url: str | None, *, secret: str = SECRET, **extra: Any) 
     }
 
 
-@pytest.fixture(autouse=True)
-def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fake model servers here listen on 127.0.0.1, which no stored credential may name (ADR 0032): these tests
-    let that one address through, and every other refused host stays refused."""
-    import embry0.services.local_model_servers as servers_module
-
-    refused = getattr(servers_module, "refused_server_host", None)
-    if refused is not None:
-        monkeypatch.setattr(
-            servers_module, "refused_server_host", lambda host: None if host == "127.0.0.1" else refused(host)
-        )
-
-
 @pytest.fixture
-async def servers(aiohttp_server) -> Any:
-    """Model servers answering ``GET /v1/models``: one that works, one that checks a key, one with no such path."""
+async def servers(aiohttp_server, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Model servers answering ``GET /v1/models``: one that works, one that checks a key, one with no such path. They
+    listen on 127.0.0.1, which no real server may be (ADR 0032): a test using them lets that one address through."""
+    allow_loopback_test_servers(monkeypatch)
 
     async def models(request: web.Request) -> web.Response:
         return web.json_response({"data": [{"id": "qwen"}]})
@@ -189,3 +180,51 @@ def test_nothing_is_named_when_neither_is_set() -> None:
     with capture_logs() as logs:
         assert warn_retired_upstream(Embry0Config()) == []
     assert not [e for e in logs if e["event"] == "settings_env_retired"]
+
+
+async def test_a_credential_whose_name_resolves_to_this_machine_is_never_probed(aiohttp_server, monkeypatch) -> None:
+    """A name is read for every address it resolves to: one that is this machine is refused before anything is sent,
+    so the key goes nowhere (the fake server below listens there, and sees nothing)."""
+    seen: list[str] = []
+
+    async def models(request: web.Request) -> web.Response:
+        seen.append(request.headers.get("Authorization", ""))
+        return web.json_response({"data": []})
+
+    app = web.Application()
+    app.router.add_get("/v1/models", models)
+    port = (await aiohttp_server(app)).port
+    fake_dns(monkeypatch, {"localtest.me": ["127.0.0.1"], "metadata.google.internal": ["169.254.169.254"]})
+    rows = [
+        _row("cred-loop", f"http://localtest.me:{port}/v1"),
+        _row("cred-meta", "http://metadata.google.internal/v1"),
+    ]
+    found = await check_custom_servers(Credentials(rows), Secrets())
+    assert found == {"cred-loop": "refused_host", "cred-meta": "refused_host"}, found
+    assert seen == [], f"the probe sent the key to this machine: {seen}"
+
+
+@pytest.mark.parametrize("host", ["2130706433", "0x7f000001", "127.1", "0", "169.254.43518", "0xa9fea9fe"])
+async def test_a_credential_spelling_this_machine_is_refused_before_its_key_is_read(host: str) -> None:
+    credentials = Credentials([_row("cred-a", f"http://{host}:8000/v1")])
+    found = await check_custom_servers(credentials, Secrets())
+    assert found == {"cred-a": "refused_host"}, f"{host} was probed: {found}"
+    assert credentials.fetched == [], f"the key of a credential at {host} was read"
+
+
+async def test_a_name_is_probed_at_its_checked_address_and_named_in_host(aiohttp_server, monkeypatch) -> None:
+    """The probe resolves the name once, checks it, and connects there; the server reads its own name."""
+    hosts: list[str] = []
+
+    async def models(request: web.Request) -> web.Response:
+        hosts.append(request.headers.get("Host", ""))
+        return web.json_response({"data": []})
+
+    app = web.Application()
+    app.router.add_get("/v1/models", models)
+    port = (await aiohttp_server(app)).port
+    allow_loopback_test_servers(monkeypatch)
+    fake_dns(monkeypatch, {"gpu-box.test": ["127.0.0.1"]})
+    found = await check_custom_servers(Credentials([_row("cred-a", f"http://gpu-box.test:{port}/v1")]), Secrets())
+    assert found == {"cred-a": "ok"}, f"the probe did not reach the checked address: {found}"
+    assert hosts == [f"gpu-box.test:{port}"], f"the server must read its own name in Host: {hosts}"

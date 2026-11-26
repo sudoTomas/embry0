@@ -41,6 +41,7 @@ which are metered and capped as every job is.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 import uuid
@@ -129,6 +130,9 @@ class Endpoint:
     local: bool
     #: The server a local call holds a slot of (``services.local_slots``); '' for a hosted model.
     server: str = ""
+    #: The address a local call connects to, its server's host resolved and checked (``server_address``); '' for a
+    #: hosted model, whose host is the provider's own.
+    address: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,16 +185,18 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
     root = str(cred.metadata.get("base_url") or provider.openai_base_url or "").rstrip("/")
     if not root or not cred.secret:
         return None
-    from urllib.parse import urlsplit
-
-    from embry0.execution.proxy.local_llm_proxy import refused_server_host
-
-    refused = refused_server_host(urlsplit(root).hostname)
-    if refused is not None:
-        # ADR 0032: a credential written before the check may still name one; no call goes there.
-        logger.warning("background_model_refused_server", feature=feature, model=model, reason=refused)
-        return None
     local = provider.name == "custom"
+    address = ""
+    if local:
+        from embry0.execution.proxy.server_address import RefusedServer, UnresolvedServer, pin_server
+
+        try:
+            # ADR 0032: the operator's server is reached at an address its host resolved to and was checked for (never
+            # this machine or link-local, whatever the credential's spelling), and only there. A lookup, off the loop.
+            address = (await asyncio.to_thread(pin_server, root)).address
+        except (RefusedServer, UnresolvedServer) as exc:
+            logger.warning("background_model_refused_server", feature=feature, model=model, reason=str(exc))
+            return None
     return Endpoint(
         model=model,
         root=root,
@@ -198,6 +204,7 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
         upstream_model=upstream_model(provider, model),
         local=local,
         server=server_of(getattr(cred, "id", None)) if local else "",
+        address=address,
     )
 
 
@@ -269,12 +276,20 @@ async def ask_json(
         # and no thinking for a short task.
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": name, "schema": dict(schema)}}
         body["chat_template_kwargs"] = {"enable_thinking": False}
-    resp = await client.post(
-        f"{endpoint.root}/chat/completions",
-        json=body,
-        headers={"Authorization": f"Bearer {endpoint.key}"},
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
+    url = f"{endpoint.root}/chat/completions"
+    headers = {"Authorization": f"Bearer {endpoint.key}"}
+    extensions: dict[str, Any] = {}
+    if endpoint.address:
+        from embry0.execution.proxy.server_address import pinned_request
+
+        url, host, extensions = pinned_request(url, endpoint.address)
+        headers.update(host)
+    if extensions:
+        resp = await client.post(
+            url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS, extensions=extensions
+        )
+    else:
+        resp = await client.post(url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
     resp.raise_for_status()
     try:
         data = resp.json()

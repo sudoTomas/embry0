@@ -106,8 +106,9 @@ describes what embry0 does rather than listing changes.
   be rebuilt. A paused custom job whose sandbox was created with the key or
   the server's address in its env is not resumed
   (`ERR_SANDBOX_ROUTE_RETIRED`): dispatch it again. A custom credential may
-  not name this machine or a link-local address; one stored that way is
-  refused when a job uses it.
+  not name this machine or a link-local address, in any spelling or by a name
+  that resolves there; one stored that way is refused when a job or a call uses
+  it.
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

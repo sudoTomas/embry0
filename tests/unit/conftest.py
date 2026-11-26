@@ -112,3 +112,13 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     GUARD.remove_children()
+
+
+@pytest.fixture(autouse=True)
+def _no_model_server_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Where embry0 connects to an operator's model server it resolves the host first (ADR 0032, ``server_address``).
+    No unit test reaches real DNS that way: a name answers "not known" unless the test names its addresses with
+    ``tests.fixtures.model_servers.fake_dns``."""
+    from tests.fixtures.model_servers import fake_dns
+
+    fake_dns(monkeypatch, {})

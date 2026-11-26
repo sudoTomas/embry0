@@ -72,6 +72,7 @@ COPY embry0/execution/proxy/minio_proxy.py        /app/embry0/execution/proxy/mi
 COPY embry0/execution/proxy/model_request.py      /app/embry0/execution/proxy/model_request.py
 COPY embry0/execution/proxy/presign_proxy.py      /app/embry0/execution/proxy/presign_proxy.py
 COPY embry0/execution/proxy/receive_pack.py       /app/embry0/execution/proxy/receive_pack.py
+COPY embry0/execution/proxy/server_address.py     /app/embry0/execution/proxy/server_address.py
 COPY embry0/execution/proxy/xai_proxy.py          /app/embry0/execution/proxy/xai_proxy.py
 COPY embry0/execution/proxy/server.py             /app/embry0/execution/proxy/server.py
 

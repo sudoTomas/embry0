@@ -28,6 +28,7 @@ import pytest
 
 from embry0.services import job_briefs, proposal_briefs
 from embry0.services.proposals import Proposal
+from tests.fixtures.model_servers import fake_dns
 from tests.fixtures.provider_catalogue import enable_providers
 
 GOLDEN = json.loads((Path(__file__).resolve().parents[2] / "fixtures" / "brief_requests.json").read_text())
@@ -117,10 +118,19 @@ def _client(sent: list[httpx.Request], good: dict[str, str]) -> httpx.AsyncClien
     return httpx.AsyncClient(transport=httpx.MockTransport(answer))
 
 
+@pytest.fixture(autouse=True)
+def _models_test_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The writers' custom server is models.test; a call to it connects to the address it resolves to."""
+    fake_dns(monkeypatch, {"models.test": ["10.0.0.5"]})
+
+
 def _request(request: httpx.Request) -> dict[str, Any]:
+    # A call connects to the address its server's name resolved to (ADR 0032) and names the server in Host: the URL
+    # the server sees is the one with that name, which is the one the writer sent before.
+    url = request.url.copy_with(netloc=request.headers["host"].encode()) if "host" in request.headers else request.url
     return {
         "method": request.method,
-        "url": str(request.url),
+        "url": str(url),
         "headers": {k: v for k, v in sorted(request.headers.items()) if k in SET_HEADERS},
         "body": request.content.decode(),
     }

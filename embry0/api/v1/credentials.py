@@ -6,6 +6,7 @@ Who made a binding (``created_by``) is shown as ``GET /audit`` shows actors
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -276,6 +277,15 @@ async def create_credential(req: CredentialCreate, request: Request) -> Credenti
     host = (req.host.strip() or expected).lower()
     if host != expected:
         raise HTTPException(status_code=422, detail=f"host for {req.provider} must be {expected!r} in this deployment")
+    base_url = str((req.metadata or {}).get("base_url") or "")
+    if base_url:
+        # ADR 0032: the schema refused this machine and link-local in any spelling; a name is read here, every
+        # address it resolves to. A name that resolves to nothing here is checked again where a call connects.
+        from embry0.execution.proxy.server_address import server_refusal
+
+        refused = await asyncio.to_thread(server_refusal, base_url)
+        if refused is not None:
+            raise HTTPException(status_code=422, detail=f"metadata.base_url may not be a model server: {refused}")
     try:
         row = await st.credentials_repo.create(
             kind=req.kind,

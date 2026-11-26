@@ -15,6 +15,7 @@ from embry0.execution.sandbox_manager import SandboxInitError, SandboxManager, S
 from embry0.safety.error_codes import ErrorCode
 from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG, LOCAL_LLM_PROXY_TOKEN_REL
 from embry0.services.credentials.resolver import CredentialUnavailableError
+from tests.fixtures.model_servers import fake_dns
 from tests.unit.execution import test_sandbox_reenroll as reenroll
 from tests.unit.execution.test_sandbox_manager import (  # noqa: F401
     _stub_egress_unless_overridden,
@@ -24,12 +25,22 @@ from tests.unit.execution.test_sandbox_manager_llm import _env, _manager
 from tests.unit.execution.test_sandbox_manager_openai_compatible import _CUSTOM, _key
 
 _PROXY = "http://local-llm-proxy:9108"
+
+
 #: The server a sandbox on ``_CUSTOM`` is enrolled with: the credential's id, its API root and its key.
-_ITS_SERVER = (
-    local_llm_proxy.Upstream(credential_id="cred-custom", root="http://10.0.0.5:11434/v1", api_key="ollama-placeholder")
-    if hasattr(local_llm_proxy, "Upstream")
-    else "the credential's server (local_llm_proxy.Upstream, ADR 0032)"
-)
+def _its_server() -> object:
+    try:
+        return local_llm_proxy.Upstream(
+            credential_id="cred-custom",
+            root="http://10.0.0.5:11434/v1",
+            api_key="ollama-placeholder",
+            address="10.0.0.5",
+        )
+    except (AttributeError, TypeError):
+        return "the credential's server with its checked address (local_llm_proxy.Upstream, ADR 0032)"
+
+
+_ITS_SERVER = _its_server()
 
 
 def test_the_sandbox_gets_the_proxy_and_no_key_or_server_address() -> None:
@@ -125,14 +136,52 @@ async def test_a_custom_credential_naming_no_server_does_not_start() -> None:
     assert not mgr._docker.build_run_cmd.called, "a container was started for a credential with no server"
 
 
-@pytest.mark.parametrize("root", ["http://127.0.0.1:11434/v1", "http://169.254.169.254/v1", "http://localhost/v1"])
-async def test_a_custom_credential_naming_this_machine_or_link_local_does_not_start(root: str) -> None:
-    """The credential may come from the environment (CUSTOM_LLM_BASE_URL), which no API check saw."""
+@pytest.mark.parametrize(
+    "root",
+    [
+        "http://127.0.0.1:11434/v1",
+        "http://169.254.169.254/v1",
+        "http://localhost/v1",
+        "http://2130706433:11434/v1",
+        "http://0x7f000001/v1",
+        "http://127.1/v1",
+        "http://169.254.43518/v1",
+        "https://localtest.me/v1",
+        "https://127.0.0.1.nip.io/v1",
+        "http://metadata.google.internal/v1",
+        "http://nowhere.test/v1",
+    ],
+)
+async def test_a_custom_credential_naming_this_machine_or_link_local_does_not_start(
+    root: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The credential may come from the environment (CUSTOM_LLM_BASE_URL), which no API check saw, or name a host
+    that resolves there: its every address is read, and a name that resolves to none is no server either."""
+    fake_dns(
+        monkeypatch,
+        {
+            "localtest.me": ["127.0.0.1"],
+            "127.0.0.1.nip.io": ["127.0.0.1"],
+            "metadata.google.internal": ["169.254.169.254"],
+        },
+    )
     mgr, _, pm = _proxied_manager({"custom": _key("custom", "k", {"base_url": root})})
     refused = await _refused(mgr)
     assert refused is not None, f"a custom job started on a credential naming {root}"
     assert "does not reach" in str(refused) and refused.error_code == ErrorCode.CREDENTIAL_UNAVAILABLE, refused
     assert not mgr._docker.build_run_cmd.called, "a container was started for a server embry0 does not reach"
+
+
+async def test_a_server_name_is_pinned_to_the_address_it_was_checked_at(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy connects to the address the orchestrator resolved and checked, never to the name again."""
+    fake_dns(monkeypatch, {"gpu-box.lan": ["10.0.0.9"]})
+    mgr, _, pm = _proxied_manager({"custom": _key("custom", "k", {"base_url": "https://gpu-box.lan:8443/v1"})})
+    await mgr.create("job-1", repo="acme/widgets", llm_providers=["custom"])
+    server = pm.enroll_sandbox.await_args.kwargs.get("local_llm")
+    got = (getattr(server, "root", None), getattr(server, "address", None))
+    assert got == ("https://gpu-box.lan:8443/v1", "10.0.0.9"), (
+        f"the sandbox must be enrolled with the name and its checked address: {server}"
+    )
 
 
 async def test_a_sandbox_without_the_custom_provider_is_not_enrolled_with_the_proxy() -> None:

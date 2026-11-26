@@ -226,7 +226,9 @@ async def _llm_entries(
     upstream = str(getattr(config, "local_llm_upstream", "") or "").strip().rstrip("/")
     for provider in enabled_openai_compatible():
         if provider.name == "custom" and upstream:
-            entry = _local_upstream_entry(upstream, env, config, report, key_env=provider.api_key_env)
+            entry = _local_upstream_entry(
+                upstream, env, config, report, key_env=provider.api_key_env, refused=await _refusal(upstream)
+            )
             if entry is not None:
                 out.append(entry)
             continue
@@ -234,7 +236,7 @@ async def _llm_entries(
         if fallback is None:
             continue
         metadata = env_fallback_metadata(provider.name, env)
-        refused = _refused_address(metadata["base_url"]) if "base_url" in metadata else None
+        refused = await _refusal(metadata["base_url"]) if "base_url" in metadata else None
         if refused is not None:
             report.skipped.append(f"{provider.name}/api-key: its base URL may not be a model server: {refused}")
             continue
@@ -245,15 +247,18 @@ async def _llm_entries(
     return out
 
 
-def _refused_address(url: str) -> str | None:
-    """Why the server ``url`` names may not be a model server (this machine, link-local), or None."""
-    from embry0.execution.proxy.local_llm_proxy import refused_server_host
+async def _refusal(url: str) -> str | None:
+    """Why the server ``url`` names may not be a model server: its host is, or resolves to, this machine or
+    link-local (ADR 0032, ``server_address.server_refusal``); None when it may. A lookup, off the event loop."""
+    import asyncio
 
-    return refused_server_host(urlparse(url).hostname)
+    from embry0.execution.proxy.server_address import server_refusal
+
+    return await asyncio.to_thread(server_refusal, url)
 
 
 def _local_upstream_entry(
-    upstream: str, env: Mapping[str, str], config: Any, report: ImportReport, *, key_env: str
+    upstream: str, env: Mapping[str, str], config: Any, report: ImportReport, *, key_env: str, refused: str | None
 ) -> tuple[str, str, str, str, str, int, dict[str, Any]] | None:
     """ADR 0032: ``LOCAL_LLM_UPSTREAM``, which sent every agent run on the custom provider to one server, becomes the
     environment's custom credential (``custom/api-key``): that server's address, and ``LOCAL_LLM_API_KEY``, else
@@ -263,7 +268,6 @@ def _local_upstream_entry(
     if not upstream.startswith(("http://", "https://")) or not host:
         report.skipped.append("custom/api-key: LOCAL_LLM_UPSTREAM is not an http(s) URL with a host")
         return None
-    refused = _refused_address(upstream)
     if refused is not None:
         report.skipped.append(f"custom/api-key: LOCAL_LLM_UPSTREAM may not be a model server: {refused}")
         return None

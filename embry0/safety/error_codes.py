@@ -347,6 +347,10 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.workspace_providers.provider:WorkspaceProviderError", ErrorCode.WORKSPACE_PROVIDER),
     ("embry0.orchestration.nodes.agent:SandboxRequiredError", ErrorCode.SANDBOX_REQUIRED),
     ("embry0.execution.sandbox_manager:SandboxInitError", ErrorCode.SANDBOX_INIT),
+    # A custom credential's server that may not be reached, or resolves to nothing (ADR 0032): its credential, as
+    # every site that meets one reports it.
+    ("embry0.execution.proxy.server_address:RefusedServer", ErrorCode.CREDENTIAL_UNAVAILABLE),
+    ("embry0.execution.proxy.server_address:UnresolvedServer", ErrorCode.CREDENTIAL_UNAVAILABLE),
     ("embry0.execution.docker_client:ExecStdinTimeoutError", ErrorCode.SANDBOX_EXEC_STALLED),
     ("embry0.execution.tls:CABundleError", ErrorCode.SANDBOX_INIT),
     ("embry0.execution.proxy.enrollment:RegistryFullError", ErrorCode.PROXY_ENROLLMENT),

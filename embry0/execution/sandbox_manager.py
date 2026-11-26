@@ -465,12 +465,14 @@ class SandboxManager:
                         env[catalog.sandbox_base_url_env] = base_url
         return xai_credential_id
 
-    def _local_server(self, resolved: dict[str, ResolvedCredential]) -> Upstream | None:
+    async def _local_server(self, resolved: dict[str, ResolvedCredential]) -> Upstream | None:
         """The model server a sandbox on the custom provider is enrolled with at the local-llm-proxy: its
-        credential's id, API root and key (ADR 0032). None when the job resolved no custom credential.
+        credential's id, API root and key, and the address its host resolves to here, every one checked, which
+        the proxy connects to (ADR 0032, ``server_address``). None when the job resolved no custom credential.
 
-        Raises :class:`SandboxInitError` when it cannot be reached: the proxy is not running, or the credential
-        names no API root. No route around the proxy exists, so such a job does not start.
+        Raises :class:`SandboxInitError` when it cannot be reached: the proxy is not running, the credential names
+        no API root, or its host is, or resolves to, this machine or link-local, or to nothing. No route around the
+        proxy exists, so such a job does not start.
         """
         from embry0.execution.proxy.local_llm_proxy import Upstream
 
@@ -488,17 +490,17 @@ class SandboxManager:
                 f"the custom credential '{cred.label}' names no server: its metadata has no base_url",
                 error_code=ErrorCode.CREDENTIAL_UNAVAILABLE,
             )
-        from urllib.parse import urlsplit
+        from embry0.execution.proxy.server_address import RefusedServer, UnresolvedServer, pin_server
 
-        from embry0.execution.proxy.local_llm_proxy import refused_server_host
-
-        refused = refused_server_host(urlsplit(root).hostname)
-        if refused is not None:
+        try:
+            # A lookup, off the event loop.
+            pinned = await asyncio.to_thread(pin_server, root)
+        except (RefusedServer, UnresolvedServer) as exc:
             raise SandboxInitError(
-                f"the custom credential '{cred.label}' names a server embry0 does not reach: {refused}",
+                f"the custom credential '{cred.label}' names a server embry0 does not reach: {exc}",
                 error_code=ErrorCode.CREDENTIAL_UNAVAILABLE,
-            )
-        return Upstream(credential_id=cred.id or "", root=root, api_key=cred.secret)
+            ) from exc
+        return Upstream(credential_id=cred.id or "", root=root, api_key=cred.secret, address=pinned.address)
 
     async def _install_ca_bundle(self, container_id: str) -> None:
         """Merge the private CA into the container's trust store (spec 1A §3.2).
@@ -678,7 +680,7 @@ class SandboxManager:
             )
         # The server a sandbox on the custom provider reaches, worked out before any container exists: a job whose
         # server cannot be reached fails here.
-        local_server = self._local_server(llm_resolved)
+        local_server = await self._local_server(llm_resolved)
 
         # Spec 1A §3.2: point every in-sandbox TLS client at the merged CA
         # bundle _install_ca_bundle writes just after the container starts.
@@ -1253,7 +1255,7 @@ class SandboxManager:
                 logger.warning(
                     "sandbox_reenroll_custom_credential_changed", container=container, was=credential_id, now=got
                 )
-            return self._local_server(resolved)
+            return await self._local_server(resolved)
         except (CredentialUnavailableError, CredentialMissingError, SandboxInitError) as exc:
             raise SandboxReenrollError(
                 f"sandbox {container} could not be re-enrolled with its model server: {exc}",

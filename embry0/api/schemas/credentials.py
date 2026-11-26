@@ -48,7 +48,7 @@ def _custom_base_url(metadata: dict[str, Any]) -> str:
         raise ValueError("metadata.base_url must be an http(s) URL with a host, e.g. http://10.0.0.5:11434/v1")
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("metadata.base_url must not carry credentials, a query or a fragment")
-    from embry0.execution.proxy.local_llm_proxy import refused_server_host
+    from embry0.execution.proxy.server_address import refused_server_host
 
     refused = refused_server_host(parsed.hostname)
     if refused is not None:

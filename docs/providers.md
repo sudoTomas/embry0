@@ -825,12 +825,27 @@ fails with `ERR_SANDBOX_ROUTE_RETIRED`; dispatch it again.
 
 **Which hosts may be a server.** Never this machine (`localhost`, a loopback
 address, `0.0.0.0`) or the link-local range, where a cloud's metadata service
-answers (169.254.0.0/16, fe80::/10): a credential naming one is refused when it
-is written or imported, a job on it does not start, no background call goes
-there, and the proxy refuses to be enrolled with one.
-Every other host is trusted, the operator's own network included, because only
-a deployment admin writes a custom credential's address (an admin key with no
-repository allowlist, or the environment). Calls the
+answers (169.254.0.0/16, fe80::/10). A host is read the way the resolver reads
+it, not by its spelling: an address in any form (`2130706433`, `0x7f000001`,
+`127.1`, `169.254.43518`, an IPv4-mapped IPv6 address) is that address, and a
+name counts for every address it resolves to (`localtest.me` is 127.0.0.1). A
+credential naming one is refused when it is written or imported, a job on it
+does not start, no background call, startup probe or credential check goes
+there, and the proxy refuses to be enrolled with one. Every other host is
+trusted, the operator's own network included, because only a deployment admin
+writes a custom credential's address (an admin key with no repository
+allowlist, or the environment).
+
+**Every call connects to the address that was checked.** Where embry0 calls a
+custom server (the local-llm-proxy for a job, a background call, a probe), it
+resolves the host once, checks every address, and connects to one of them,
+never to the name again: a name that would answer otherwise a second later (DNS
+rebinding) gets no second question. The name is still the server's `Host`
+header and, for https, the name its certificate is checked for (SNI). For a job
+the orchestrator resolves it, since DinD resolves no name, and enrolls the
+sandbox with the address. A name that resolves to nothing here starts no job
+and makes no call; a credential may still be written with one, and is checked
+again where a call is made. Calls the
 orchestrator makes itself (proposal and job briefs, the Slop-O-Meter's
 judgments; see [Background models](#background-models)) reach the same server
 directly, with the same address and key.

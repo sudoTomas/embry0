@@ -30,7 +30,6 @@ embry0/workflows/_validation.py).
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import secrets
 import socket
 import time
@@ -155,34 +154,6 @@ def _daemon_unreachable(exc: BaseException) -> bool:
     """
     text = str(exc).lower()
     return any(marker in text for marker in _DAEMON_UNREACHABLE_MARKERS)
-
-
-def resolve_upstream_url(url: str) -> str:
-    """``url`` with its host replaced by the address it resolves to, for a proxy in DinD.
-
-    DinD resolves no name the orchestrator's networks know, so an http
-    upstream named by such a name is baked in by address, as the backend
-    proxies' are. An https upstream keeps its name for the certificate check,
-    and a name that does not resolve here is kept for DinD to try.
-    """
-    from urllib.parse import urlsplit, urlunsplit
-
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.scheme != "http" or not host:
-        return url
-    try:
-        ipaddress.ip_address(host)
-        return url
-    except ValueError:
-        pass
-    try:
-        address = socket.gethostbyname(host)
-    except OSError:
-        logger.warning("local_llm_upstream_unresolved", host=host)
-        return url
-    netloc = address if parts.port is None else f"{address}:{parts.port}"
-    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def _resolve_backend_url(host: str, port: int) -> str:
@@ -619,12 +590,12 @@ class ProxyManager:
         goes to the git-proxy so its refusals name the job.
 
         ``local_llm`` is the server a sandbox whose job resolved the custom
-        provider reaches: its credential's id, API root and key. The sandbox is
-        enrolled with the local-llm-proxy for that server alone (ADR 0032); a
-        host name in the root is sent as the address it resolves to here, since
-        DinD resolves none (``resolve_upstream_url``). A local-llm-proxy that
-        does not echo the server runs an image from before per-sandbox
-        servers: refused the same way as the git-proxy's grant.
+        provider reaches: its credential's id, API root and key, and the address
+        the sandbox manager resolved and checked for it, which the proxy
+        connects to (``server_address``; DinD resolves no name). The sandbox is
+        enrolled with the local-llm-proxy for that server alone (ADR 0032). A
+        local-llm-proxy that does not echo the server runs an image from before
+        per-sandbox servers: refused the same way as the git-proxy's grant.
 
         Raises RuntimeError if any enrollment exec fails, if such a stale
         proxy cannot be revoked, or if the git-proxy does not confirm its
@@ -677,11 +648,10 @@ class ProxyManager:
         if local_llm is not None:
             if not self.local_llm_proxy_url:
                 raise RuntimeError("the local-llm-proxy is not running: a sandbox on the custom provider has no route")
-            # A blocking lookup, off the event loop.
-            root = await asyncio.to_thread(resolve_upstream_url, local_llm.root)
             local_server = {
                 "credential_id": local_llm.credential_id,
-                "upstream": root.rstrip("/"),
+                "upstream": local_llm.root.rstrip("/"),
+                "address": local_llm.address,
                 "api_key": local_llm.api_key,
             }
             targets.append(("local-llm-proxy", 9108))
@@ -818,6 +788,7 @@ class ProxyManager:
             isinstance(echoed, dict)
             and echoed.get("credential_id") == server["credential_id"]
             and echoed.get("upstream") == server["upstream"]
+            and echoed.get("address") == server["address"]
         ):
             return
         logger.error(

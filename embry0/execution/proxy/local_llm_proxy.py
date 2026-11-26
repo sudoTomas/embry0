@@ -48,6 +48,7 @@ from embry0.execution.proxy.metering import (
     register_meter_routes,
 )
 from embry0.execution.proxy.model_request import openai_error, read_body
+from embry0.execution.proxy.server_address import pinned_request, refused_address, refused_server_host
 
 logger = structlog.get_logger(__name__)
 
@@ -75,46 +76,21 @@ _MAX_CREDENTIAL_ID = 200
 @dataclass(frozen=True, slots=True)
 class Upstream:
     """The model server one sandbox reaches: the custom credential's id (``''`` for the environment's), its API
-    root (``http://host:port/v1``) and its key (``''`` sends none)."""
+    root (``http://host:port/v1``), its key (``''`` sends none) and the address the orchestrator resolved and
+    checked for it, which every call connects to (``server_address``)."""
 
     credential_id: str
     root: str
     api_key: str
+    address: str = ""
 
     def __repr__(self) -> str:  # never the key in a log or a traceback
-        return f"Upstream(credential_id={self.credential_id!r}, root={self.root!r})"
+        return f"Upstream(credential_id={self.credential_id!r}, root={self.root!r}, address={self.address!r})"
 
 
 # This proxy's own state keys; those several proxies share are in ``app_keys``.
 #: Per enrolled sandbox: the server it reaches.
 UPSTREAM_BY_SANDBOX: web.AppKey[dict[str, Upstream]] = web.AppKey("upstream_by_sandbox")
-
-
-def refused_server_host(host: str | None) -> str | None:
-    """Why ``host`` may not be a model server, or None when it may.
-
-    Refused: this machine (``localhost``, a loopback address, or the unspecified address that reaches it) and the
-    link-local range, where a cloud's metadata service answers (169.254.169.254). Every other host is trusted, since
-    only a deployment admin writes a custom credential's address. A name other than ``localhost`` is not resolved
-    here: the orchestrator sends an http server's name as the address it resolves to, and that address is checked
-    again where the proxy takes it.
-    """
-    name = (host or "").strip().strip("[]").rstrip(".").lower()
-    if name == "localhost" or name.endswith(".localhost"):
-        return f"{host} is this machine"
-    try:
-        address = ipaddress.ip_address(name)
-    except ValueError:
-        return None
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
-        address = address.ipv4_mapped
-    if address.is_loopback:
-        return f"{host} is this machine (a loopback address)"
-    if address.is_unspecified:
-        return f"{host} is this machine (the unspecified address)"
-    if address.is_link_local:
-        return f"{host} is link-local, where a cloud's metadata service answers"
-    return None
 
 
 def parse_upstream(value: Any) -> Upstream:
@@ -140,9 +116,19 @@ def parse_upstream(value: Any) -> Upstream:
     refused = refused_server_host(parts.hostname)
     if refused is not None:
         raise EnrollRejected(f"local_llm.upstream may not be a model server: {refused}")
+    address = value.get("address")
+    try:
+        pinned = ipaddress.ip_address(address) if isinstance(address, str) else None
+    except ValueError:
+        pinned = None
+    if pinned is None:
+        raise EnrollRejected("local_llm.address must be the address the server resolved to, as an IP address")
+    refused = refused_address(pinned)
+    if refused is not None:
+        raise EnrollRejected(f"local_llm.address may not be a model server's: {refused}")
     if not isinstance(api_key, str) or len(api_key) > _MAX_KEY or any(c in api_key for c in "\r\n"):
         raise EnrollRejected("local_llm.api_key must be a string of one line")
-    return Upstream(credential_id=credential_id, root=root.rstrip("/"), api_key=api_key)
+    return Upstream(credential_id=credential_id, root=root.rstrip("/"), api_key=api_key, address=str(pinned))
 
 
 class _UpstreamEnroll:
@@ -155,7 +141,9 @@ class _UpstreamEnroll:
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: Upstream) -> dict[str, Any]:
         app[UPSTREAM_BY_SANDBOX][sandbox_id] = parsed
-        return {LOCAL_LLM_FIELD: {"credential_id": parsed.credential_id, "upstream": parsed.root}}
+        return {
+            LOCAL_LLM_FIELD: {"credential_id": parsed.credential_id, "upstream": parsed.root, "address": parsed.address}
+        }
 
 
 def create_local_llm_proxy_app(
@@ -245,7 +233,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             return web.json_response({"error": "meter_full"}, status=503)
 
     client: httpx.AsyncClient = request.app[HTTP_CLIENT]
-    url = f"{upstream.root}/{path}"
+    # The address the orchestrator checked, never the name again; the name stays the Host and, for https, the TLS
+    # server name (server_address.pinned_request).
+    url, host_header, extensions = pinned_request(f"{upstream.root}/{path}", upstream.address)
     logger.info(
         "local_llm_proxy_forward",
         sandbox_id=sandbox_id,
@@ -254,7 +244,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         bytes=len(body),
     )
     try:
-        return await _forward(request, client, method, url, body, sandbox_id, metered, upstream)
+        return await _forward(
+            request, client, method, url, body, sandbox_id, metered, upstream, host_header, extensions
+        )
     finally:
         if metered is not None:
             metered.close()
@@ -269,12 +261,18 @@ async def _forward(
     sandbox_id: str,
     metered: Metered | None,
     server: Upstream,
+    host_header: dict[str, str],
+    extensions: dict[str, Any],
 ) -> web.StreamResponse:
     """Send the call upstream and stream its answer back through the meter. A call whose answer never came back
     after it was sent is charged its ceiling; one that never connected costs nothing."""
     try:
         async with client.stream(
-            method, url, headers=_upstream_headers(request, server), content=body or None
+            method,
+            url,
+            headers={**_upstream_headers(request, server), **host_header},
+            content=body or None,
+            extensions=extensions,
         ) as upstream:
             if metered is not None:
                 metered.answer(upstream.status_code, upstream.headers.get("content-type"))

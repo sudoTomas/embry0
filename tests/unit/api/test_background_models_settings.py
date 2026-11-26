@@ -211,7 +211,7 @@ async def test_a_hosted_model_s_spend_is_counted_against_the_caps_and_refused_pa
 
     class Resolver:
         async def resolve_llm(self, repo: str, provider: str) -> Any:
-            return SimpleNamespace(secret="k", metadata={"base_url": "http://models.test/v1"})
+            return SimpleNamespace(secret="k", metadata={"base_url": "http://10.0.0.5/v1"})
 
     class Briefs:
         rows: dict[str, Any] = {}

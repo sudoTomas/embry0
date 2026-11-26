@@ -15,7 +15,8 @@ work now is named in the log, ``custom_credential_check_failed`` with a
 ``reason``:
 
 - ``no_server``: its metadata names no address;
-- ``refused_host``: its address is this machine or link-local, which no job reaches (and which is not probed);
+- ``refused_host``: its address is, or resolves to, this machine or link-local, which nothing reaches (a spelling
+  is refused before its key is read; a name, by the probe's own check, before anything is sent);
 - ``unreachable``: nothing answers at its address;
 - ``key_refused``: the server refused its key (401 or 403), which is what a
   placeholder key comes to on a server that checks one;
@@ -37,11 +38,12 @@ from urllib.parse import urlsplit
 
 import structlog
 
-from embry0.execution.proxy.local_llm_proxy import refused_server_host
+from embry0.execution.proxy.server_address import refused_server_host
 from embry0.services.provider_probe import (
     STATUS_ENTITLEMENT_REFUSED,
     STATUS_ERROR,
     STATUS_NOT_CONFIGURED,
+    STATUS_REFUSED,
     STATUS_UNAUTHORIZED,
     STATUS_UNREACHABLE,
     ProbeCheck,
@@ -56,6 +58,7 @@ PROBE_CONCURRENCY = 4
 #: A probe's status -> the reason the log gives; a status not here is a server that works.
 _REASONS = {
     STATUS_NOT_CONFIGURED: "no_server",
+    STATUS_REFUSED: "refused_host",
     STATUS_UNREACHABLE: "unreachable",
     STATUS_UNAUTHORIZED: "key_refused",
     STATUS_ENTITLEMENT_REFUSED: "key_refused",
