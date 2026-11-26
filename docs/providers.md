@@ -506,7 +506,7 @@ background calls keep their schema and run without thinking, and agents keep
 the server's default, as before. Each factor the overlay does not set gets its
 old value (2.0). A model the overlay already lists keeps everything it sets,
 its price included, and gains only `structured_output` and
-`background_request_extras` where it sets neither; one it takes out stays out.
+`background_request_extras` where it sets neither.
 With a `default_price` of the overlay's own the models are written at that
 price instead of `free`: a model's entry needs prices of its own or `free`, so
 they are pinned at it, and a later change of the default does not move them.

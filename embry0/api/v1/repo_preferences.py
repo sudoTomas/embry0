@@ -16,6 +16,7 @@ from embry0.api.schemas.repo_preferences import (
     RepoPreferencesUpdateRequest,
 )
 from embry0.api.served import ServedRoute
+from embry0.api.v1.provider_catalogue import catalogue_held
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
 
@@ -50,6 +51,17 @@ async def get_repo_preferences(full_repo: str, request: Request) -> RepoPreferen
 
 @router.put("/repos/{full_repo:repo}/-/preferences", response_model=RepoPreferencesResponse)
 async def put_repo_preferences(
+    full_repo: str, req: RepoPreferencesUpdateRequest, request: Request
+) -> RepoPreferencesResponse:
+    if req.pr_review is None or not req.pr_review.model:
+        return await _put_repo_preferences(full_repo, req, request)
+    # The review's model is checked and stored against the stored provider catalogue, which no change can take it
+    # out of meanwhile.
+    async with catalogue_held(request):
+        return await _put_repo_preferences(full_repo, req, request)
+
+
+async def _put_repo_preferences(
     full_repo: str, req: RepoPreferencesUpdateRequest, request: Request
 ) -> RepoPreferencesResponse:
     # Validate sandbox_profile exists if provided. The orchestrator attaches

@@ -48,9 +48,10 @@ def _store(request: Request) -> CatalogueStore:
 
 
 def catalogue_held(request: Request) -> AbstractAsyncContextManager[Any]:
-    """For a write that names a model (a tier, the fallback order, an agent definition): check and store it inside
-    this block, against the stored catalogue, with its row held (``CatalogueStore.held``). Without a store (an app
-    built without one), the installed catalogue, as before."""
+    """For a write that names a model (a tier, the fallback order, an agent definition, a pipeline template's steps,
+    a repository's review model): check and store it inside this block, against the stored catalogue, with its row
+    held (``CatalogueStore.held``). Without a store (an app built without one), the installed catalogue, as
+    before."""
     store = getattr(request.app.state, "provider_catalogue", None)
     return cast(CatalogueStore, store).held() if store is not None else nullcontext()
 

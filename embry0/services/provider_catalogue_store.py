@@ -17,7 +17,8 @@ replace. Undo puts back what the newest change replaced, and only while the
 stored text is still what that change wrote.
 
 **Writes that name a model.** A tier, the fallback order, an agent
-definition and a ``background_models`` value are checked against the stored
+definition, a pipeline template's steps, a repository's review model and a
+``background_models`` value are checked against the stored
 catalogue with its row held ``FOR SHARE`` (:meth:`CatalogueStore.held`,
 :func:`held_catalogue`), and a change of the catalogue takes the row ``FOR
 UPDATE`` before it reads what names a model: of a write naming a model and a
@@ -295,7 +296,9 @@ def custom_import(data: Mapping[str, Any], models: Iterable[str]) -> tuple[dict[
 
     The old factors fill each one the overlay does not set. Each of ``models`` the overlay does not list is
     written as :data:`RELIED_ON_MODEL`; one it lists (priced or free) keeps everything it sets and gains only the
-    fields of :data:`RELIED_ON_CALL_FIELDS` it does not; one it takes out (``null``) stays out. Where the overlay
+    fields of :data:`RELIED_ON_CALL_FIELDS` it does not. (``null`` takes out a model a provider ships, so no valid
+    overlay lists a custom model as ``null``: custom ships none. One that does anyway is left as it is, and the
+    catalogue refuses the overlay as it refused it before.) Where the overlay
     sets the provider a ``default_price``, a model written is pinned at that price rather than ``free``: a model's
     entry needs prices of its own or ``free`` (a later change of the default does not move it).
     """
@@ -314,7 +317,7 @@ def custom_import(data: Mapping[str, Any], models: Iterable[str]) -> tuple[dict[
         if model in listed:
             entry = listed[model]
             if not isinstance(entry, dict):
-                continue  # taken out by the deployment: it stays out
+                continue  # null: custom ships no model to take out, so the catalogue refuses this overlay anyway
             missing = [key for key in RELIED_ON_CALL_FIELDS if key not in entry]
             for key in missing:
                 entry[key] = json.loads(json.dumps(RELIED_ON_MODEL[key]))
