@@ -1,6 +1,7 @@
 """Configuration API — model, provider and integration settings, context injection, and the deprecated budget route."""
 
 import os
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -380,15 +381,16 @@ def _check_fallback_order(order: list[str], disabled: set[str], *, changed: bool
         )
 
 
-def _refuse_watcher_local_model(updates: dict[str, Any]) -> None:
-    """422 for ``watcher_local_model``, which moved to the settings document (#164).
+def _refuse_watcher_local_model(sent: Collection[str]) -> None:
+    """422 for ``watcher_local_model``, which moved to the settings document (#164), whatever its value, ``null``
+    included: ``sent`` is every field the request names.
 
     The model the watcher's analyses prefer is ``background_models.watcher``,
     and the default every background feature runs on ``.default``. Refused
     rather than dropped, so a client written for the old field learns where
     it went instead of losing the change.
     """
-    if "watcher_local_model" in updates:
+    if "watcher_local_model" in sent:
         raise HTTPException(
             status_code=422,
             detail=(
@@ -399,11 +401,11 @@ def _refuse_watcher_local_model(updates: dict[str, Any]) -> None:
         )
 
 
-def _refuse_local_max_runs(updates: dict[str, Any]) -> None:
-    """422 for ``local_max_runs``, which moved to the settings document (#174): how many calls each of the operator's
-    model servers takes at once is ``local_models.max_runs``. Refused rather than dropped, as
-    ``watcher_local_model`` is."""
-    if "local_max_runs" in updates:
+def _refuse_local_max_runs(sent: Collection[str]) -> None:
+    """422 for ``local_max_runs``, which moved to the settings document (#174), whatever its value, ``null``
+    included: how many calls each of the operator's model servers takes at once is ``local_models.max_runs``.
+    Refused rather than dropped, as ``watcher_local_model`` is."""
+    if "local_max_runs" in sent:
         raise HTTPException(
             status_code=422,
             detail=(
@@ -421,9 +423,11 @@ async def update_provider(
     request: Request,
     repo: ProviderConfigRepository = Depends(get_provider_repo),
 ) -> dict[str, Any]:
+    # A moved field is refused whatever it holds: a null names it as surely as a value (a field still here takes
+    # null as "leave it", below).
+    _refuse_watcher_local_model(req.model_fields_set)
+    _refuse_local_max_runs(req.model_fields_set)
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
-    _refuse_watcher_local_model(updates)
-    _refuse_local_max_runs(updates)
     if not updates:
         return await repo.get()
     from embry0.api.v1.provider_catalogue import catalogue_held
