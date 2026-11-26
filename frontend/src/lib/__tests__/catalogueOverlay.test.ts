@@ -74,7 +74,8 @@ describe("overlayYaml", () => {
     });
   }
 
-  for (const sample of shared.cases) {
+  // A case typed by hand is an operator's YAML, which the backend reads back; the form writes its own (#756).
+  for (const sample of shared.cases.filter((c) => !("typed_by_hand" in c && c.typed_by_hand))) {
     it(`writes ${sample.name} as the catalogue reads it`, () => {
       expect(overlayYaml(sample.overlay as CatalogueOverlay)).toBe(sample.yaml);
     });

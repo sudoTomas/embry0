@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -560,10 +561,28 @@ def _model_problems(where: tuple[str | int, ...], model: str, spec: ModelEntry, 
     return problems
 
 
+class CatalogueLoader(yaml.SafeLoader):
+    """PyYAML's safe loader, but a number in exponent form with no decimal point (``1e-7``, ``5E+3``, ``1e21``) is a
+    float, as YAML 1.2 and JSON read it and as the dashboard's editor shows it; YAML 1.1 reads it as a string, so a
+    hand-typed ``temperature: 1e-7`` reached the provider as ``"1e-7"`` (#756). Only that form changes: what YAML 1.1
+    reads as a number still is, and a scalar that does not start with a digit, a sign or a point never becomes one,
+    so no provider name, model id (each starts with its provider's prefix) or extras key can. The shipped catalogue
+    and every stored overlay are read with it (``provider_catalogue_store.load_text``)."""
+
+
+# Added on the subclass, which PyYAML gives a copy of the resolvers: the safe loader every other reader uses is left
+# as it is.
+CatalogueLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:float",
+    re.compile(r"^[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[eE][-+]?[0-9]+$"),
+    list("-+0123456789."),
+)
+
+
 @cache
 def seed() -> Catalogue:
     """The catalogue embry0 ships. A seed that does not validate is a bug, so this raises."""
-    return Catalogue.build(parse(yaml.safe_load(SEED_FILE.read_text(encoding="utf-8"))))
+    return Catalogue.build(parse(yaml.load(SEED_FILE.read_text(encoding="utf-8"), Loader=CatalogueLoader)))  # noqa: S506 - a safe loader
 
 
 def merge(

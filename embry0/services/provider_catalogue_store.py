@@ -60,6 +60,7 @@ import yaml
 from embry0.agents.catalogue import (
     Catalogue,
     CatalogueInvalid,
+    CatalogueLoader,
     CatalogueOverlay,
     Problem,
     StoredRead,
@@ -146,11 +147,11 @@ def load_text(text: str) -> dict[str, Any]:
     if "\x00" in text:
         raise CatalogueInvalid([Problem((), "nul_character", "the catalogue cannot hold the NUL character")])
     try:
-        root = yaml.compose(text, Loader=yaml.SafeLoader)
+        root = yaml.compose(text, Loader=CatalogueLoader)
         structure = structure_problems(root, what="the provider catalogue")
         if structure:
             raise CatalogueInvalid(_structure_placed(structure))
-        loaded = yaml.safe_load(text)
+        loaded = yaml.load(text, Loader=CatalogueLoader)  # noqa: S506 - a safe loader
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""

@@ -429,6 +429,10 @@ A write of any of those, in turn, is checked against the stored catalogue
 with its row held, so a change of the catalogue and a write naming a model
 never pass each other.
 
+A number may be typed in exponent form: `1e-7` and `5E-1` are numbers, as YAML
+1.2 and JSON read them (YAML 1.1 read them as text, #756). A value meant as
+text that looks like one goes in quotes.
+
 **Everything in the document is readable by every key**, a key with a
 repository allowlist included: the YAML as written with its comments, each
 change's reason, the text before and after each change, and every value,
