@@ -13,9 +13,9 @@ address in any form ``inet_aton`` takes (``2130706433``, ``0x7f000001``,
 name, whose every address counts (``localtest.me`` resolves to 127.0.0.1).
 And a call connects to the address that was checked (:func:`pin_server`), never
 to the name again: a name that answers one address at the check and another at
-the call (DNS rebinding) gets no second answer. An https server keeps its name
-for TLS, as the SNI and the certificate's host, and every server keeps it as the
-``Host`` header (:func:`pinned_request`).
+the call (DNS rebinding) gets no second answer. The call keeps the name in its
+URL, as the ``Host`` header, the TLS server name and the connection pool's key;
+only its socket goes to the address (``pinned_client``).
 """
 
 from __future__ import annotations
@@ -23,8 +23,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from dataclasses import dataclass
-from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -168,18 +167,3 @@ def pin_server(url: str) -> Pinned:
             raise RefusedServer(f"{host} resolves to {address}, {reason}")
     chosen = next((a for a in addresses if a.version == 4), addresses[0])
     return Pinned(url=url, address=str(chosen))
-
-
-def pinned_request(url: str, address: str) -> tuple[str, dict[str, str], dict[str, Any]]:
-    """What a call to ``url`` sends, connecting to ``address``: the URL with the address in place of the host, the
-    ``Host`` header the server expects, and the request's extensions (the name for TLS, for an https name)."""
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    pinned = ipaddress.ip_address(address)
-    where = f"[{pinned}]" if pinned.version == 6 else str(pinned)
-    netloc = f"{where}:{parts.port}" if parts.port else where
-    extensions: dict[str, Any] = {}
-    if parts.scheme == "https" and literal_address(host) is None:
-        extensions["sni_hostname"] = host
-    connect_to = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
-    return connect_to, {"Host": parts.netloc.rsplit("@", 1)[-1]}, extensions

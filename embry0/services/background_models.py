@@ -52,6 +52,7 @@ import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -307,16 +308,13 @@ async def ask_json(
             body.setdefault(key, value)
     url = f"{endpoint.root}/chat/completions"
     headers = {"Authorization": f"Bearer {endpoint.key}"}
-    extensions: dict[str, Any] = {}
     if endpoint.address:
-        from embry0.execution.proxy.server_address import pinned_request
+        # The operator's server, on a pinning client (BackgroundCalls gives one): the connection goes to the address
+        # its name was checked at, and the URL keeps the name for Host, TLS and the pool (pinned_client).
+        from embry0.execution.proxy.pinned_client import pinned
 
-        url, host, extensions = pinned_request(url, endpoint.address)
-        headers.update(host)
-    if extensions:
-        resp = await client.post(
-            url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS, extensions=extensions
-        )
+        with pinned(url, endpoint.address):
+            resp = await client.post(url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
     else:
         resp = await client.post(url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
     resp.raise_for_status()
@@ -350,6 +348,13 @@ class _Gate(Protocol):
     async def check(self, *, actor: str | None = None, excluding: str | None = None) -> Any: ...
 
 
+def _own_server_client(_caller: httpx.AsyncClient) -> httpx.AsyncClient:
+    """A pinning client for one call to an operator's server (pinned_client)."""
+    from embry0.execution.proxy.pinned_client import pinning_client
+
+    return pinning_client()
+
+
 class BackgroundCalls:
     """Every model call a background feature makes outside a job: keyed, capped and metered as a job's run.
 
@@ -375,8 +380,13 @@ class BackgroundCalls:
         local_slots: CallSlots | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], datetime] = lambda: datetime.now(UTC),
+        server_client: Callable[[httpx.AsyncClient], AbstractAsyncContextManager[httpx.AsyncClient]] | None = None,
     ) -> None:
         self._resolver = resolver
+        #: The client a call to the operator's own server is made on, given the caller's: a pinning client of its own
+        #: for each call (pinned_client), never the caller's, whose pool is keyed by address and would hand one
+        #: name's verified connection to a call for another. A test passes the caller's back.
+        self._server_client = server_client or _own_server_client
         self._spend = spend
         self._gate = gate
         self._local_slots = local_slots
@@ -451,9 +461,15 @@ class BackgroundCalls:
                 raise BackgroundCallRefused(feature, endpoint.model, decision)
         lease = await self._take_slot(feature, endpoint) if endpoint.local else None
         try:
-            answer = await ask_json(
-                endpoint, client, system=system, user=user, schema=schema, name=name, max_tokens=max_tokens
-            )
+            if endpoint.address:
+                async with self._server_client(client) as own:
+                    answer = await ask_json(
+                        endpoint, own, system=system, user=user, schema=schema, name=name, max_tokens=max_tokens
+                    )
+            else:
+                answer = await ask_json(
+                    endpoint, client, system=system, user=user, schema=schema, name=name, max_tokens=max_tokens
+                )
         finally:
             if lease is not None and self._local_slots is not None:
                 await self._local_slots.slots.release(lease)

@@ -260,34 +260,27 @@ async def test_a_call_connects_to_the_checked_address_and_names_the_server_in_ho
     )
 
 
-async def test_an_https_server_keeps_its_name_for_tls(aiohttp_client, monkeypatch):
-    """Connecting to the address leaves the certificate to be checked for the name: the call carries it as SNI."""
-    import httpx
+async def test_an_https_server_keeps_its_name_for_tls(aiohttp_client, aiohttp_server, tmp_path, monkeypatch):
+    """Connecting to the address leaves the certificate to be checked for the name: the call goes to the
+    credential's URL, its name the Host and the TLS server name, over a connection to the checked address."""
+    from tests.fixtures.tls_servers import tls_server
 
-    sent: list[httpx.Request] = []
-
-    def answer(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        return httpx.Response(200, json={"choices": []})
-
-    real_client = httpx.AsyncClient
-    monkeypatch.setattr(
-        local_llm_proxy.httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(answer), **kw)
-    )
+    tls = await tls_server(aiohttp_server, tmp_path, monkeypatch, "models.test")
     client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
     server = {
         "credential_id": "cred-a",
-        "upstream": "https://models.test:8443/v1",
+        "upstream": f"https://models.test:{tls.port}/v1",
         "api_key": "",
-        "address": "10.0.0.7",
+        "address": "127.0.0.1",
     }
     assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, server)).status == 200
-    assert (await client.post("/v1/chat/completions", json={"messages": []}, headers=_AUTH)).status == 200
-    [request] = sent
-    assert (request.url.scheme, request.url.host, request.url.port) == ("https", "10.0.0.7", 8443), request.url
-    assert request.headers["host"] == "models.test:8443", f"the server's own name, in Host: {request.headers}"
-    assert request.extensions.get("sni_hostname") == "models.test", (
-        f"the TLS server name must be the credential's, so its certificate is checked for it: {request.extensions}"
+    resp = await client.post("/v1/chat/completions", json={"messages": []}, headers=_AUTH)
+    assert resp.status == 200, await resp.text()
+    assert [seen["host"] for seen in tls.seen] == [f"models.test:{tls.port}"], (
+        f"the server's own name, in Host: {tls.seen}"
+    )
+    assert tls.handshakes == ["models.test"], (
+        f"the TLS server name must be the credential's, so its certificate is checked for it: {tls.handshakes}"
     )
 
 

@@ -24,6 +24,7 @@ from embry0.services.proposal_briefs import (
 from embry0.services.proposals import Proposal
 from embry0.settings.sections.leads import LeadsSettings
 from tests.fixtures.leads import MemorySettings, brief_reader, leads_policy, leads_section
+from tests.fixtures.model_servers import caller_s_client
 from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers, kept_local_model
 
 T0 = datetime(2026, 10, 25, 12, tzinfo=UTC)
@@ -213,7 +214,7 @@ def _calls() -> Any:
     """The metered call path (#164), imported here so this file still collects on a tree without it."""
     from embry0.services.background_models import BackgroundCalls
 
-    return BackgroundCalls(resolver=FakeResolver(), spend=NoSpend(), gate=OpenGate())
+    return BackgroundCalls(server_client=caller_s_client, resolver=FakeResolver(), spend=NoSpend(), gate=OpenGate())
 
 
 def _writer(

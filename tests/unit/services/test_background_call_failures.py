@@ -24,6 +24,7 @@ from structlog.testing import capture_logs
 
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
+from tests.fixtures.model_servers import caller_s_client
 from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 
 BRIEF = {"title": "Stop retrying a saved email", "problem": "It retries.", "fix": "Stop it.", "size": "small"}
@@ -110,7 +111,7 @@ async def _ask(calls: Any, model: str, client: httpx.AsyncClient, feature: str =
 async def test_bad_usage_is_read_as_none_and_the_call_is_still_recorded(providers: None, usage: str) -> None:
     module = _module()
     spend = Spend()
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=Gate())
     sent: list[str] = []
     async with _raw_client(sent, _body(usage)) as client:
         with capture_logs() as logs:
@@ -126,7 +127,7 @@ async def test_bad_usage_is_read_as_none_and_the_call_is_still_recorded(provider
 async def test_a_cached_count_past_the_prompt_is_held_to_it(providers: None) -> None:
     module = _module()
     spend = Spend()
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=Gate())
     usage = '{"prompt_tokens": 10, "completion_tokens": 1, "prompt_tokens_details": {"cached_tokens": 50}}'
     async with _raw_client([], _body(usage)) as client:
         assert await _ask(calls, "gpt-6-luna", client) == "answered"
@@ -172,7 +173,7 @@ async def test_bad_usage_never_raises_past_a_writer(providers: None) -> None:
         proposals=feed,
         settings=brief_reader(models),
         briefs=Briefs(),
-        calls=module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate()),
+        calls=module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=Gate()),
         client=_raw_client([], _body('{"prompt_tokens": 1e999, "completion_tokens": 1}')),
     )
     try:
@@ -185,7 +186,7 @@ async def test_bad_usage_never_raises_past_a_writer(providers: None) -> None:
 async def test_a_body_that_is_not_json_is_recorded_and_refused_as_an_answer(providers: None) -> None:
     module = _module()
     spend = Spend()
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=Gate())
     async with _raw_client([], "<html>bad gateway</html>") as client:
         with capture_logs() as logs:
             outcome = await _ask(calls, "gpt-6-luna", client)
@@ -197,7 +198,7 @@ async def test_a_body_that_is_not_json_is_recorded_and_refused_as_an_answer(prov
 async def test_a_spend_that_cannot_be_stored_refuses_the_feature_s_hosted_calls_until_it_is(providers: None) -> None:
     module = _module()
     spend, gate = Spend(), Gate()
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=gate)
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=gate)
     usage = '{"prompt_tokens": 1000, "completion_tokens": 100}'
     sent: list[str] = []
     async with _raw_client(sent, _body(usage)) as client:
@@ -236,7 +237,9 @@ async def test_a_model_with_no_price_warns_once_an_hour(monkeypatch: pytest.Monk
     enable_providers(monkeypatch, "openrouter")
     module = _module()
     now = [0.0]
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate(), clock=lambda: now[0])
+    calls = module.BackgroundCalls(
+        server_client=caller_s_client, resolver=Resolver(), spend=Spend(), gate=Gate(), clock=lambda: now[0]
+    )
     with capture_logs() as logs:
         for _ in range(3):
             assert await calls.endpoint("job_brief", "openrouter/acme/unlisted", "acme/widgets") is None
@@ -254,7 +257,7 @@ async def test_past_the_held_limit_the_rows_that_cost_nothing_are_dropped_first(
     monkeypatch.setattr(module, "MAX_UNRECORDED", 3)
     spend = Spend()
     spend.failing = True
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=Gate())
     usage = '{"prompt_tokens": 1000000, "completion_tokens": 0}'
     async with _raw_client([], _body(usage)) as client:
         assert await _ask(calls, "gpt-6-luna", client) == "answered"
@@ -280,7 +283,9 @@ async def test_a_held_row_keeps_its_call_s_id_and_time_when_it_is_stored_later(p
     )
     spend = Spend()
     wall = [datetime(2026, 10, 30, 9, 0, tzinfo=UTC)]
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate(), wall=lambda: wall[0])
+    calls = module.BackgroundCalls(
+        server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=Gate(), wall=lambda: wall[0]
+    )
     attempts: list[str] = []
     record = spend.record
 
@@ -309,7 +314,9 @@ async def test_a_failing_insert_is_an_error_once_a_minute_not_on_every_call(prov
     now = [0.0]
     spend = Spend()
     spend.failing = True
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=Gate(), clock=lambda: now[0])
+    calls = module.BackgroundCalls(
+        server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=Gate(), clock=lambda: now[0]
+    )
     async with _raw_client([], _body('{"prompt_tokens": 10, "completion_tokens": 1}')) as client:
         with capture_logs() as logs:
             for at in (0.0, 10.0, 30.0, 61.0):

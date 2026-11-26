@@ -36,6 +36,7 @@ from embry0.settings.store import SettingsStore
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
 from embry0.storage.repositories.api_keys import ApiKeyRow, hash_token
+from tests.fixtures.model_servers import caller_s_client
 from tests.fixtures.provider_catalogue import LOCAL_SERVER, store_providers
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
@@ -248,6 +249,7 @@ async def test_a_hosted_model_s_spend_is_counted_against_the_caps_and_refused_pa
         settings=brief_settings(app.state.settings, AgentDefinitionsRepository(db)),
         briefs=Briefs(),
         calls=module.BackgroundCalls(
+            server_client=caller_s_client,
             resolver=Resolver(),
             spend=BackgroundSpendRepository(db),
             gate=build_budget_gate(policy),

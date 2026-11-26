@@ -351,6 +351,8 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     # every site that meets one reports it.
     ("embry0.execution.proxy.server_address:RefusedServer", ErrorCode.CREDENTIAL_UNAVAILABLE),
     ("embry0.execution.proxy.server_address:UnresolvedServer", ErrorCode.CREDENTIAL_UNAVAILABLE),
+    # A model server called with no checked address for its name (pinned_client): the same.
+    ("embry0.execution.proxy.pinned_client:UnpinnedConnection", ErrorCode.CREDENTIAL_UNAVAILABLE),
     ("embry0.execution.docker_client:ExecStdinTimeoutError", ErrorCode.SANDBOX_EXEC_STALLED),
     ("embry0.execution.tls:CABundleError", ErrorCode.SANDBOX_INIT),
     ("embry0.execution.proxy.enrollment:RegistryFullError", ErrorCode.PROXY_ENROLLMENT),

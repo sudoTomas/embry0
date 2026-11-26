@@ -921,7 +921,9 @@ custom server (the local-llm-proxy for a job, a background call, a probe), it
 resolves the host once, checks every address, and connects to one of them,
 never to the name again: a name that would answer otherwise a second later (DNS
 rebinding) gets no second question. The name is still the server's `Host`
-header and, for https, the name its certificate is checked for (SNI). For a job
+header and, for https, the name its certificate is checked for (SNI), on a
+connection of its own: connections are kept per name, so two servers that share
+an address never share one, and each handshake checks its own name. For a job
 the orchestrator resolves it, since DinD resolves no name, and enrolls the
 sandbox with the address. A name that resolves to nothing here starts no job
 and makes no call; a credential may still be written with one, and is checked

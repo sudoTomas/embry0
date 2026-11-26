@@ -23,6 +23,7 @@ from structlog.testing import capture_logs
 
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
+from tests.fixtures.model_servers import caller_s_client
 from tests.fixtures.provider_catalogue import enable_providers
 
 GOOD = {
@@ -114,7 +115,7 @@ async def test_a_hosted_model_s_spend_is_priced_as_a_job_s_and_recorded_under_it
 
     module = _module()
     resolver, spend, gate = Resolver(), Spend(), Gate()
-    calls = module.BackgroundCalls(resolver=resolver, spend=spend, gate=gate)
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=resolver, spend=spend, gate=gate)
     endpoint = await calls.endpoint("proposal_brief", "gpt-6-luna", "acme/widgets")
     assert endpoint is not None and not endpoint.local
     assert resolver.asked == [("acme/widgets", "openai")], (
@@ -145,7 +146,9 @@ async def test_a_hosted_model_s_spend_is_priced_as_a_job_s_and_recorded_under_it
 async def test_a_call_over_the_caps_is_refused_before_anything_is_sent(providers: None) -> None:
     module = _module()
     spend, gate = Spend(), Gate(allowed=False)
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=gate, clock=lambda: 0.0)
+    calls = module.BackgroundCalls(
+        server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=gate, clock=lambda: 0.0
+    )
     endpoint = await calls.endpoint("job_brief", "gpt-6-luna", "acme/widgets")
     sent: list[dict[str, Any]] = []
     async with _answering(sent, {"prompt_tokens": 1, "completion_tokens": 1}) as client:
@@ -165,7 +168,7 @@ async def test_a_call_over_the_caps_is_refused_before_anything_is_sent(providers
 async def test_the_operator_s_own_server_bills_nothing_and_is_never_refused(providers: None) -> None:
     module = _module()
     spend, gate = Spend(), Gate(allowed=False)
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=gate)
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=gate)
     endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
     assert endpoint is not None and endpoint.local
     sent: list[dict[str, Any]] = []
@@ -179,7 +182,7 @@ async def test_a_model_with_no_price_is_never_called(monkeypatch: pytest.MonkeyP
     enable_providers(monkeypatch, "openrouter")
     module = _module()
     resolver = Resolver()
-    calls = module.BackgroundCalls(resolver=resolver, spend=Spend(), gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=resolver, spend=Spend(), gate=Gate())
     with capture_logs() as logs:
         assert await calls.endpoint("job_brief", "openrouter/acme/unlisted", "acme/widgets") is None
     assert resolver.asked == [], "no key is even looked for"
@@ -214,7 +217,7 @@ async def test_a_writer_refused_by_the_caps_stops_its_tick_and_writes_on_a_later
         proposals=feed,
         settings=brief_reader(models),
         briefs=Briefs(),
-        calls=module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=gate),
+        calls=module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=gate),
         client=_answering(sent, {"prompt_tokens": 10, "completion_tokens": 5}),
     )
     assert await writer.tick() == [], "over the caps: no brief, and no exception out of the tick"
@@ -269,7 +272,7 @@ async def test_a_priced_custom_model_is_held_to_the_caps(monkeypatch: pytest.Mon
     )
     module = _module()
     spend, gate = Spend(), Gate(allowed=False)
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=gate)
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=gate)
     endpoint = await calls.endpoint("slop_judge", "custom/gateway", "acme/widgets")
     assert endpoint is not None
     sent: list[dict[str, Any]] = []
@@ -295,7 +298,7 @@ async def test_a_call_sends_the_model_s_extras_and_its_schema_only_where_the_cat
         entry["structured_output"] = "json_schema"
     enable_providers(monkeypatch, "custom", custom={"models": {"custom/qwen": entry}})
     module = _module()
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=Spend(), gate=Gate())
     endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
     assert endpoint is not None
     sent: list[dict[str, Any]] = []
@@ -319,7 +322,7 @@ async def test_a_custom_model_with_no_entry_sends_no_thinking_switch_and_no_sche
     """The local server's fields are the model's entry's now, not every custom model's (#173)."""
     enable_providers(monkeypatch, "openai", "custom", custom={"models": {"custom/qwen": {"free": True}}})
     module = _module()
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=Spend(), gate=Gate())
     endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
     assert endpoint is not None
     sent: list[dict[str, Any]] = []
@@ -340,7 +343,7 @@ async def test_a_background_call_sends_the_model_s_background_extras_over_its_ow
     }
     enable_providers(monkeypatch, "custom", custom={"models": {"custom/qwen": entry}})
     module = _module()
-    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    calls = module.BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=Spend(), gate=Gate())
     endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
     assert endpoint is not None
     sent: list[dict[str, Any]] = []

@@ -28,7 +28,7 @@ import pytest
 
 from embry0.services import job_briefs, proposal_briefs
 from embry0.services.proposals import Proposal
-from tests.fixtures.model_servers import fake_dns
+from tests.fixtures.model_servers import caller_s_client, fake_dns
 from tests.fixtures.provider_catalogue import enable_providers, kept_local_model
 
 GOLDEN = json.loads((Path(__file__).resolve().parents[2] / "fixtures" / "brief_requests.json").read_text())
@@ -109,7 +109,7 @@ class OpenGate:
 def _calls() -> Any:
     from embry0.services.background_models import BackgroundCalls
 
-    return BackgroundCalls(resolver=Resolver(), spend=NoSpend(), gate=OpenGate())
+    return BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=NoSpend(), gate=OpenGate())
 
 
 def _client(sent: list[httpx.Request], good: dict[str, str]) -> httpx.AsyncClient:
@@ -504,7 +504,7 @@ async def test_each_loop_s_calls_are_metered_under_its_own_feature() -> None:
             self.rows.append(row)
 
     spend = Spend()
-    calls = BackgroundCalls(resolver=Resolver(), spend=spend, gate=OpenGate())
+    calls = BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=spend, gate=OpenGate())
     sent: list[httpx.Request] = []
     feed = _proposals(GOLDEN["proposals"]["cases"][:1])
     writer = _proposal_writer(Store(), Agents(), feed, sent)
