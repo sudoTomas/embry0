@@ -1,5 +1,5 @@
 {
-  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other.",
+  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other.",
   "cases": [
     {
       "name": "nothing: the shipped catalogue",

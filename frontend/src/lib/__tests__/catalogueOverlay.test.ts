@@ -1,8 +1,9 @@
 // The provider catalogue's overlay as the Providers page's form edits and writes it (#173, plan item 6). What it
-// writes is pinned in tests/fixtures/catalogue_overlay_yaml.json, which the backend reads back too
+// writes is pinned in ./fixtures/catalogue_overlay_yaml.json, inside the frontend so its image builds with it, which
+// the backend reads back too
 // (tests/unit/agents/test_catalogue_overlay_yaml.py), so the two cannot drift apart.
 import { describe, expect, it } from "vitest";
-import shared from "../../../../tests/fixtures/catalogue_overlay_yaml.json";
+import shared from "./fixtures/catalogue_overlay_yaml.json";
 import {
   hasComments,
   hasDatedPrices,

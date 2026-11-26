@@ -1,8 +1,9 @@
 """The overlay the dashboard's form writes reads back as the overlay it meant (#173, the Providers page).
 
 The form writes the catalogue overlay as YAML from its values (``frontend/src/lib/catalogueOverlay.ts``). Each case of
-``tests/fixtures/catalogue_overlay_yaml.json`` is what it writes for an overlay, pinned there by the frontend's own
-test; here the catalogue reads each back to that overlay, and takes it.
+``frontend/src/lib/__tests__/fixtures/catalogue_overlay_yaml.json`` is what it writes for an overlay, pinned there by
+the frontend's own test (the file is inside the frontend, whose image builds with only that directory); here the
+catalogue reads each back to that overlay, and takes it.
 """
 
 from __future__ import annotations
@@ -17,9 +18,8 @@ import pytest
 from embry0.agents import catalogue
 from embry0.services.provider_catalogue_store import load_text
 
-CASES = json.loads((Path(__file__).resolve().parents[2] / "fixtures" / "catalogue_overlay_yaml.json").read_text())[
-    "cases"
-]
+SHARED = Path(__file__).resolve().parents[3] / "frontend/src/lib/__tests__/fixtures/catalogue_overlay_yaml.json"
+CASES = json.loads(SHARED.read_text())["cases"]
 
 
 def _json_form(value: Any) -> Any:
