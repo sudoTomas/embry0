@@ -273,8 +273,9 @@ def create_local_llm_proxy_app(
     """The proxy app, forwarding each enrolled sandbox to the server it was enrolled with, under that enrollment's
     request cap and timeout. ``max_request_bytes`` is the ceiling: no enrollment may ask for more, and no body
     larger is read. With ``require_run`` a call from a sandbox with no declared run is refused."""
-    if max_request_bytes <= 0:
-        raise ValueError("MAX_REQUEST_BYTES must be positive")
+    if not 0 < max_request_bytes <= MAX_REQUEST_BYTES_CEILING:
+        # A container's MAX_REQUEST_BYTES lowers the ceiling, never raises it: the settings' bounds are this one.
+        raise ValueError(f"MAX_REQUEST_BYTES must be positive and at most {MAX_REQUEST_BYTES_CEILING}")
     app = web.Application(client_max_size=max_request_bytes)
     app[MAX_REQUEST_BYTES] = max_request_bytes
     app[UPSTREAM_BY_SANDBOX] = {}
@@ -362,8 +363,12 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
         logger.error("local_llm_proxy_no_server", sandbox_id=sandbox_id)
         return openai_error("no_server", "no model server is enrolled for this sandbox", 503)
 
-    # Set with the server by the same enrollment; the defaults only for a sandbox that has neither.
-    limits = request.app[LIMITS_BY_SANDBOX].get(sandbox_id, Limits())
+    # Set with the server by the same enrollment. A server with no limits is a bug: refuse rather than forward
+    # under defaults the sandbox was never given.
+    limits = request.app[LIMITS_BY_SANDBOX].get(sandbox_id)
+    if limits is None:
+        logger.error("local_llm_proxy_no_limits", sandbox_id=sandbox_id, provider=provider)
+        return openai_error("no_limits", "no limits are enrolled for this sandbox", 503)
     body = b""
     if method == "POST":
         read = await read_body(

@@ -614,3 +614,32 @@ async def test_a_server_has_the_enrollment_s_timeout_to_answer(aiohttp_client, a
         f"a 0.2 s timeout -> {impatient.status}, a 5 s one -> {patient.status}: the enrollment's timeout must bound "
         "the server's answer"
     )
+
+
+def test_a_container_s_cap_never_raises_the_proxy_s_ceiling(monkeypatch: pytest.MonkeyPatch):
+    """MAX_REQUEST_BYTES lowers the ceiling the proxy starts with, never raises it past MAX_REQUEST_BYTES_CEILING (the
+    bound of local_models.max_request_bytes): a proxy told otherwise does not start."""
+    ceiling = local_llm_proxy.MAX_REQUEST_BYTES_CEILING
+    assert local_llm_proxy.create_local_llm_proxy_app(_ADMIN, max_request_bytes=ceiling) is not None
+    with pytest.raises(ValueError, match="MAX_REQUEST_BYTES"):
+        local_llm_proxy.create_local_llm_proxy_app(_ADMIN, max_request_bytes=ceiling + 1)
+    from embry0.execution.proxy import server
+
+    monkeypatch.setenv("PROXY_TYPE", "local_llm")
+    monkeypatch.setenv("PROXY_ADMIN_TOKEN", _ADMIN)
+    monkeypatch.setenv("MAX_REQUEST_BYTES", str(ceiling + 1))
+    with pytest.raises(ValueError, match="MAX_REQUEST_BYTES"):
+        server.build_app_from_env()
+    monkeypatch.setenv("MAX_REQUEST_BYTES", "4096")
+    assert server.build_app_from_env()[local_llm_proxy.MAX_REQUEST_BYTES] == 4096, "a lower ceiling was not taken"
+
+
+async def test_a_sandbox_with_no_limits_held_is_refused_and_reaches_no_server(aiohttp_client, upstream):
+    """Its server and its limits come with one enrollment; a server held without limits is a bug, refused rather
+    than forwarded under defaults the sandbox was never given."""
+    client = await _proxy(aiohttp_client, upstream)
+    del client.server.app[local_llm_proxy.LIMITS_BY_SANDBOX]["sbx-1"]
+    resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
+    assert resp.status == 503, f"a call with no limits held was answered {resp.status}"
+    assert (await resp.json())["error"]["code"] == "no_limits"
+    assert upstream.seen == [], "a call with no limits held reached the server"
