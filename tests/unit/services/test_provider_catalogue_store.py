@@ -243,6 +243,35 @@ async def test_a_change_may_not_take_out_a_model_an_agent_or_a_background_featur
     ]
 
 
+async def test_a_change_may_not_take_out_a_model_a_template_step_or_a_review_names(
+    store: CatalogueStore, db_with_migrations
+) -> None:
+    """A template's step (on its config, or the legacy top-level model) and a repository's review model run on the
+    catalogue too: a change that takes theirs out is refused, as for a tier."""
+    await store.save(DEEPSEEK_ON, actor="a")
+    await db_with_migrations.execute(
+        "INSERT INTO pipeline_templates (id, name, graph_definition) VALUES ('tpl-1', 'acme-flow', $1::jsonb)",
+        {
+            "nodes": [
+                {"id": "plan", "type": "agent", "config": {"agent_type": "triage", "model": "deepseek-flash"}},
+                {"id": "fix", "type": "agent", "agent_type": "developer", "model": "deepseek-v4-pro"},
+            ],
+            "edges": [],
+        },
+    )
+    await db_with_migrations.execute(
+        "INSERT INTO repo_preferences (repo, pr_review) VALUES ('acme/widgets', $1::jsonb)",
+        {"enabled": True, "model": "deepseek-flash"},
+    )
+    with pytest.raises(CatalogueInvalid) as refused:
+        await store.save("", actor="a")
+    assert sorted(_locs(refused.value)) == [
+        ("references", "pipeline_templates", "acme-flow", "fix"),
+        ("references", "pipeline_templates", "acme-flow", "plan"),
+        ("references", "repo_preferences", "acme/widgets", "pr_review"),
+    ], "a template's steps and a repository's review model name the models they run on"
+
+
 async def test_a_model_nothing_could_run_before_does_not_hold_a_change_up(
     store: CatalogueStore, db_with_migrations
 ) -> None:

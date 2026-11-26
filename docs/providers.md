@@ -403,10 +403,12 @@ by a 422 naming every problem and never a value: the YAML's own (a syntax
 error, an alias, a key written twice), past 256 KiB (413), an overlay field
 it may not set, a catalogue it makes that cannot be (a chat-completions model
 without a price, prefixes of two providers that are on overlapping), a
-`request_extras` value past 4,096 bytes as JSON or nested deeper than 32, and
-any model a tier, the fallback order, an agent definition or a
-`background_models` value names that the change would take out, leave without
-a price or turn off (`loc` `references.<where>`). Change what names it first.
+`request_extras` or `background_request_extras` value past 4,096 bytes as
+JSON or nested deeper than 32, and any model a tier, the fallback order, an
+agent definition, a pipeline template's step (its `config.model`, or a legacy
+top-level `model`), a repository's review model (`pr_review.model`) or a
+`background_models` value names that the change would take out, leave
+without a price or turn off (`loc` `references.<where>`). Change what names it first.
 A write of any of those, in turn, is checked against the stored catalogue
 with its row held, so a change of the catalogue and a write naming a model
 never pass each other.
@@ -470,6 +472,11 @@ unpriced model. Per model it may also say what its server needs:
 - `request_extras`: chat-completions fields from the allowlist above, sent
   with every call of the model, an agent's and a background call's; a call's
   own fields win.
+- `background_request_extras`: fields from the same allowlist that only a
+  background call sends, after (so over) the model's `request_extras`; an
+  agent's run never sends them. A local server's thinking switch goes here
+  when the briefs and the judge should run without thinking while agents keep
+  the server's default.
 
 ```yaml
 providers:
@@ -480,7 +487,7 @@ providers:
       custom/qwen3-32b:
         free: true
         structured_output: json_schema
-        request_extras:
+        background_request_extras:
           chat_template_kwargs: {enable_thinking: false}
       custom/gateway-model: {prices: [{in: 0.4, out: 1.2}]}
 ```
@@ -490,23 +497,26 @@ was priced at $0, its turn and time budgets doubled, and every background
 call to it sent its schema with the server's thinking turned off. At the first
 start of the release that changed that, each custom model the deployment's
 stored configuration names (a tier or the default model, the fallback order,
-an agent definition, a `background_models` value at any layer, a job's
-`agent_models` override) or a run was traced on is written into the overlay as
-`free: true` and `structured_output: json_schema`, with the old factors
-(`turns: 2.0`, `timeout: 2.0`) unless the overlay sets its own. A model a
-`background_models` value names also gets
-`request_extras: {chat_template_kwargs: {enable_thinking: false}}`, the
-thinking switch every background call sent; no other does, since a model's
-request extras go with an agent's run too, which never sent it, so agents keep
-the server's default. A model
-it already lists stays as it is, and with a `default_price` of its own the
-models are written at that price instead of `free`. It is one revision (source
-`upgrade`) and one `provider_catalogue.custom_imported` audit row, and the
-`imported` ledger (`custom.relied_on`) keeps it from running again, whether or
-not there was anything to keep. An overlay the catalogue
-would refuse with these entries is left as it is, and the start logs
-`provider_catalogue_custom_import_refused` at error level: list those models
-yourself.
+an agent definition, a pipeline template's step, a repository's review model,
+a `background_models` value at any layer, a job's `agent_models` override) or
+a run was traced on is written into the overlay as `free: true`,
+`structured_output: json_schema` and
+`background_request_extras: {chat_template_kwargs: {enable_thinking: false}}`:
+background calls keep their schema and run without thinking, and agents keep
+the server's default, as before. Each factor the overlay does not set gets its
+old value (2.0). A model the overlay already lists keeps everything it sets,
+its price included, and gains only `structured_output` and
+`background_request_extras` where it sets neither; one it takes out stays out.
+With a `default_price` of the overlay's own the models are written at that
+price instead of `free`: a model's entry needs prices of its own or `free`, so
+they are pinned at it, and a later change of the default does not move them.
+It is one revision (source `upgrade`) and one
+`provider_catalogue.custom_imported` audit row, and the `imported` ledger
+(`custom.relied_on`) keeps it from running again, whether or not there was
+anything to keep. An overlay the catalogue would refuse with these entries is
+left as it is and not marked: the start logs
+`provider_catalogue_custom_import_refused` at error level, and the first
+start after the overlay is fixed keeps them.
 
 ### Adding a key
 
@@ -1065,8 +1075,9 @@ each call goes the way a job's run would:
   A `custom/` model the catalogue marks `free` bills nothing and is never
   refused for spend; one it prices (a paid gateway behind the server) is held
   to the caps as a hosted one is;
-- the call's body carries the model's `request_extras` (a local server's
-  thinking switch, say), the call's own fields after them, and its answer's
+- the call's body carries the model's `background_request_extras` (a local
+  server's thinking switch, say), then its `request_extras`, the call's own
+  fields winning over both, and its answer's
   JSON schema as `response_format` only for a model whose entry says
   `structured_output: json_schema`;
 - a call to a `custom/` model holds a slot of its server while it is made,

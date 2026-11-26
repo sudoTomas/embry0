@@ -21,9 +21,10 @@ model directly over chat completions. Each goes through
   of the operator's own server (``custom/``) its catalogue entry marks
   ``free`` bills nothing and is never refused for spend; one it prices (a
   paid gateway behind the server) is held to the caps as a hosted one is;
-- the body carries the model's ``request_extras`` (a local server's
-  thinking switch, say), the call's own fields after them; and the answer's
-  JSON schema as ``response_format`` only for a model whose entry says
+- the body carries the model's ``background_request_extras`` (a local
+  server's thinking switch, say), then its ``request_extras``, the call's
+  own fields winning over both; and the answer's JSON schema as
+  ``response_format`` only for a model whose entry says
   ``structured_output: json_schema``;
 - a call to the operator's own server holds one of its slots for the
   length of the call, as an agent run does
@@ -142,6 +143,8 @@ class Endpoint:
     free: bool = False
     #: The chat-completions body fields the model's catalogue entry gives it (``request_extras``).
     extras: Mapping[str, Any] = field(default_factory=dict)
+    #: Those it gives a background call only (``background_request_extras``), over ``extras``.
+    background_extras: Mapping[str, Any] = field(default_factory=dict)
     #: The model can be held to a JSON schema while it decodes (``structured_output: json_schema``).
     structured_output: bool = False
 
@@ -184,6 +187,7 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
     (``local_slots.server_of``).
     """
     from embry0.agents.providers import (
+        background_request_extras,
         model_rates,
         provider_for_model,
         request_extras,
@@ -224,6 +228,7 @@ async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature
         address=address,
         free=model_rates(model) == (0.0, 0.0),
         extras=request_extras(model),
+        background_extras=background_request_extras(model),
         structured_output=structured_output(model),
     )
 
@@ -294,10 +299,12 @@ async def ask_json(
     if endpoint.structured_output:
         # A server that holds the model to a schema while it decodes: the answer's own.
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": name, "schema": dict(schema)}}
-    # Then the model's own fields (its catalogue entry's request_extras, such as a local server's thinking switch),
-    # each only where the call set none of its own, so the call's always win.
-    for key, value in endpoint.extras.items():
-        body.setdefault(key, value)
+    # Then the model's own fields, each only where the call set none of its own, so the call's always win: first
+    # those its catalogue entry gives a background call (background_request_extras, such as a local server's
+    # thinking switch), then those it gives every call (request_extras).
+    for extras in (endpoint.background_extras, endpoint.extras):
+        for key, value in extras.items():
+            body.setdefault(key, value)
     url = f"{endpoint.root}/chat/completions"
     headers = {"Authorization": f"Bearer {endpoint.key}"}
     extensions: dict[str, Any] = {}

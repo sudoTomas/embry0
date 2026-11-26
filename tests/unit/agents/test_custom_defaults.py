@@ -81,3 +81,34 @@ def test_an_overlay_takes_structured_output_back_with_null() -> None:
     )
     cleared = catalogue.merge(base, {"providers": {"custom": {"models": {"custom/qwen": {"structured_output": None}}}}})
     assert cleared.providers["custom"].models["custom/qwen"].structured_output is None
+
+
+def test_a_background_only_extra_never_reaches_an_agent_s_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``background_request_extras`` go with a background call only: an agent's run on the same model sends the
+    model's request_extras and nothing else, so a background call's thinking switch leaves agents on the server's
+    default."""
+    providers = _providers()
+    lookup = getattr(providers, "background_request_extras", None)
+    if lookup is None:
+        pytest.fail("the catalogue must give a model fields a background call alone sends")
+    thinking_off = {"chat_template_kwargs": {"enable_thinking": False}}
+    installed = enable_providers(
+        monkeypatch,
+        "custom",
+        custom={"models": {"custom/qwen": {"free": True, "background_request_extras": thinking_off}}},
+    )
+    assert lookup("custom/qwen", installed) == thinking_off
+    record = providers.provider_record("custom/qwen", installed)
+    assert record.request_extras == {}, "an agent's run must not carry the background call's fields"
+
+
+@pytest.mark.parametrize("field", ["model", "stream", "tools", "messages", "service_tier"])
+def test_background_extras_take_only_what_request_extras_take(field: str) -> None:
+    overlay = {
+        "providers": {"custom": {"models": {"custom/qwen": {"free": True, "background_request_extras": {field: 1}}}}}
+    }
+    with pytest.raises(catalogue.CatalogueInvalid) as refused:
+        catalogue.merge(catalogue.seed().document, overlay)
+    assert ("providers", "custom", "models", "custom/qwen", "background_request_extras", field) in [
+        problem.loc for problem in refused.value.problems
+    ], refused.value.problems

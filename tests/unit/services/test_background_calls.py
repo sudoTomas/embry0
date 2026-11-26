@@ -326,3 +326,27 @@ async def test_a_custom_model_with_no_entry_sends_no_thinking_switch_and_no_sche
     async with _answering(sent, {"prompt_tokens": 9, "completion_tokens": 4}) as client:
         await calls.ask("slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j")
     assert "chat_template_kwargs" not in sent[0] and "response_format" not in sent[0], sent[0]
+
+
+async def test_a_background_call_sends_the_model_s_background_extras_over_its_own_extras(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A field a background call alone needs (a local server's thinking switch) is the model's
+    background_request_extras: sent after, so over, its request_extras, and never over the call's own fields."""
+    entry: dict[str, Any] = {
+        "free": True,
+        "request_extras": {"chat_template_kwargs": {"enable_thinking": True}, "top_p": 0.8},
+        "background_request_extras": {"chat_template_kwargs": {"enable_thinking": False}, "temperature": 0.9},
+    }
+    enable_providers(monkeypatch, "custom", custom={"models": {"custom/qwen": entry}})
+    module = _module()
+    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
+    assert endpoint is not None
+    sent: list[dict[str, Any]] = []
+    async with _answering(sent, {"prompt_tokens": 9, "completion_tokens": 4}) as client:
+        await calls.ask("slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j")
+    (body,) = sent
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}, "the background extras win over the model's own"
+    assert body["top_p"] == 0.8, "the model's own extras still go where the background ones say nothing"
+    assert body["temperature"] == 0.3, "the call's own fields win over both"

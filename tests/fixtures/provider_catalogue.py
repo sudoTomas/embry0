@@ -52,10 +52,9 @@ LOCAL_SERVER: dict[str, Any] = {"custom": {"default_price": {"in": 0.0, "out": 0
 
 
 def kept_local_model(model: str) -> dict[str, Any]:
-    """:data:`LOCAL_SERVER` with ``model`` listed as a release's first start keeps a custom model a
-    ``background_models`` value names (``provider_catalogue_store.RELIED_ON_MODEL`` and ``THINKING_OFF``): free,
-    held to a background call's JSON schema, its server's thinking off."""
-    from embry0.services.provider_catalogue_store import RELIED_ON_MODEL, THINKING_OFF
+    """:data:`LOCAL_SERVER` with ``model`` listed as a release's first start keeps a custom model the deployment used
+    (``provider_catalogue_store.RELIED_ON_MODEL``): free, held to a background call's JSON schema, and that call's
+    server thinking off."""
+    from embry0.services.provider_catalogue_store import RELIED_ON_MODEL
 
-    entry = {**RELIED_ON_MODEL, "request_extras": dict(THINKING_OFF)}
-    return {"custom": {**LOCAL_SERVER["custom"], "models": {model: entry}}}
+    return {"custom": {**LOCAL_SERVER["custom"], "models": {model: dict(RELIED_ON_MODEL)}}}

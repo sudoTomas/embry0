@@ -321,6 +321,13 @@ def request_extras(model: str, catalogue: Catalogue | None = None) -> dict[str, 
     return dict(provider.request_extras.get(model, {})) if provider is not None else {}
 
 
+def background_request_extras(model: str, catalogue: Catalogue | None = None) -> dict[str, Any]:
+    """The body fields ``model``'s catalogue entry gives a background call only (``background_request_extras``),
+    sent after its ``request_extras``; {} for none. An agent's run never sends them."""
+    provider = provider_for_model(model, catalogue) if model else None
+    return dict(provider.background_request_extras.get(model, {})) if provider is not None else {}
+
+
 def offered_problem(model: str, catalogue: Catalogue | None = None) -> str | None:
     """Why ``catalogue`` (the installed one by default) does not offer ``model`` priced, or None when it does.
 

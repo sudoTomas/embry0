@@ -113,8 +113,9 @@ describes what embry0 does rather than listing changes.
   OpenAI-compatible server) no longer prices every model at $0 or doubles its
   turn and time budgets, and its background calls send a JSON schema and the
   server's thinking switch only to a model whose catalogue entry says so
-  (`structured_output: json_schema`, `request_extras`). A `custom/` model runs
-  only once the provider catalogue lists it with its prices or `free: true`.
+  (`structured_output: json_schema`, `background_request_extras`, which an
+  agent's run never sends). A `custom/` model runs only once the provider
+  catalogue lists it with its prices or `free: true`.
   The first start keeps what a deployment relied on, once: each custom model
   its stored configuration names or a run was traced on is written into its
   overlay at the old defaults, with the old factors
