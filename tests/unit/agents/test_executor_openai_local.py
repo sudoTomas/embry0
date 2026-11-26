@@ -64,17 +64,20 @@ def test_through_the_proxy_without_a_bearer_nothing_is_sent(proxied, monkeypatch
 
 
 def _windowed(monkeypatch: pytest.MonkeyPatch, window: int, **kw: Any) -> Any:
-    """A run on the custom model whose provider record carries the catalogue's ``window`` for it (#174)."""
+    """A run on a custom model the catalogue lists, free, with ``window`` its context window (#174): its provider
+    record, as the orchestrator resolves it, carries the window."""
     from dataclasses import replace
 
     from embry0.agents.providers import provider_record
     from tests.fixtures.provider_catalogue import enable_providers
 
-    enable_providers(monkeypatch, "custom")
     invocation = _invocation(**kw)
+    enable_providers(
+        monkeypatch, "custom", custom={"models": {invocation.model: {"free": True, "context_window": window}}}
+    )
     record = provider_record(invocation.model)
-    assert record.name == "custom", f"the run's record is not the custom provider's: {record.name}"
-    return replace(invocation, provider_record=replace(record, context_window=window))
+    assert (record.name, record.context_window) == ("custom", window), f"the run's record: {record}"
+    return replace(invocation, provider_record=record)
 
 
 def test_a_conversation_over_the_window_elides_old_tool_output(proxied, monkeypatch, tmp_path) -> None:

@@ -80,3 +80,72 @@ async def test_a_table_that_cannot_be_read_holds_up_no_start(db_with_migrations:
     with capture_logs() as logs:
         assert await _write()(Down(), SettingsStore(db_with_migrations)) == {}
     assert [e["event"] for e in logs] == ["settings_carried_unread"], logs
+
+
+async def test_a_person_s_write_between_the_check_and_the_write_is_kept(db_with_migrations: DatabasePool) -> None:
+    """The check reads the document, then the write lands: a person who set the key in between keeps their value,
+    since the write names the generation the check read and is refused, and the check, read again, finds it set."""
+    db = db_with_migrations
+
+    class Racing(SettingsStore):
+        raced = False
+
+        async def document(self, scope: Any = None) -> dict[str, Any]:
+            read = await super().document(scope)
+            if not self.raced:
+                self.raced = True
+                await SettingsStore(db).set_keys("local_models", {"max_runs": 5}, actor="a-person")
+            return read
+
+    store = Racing(db)
+    await _carry(db, "local_models.max_runs", 3)
+    done = await _write()(db, store)
+    assert (await SettingsStore(db).document())["data"]["local_models"] == {"max_runs": 5}, (
+        "the carried value overwrote a person's, written after the check read the document"
+    )
+    assert done == {"local_models.max_runs": "already_set"}, done
+    assert await _left(db) == []
+
+
+async def test_a_row_that_cannot_be_deleted_holds_up_no_start(db_with_migrations: DatabasePool) -> None:
+    """The value is written; the row stays, logged, and the next start finds the key set and drops it."""
+    db = db_with_migrations
+
+    class NoDelete:
+        async def fetch(self, *args: Any) -> Any:
+            return await db.fetch(*args)
+
+        async def execute(self, *_args: Any) -> Any:
+            raise OSError("the database went away")
+
+    store = SettingsStore(db)
+    await _carry(db, "local_models.max_runs", 3)
+    with capture_logs() as logs:
+        try:
+            done = await _write()(NoDelete(), store)
+        except OSError:
+            pytest.fail("a carried row that could not be deleted stopped the start")
+    assert done == {"local_models.max_runs": "written"}, done
+    assert [e["log_level"] for e in logs if e["event"] == "settings_carried_row_kept"] == ["error"], logs
+    assert await _left(db) == ["local_models.max_runs"]
+    assert await _write()(db, store) == {"local_models.max_runs": "already_set"}, "the next start wrote it again"
+    assert await _left(db) == []
+
+
+async def test_a_document_that_keeps_changing_keeps_the_row_for_the_next_start(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """Written under every check, the value is refused this start and kept, never written over the latest write."""
+    db = db_with_migrations
+
+    class Busy(SettingsStore):
+        async def document(self, scope: Any = None) -> dict[str, Any]:
+            read = await super().document(scope)
+            await SettingsStore(db).set_keys("budget", {"daily_cap_usd": 10.0 + read["generation"]}, actor="x")
+            return read
+
+    await _carry(db, "local_models.max_runs", 3)
+    done = await _write()(db, Busy(db))
+    assert done == {"local_models.max_runs": "refused"}, done
+    assert await _left(db) == ["local_models.max_runs"], "a value never written was dropped"
+    assert "local_models" not in (await SettingsStore(db).document())["data"]

@@ -26,6 +26,8 @@ export interface CatalogueModel {
   chat_only: boolean;
   request_extras: Record<string, unknown>;
   structured_output?: string | null;
+  /** A custom model's context window in tokens (#174); a whole number. */
+  context_window?: number | null;
 }
 
 /** A provider as the catalogue in force has it. */
@@ -194,10 +196,15 @@ export function plainDecimal(value: number): string {
   return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
+/** The overlay's fields the schema types as whole numbers, written as integers: a float there is refused. */
+const WHOLE_NUMBER_KEYS = new Set(["version", "context_window"]);
+/** A model's fields of extra request body: JSON, which YAML reads as written, so their numbers stay as they are. */
+const EXTRAS_KEYS = new Set(["request_extras", "background_request_extras"]);
+
 function scalar(value: unknown, key: string): string {
-  // The schema's version is a whole number; every other number of the overlay (a price, a factor, hours) a float,
-  // so a whole one is written with its ".0".
-  if (typeof value === "number" && key === "version") return String(value);
+  // Every number of the overlay but a whole-number field's (a price, a factor, hours) is a float, so a whole one is
+  // written with its ".0".
+  if (typeof value === "number" && WHOLE_NUMBER_KEYS.has(key)) return String(value);
   if (typeof value === "number") {
     const text = plainDecimal(value);
     return text.includes(".") ? text : `${text}.0`;
@@ -240,7 +247,7 @@ function block(value: unknown, indent: number, key: string, out: string[]): void
       return;
     }
     for (const [k, v] of entries) {
-      if (k === "request_extras" && v && typeof v === "object") {
+      if (EXTRAS_KEYS.has(k) && v && typeof v === "object") {
         out.push(`${pad}${keyText(k)}: ${flow(v)}`);
       } else if (v !== null && typeof v === "object") {
         out.push(`${pad}${keyText(k)}:`);
