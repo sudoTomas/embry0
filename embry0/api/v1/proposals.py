@@ -400,7 +400,7 @@ async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | N
     schedule's audits of it do.
     """
     from embry0.api.budget import unattended_cap
-    from embry0.api.v1.organizations import github_only, org_forge_client
+    from embry0.api.v1.organizations import github_only, org_forge_client, refuse_removed
     from embry0.services.context_audit import RepoContext, read_head, start_context_audit_job
     from embry0.settings.sections.context_audit import CONTEXT_AUDIT, file_rules
 
@@ -408,6 +408,8 @@ async def _start_fix(request: Request, proposal: Proposal, run_with: RunWith | N
     org = await _state(request, "organizations_repo").get(proposal.repo.split("/", 1)[0])
     if org is None:
         raise HTTPException(status_code=409, detail=f"no registered organization holds {proposal.repo}'s credential")
+    # Asked again where the credential is read: a removal can land after the accept's own check (#721).
+    refuse_removed(org)
     github_only(org, "fixing a finding")
     head = await read_head(await org_forge_client(request, org), proposal.repo)
     if head is None:
@@ -510,6 +512,10 @@ async def record_lead_accept(request: Request, row: dict[str, Any], *, by: str, 
 async def accept_proposal(proposal_id: str, body: AcceptBody, request: Request) -> dict[str, Any]:
     """Start it, through the path its kind already has; the answer is recorded only once the start worked."""
     proposal = await readable_proposal(request, proposal_id, action="accept a proposal")
+    from embry0.api.v1.organizations import refuse_removed_repository
+
+    # #721: before any path writes its issue or its answer, so a refused start leaves nothing behind.
+    await refuse_removed_repository(request, proposal.repo)
     # Checked before anything starts; the case and issue paths check it again as their routes do.
     run_with = await checked_run_with(request, body.run_with, proposal.repo)
     native = proposal.id.split(":", 1)[1]

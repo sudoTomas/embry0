@@ -242,6 +242,10 @@ the log excerpt rides the task — but the repo **must be registered** (#360
 refuses jobs for unregistered repos: a tick on an unregistered stack records
 an `error` naming `ERR_REPO_UNREGISTERED`, before any logs are fetched or an
 analysis is paid for). This applies to every stack, not only the self stack.
+Its organization must not be removed either (#721): a tick then records an
+`error` saying the organization was removed, at every tick, before any logs
+are fetched or signatures recorded, until the stack is unwatched (`DELETE
+/watcher/stacks/{owner}/{name}`) or the organization made active again.
 
 ## Setting it up
 

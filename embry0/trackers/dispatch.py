@@ -12,7 +12,7 @@ from typing import Any
 
 import structlog
 
-from embry0.storage.repositories.jobs import StatusTransitionConflict
+from embry0.storage.repositories.jobs import OrganizationRemoved, StatusTransitionConflict
 from embry0.storage.repositories.repos import UnregisteredRepoError
 from embry0.storage.schemas import IssueStatus
 from embry0.trackers.models import TrackerIssue
@@ -93,9 +93,12 @@ async def start_triage(
     issue's opener. It lands on ``jobs.dispatched_by`` so the dispatch rate
     limit buckets per human (#246).
     """
-    job_id = await dispatch_open_issue(
-        issue_id, current_status, issues_repo, issue_executor, tracker=tracker, reason=reason, actor=actor
-    )
+    try:
+        job_id = await dispatch_open_issue(
+            issue_id, current_status, issues_repo, issue_executor, tracker=tracker, reason=reason, actor=actor
+        )
+    except OrganizationRemoved:
+        return False  # logged, the issue back in `open`: a trigger has nobody to answer
     return job_id is not None
 
 
@@ -113,7 +116,9 @@ async def dispatch_open_issue(
     """:func:`start_triage`, returning the job id it dispatched (None if not).
 
     The API's case-accept route needs the id to hand back; the webhook
-    callers only need to know whether a job started.
+    callers only need to know whether a job started. A repository whose
+    organization was removed raises ``OrganizationRemoved`` once the issue is
+    back in ``open``, so a route a person asked answers why (#721).
     """
     if issue_executor is None:
         return None
@@ -144,6 +149,9 @@ async def dispatch_open_issue(
             logger.warning(
                 "webhook_dispatch_refused_unregistered_repo", issue_id=issue_id, tracker=tracker, detail=str(exc)
             )
+        elif isinstance(exc, OrganizationRemoved):
+            # #721: refused, not broken — the repository's organization was removed.
+            logger.warning("dispatch_refused_organization_removed", issue_id=issue_id, tracker=tracker, owner=exc.owner)
         else:
             logger.warning("webhook_auto_triage_failed", issue_id=issue_id, tracker=tracker, exc_info=True)
         # Never strand the issue in `triaging`: only `open` dispatches, so a
@@ -152,6 +160,9 @@ async def dispatch_open_issue(
             await issues_repo.update(issue_id, status="open")
         except (ValueError, StatusTransitionConflict):
             logger.warning("webhook_trigger_revert_failed", issue_id=issue_id, tracker=tracker, exc_info=True)
+        if isinstance(exc, OrganizationRemoved):
+            # A person who asked (accepting a case or a lead) is told why, by the route's 409 (#721).
+            raise
         return None
 
     logger.info(

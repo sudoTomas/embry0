@@ -50,7 +50,7 @@ from embry0.storage.repositories.issues import (
     InvalidIssueTransition,
     IssuesRepository,
 )
-from embry0.storage.repositories.jobs import JobsRepository, job_repository
+from embry0.storage.repositories.jobs import JobsRepository, OrganizationRemoved, job_repository
 from embry0.storage.repositories.repos import UnregisteredRepoError
 from embry0.trackers import github_number_of
 
@@ -84,6 +84,11 @@ async def _dispatch(
         logger.warning(failure_event, issue_id=issue_id, error_code=ErrorCode.REPO_UNREGISTERED.value)
         await issues.update(issue_id, status="open")
         return {"job_id": None, "dispatch_error_code": ErrorCode.REPO_UNREGISTERED.value, "dispatch_error": str(exc)}
+    except OrganizationRemoved as exc:
+        # #721: names only the organization and what brings it back, so it is safe to hand the client as it is.
+        logger.warning(failure_event, issue_id=issue_id, error_code=ErrorCode.ORGANIZATION_REMOVED.value)
+        await issues.update(issue_id, status="open")
+        return {"job_id": None, "dispatch_error_code": ErrorCode.ORGANIZATION_REMOVED.value, "dispatch_error": str(exc)}
     except Exception:
         logger.warning(failure_event, issue_id=issue_id, exc_info=True)
         await issues.update(issue_id, status="open")
@@ -705,6 +710,11 @@ async def answer_issue_input_as(
     # An answer resumes the issue's job once no blocking question is left.
     action = "answer a question on an issue"
     await hide_unless_covered(request, existing.get("repo"), _issue_not_found(), action=action)
+    from embry0.api.v1.organizations import refuse_removed_repository
+
+    # #721: the answer may start the issue's triage again, and no job starts on a removed organization's repository;
+    # refused before the answer is recorded, so it can be given again once the organization is active.
+    await refuse_removed_repository(request, existing.get("repo"))
 
     inp = await inputs.get(input_id)
     if not inp:

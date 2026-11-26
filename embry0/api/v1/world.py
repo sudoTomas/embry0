@@ -427,7 +427,8 @@ async def _pr_stats(request: Request, pr_url: str | None, repo: str | None) -> d
         return None
     repo, number, owner = pr.repo, pr.number, pr.owner
     org = await _once(request, "pr_organizations", owner, lambda: _organization(request, owner))
-    if org is None or org.forge != pr.forge:
+    # A removed organization's credential is not used (#721): its pull request shows no numbers, as an unknown one's.
+    if org is None or org.status == "removed" or org.forge != pr.forge:
         return None
     from embry0.api.v1.organizations import org_pull_requests
 

@@ -725,3 +725,62 @@ async def test_a_hook_here_with_a_query_or_a_password_is_shown_bare(app: Any, fo
         assert part not in shown.text and part not in install.text, f"{part!r} is in an answer"
     assert install.json()["outcome"] == "already", install.text
     assert forge.posts == [], "a hook at the target is already there, whatever its query"
+
+
+# ---- a removed organization (#721) ----
+
+_REMOVED = "the organization acme was removed: embry0 does not act with its credential"
+
+
+@pytest.mark.asyncio
+async def test_a_removed_organization_s_credential_is_used_by_no_organization_route(app: Any, forge: FakeForge) -> None:
+    """Listing and installing its webhook, probing it again and surveying its context files each read the forge with
+    the organization's credential: a removed organization answers 409, and no credential is read for it."""
+    app.state.organizations_repo.orgs["acme"].status = "removed"
+    async with _client(app) as client:
+        answers = {
+            "list webhooks": await client.get("/api/v1/orgs/acme/webhook"),
+            "install a webhook": await client.post("/api/v1/orgs/acme/webhook"),
+            "probe again": await client.post("/api/v1/orgs/acme/probe"),
+            "survey context files": await client.get("/api/v1/orgs/acme/context-audit?refresh=true"),
+        }
+    said = {what: (r.status_code, r.json().get("detail")) for what, r in answers.items()}
+    assert said == dict.fromkeys(answers, (409, _REMOVED)), said
+    assert (app.state.tokens, forge.posts) == ([], []), "a removed organization's credential is not used"
+
+
+@pytest.mark.asyncio
+async def test_a_paused_organization_s_webhook_is_still_read(app: Any) -> None:
+    app.state.organizations_repo.orgs["acme"].status = "paused"
+    async with _client(app) as client:
+        listed = await client.get("/api/v1/orgs/acme/webhook")
+    assert listed.status_code == 200, listed.text
+    assert app.state.tokens, "a paused organization's credential is still read"
+
+
+@pytest.mark.asyncio
+async def test_no_discovery_starts_for_a_removed_organization(app: Any) -> None:
+    """Every start goes through start_discovery: the discover route, the schedule and a rediscovery after a change
+    (which logs and starts nothing)."""
+    from fastapi import HTTPException
+    from structlog.testing import capture_logs
+
+    org = app.state.organizations_repo.orgs["acme"]
+    org.status = "removed"
+    request = organizations_api.app_request(app)
+    with pytest.raises(HTTPException) as refused:
+        await organizations_api.start_discovery(request, org)
+    assert (refused.value.status_code, refused.value.detail) == (409, _REMOVED)
+
+    class Facts:
+        async def running_run(self, owner: str) -> None:
+            return None
+
+        async def start_run(self, owner: str) -> dict[str, Any]:
+            raise AssertionError("no run starts for a removed organization")
+
+    app.state.org_repos_repo = Facts()
+    with capture_logs() as logs:
+        assert await organizations_api.rediscover(request, org, event="rediscovery_not_started") is None
+    assert [e["detail"] for e in logs if e["event"] == "rediscovery_not_started"] == [_REMOVED]
+    assert app.state.tokens == []

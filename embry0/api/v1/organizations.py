@@ -481,6 +481,7 @@ async def reprobe_organization(owner: str, request: Request) -> dict[str, Any]:
     org = await repository.get(owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    refuse_removed(org)  # #721: a removed organization is probed with nothing, its stored access left as it was
     token, source = await _token_for(request, org.owner, org.forge, org.credential_id)
     probe = await probe_access(request, org.owner, org.forge, token)
     updated = await repository.update_access(
@@ -803,6 +804,7 @@ async def start_discovery(request: Request, org: Organization, *, actor: str | N
     with 409 by the repository's own check. ``actor`` names the starter in
     the audit row when it is not the request's caller.
     """
+    refuse_removed(org)  # #721: every start, the schedule's and a rediscovery after a change included
     facts_repo = _facts_repo(request)
     token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
     run = await facts_repo.start_run(org.owner)
@@ -852,6 +854,33 @@ def github_only(org: Organization, what: str) -> None:
         raise HTTPException(status_code=422, detail=f"{what} is not supported for this forge ({org.forge})")
 
 
+async def refuse_removed_repository(request: Request, repo: str | None) -> None:
+    """Raise ``OrganizationRemoved`` when ``repo``'s organization was removed: no job starts on it (#721).
+
+    Asked by an entry that writes something of its own before its job (an issue, a lead's or a proposal's answer, a
+    pull request's follow-up), so a refused start leaves nothing behind; the job store refuses again where every job
+    is made (``JobsRepository.create``), whatever asked. The application answers 409 with the reason.
+    """
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
+    organizations = getattr(request.app.state, "organizations_repo", None)
+    owner = str(repo or "").split("/", 1)[0].strip().lower()
+    if organizations is None or not owner:
+        return
+    org = await organizations.get(owner)
+    if org is not None and org.status == "removed":
+        raise OrganizationRemoved(owner)
+
+
+def refuse_removed(org: Organization) -> None:
+    """Refuse with 409 to act with a removed organization's credential (#721). A paused organization's still acts:
+    pausing stops embry0's own background work for it, not what a person asks."""
+    if org.status == "removed":
+        raise HTTPException(
+            status_code=409, detail=f"the organization {org.owner} was removed: embry0 does not act with its credential"
+        )
+
+
 def make_forge_client(request: Request, org: Organization, token: str, *, forge_time: Any = None) -> Any:
     """The GitHub client the webhook routes, the context audit and the proposals' reads call the forge with; 422
     for an organization on another forge (:func:`github_only`). A module function so tests swap in a fake. With
@@ -871,6 +900,7 @@ async def _org_for_hooks(request: Request, owner: str) -> tuple[Organization, An
     org = await _org_read(request, owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    refuse_removed(org)  # #721: neither listing its hooks nor installing one uses a removed organization's credential
     if org.forge != "github":
         raise HTTPException(status_code=422, detail="organization webhooks are a GitHub feature in this release")
     token, _source = await _token_for(request, org.owner, org.forge, org.credential_id)
@@ -1086,6 +1116,7 @@ async def organization_context_audit(owner: str, request: Request, refresh: bool
     org = await _org_read(request, owner)
     if org is None:
         raise HTTPException(status_code=404, detail=f"no organization {owner}")
+    refuse_removed(org)  # #721: a survey reads trees with the organization's credential
     schedule = getattr(request.app.state, "context_audit", None)
     if schedule is None:
         raise HTTPException(status_code=503, detail="the context audit schedule is not initialized")

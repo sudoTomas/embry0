@@ -41,7 +41,7 @@ from embry0.safety.error_codes import ErrorCode
 from embry0.services import linear_notice_texts as texts
 from embry0.services.linear_dispatch import LINEAR_GRAPHQL_URL, compose_additional_context
 from embry0.services.trigger_labels import matching_triggers, normalize_labels
-from embry0.storage.repositories.jobs import StatusTransitionConflict
+from embry0.storage.repositories.jobs import OrganizationRemoved, StatusTransitionConflict
 from embry0.trackers import (
     BACKLOG_CUT_SHORT,
     BacklogItem,
@@ -1158,6 +1158,26 @@ class LinearSyncService:
                 # A person's choice when accepting a draft; a webhook carries none.
                 **({"run_with": ctx.run_with} if ctx.run_with is not None else {}),
             )
+        except OrganizationRemoved as exc:
+            # #721: refused before any job; the ticket is told why, once, and the issue goes back to `open`.
+            try:
+                await issues_repo.update(issue_id, status="open")
+            except (ValueError, StatusTransitionConflict):
+                logger.warning("linear_trigger_revert_failed", issue_id=issue_id, exc_info=True)
+            announced = await notices.announce(
+                ref,
+                f"organization_removed:{exc.owner}",
+                texts.organization_removed(repo, exc.owner, auto_retry=ctx.auto_retry),
+            )
+            _log_once(announced)("linear_trigger_organization_removed", identifier=issue.key, repo=repo)
+            return {
+                "status": "ignored",
+                "skip": "organization_removed",
+                "error_code": ErrorCode.ORGANIZATION_REMOVED.value,
+                "reason": str(exc),
+                "repo": repo,
+                "issue_id": issue_id,
+            }
         except Exception:
             logger.warning("linear_trigger_execute_failed", issue_id=issue_id, exc_info=True)
             # Never strand the issue in `triaging` (parity with start_triage on

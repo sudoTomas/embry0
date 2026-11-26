@@ -651,3 +651,66 @@ async def test_a_maps_issues_and_analyses_follow_its_repositorys_settings_and_ca
     assert app.state.jobs_repo.create.await_args.kwargs["pipeline_template"] == "deep-look", (
         "a part sent for analysis runs the template its repository's settings name"
     )
+
+
+class _Orgs:
+    """The organizations, ``acme`` in the status given (#721)."""
+
+    def __init__(self, status: str) -> None:
+        self.status = status
+
+    async def get(self, owner: str) -> Any:
+        return SimpleNamespace(owner=owner, status=self.status)
+
+
+REFUSED = "the organization acme was removed: no job starts on its repositories until it is made active again"
+
+
+async def _send(app: FastAPI, kind: str, together: bool) -> Any:
+    async with await _client(app) as client:
+        await _upload(client, _doc(nodes=[*_doc()["nodes"], TABLE]))
+        return await client.post(
+            "/api/v1/maps/shop/send",
+            json={"node_ids": [PROBE, "table:old_backup"], "kind": kind, "together": together, "by": "ann"},
+            headers=HEADERS,
+        )
+
+
+@pytest.mark.parametrize("together", [False, True])
+@pytest.mark.parametrize("kind", ["fix", "analysis", "remove"])
+async def test_a_removed_organization_s_parts_say_why_and_write_nothing(
+    app: FastAPI, kind: str, together: bool
+) -> None:
+    """A part of a removed organization's repository starts nothing and writes nothing of its own (no mark, no lead,
+    no issue); each says why, as a part that cannot go does, and its send is recorded with the reason (#721)."""
+    app.state.organizations_repo = _Orgs("removed")
+    sent = await _send(app, kind, together)
+    assert sent.status_code == 202, sent.text
+    by_part = {r["node_id"]: r for r in sent.json()["results"]}
+    assert [(r["error"], r["job_id"]) for r in by_part.values()] == [(REFUSED, None)] * 2, sent.text
+    app.state.issues_repo.create.assert_not_awaited()
+    app.state.jobs_repo.create.assert_not_awaited()
+    app.state.issue_executor.execute.assert_not_awaited()
+    assert app.state.knowledge_maps_repo.marks_ == {}, "no bloat mark was written"
+    assert app.state.leads_repo.rows == {}, "no lead was written"
+    assert [s["error"] for s in app.state.knowledge_maps_repo.sends] == [REFUSED] * 2
+
+
+@pytest.mark.parametrize("together", [False, True])
+async def test_a_paused_organization_s_parts_still_go(app: FastAPI, together: bool) -> None:
+    app.state.organizations_repo = _Orgs("paused")
+    sent = await _send(app, "fix", together)
+    assert [r["error"] for r in sent.json()["results"]] == [None, None], sent.text
+    app.state.issues_repo.create.assert_awaited()
+
+
+@pytest.mark.parametrize("together", [False, True])
+async def test_a_part_the_job_store_refuses_says_why_and_the_send_goes_on(app: FastAPI, together: bool) -> None:
+    """Removed after the send looked: the job store refuses the job, and the parts, not the whole send, say why."""
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
+    app.state.jobs_repo.create = AsyncMock(side_effect=OrganizationRemoved("acme"))
+    sent = await _send(app, "analysis", together)
+    assert sent.status_code == 202, sent.text
+    assert [(r["error"], r["job_id"]) for r in sent.json()["results"]] == [(REFUSED, None)] * 2, sent.text
+    assert [s["error"] for s in app.state.knowledge_maps_repo.sends] == [REFUSED] * 2

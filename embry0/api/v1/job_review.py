@@ -240,6 +240,10 @@ async def send_back(job_id: str, body: SendBackBody, request: Request) -> dict[s
     pr = await _pull_request(request, job, "sending work back")
     if pr is None:
         raise HTTPException(status_code=409, detail="the job opened no pull request to send back")
+    from embry0.api.v1.organizations import refuse_removed_repository
+
+    # #721: before the follow-up reads the pull request again with the organization's credential.
+    await refuse_removed_repository(request, pr.repo)
     # The follow-up runs in the pull request's repository: a key may not start work in one it does not cover, and is
     # refused naming the job's repository only (the audit row names the other).
     await enforce_reach(
@@ -421,6 +425,9 @@ async def reject(job_id: str, body: RejectBody, request: Request) -> dict[str, A
         org = await organizations.get(pr.owner)
         if org is None:
             raise HTTPException(status_code=409, detail=f"no registered organization holds {pr.repo}'s credential")
+        from embry0.api.v1.organizations import refuse_removed
+
+        refuse_removed(org)
         if org.forge != pr.forge:
             raise HTTPException(
                 status_code=409,

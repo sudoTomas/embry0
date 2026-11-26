@@ -53,6 +53,20 @@ way the job is stored under that repository, so `GET /jobs?repo=`, the world
 view and the stats find it there. A job over a URL (an `http` context) or
 with no context names none.
 
+No job starts on a repository whose organization was removed, whatever asks
+for it (#721): a route answers 409 with `error_code`
+`ERR_ORGANIZATION_REMOVED` and a sentence saying so, an issue's dispatch
+answers that code in `dispatch_error_code` with the issue back in `open`, a
+Linear ticket is told why once, and a background start (the scout, a
+label trigger) logs it and goes on. A route that would write something of
+its own first (accepting a proposal or a lead, sending work back, answering
+an issue's question) refuses before writing it. A watched stack whose
+repository's organization was removed records an `error` tick with that
+sentence at every tick, before it fetches any logs: unwatching the stack
+(`DELETE /watcher/stacks/{owner}/{name}`) stops the ticks. A paused
+organization's repositories still start jobs, and making the organization
+active again lets its repositories start them as before.
+
 A request's `pipeline_config` is stored on the job as given, but for the keys
 embry0 writes itself for the work it starts, which a request cannot set
 (`embry0.api.schemas.INTERNAL_PIPELINE_KEYS`: `run_with`,
@@ -148,7 +162,7 @@ A person's verdict on a finished job's work, and what they do with it. Each writ
 - `GET /api/v1/jobs/{job_id}/evaluation` (read): the evaluation as it stands, in the same shape; every field `null`, with an empty `note`, while nobody has reviewed the job; a job dismissed before anyone rated it has only `by` and `at`, and one rated before keeps what it was given. It reads at any time, the game layer on or off. A job outside the calling key's repository allowlist answers 404 as a missing one does, and nothing is logged or audited: it is a read.
 - `PUT /api/v1/jobs/{job_id}/evaluation` (`{"rating": "good"|"needs_work"|"bad", "verdict": "merged", "note"}`, any of them): 409 while the job has not finished, 422 with none of them.
 - `POST /api/v1/jobs/{job_id}/send-back` (`{"notes", "run_with"}`, 202): a pr-followup job on the job's pull request branch with the notes; 409 without one, when the pull request is not in the job's own repository (its path, on the forge the repository is registered on), when it is not open, when it comes from a fork (its branch is another repository's), or when its branch is the repository's default branch, or which branch that is cannot be read. It works on github.com pull requests and on merge requests of the deployment's GitLab (`GITLAB_URL`), whose source branch the follow-up pushes to. On any other host it answers 422 `sending work back is not supported for this forge (<forge>)`, naming `github at <host>` for a GitHub Enterprise host or `gitlab at <host>` for another GitLab, which embry0 does not reach.
-- `POST /api/v1/jobs/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, which takes the admin tier, closes the pull request with the note as a comment, using the credential of the organization its owner is registered as. The answer adds `closed_pr`, false for a job with no pull request or a merged one. Closing works on github.com pull requests and on merge requests of the deployment's GitLab (a note, then `state_event: close`; a line of the note that starts with a slash gets a zero-width space before it, so GitLab runs no quick action from it). On any other host it answers 422 `closing a pull request is not supported for this forge (<forge>)` and records nothing, so reject again without `close_pr` to record the rejection alone. 409 when the pull request is not in the job's own repository (its path, compared ignoring case after `REPO_RENAMES`, on the forge the repository is registered on), when its owner is not a registered organization, or is registered on another forge.
+- `POST /api/v1/jobs/{job_id}/reject` (`{"note", "close_pr"}`): records the rejection; with `close_pr`, which takes the admin tier, closes the pull request with the note as a comment, using the credential of the organization its owner is registered as. The answer adds `closed_pr`, false for a job with no pull request or a merged one. Closing works on github.com pull requests and on merge requests of the deployment's GitLab (a note, then `state_event: close`; a line of the note that starts with a slash gets a zero-width space before it, so GitLab runs no quick action from it). On any other host it answers 422 `closing a pull request is not supported for this forge (<forge>)` and records nothing, so reject again without `close_pr` to record the rejection alone. 409 `the organization <owner> was removed: embry0 does not act with its credential` when its owner's organization was removed (a paused one still closes), and records nothing (#721). 409 when the pull request is not in the job's own repository (its path, compared ignoring case after `REPO_RENAMES`, on the forge the repository is registered on), when its owner is not a registered organization, or is registered on another forge.
 - `POST /api/v1/jobs/{job_id}/run-again` (`{"run_with"}`, 202): starts the job again as a new job from its launch record (same repo, task, pipeline and settings; a Run with choice replaces the old one) and records the new job as its follow-up, so it leaves the review inbox, and answers `followup_issue_id` too: the issue the new job is linked to. The new job is linked to the old one's issue, except for a key with a [repository allowlist](#repository-allowlist) that does not read that issue: its new job has no issue and no issue number, and an issue's workflow runs from the job's own task, as an issue-less job's does, without the issue's answered questions that the old run carried. 409 while the job has not finished, or for a job with no launch record. A map of a repository's areas runs again as a new map, as Map in the repository's Areas section starts one ([map areas](areas.md#map-areas)): the map waiting for a person is retired, a new one waits for the new job, and a map already running is a 409.
 - `POST /api/v1/jobs/{job_id}/dismiss`: seen, nothing to do; the job leaves the review inbox. It adds no rating or verdict: a job dismissed before anyone rated it has none, and one rated before keeps what it was given. 409 while it has not finished.
 
@@ -783,7 +797,7 @@ curl -X POST http://localhost:8200/api/v1/standards/acme/design/audit/acme/widge
 
 ## Organizations
 
-The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.md)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an `organization.*` audit row. Registering an owner changes nothing for any repository until a person acts.
+The forge owners embry0 maintains as a whole ([ADR 0010](adr/0010-organizations.md)). Reads need any authenticated principal; every mutation needs the `admin` tier and writes an `organization.*` audit row. Registering an owner changes nothing for any repository until a person acts. A removed organization's credential is not used (#721): its webhook routes, a probe again, the context-audit survey and a discovery answer 409, as closing a job's pull request and fixing a finding do.
 
 | Endpoint | Tier |
 |---|---|

@@ -1388,3 +1388,49 @@ async def test_an_mcp_tool_starts_work_only_in_the_repositories_the_key_covers(
             seen[token] = await outside(db, started)
     assert seen["limited"] == [], f"{tool}: a key covering only {COVERED} started work outside it: {seen['limited']}"
     assert bool(seen["open"]) == starts, f"{tool}: a key without a list starts work there: {seen['open']}"
+
+
+# --------------------------------------------------------------------------------------- a removed organization (#721)
+
+#: The sites that go on with a job made earlier rather than start one: a removed organization's repository is refused a
+#: new job, not the end of one already running.
+_GOES_ON = _RESUME | {"embry0.api.v1.jobs:answer_job_input_as", "embry0.api.v1.issues:_resume_pipeline"}
+#: Every call of the walk that starts a new job.
+NEW_STARTS = [
+    (method, path, variant)
+    for method, path, variant in WALK
+    if (method, path, variant.label) in STARTS and not STARTS[(method, path, variant.label)] <= _GOES_ON
+]
+
+
+def _says_removed(answer: httpx.Response) -> bool:
+    """The answer names why: the job store's refusal (409, or a dispatch's error code), or an organization route's own
+    status check."""
+    text = answer.text
+    return "ERR_ORGANIZATION_REMOVED" in text or " was removed" in text or "is removed" in text
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "variant"), NEW_STARTS, ids=[f"{m} {p} {v.label}".strip() for m, p, v in NEW_STARTS]
+)
+async def test_no_call_starts_a_job_on_a_removed_organization_s_repository(
+    method: str, path: str, variant: Call, db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#721: each call that starts work, through a key without a list, at a repository whose organization was
+    removed, starts no job and says why. A paused organization's still start (the walk above runs on active ones)."""
+    db = db_with_migrations
+    async with issue_reads_app(db, monkeypatch) as (app, keys, values):
+        named = dict(values[UNCOVERED]) | dict(variant.params)
+        if variant.setup is not None:
+            named |= dict(await variant.setup(app, db) or {})
+        # Both: a call may start its job in either repository (running again the key's own job, say).
+        await db.execute(
+            "UPDATE organizations SET status = 'removed' WHERE owner = ANY($1::text[])", list(OWNER.values())
+        )
+        started = record(monkeypatch)
+        answer = await _call(app, method, path, variant, named, keys.open)
+    made = [f"{row['job_id']} in {row['repo']} at {row['site']}" for row in started.made]
+    assert made == [], f"{method} {path} {variant.label}: started on a removed organization's repository: {made}"
+    assert _says_removed(answer), (
+        f"{method} {path} {variant.label}: not told why: {answer.status_code} {answer.text[:300]}"
+    )

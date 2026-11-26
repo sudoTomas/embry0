@@ -804,6 +804,7 @@ async def _send_together(
     from embry0.api.v1.leads import _dispatch_issue
     from embry0.api.v1.proposals import record_lead_accept
     from embry0.services.proposals import still_open
+    from embry0.storage.repositories.jobs import OrganizationRemoved
 
     maps, now, owner = _maps(request), datetime.now(UTC), part["owner"]
     leads: dict[str, str] = {}
@@ -846,6 +847,8 @@ async def _send_together(
                     await record_lead_accept(request, row, by=body.by, reason=body.note, job_id=job["job_id"])
     except HTTPException as exc:
         job["error"] = str(exc.detail)
+    except OrganizationRemoved as exc:  # removed after send_parts looked: the job store refused it
+        job["error"] = str(exc)
     return job, leads
 
 
@@ -853,8 +856,12 @@ async def _send_together(
 async def send_parts(slug: str, body: SendBody, request: Request, owner: OwnerParam = None) -> dict[str, Any]:
     """Send parts to agents: one job each, or with ``together`` one job per repository and kind.
 
-    A part that cannot go says why and the others still go.
+    A part that cannot go says why and the others still go: a part of a removed organization's repository included,
+    refused before its mark, lead or issue is written (#721).
     """
+    from embry0.api.v1.organizations import refuse_removed_repository
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
     target = await _map_owner(request, slug, owner, action=_ACTION_SEND)
     part = await _parts(request, slug, target)
     maps = _maps(request)
@@ -875,6 +882,7 @@ async def send_parts(slug: str, body: SendBody, request: Request, owner: OwnerPa
             if repo is None:
                 raise HTTPException(status_code=409, detail="this part lives in no repository, so no agent can take it")
             await enforce_repo_allowlist(request, repo, action=_ACTION_SEND)
+            await refuse_removed_repository(request, repo)
             if repo not in checked:
                 checked[repo] = await checked_run_with(request, body.run_with, repo)
             run_with = checked[repo]
@@ -901,6 +909,8 @@ async def send_parts(slug: str, body: SendBody, request: Request, owner: OwnerPa
                 result["job_id"] = await start
         except HTTPException as exc:
             result["error"] = str(exc.detail)
+        except OrganizationRemoved as exc:
+            result["error"] = str(exc)
         if repo is not None and node is not None and not (result["error"] or "").startswith("no such part"):
             await maps.add_send(
                 slug=slug,

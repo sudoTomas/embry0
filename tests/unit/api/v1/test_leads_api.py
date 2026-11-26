@@ -404,3 +404,40 @@ async def test_a_gitlab_ticket_of_no_active_gitlab_organization_is_not_read(
         "acme/web has no active GitLab organization to read it with",
     )
     assert built == [] and not app.state.issues_repo.create.await_count
+
+
+@pytest.mark.asyncio
+async def test_a_removed_organization_s_lead_starts_nothing_and_writes_nothing() -> None:
+    """#721: refused before the lead's issue, ticket or follow-up is written (a map's weed removal starts its lead here
+    too), so the lead stays open as it was; a paused organization's goes on."""
+    from types import SimpleNamespace
+
+    from embry0.api.v1.leads import start_lead
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
+    written: list[str] = []
+
+    class Leads:
+        async def get(self, lead_id: str) -> dict[str, object]:
+            return {"id": lead_id, "state": "open", "kind": "ci", "repo": "gone/web", "title": "a lead"}
+
+    class Organizations:
+        def __init__(self, status: str) -> None:
+            self.status = status
+
+        async def get(self, owner: str) -> object:
+            return SimpleNamespace(owner=owner, forge="github", status=self.status)
+
+    class Executor:
+        async def dispatch_refusal(self, actor: str | None = None) -> None:
+            written.append("asked the gate")
+            raise RuntimeError("stop here: past the refusal")
+
+    state = SimpleNamespace(leads_repo=Leads(), organizations_repo=Organizations("removed"), issue_executor=Executor())
+    request = SimpleNamespace(app=SimpleNamespace(state=state))
+    with pytest.raises(OrganizationRemoved) as refused:
+        await start_lead(request, "lead-1", by="ada@example.com", run_with=None)  # type: ignore[arg-type]
+    assert refused.value.owner == "gone" and written == []
+    state.organizations_repo = Organizations("paused")
+    with pytest.raises(RuntimeError, match="past the refusal"):
+        await start_lead(request, "lead-1", by="ada@example.com", run_with=None)  # type: ignore[arg-type]

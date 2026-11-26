@@ -662,6 +662,32 @@ async def test_execute_failure_reverts_the_issue_to_open(monkeypatch) -> None:
     assert statuses == ["triaging", "open"]
 
 
+async def test_a_removed_organization_s_repository_is_refused_and_the_ticket_told_why(monkeypatch) -> None:
+    """#721: the job store refuses the job; the issue goes back to `open` and the ticket says why, naming the code."""
+    from embry0.services import linear_notice_texts as texts
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
+    svc = _service()
+    monkeypatch.setattr(svc, "fetch_trigger_issue", AsyncMock(return_value=_ISSUE))
+    posted: list[tuple[str, str]] = []
+    monkeypatch.setattr(svc, "post_comment", AsyncMock(side_effect=lambda i, b: posted.append((i, b)) or True))
+    issues = _FakeIssues()
+    executor = AsyncMock()
+    executor.execute = AsyncMock(side_effect=OrganizationRemoved("acme"))
+    ctx = TriggerContext(issues_repo=issues, issue_executor=executor, dispatch_ledger=_Ledger())
+
+    result = await svc.handle_webhook_event(_payload(), ctx)
+
+    assert (result["status"], result["skip"], result["error_code"]) == (
+        "ignored",
+        "organization_removed",
+        "ERR_ORGANIZATION_REMOVED",
+    ), result
+    assert [u["status"] for u in issues.updates if "status" in u] == ["triaging", "open"]
+    assert posted == [("uuid-1", texts.organization_removed("acme/quoting", "acme", auto_retry=False))], posted
+    assert "dispatch_failed" not in str(posted), "not the generic failure"
+
+
 async def test_a_failed_revert_is_logged_not_raised(monkeypatch) -> None:
     from embry0.storage.repositories.jobs import StatusTransitionConflict
 

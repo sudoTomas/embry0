@@ -1529,6 +1529,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_STORAGE` | A Postgres error escaped the workflow. |
 | `ERR_UPSTREAM_HTTP` | An unhandled HTTP failure talking to a forge, tracker or provider. |
 | `ERR_JOB_STATE_CONFLICT` | A job status transition lost a race. |
+| `ERR_ORGANIZATION_REMOVED` | **API responses only, never `jobs.error_code`.** A job was asked for on a repository whose organization was removed: none starts, whatever asked (#721). A paused organization's repositories still start jobs; making the organization active again lets its repositories start them as before. |
 | `ERR_ABANDONED` | A person chose "abandon" at the max-retries pause. |
 | `ERR_AGENT_RUNNER_UNAVAILABLE` | A node ran without an agent runner — orchestrator wiring bug. |
 | `ERR_MODEL_DISABLED` | The job asked for a model the operator has disabled. |

@@ -273,6 +273,10 @@ async def start_lead(request: Request, lead_id: str, *, by: str, run_with: RunWi
     row = await _repo(request).get(lead_id)
     if row is None or row.get("state") != "open":
         raise HTTPException(status_code=404, detail="no open lead with that id")
+    from embry0.api.v1.organizations import refuse_removed_repository
+
+    # #721: before the lead's issue, ticket or follow-up is written, so a refused start leaves the lead as it was.
+    await refuse_removed_repository(request, str(row.get("repo") or ""))
     executor = getattr(request.app.state, "issue_executor", None)
     refusal = await executor.dispatch_refusal(actor=by) if executor is not None else None
     if refusal is not None:

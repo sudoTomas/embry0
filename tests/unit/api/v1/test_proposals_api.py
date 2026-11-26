@@ -805,3 +805,49 @@ async def test_a_removed_organization_s_codeowners_is_not_read_and_a_paused_one_
     assert (built == []) is unread, f"the removed organization's credential is not used: {built}"
     said = [e["event"] for e in logs if str(e["event"]).startswith("codeowners_not_read")]
     assert said == (["codeowners_not_read_removed_organization"] if unread else []), said
+
+
+@pytest.mark.parametrize("status", ["removed", "paused"])
+async def test_a_removed_organization_s_finding_is_not_fixed_with_its_credential(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    """Fixing a finding reads the repository's head with its organization's credential and opens a pull request: a
+    removed organization's is not used, and the answer says why. A paused one goes on to the fix (#721)."""
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
+    read: list[str] = []
+
+    async def read_head(client: Any, repo: str) -> tuple[str, str]:
+        read.append(repo)
+        raise RuntimeError("stop here: the head was read")
+
+    monkeypatch.setattr("embry0.services.context_audit.read_head", read_head)
+    app.state.issue_executor = SimpleNamespace(dispatch_refusal=lambda actor: _resolved(None))
+    async with await _client(app) as client:
+        finding_id = next(
+            p["id"] for p in (await client.get("/api/v1/proposals")).json()["proposals"] if p["kind"] == "finding"
+        )
+        app.state.organizations_repo = FakeOrgs(status=status)
+        if status == "paused":
+            with pytest.raises(RuntimeError, match="the head was read"):
+                await client.post(f"/api/v1/proposals/{finding_id}/accept", json={"by": "docs-owner"})
+            assert read == ["acme/docs"], "a paused organization's finding goes on to its fix"
+            return
+        # Refused before anything is read or written, by accepting a proposal of a removed organization's repository
+        # (the application answers it 409; this bare app raises it).
+        with pytest.raises(OrganizationRemoved) as refused:
+            await client.post(f"/api/v1/proposals/{finding_id}/accept", json={"by": "docs-owner"})
+        assert refused.value.owner == "acme"
+        assert read == [], "nothing was read with a removed organization's credential"
+
+        # Removed after the accept looked: the fix asks again where it reads the credential.
+        async def looked_while_active(request: Any, repo: str | None) -> None:
+            return None
+
+        monkeypatch.setattr("embry0.api.v1.organizations.refuse_removed_repository", looked_while_active)
+        late = await client.post(f"/api/v1/proposals/{finding_id}/accept", json={"by": "docs-owner"})
+    assert (late.status_code, late.json()["detail"]) == (
+        409,
+        "the organization acme was removed: embry0 does not act with its credential",
+    ), late.text
+    assert read == [], "nothing was read with a removed organization's credential"
