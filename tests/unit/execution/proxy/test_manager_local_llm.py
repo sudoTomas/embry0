@@ -166,6 +166,59 @@ async def test_the_held_llm_proxy_starts_once_its_old_name_is_gone(docker_mock, 
     rules.assert_awaited_once()  # the rules that let sandboxes reach a proxy name its addresses
 
 
+_UNREACHABLE = "Cannot connect to the Docker daemon at tcp://dind:2376. Is the docker daemon running?"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_launch_of_the_held_llm_proxy_is_tried_again(docker_mock, pm, monkeypatch):
+    """A daemon blip on the held llm-proxy's launch must not end the wait for good, nor leave the old reason."""
+    monkeypatch.setattr("embry0.execution.proxy.manager._SWEEP_DELAYS_S", (0.0,))
+    seen: dict[str, Any] = {"rm_old": 0, "run": 0, "reason_at_retry": []}
+
+    async def run_cmd(cmd, *args, **kwargs):
+        verb, target = cmd[1], cmd[-1]
+        if cmd[1:3] == ["rm", "-f"] and target == "local-llm-proxy":
+            seen["rm_old"] += 1
+            if seen["rm_old"] == 1:
+                raise RuntimeError(f"Docker command failed: {_IN_PROGRESS}")
+            seen["reason_at_retry"].append(pm.llm_proxy_held)
+        if verb == "run" and target == "llm-proxy":
+            seen["run"] += 1
+            if seen["run"] == 1:
+                raise RuntimeError(f"Docker command failed: {_UNREACHABLE}")
+        return b"ok"
+
+    docker_mock.run_cmd = AsyncMock(side_effect=run_cmd)
+    await pm.start(github_token="ghp_test")
+    task = pm._held_task
+    assert task is not None
+    await asyncio.wait({task}, timeout=5)
+
+    assert task.done() and task.exception() is None, f"the wait for the llm-proxy ended: {task.exception()!r}"
+    assert (pm.llm_proxy_url, pm.llm_proxy_held) == ("http://llm-proxy:9108", "")
+    # What the second retry found: the failed launch, not the old container, which was gone by then.
+    assert "Cannot connect to the Docker daemon" in seen["reason_at_retry"][1], seen["reason_at_retry"]
+    commands = _commands(docker_mock)
+    runs = [i for i, command in enumerate(commands) if command == ("run", "llm-proxy")]
+    assert len(runs) == 2 and ("rm", "llm-proxy") in commands[runs[0] : runs[1]], (
+        f"what the failed launch left under the name is not removed before the next: {commands}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_fail_on_a_retry_that_ended_in_error(pm):
+    async def broken() -> None:
+        raise RuntimeError("the wait broke")
+
+    pm._held_task = asyncio.create_task(broken())
+    await asyncio.sleep(0)
+    try:
+        await pm.stop()
+    except RuntimeError as exc:
+        pytest.fail(f"stop failed on how the retry ended: {exc}")
+    assert pm._held_task is None
+
+
 def _server() -> object:
     upstream = getattr(llm_proxy, "Upstream", None)
     assert upstream is not None, "a sandbox's server has no shape to be enrolled with (llm_proxy.Upstream)"

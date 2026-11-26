@@ -497,8 +497,10 @@ class ProxyManager:
             "LISTEN_PORT": "9108",
             "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
         }
-        if not await self._start_llm_proxy():
-            self._held_task = asyncio.create_task(self._retry_held_llm_proxy(), name="llm-proxy-held")
+        try:
+            await self._start_llm_proxy()
+        except ProxyNameHeld as exc:
+            self._hold_llm_proxy(str(exc))
 
         # Only leftovers we did not just launch. A name in ``_launched`` is the
         # live shared proxy; the sweep must not remove it.
@@ -506,32 +508,48 @@ class ProxyManager:
         self._ensure_sweep()
         logger.info("proxy_manager_started", launched=list(self._launched))
 
-    async def _start_llm_proxy(self) -> bool:
-        """Launch the llm-proxy; False, with the reason in ``llm_proxy_held``, while a container holding its old name
-        stands."""
-        try:
-            await self._launch(name="llm-proxy", env=self._llm_proxy_env, attach_internet=True)
-        except ProxyNameHeld as exc:
-            self.llm_proxy_held = str(exc)
-            logger.error("llm_proxy_held", error=str(exc))
-            return False
+    async def _start_llm_proxy(self) -> None:
+        """Launch the llm-proxy. Raises ProxyNameHeld while a container holds its old name, or what the launch
+        raised."""
+        await self._launch(name="llm-proxy", env=self._llm_proxy_env, attach_internet=True)
         self.llm_proxy_held = ""
         self.llm_proxy_url = "http://llm-proxy:9108"
         logger.info("llm_proxy_started")
-        return True
+
+    def _hold_llm_proxy(self, reason: str) -> None:
+        """Take the llm-proxy as not running, for ``reason`` (a container holds its old name), and retry its launch."""
+        self.llm_proxy_url = ""
+        self.llm_proxy_held = reason
+        logger.error("llm_proxy_held", error=reason)
+        if self._held_task is None or self._held_task.done():
+            self._held_task = asyncio.create_task(self._retry_held_llm_proxy(), name="llm-proxy-held")
 
     async def _retry_held_llm_proxy(self) -> None:
-        """Launch the held llm-proxy once the container holding its old name is gone: at the sweep's delays, then
-        every last one of them, until it launches or this process stops. The rules that let sandboxes reach a proxy
-        are written again for it, as after a recreation."""
+        """Launch the held llm-proxy once it can be: at the sweep's delays, then every last one of them, until it
+        launches or this process stops. Any failure is retried, its reason kept in ``llm_proxy_held``. Once it runs,
+        it is given back the state it held (a recreation that found its old name held) and the rules that let
+        sandboxes reach a proxy are written again, as after a recreation."""
         attempt = 0
         while not self._stopping:
             await asyncio.sleep(_SWEEP_DELAYS_S[min(attempt, len(_SWEEP_DELAYS_S) - 1)])
             attempt += 1
             if self._stopping:
                 return
-            if not await self._start_llm_proxy():
-                continue
+            async with self._revive_locks.setdefault("llm-proxy", asyncio.Lock()):
+                try:
+                    # What a failed attempt may have left under the name, as a recreation removes it first.
+                    await self._remove_proxies(["llm-proxy"], phase="held_retry")
+                    await self._start_llm_proxy()
+                except ProxyNameHeld as exc:
+                    self.llm_proxy_held = str(exc)
+                    logger.error("llm_proxy_held", error=str(exc))
+                    continue
+                except Exception as exc:  # noqa: BLE001 — a daemon blip must not end the wait for good
+                    self.llm_proxy_held = f"llm-proxy could not be started ({exc}); it is tried again within a minute"
+                    logger.error("llm_proxy_start_failed", error=str(exc))
+                    continue
+                restored, failed = await self._replay("llm-proxy")
+                logger.warning("llm_proxy_released", restored=restored, failed=failed)
             if self._on_recreated is not None:
                 try:
                     await self._on_recreated()
@@ -552,6 +570,8 @@ class ProxyManager:
             await task
         except asyncio.CancelledError:
             pass
+        except Exception as exc:  # noqa: BLE001 — stopping must not fail on how the wait ended
+            logger.error("llm_proxy_held_retry_failed", error=str(exc))
 
     async def _clear_names(self, proxy: str, names: tuple[str, ...]) -> None:
         """Remove the containers holding ``names`` before ``proxy`` is launched to answer to them.
@@ -1470,6 +1490,9 @@ class ProxyManager:
                 await self._launch(name=name, env=env, attach_internet=attach_internet)
             except Exception as exc:  # noqa: BLE001 — the caller gets its original error
                 logger.error("proxy_recreate_failed", proxy=name, error=str(exc))
+                if name == "llm-proxy" and isinstance(exc, ProxyNameHeld):
+                    # Not running, and not to be until the old name is free: custom jobs are told what to remove.
+                    self._hold_llm_proxy(str(exc))
                 return False
             restored, failed = await self._replay(name)
             logger.warning("proxy_recreated", proxy=name, restored=restored, failed=failed)

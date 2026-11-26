@@ -9,8 +9,10 @@ still running.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -37,6 +39,8 @@ class _Daemon:
         self.generations = 0
         self.unreachable = False
         self.log: list[tuple[str, str]] = []
+        #: Container name -> how many more of its removals the daemon refuses.
+        self.refused: dict[str, int] = {}
 
     def client(self) -> MagicMock:
         docker = MagicMock()
@@ -67,6 +71,12 @@ class _Daemon:
             self.proxies[cmd[3]] = _Proxy(self.generations)
             return "cid"
         if verb == "rm":
+            if self.refused.get(cmd[3], 0) > 0:
+                self.refused[cmd[3]] -= 1
+                raise RuntimeError(
+                    f"Docker command failed: Error response from daemon: removal of container {cmd[3]} is already in "
+                    "progress"
+                )
             self.proxies.pop(cmd[3], None)
             return ""
         if verb == "network":
@@ -274,6 +284,36 @@ async def test_a_recreated_llm_proxy_answers_to_its_old_name_again():
     assert launches[1].get("network_aliases") == ("local-llm-proxy",), f"the recreated llm-proxy: {launches[1]}"
     rerun = len(daemon.log) - 1 - daemon.log[::-1].index(("run", "llm-proxy"))
     assert daemon.log[rerun - 1] == ("rm", "local-llm-proxy"), f"not removed before the recreation: {daemon.log}"
+
+
+async def test_a_recreation_that_finds_the_old_name_held_holds_the_llm_proxy(monkeypatch):
+    """Custom jobs must be told what to remove, not sent to a proxy that is not there; and it comes back."""
+    monkeypatch.setattr("embry0.execution.proxy.manager._SWEEP_DELAYS_S", (0.0,))
+    daemon = _Daemon()
+    mgr = ProxyManager(daemon.client(), proxy_admin_token="admin-secret")
+    mgr._http = MagicMock()  # start() was called
+    mgr._llm_proxy_env = {"PROXY_TYPE": "llm", "LISTEN_PORT": "9108"}
+    await mgr._start_llm_proxy()
+    rules = AsyncMock()
+    mgr.on_proxy_recreated(rules)
+    # A sandbox enrolled with it before it stopped, as the manager holds it to replay.
+    body = {"sandbox_id": "sandbox-a", "sandbox_token": "tok-a"}
+    mgr._admin_state["llm-proxy"] = {"enroll:sandbox-a": ("/admin/enroll", 9108, body, time.monotonic() + 3600)}
+    daemon.proxies["llm-proxy"].running = False
+    daemon.refused["local-llm-proxy"] = 1
+
+    assert not await mgr._revive("llm-proxy"), "recreated beside a container holding its old name"
+
+    assert mgr.llm_proxy_url == "", "a custom job would be sent to an llm-proxy that is not there"
+    assert "docker rm -f local-llm-proxy" in mgr.llm_proxy_held, f"the reason: {mgr.llm_proxy_held!r}"
+    task = mgr._held_task
+    assert task is not None, "nothing launches the llm-proxy once its old name is free"
+    await asyncio.wait({task}, timeout=5)
+    assert task.done() and task.exception() is None, f"the wait for the llm-proxy ended: {task.exception()!r}"
+    assert (mgr.llm_proxy_url, mgr.llm_proxy_held) == ("http://llm-proxy:9108", "")
+    assert daemon.proxies["llm-proxy"].running, "the llm-proxy is not running again"
+    assert set(daemon.proxies["llm-proxy"].enrollments) == {"sandbox-a"}, "the enrollments it held were not given back"
+    rules.assert_awaited_once()  # the rules that let sandboxes reach a proxy name its addresses
 
 
 async def test_no_proxy_is_recreated_while_stopping():
