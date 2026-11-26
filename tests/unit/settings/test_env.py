@@ -23,11 +23,11 @@ def test_a_variable_name_is_the_attribute_in_capitals() -> None:
 #: The variables no longer read at all, with what each line says runs instead (ADR 0032).
 RETIRED = {
     "LOCAL_LLM_UPSTREAM": (
-        "each custom credential names its own server, reached through the local-llm-proxy (ADR 0032), and "
+        "each custom credential names its own server, reached through the llm-proxy (ADR 0032), and "
         "`embry0 credentials import-env` copies the two variables into the environment's (custom/api-key)"
     ),
     "LOCAL_LLM_API_KEY": (
-        "each custom credential names its own server, reached through the local-llm-proxy (ADR 0032), and "
+        "each custom credential names its own server, reached through the llm-proxy (ADR 0032), and "
         "`embry0 credentials import-env` copies the two variables into the environment's (custom/api-key)"
     ),
 }

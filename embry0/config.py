@@ -601,7 +601,7 @@ class Embry0Config(BaseSettings):
     # off keeps grok on the EMB-36 CLI/console-key path.
     # Local models (docs/providers.md): the operator's own OpenAI-compatible
     # model servers, the custom provider's. A custom credential is its server,
-    # address and key, and every sandbox reaches it through the local-llm-proxy
+    # address and key, and every sandbox reaches it through the llm-proxy
     # (ADR 0032). Their limits are the settings document's local_models section,
     # and a custom model's context window the provider catalogue's.
     #

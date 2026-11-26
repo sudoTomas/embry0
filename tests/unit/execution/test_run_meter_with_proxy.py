@@ -50,7 +50,7 @@ class _LocalExec:
 async def proxy(aiohttp_server, monkeypatch) -> AsyncIterator[Any]:
     server = await aiohttp_server(create_xai_proxy_app(ADMIN))
     monkeypatch.setitem(manager_module.METERED_PROXIES, "xai-proxy", (server.port, "xai"))
-    monkeypatch.setitem(manager_module.METERED_PROXIES, "local-llm-proxy", (1, "custom"))
+    monkeypatch.setitem(manager_module.METERED_PROXIES, "llm-proxy", (1, "custom"))
     mgr = ProxyManager(_LocalExec(), proxy_admin_token=ADMIN)  # type: ignore[arg-type]
     mgr._http = MagicMock()  # start() was called
     mgr.xai_proxy_url = "http://xai-proxy:9106"
@@ -165,7 +165,7 @@ def test_only_the_metering_proxies_a_sandbox_is_enrolled_with_are_its_targets() 
     mgr.xai_proxy_url = "http://xai-proxy:9106"
     mgr._remember("xai-proxy", "POST", "/admin/enroll", 9106, {"sandbox_id": "sbx-1", "sandbox_token": TOKEN})
     mgr._remember("git-proxy", "POST", "/admin/enroll", 9101, {"sandbox_id": "sbx-1", "sandbox_token": TOKEN})
-    assert mgr.metered_proxies() == ["xai-proxy"], "the local-llm-proxy was not launched"
+    assert mgr.metered_proxies() == ["xai-proxy"], "the llm-proxy was not launched"
     assert mgr.metered_proxies_for("sbx-1") == ["xai-proxy"]
     assert mgr.metered_proxies_for("sbx-2") == []
     mgr._remember("xai-proxy", "DELETE", "/admin/enroll/sbx-1", 9106, None)
@@ -778,15 +778,15 @@ async def test_one_proxy_s_remainder_never_holds_another_s(proxy: Any) -> None:
         await gate.wait()
 
     mgr._send_remainder = _send_remainder  # type: ignore[method-assign]
-    mgr._replay_abandoned.update({"xai-proxy", "local-llm-proxy"})
+    mgr._replay_abandoned.update({"xai-proxy", "llm-proxy"})
     mgr._resume_replay_soon("xai-proxy")
     mgr._resume_replay_soon("xai-proxy")
-    mgr._resume_replay_soon("local-llm-proxy")
+    mgr._resume_replay_soon("llm-proxy")
     await asyncio.sleep(0)
     gate.set()
     await asyncio.gather(*getattr(mgr, "_remainder_tasks", ()))
     mgr._replay_abandoned.clear()
-    assert sorted(started) == ["local-llm-proxy", "xai-proxy"], f"remainders started: {started}"
+    assert sorted(started) == ["llm-proxy", "xai-proxy"], f"remainders started: {started}"
 
 
 async def test_every_request_that_changes_a_proxy_s_state_is_numbered(proxy: Any) -> None:

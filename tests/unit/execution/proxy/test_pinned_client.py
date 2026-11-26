@@ -2,7 +2,7 @@
 
 The pool of a client that rewrote the URL to the address was keyed by the address: after one TLS handshake
 verified for name A, a call for name B pinned to the same address went over A's connection, its certificate never
-checked for B, and B's key with it. Each site that calls a model server (the local-llm-proxy, the background calls,
+checked for B, and B's key with it. Each site that calls a model server (the llm-proxy, the background calls,
 the probe behind the startup and credential checks) is tested here against one TLS server whose certificate holds
 one name, reached under that name and under another, in both orders.
 """
@@ -16,7 +16,7 @@ import httpx
 import pytest
 from aiohttp import web
 
-from embry0.execution.proxy import local_llm_proxy
+from embry0.execution.proxy import llm_proxy
 from tests.fixtures.model_servers import allow_loopback_test_servers
 from tests.fixtures.tls_servers import TlsServer, tls_server
 
@@ -159,7 +159,7 @@ async def test_one_client_checks_each_name_on_a_connection_of_its_own(
     assert _keys_received(server) == [f"Bearer {_KEYS[RIGHT]}"], "a key went over a connection checked for another name"
 
 
-# --- the local-llm-proxy ------------------------------------------------------------------------------------------
+# --- the llm-proxy ------------------------------------------------------------------------------------------
 
 
 async def _enroll(client: Any, name: str, port: int) -> None:
@@ -184,7 +184,7 @@ async def test_the_proxy_never_sends_a_sandbox_s_key_over_another_name_s_connect
 ) -> None:
     """Two sandboxes on two custom credentials, one server address, the certificate holding one name: the other's
     call is refused at its own handshake, whichever came first, and its key never reaches the server."""
-    client = await aiohttp_client(local_llm_proxy.create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(llm_proxy.create_llm_proxy_app(_ADMIN))
     for name in (RIGHT, WRONG):
         await _enroll(client, name, server.port)
     statuses = []

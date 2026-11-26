@@ -215,7 +215,8 @@ async def test_failed_preclean_of_an_unlaunched_name_is_swept_later(no_sleep, mo
         if cmd[1:3] == ["rm", "-f"]:
             if not state["daemon_up"]:
                 raise RuntimeError(_UNREACHABLE)
-            removed.append(cmd[-1])
+            if (log_context or {}).get("phase") == "delayed_sweep":
+                removed.append(cmd[-1])
             return ""
         return ""
 

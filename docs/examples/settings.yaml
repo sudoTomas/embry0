@@ -569,13 +569,13 @@ local_models:
   # for five minutes. 0: it does not wait.
   # slot_wait_seconds: 900
 
-  # How long the local-llm-proxy waits for a server to answer a sandbox's
-  # call; a long completion from a model on one card can take minutes. Read
-  # when a sandbox is enrolled: a change reaches the next one.
+  # How long the llm-proxy waits for a server to answer a sandbox's call; a
+  # long completion from a model on one card can take minutes. Read when a
+  # sandbox is enrolled: a change reaches the next one.
   # request_timeout_seconds: 900
 
-  # The largest request body the local-llm-proxy forwards to a server, in
-  # bytes; over it the call is refused with 413 and the run ends as
+  # The largest request body the llm-proxy forwards to a server, in bytes;
+  # over it the call is refused with 413 and the run ends as
   # ERR_CONTEXT_WINDOW_EXCEEDED. Every turn resends the whole conversation.
   # Read when a sandbox is enrolled: a change reaches the next one.
   # max_request_bytes: 8388608

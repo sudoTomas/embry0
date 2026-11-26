@@ -232,7 +232,7 @@ rebuilt (`docs/ops/deploy.md`).
 A run whose provider's calls all pass a model proxy is charged what that proxy
 counted, not what its sandbox reported: an xAI run through the `xai-proxy`
 (the SuperGrok account, or an API key the proxy holds) and a local model's run
-through the `local-llm-proxy`. Each proxy reads the usage of every answer it
+through the `llm-proxy`. Each proxy reads the usage of every answer it
 forwards (`embry0/execution/proxy/metering.py`); the orchestrator declares each
 run to the proxies its sandbox is enrolled with just before the run starts and
 ends it there after, so the calls count under the run, never under a run the
@@ -577,7 +577,7 @@ The sandbox receives the key as `EMBRY0_LLM_<PROVIDER>_API_KEY`
 (`EMBRY0_LLM_OPENAI_API_KEY`, …), not under the usual names: a repository
 that sets its own `OPENAI_API_KEY` for its app keeps it. The custom provider is
 the exception: its key and its server's address never enter a sandbox, which
-gets the local-llm-proxy as `EMBRY0_LLM_CUSTOM_BASE_URL` instead
+gets the llm-proxy as `EMBRY0_LLM_CUSTOM_BASE_URL` instead
 ([Local models](#local-models)). The `EMBRY0_LLM_`
 namespace is reserved, since a repository value there could swap the account
 an agent bills or send its conversation to another server. Like every LLM
@@ -610,7 +610,7 @@ needs a model with tool support, vLLM needs `--enable-auto-tool-choice` and a
 server that ignores `tools` makes the agent answer in prose and stop; the run
 ends with no tool calls and nothing done. A custom server usually sits on the
 operator's network, which the sandbox egress drop blocks. Every sandbox reaches
-it through the local-llm-proxy, enrolled with its own credential's server, and
+it through the llm-proxy, enrolled with its own credential's server, and
 nothing is opened: no model server's host is ever an egress exception
 ([Local models](#local-models), ADR 0032).
 
@@ -955,8 +955,14 @@ still needs one stored, and any placeholder will do. Credentials bound to
 different repositories may name different servers: each job reaches the one
 its credential names.
 
-**The local-llm-proxy.** The orchestrator always starts `local-llm-proxy` on
-`sandbox-restricted`, configured with no server. It enrolls each sandbox whose
+**The llm-proxy.** The orchestrator always starts `llm-proxy` on
+`sandbox-restricted`, configured with no server. It answers to
+`local-llm-proxy` too, its name before the rename, which a sandbox created
+before then holds in its env, and so it is started only once no container
+holds that name: a `local-llm-proxy` left by an earlier release is removed
+first. While one cannot be removed, the llm-proxy is not started (the log
+says `llm_proxy_held`, and a custom job is refused saying why); it starts
+within a minute of that container's removal. It enrolls each sandbox whose
 job resolved the custom provider with that credential's id, API root and key,
 and forwards that sandbox to that server and nowhere else:
 
@@ -997,7 +1003,7 @@ writes a custom credential's address (an admin key with no repository
 allowlist, or the environment).
 
 **Every call connects to the address that was checked.** Where embry0 calls a
-custom server (the local-llm-proxy for a job, a background call, a probe), it
+custom server (the llm-proxy for a job, a background call, a probe), it
 resolves the host once, checks every address, and connects to one of them,
 never to the name again: a name that would answer otherwise a second later (DNS
 rebinding) gets no second question. The name is still the server's `Host`

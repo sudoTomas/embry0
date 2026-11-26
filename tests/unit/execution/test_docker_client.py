@@ -870,6 +870,30 @@ def test_proxy_run_cmd_uses_env_file(tmp_path):
         os.unlink(env_file)
 
 
+def test_proxy_run_cmd_gives_the_proxy_its_other_names_on_its_network():
+    import os
+
+    cmd, env_file = DockerClient().build_run_proxy_cmd(
+        name="llm-proxy",
+        image="embry0-proxy:latest",
+        network="sandbox-restricted",
+        env={"PROXY_TYPE": "llm"},
+        network_aliases=("local-llm-proxy",),
+    )
+    try:
+        assert "--network-alias=local-llm-proxy" in cmd, cmd
+        assert cmd.index("--network-alias=local-llm-proxy") < cmd.index("embry0-proxy:latest"), cmd
+    finally:
+        os.unlink(env_file)
+    cmd, env_file = DockerClient().build_run_proxy_cmd(
+        name="git-proxy", image="embry0-proxy:latest", network="sandbox-restricted", env={"PROXY_TYPE": "git"}
+    )
+    try:
+        assert not [arg for arg in cmd if arg.startswith("--network-alias")], cmd
+    finally:
+        os.unlink(env_file)
+
+
 def test_proxy_run_cmd_registry_qualified_image_forces_pull():
     """Proxies must force a fresh pull for registry-qualified images, exactly
     like sandboxes (test_build_run_cmd_registry_qualified_image_forces_pull).

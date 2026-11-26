@@ -18,7 +18,7 @@ for the length of the call, and its tick stops when none is free
 
 **Which server.** A server is the custom credential a call is made with
 (:func:`server_of`): its id, or :data:`ENV_SERVER` for the environment's. An
-agent run reaches it through the local-llm-proxy and a background call
+agent run reaches it through the llm-proxy and a background call
 directly, at the address the credential names (ADR 0032); the credential, not
 the address, tells servers apart, since one machine may go by several names
 (an address, a name, a trailing dot).

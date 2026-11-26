@@ -49,7 +49,7 @@ tests:
     input_series:
       - series: 'embry0_meter_last_read_timestamp_seconds{proxy="xai-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
         values: '0+60x60 3600x60'
-      - series: 'embry0_meter_last_read_timestamp_seconds{proxy="local-llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+      - series: 'embry0_meter_last_read_timestamp_seconds{proxy="llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
         values: '0+60x120'
     alert_rule_test:
       - eval_time: 50m
@@ -90,7 +90,7 @@ tests:
   # Seeded 0: quiet. Calls under no run from minute 20: quiet for 15 minutes, then fires.
   - interval: 1m
     input_series:
-      - series: 'embry0_meter_unattributed_requests{proxy="local-llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+      - series: 'embry0_meter_unattributed_requests{proxy="llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
         values: '0x20 3x60'
     alert_rule_test:
       - eval_time: 30m
@@ -101,10 +101,10 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: warning
-              proxy: local-llm-proxy
+              proxy: llm-proxy
             exp_annotations:
               summary: "A metering proxy counts model calls under no run"
-              description: "local-llm-proxy forwarded model calls from a sandbox with no declared run. They are kept in run_meter (tally_key unattributed:<sandbox>:<started>) and charged to no job. docs/providers.md, \"Metering at the proxies\"."
+              description: "llm-proxy forwarded model calls from a sandbox with no declared run. They are kept in run_meter (tally_key unattributed:<sandbox>:<started>) and charged to no job. docs/providers.md, \"Metering at the proxies\"."
 
   # Seeded 0: quiet. Given up from minute 10, never answered again: fires once 15 minutes have held, then clears
   # once the proxy answers (0 from minute 40). This is the rule shown able to fire.
@@ -112,7 +112,7 @@ tests:
     input_series:
       - series: 'embry0_meter_replay_abandoned{proxy="xai-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
         values: '0x10 1x30 0x30'
-      - series: 'embry0_meter_replay_abandoned{proxy="local-llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
+      - series: 'embry0_meter_replay_abandoned{proxy="llm-proxy",instance="embry0-orchestrator:8000",job="embry0_orchestrator_metrics"}'
         values: '0x70'
     alert_rule_test:
       - eval_time: 8m

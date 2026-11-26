@@ -6,7 +6,7 @@ resends the whole conversation, and a 300k-token prompt is more than a
 megabyte of JSON. The cap is the operator's, handed to each proxy as
 ``MAX_REQUEST_BYTES``: ``MODEL_PROXY_MAX_REQUEST_BYTES`` for the xai- and
 auth-proxy, 32 MiB by default, the size the Anthropic API itself takes.
-The local-llm-proxy reads each sandbox's body with that sandbox's own cap
+The llm-proxy reads each sandbox's body with that sandbox's own cap
 (``read_body``'s ``limit``: the settings document's
 ``local_models.max_request_bytes``, 8 MiB by default), under its ceiling.
 

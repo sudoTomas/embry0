@@ -52,7 +52,7 @@ def test_a_key_is_injected_under_its_reserved_name_only(provider: str, env_key: 
 
 
 def test_the_custom_base_url_stays_reserved() -> None:
-    """The custom provider's base URL is the local-llm-proxy's (ADR 0032, tests/unit/execution/
+    """The custom provider's base URL is the llm-proxy's (ADR 0032, tests/unit/execution/
     test_sandbox_manager_local_llm.py); a repository may not point an agent's conversation elsewhere."""
     assert env_override_refusal("EMBRY0_LLM_CUSTOM_BASE_URL", "http://attacker/v1") is not None, (
         "a repository must not be able to point an agent's conversation at another server"

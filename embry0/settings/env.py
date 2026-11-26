@@ -92,7 +92,7 @@ def warn_moved_variables(environ: Mapping[str, str] | None = None, env_file: str
 
 #: What replaced LOCAL_LLM_UPSTREAM and LOCAL_LLM_API_KEY (ADR 0032), said while either is set.
 LOCAL_UPSTREAM_RETIRED = (
-    "each custom credential names its own server, reached through the local-llm-proxy (ADR 0032), and "
+    "each custom credential names its own server, reached through the llm-proxy (ADR 0032), and "
     "`embry0 credentials import-env` copies the two variables into the environment's (custom/api-key)"
 )
 

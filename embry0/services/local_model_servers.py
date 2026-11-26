@@ -2,7 +2,7 @@
 
 A custom credential is its server: its address (``metadata.base_url``) and its
 key. Every sandbox on the custom provider reaches that server through the
-local-llm-proxy, and every background call reaches it directly, so each
+llm-proxy, and every background call reaches it directly, so each
 credential's own address and key are the ones that work or do not.
 
 Before ADR 0032, ``LOCAL_LLM_UPSTREAM`` sent every agent run on the custom

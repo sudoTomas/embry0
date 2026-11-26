@@ -65,7 +65,7 @@ from embry0.execution.proxy.server_address import refused_address, refused_serve
 
 logger = structlog.get_logger(__name__)
 
-PROXY_NAME = "local_llm_proxy"
+PROXY_NAME = "llm_proxy"
 #: The settings document's local_models defaults: a sandbox's request cap and the time a server has to answer it.
 DEFAULT_MAX_REQUEST_BYTES = 8 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 900.0
@@ -264,7 +264,7 @@ def _confirmed(server: Upstream) -> dict[str, str]:
     return {"credential_id": server.credential_id, "upstream": server.root, "address": server.address}
 
 
-def create_local_llm_proxy_app(
+def create_llm_proxy_app(
     admin_token: str,
     *,
     max_request_bytes: int = MAX_REQUEST_BYTES_CEILING,
@@ -314,7 +314,7 @@ async def _on_cleanup(app: web.Application) -> None:
 
 
 async def _health_handler(request: web.Request) -> web.Response:
-    return web.json_response({"status": "ok", "proxy": "local_llm"})
+    return web.json_response({"status": "ok", "proxy": "llm"})
 
 
 def _upstream_headers(request: web.Request, server: Upstream) -> dict[str, str]:
@@ -358,22 +358,22 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     if upstream is None:
         if path_per_provider:
             # Only the providers the sandbox's job resolved a credential for: anything else is refused.
-            logger.warning("local_llm_proxy_provider_not_enrolled", sandbox_id=sandbox_id, provider=provider)
+            logger.warning("llm_proxy_provider_not_enrolled", sandbox_id=sandbox_id, provider=provider)
             return openai_error("provider_not_enrolled", f"this sandbox is not enrolled for {provider}", 403)
-        logger.error("local_llm_proxy_no_server", sandbox_id=sandbox_id)
+        logger.error("llm_proxy_no_server", sandbox_id=sandbox_id)
         return openai_error("no_server", "no model server is enrolled for this sandbox", 503)
 
     # Set with the server by the same enrollment. A server with no limits is a bug: refuse rather than forward
     # under defaults the sandbox was never given.
     limits = request.app[LIMITS_BY_SANDBOX].get(sandbox_id)
     if limits is None:
-        logger.error("local_llm_proxy_no_limits", sandbox_id=sandbox_id, provider=provider)
+        logger.error("llm_proxy_no_limits", sandbox_id=sandbox_id, provider=provider)
         return openai_error("no_limits", "no limits are enrolled for this sandbox", 503)
     body = b""
     if method == "POST":
         read = await read_body(
             request,
-            "local-llm-proxy",
+            "llm-proxy",
             setting="local_models.max_request_bytes",
             shape="openai",
             limit=limits.max_request_bytes,
@@ -389,10 +389,10 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
         try:
             metered = request.app[METER].open(sandbox_id, call)
         except NoRunError:
-            logger.warning("local_llm_proxy_call_without_run", sandbox_id=sandbox_id)
+            logger.warning("llm_proxy_call_without_run", sandbox_id=sandbox_id)
             return no_run_answer("openai_chat")
         except TalliesFullError:
-            logger.error("local_llm_proxy_meter_full", sandbox_id=sandbox_id)
+            logger.error("llm_proxy_meter_full", sandbox_id=sandbox_id)
             return web.json_response({"error": "meter_full"}, status=503)
 
     client: httpx.AsyncClient = request.app[HTTP_CLIENT]
@@ -400,7 +400,7 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     # orchestrator checked, never to the name again (pinned_client).
     url = f"{upstream.root}/{path}"
     logger.info(
-        "local_llm_proxy_forward",
+        "llm_proxy_forward",
         sandbox_id=sandbox_id,
         provider=provider,
         credential_id=upstream.credential_id,
@@ -449,7 +449,7 @@ async def _forward(
                         metered.feed(chunk)
                     await response.write(chunk)
             except httpx.TransportError as exc:
-                logger.warning("local_llm_proxy_stream_truncated", sandbox_id=sandbox_id, error=str(exc))
+                logger.warning("llm_proxy_stream_truncated", sandbox_id=sandbox_id, error=str(exc))
             await response.write_eof()
             return response
     except httpx.ConnectError:

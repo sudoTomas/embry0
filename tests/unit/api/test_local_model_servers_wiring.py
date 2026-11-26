@@ -3,7 +3,7 @@ custom provider is enrolled with its credential's server again (ADR 0032).
 
 Each piece constructs and runs happily without the other: a startup that never schedules the check leaves a stored
 credential with a placeholder address to fail its first job silently, and a resume that never passes the credential
-leaves its sandbox with no server at the local-llm-proxy. So this reads the AST of the two callers, as
+leaves its sandbox with no server at the llm-proxy. So this reads the AST of the two callers, as
 test_background_models_wiring.py does.
 """
 

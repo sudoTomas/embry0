@@ -59,6 +59,7 @@ async def test_start_launches_git_proxy(docker_mock, pm):
         name="git-proxy",
         image="embry0-proxy:latest",
         network="sandbox-restricted",
+        network_aliases=(),
         env={
             "PROXY_TYPE": "git",
             "GITHUB_TOKEN": "ghp_test",
@@ -76,6 +77,7 @@ async def test_start_launches_github_proxy_dual_network(docker_mock, pm):
         name="github-proxy",
         image="embry0-proxy:latest",
         network="sandbox-restricted",
+        network_aliases=(),
         env={
             "PROXY_TYPE": "github",
             "GITHUB_TOKEN": "ghp_test",
@@ -94,6 +96,7 @@ async def test_start_launches_auth_proxy_when_key_set(docker_mock, pm):
         name="auth-proxy",
         image="embry0-proxy:latest",
         network="sandbox-restricted",
+        network_aliases=(),
         env={
             "PROXY_TYPE": "auth",
             "ANTHROPIC_API_KEY": "sk-ant-test",
@@ -136,6 +139,7 @@ async def test_start_launches_minio_and_presign_proxies(docker_mock, pm):
         name="minio-proxy",
         image="embry0-proxy:latest",
         network="sandbox-restricted",
+        network_aliases=(),
         env={
             "PROXY_TYPE": "minio",
             # 10.99.0.1 is the stub from _mock_backend_resolution.
@@ -147,6 +151,7 @@ async def test_start_launches_minio_and_presign_proxies(docker_mock, pm):
         name="presign-proxy",
         image="embry0-proxy:latest",
         network="sandbox-restricted",
+        network_aliases=(),
         env={
             "PROXY_TYPE": "presign",
             "UPSTREAM_URL": "http://10.99.0.1:8000",
@@ -224,6 +229,7 @@ async def test_gitlab_token_launches_gitlab_proxy(docker_mock, pm):
         name="gitlab-proxy",
         image="embry0-proxy:latest",
         network="sandbox-restricted",
+        network_aliases=(),
         env={
             "PROXY_TYPE": "gitlab",
             "GITLAB_TOKEN": "glpat-test",

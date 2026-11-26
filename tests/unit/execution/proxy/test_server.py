@@ -296,7 +296,7 @@ def test_build_app_context_registers_the_redaction_fields(monkeypatch):
     assert out == f"phone={redaction.REDACTED}", out
 
 
-@pytest.mark.parametrize("proxy_type", ["xai", "local_llm"])
+@pytest.mark.parametrize("proxy_type", ["xai", "llm", "local_llm"])
 @pytest.mark.parametrize(("setting", "required"), [("true", True), ("1", True), ("", False), ("no", False)])
 def test_a_metered_proxy_requires_a_run_when_told_to(monkeypatch, proxy_type, setting, required):
     """METER_REQUIRE_RUN decides whether a model call from a sandbox with no declared run is refused."""
@@ -308,14 +308,29 @@ def test_a_metered_proxy_requires_a_run_when_told_to(monkeypatch, proxy_type, se
     assert server.build_app_from_env()[METER].require_run is required
 
 
+@pytest.mark.parametrize("proxy_type", ["llm", "local_llm"])
+async def test_the_llm_type_and_its_old_name_both_start_the_llm_proxy(monkeypatch, proxy_type):
+    """local_llm is what an orchestrator from before the rename sends, with the proxy image already rebuilt."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    monkeypatch.setenv("PROXY_TYPE", proxy_type)
+    monkeypatch.setenv("PROXY_ADMIN_TOKEN", "test-admin-tok")
+    monkeypatch.delenv("LISTEN_PORT", raising=False)
+    app = server.build_app_from_env()
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/health")
+        assert (resp.status, await resp.json()) == (200, {"status": "ok", "proxy": "llm"})
+    assert server.listen_port_from_env() == 9108
+
+
 def test_the_local_proxy_starts_with_no_server_of_its_own(monkeypatch):
     """ADR 0032: each sandbox is enrolled with its own server, so the container is given none, only its cap."""
-    from embry0.execution.proxy import local_llm_proxy
+    from embry0.execution.proxy import llm_proxy
 
-    UPSTREAM_BY_SANDBOX = getattr(local_llm_proxy, "UPSTREAM_BY_SANDBOX", "upstream_by_sandbox")
+    UPSTREAM_BY_SANDBOX = getattr(llm_proxy, "UPSTREAM_BY_SANDBOX", "upstream_by_sandbox")
     monkeypatch.delenv("UPSTREAM_URL", raising=False)
     monkeypatch.delenv("UPSTREAM_API_KEY", raising=False)
-    monkeypatch.setenv("PROXY_TYPE", "local_llm")
+    monkeypatch.setenv("PROXY_TYPE", "llm")
     monkeypatch.setenv("PROXY_ADMIN_TOKEN", "test-admin-tok")
     monkeypatch.setenv("MAX_REQUEST_BYTES", "4096")
     try:

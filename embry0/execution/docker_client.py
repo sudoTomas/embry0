@@ -454,8 +454,11 @@ class DockerClient:
         image: str,
         network: str,
         env: dict[str, str],
+        network_aliases: tuple[str, ...] = (),
     ) -> tuple[list[str], str]:
         """Build `docker run -d` for a proxy container, returning (cmd, env_file_path).
+
+        ``network_aliases`` are further names the container answers to on ``network``.
 
         Proxies hold the orchestrator's credentials. Pass them via --env-file
         (mode 0600) instead of -e KEY=VAL argv to keep them out of host
@@ -491,6 +494,7 @@ class DockerClient:
         cmd.extend(["--name", name])
         cmd.extend(["--label", MANAGED_LABEL, "--label", PROXY_ROLE_LABEL])
         cmd.append(f"--network={network}")
+        cmd.extend(f"--network-alias={alias}" for alias in network_aliases)
         cmd.extend(["--env-file", env_file_path])
         cmd.append(image)
         return cmd, env_file_path

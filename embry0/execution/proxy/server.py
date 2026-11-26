@@ -12,9 +12,10 @@ Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
              require_run=METER_REQUIRE_RUN)  # access token pushed at runtime
 - minio   -> minio_proxy.create_minio_proxy_app(UPSTREAM_URL)
 - presign -> presign_proxy.create_presign_proxy_app(UPSTREAM_URL)
-- local_llm -> local_llm_proxy.create_local_llm_proxy_app(PROXY_ADMIN_TOKEN,
+- llm     -> llm_proxy.create_llm_proxy_app(PROXY_ADMIN_TOKEN,
              max_request_bytes=MAX_REQUEST_BYTES,
              require_run=METER_REQUIRE_RUN)  # each sandbox's server comes with its enrollment
+             (local_llm, its name before the rename, which an older orchestrator sends, too)
   (METER_REQUIRE_RUN=true: a model call from a sandbox with no declared run is refused; see metering)
 - context -> context_proxy.create_context_proxy_app(UPSTREAM_URL, ORCHESTRATOR_API_KEY,
              PROXY_ADMIN_TOKEN, CONTAINER_ALLOWLIST, QUERY_QUOTA)  # RAV-1140
@@ -22,7 +23,7 @@ Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
 
 Listens on 0.0.0.0:LISTEN_PORT (default depends on proxy type).
 PROXY_ADMIN_TOKEN must be set for credential-injection proxies (git/github/auth)
-and for the context and local_llm proxies (per-sandbox enrollment); the network-plumbing proxies
+and for the context and llm proxies (per-sandbox enrollment); the network-plumbing proxies
 (minio/presign) do not require it.
 """
 
@@ -38,7 +39,7 @@ from embry0.execution.proxy.auth_proxy import create_auth_proxy_app
 from embry0.execution.proxy.context_proxy import create_context_proxy_app
 from embry0.execution.proxy.git_proxy import create_git_proxy_app
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
-from embry0.execution.proxy.local_llm_proxy import MAX_REQUEST_BYTES_CEILING, create_local_llm_proxy_app
+from embry0.execution.proxy.llm_proxy import MAX_REQUEST_BYTES_CEILING, create_llm_proxy_app
 from embry0.execution.proxy.minio_proxy import create_minio_proxy_app
 from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES as MODEL_MAX_REQUEST_BYTES
 from embry0.execution.proxy.presign_proxy import create_presign_proxy_app
@@ -56,7 +57,8 @@ DEFAULT_PORTS = {
     "minio": 9100,
     "presign": 9104,
     "context": 9107,
-    "local_llm": 9108,
+    "llm": 9108,
+    "local_llm": 9108,  # the llm type's name before the rename
     # 9109+ is free; 9100/9101/9103-9108 are taken.
     "gitlab": 9105,
 }
@@ -167,9 +169,9 @@ def build_app_from_env() -> web.Application:
             max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or MODEL_MAX_REQUEST_BYTES),
             require_run=_flag("METER_REQUIRE_RUN"),
         )
-    if proxy_type == "local_llm":
+    if proxy_type in ("llm", "local_llm"):  # local_llm: the name an orchestrator from before the rename sends
         # The operator's model servers: each sandbox is enrolled with its own (ADR 0032), so none is configured here.
-        return create_local_llm_proxy_app(
+        return create_llm_proxy_app(
             admin_token,
             # The ceiling no enrollment's own cap may pass (local_models.max_request_bytes is each sandbox's).
             max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or MAX_REQUEST_BYTES_CEILING),

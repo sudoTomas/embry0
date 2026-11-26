@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from embry0.execution.proxy.local_llm_proxy import Limits, Upstream
+from embry0.execution.proxy.llm_proxy import Limits, Upstream
 from embry0.execution.proxy.manager import ProxyManager
 
 
@@ -38,13 +38,13 @@ async def _enrolling_manager(monkeypatch, echo: Any = True) -> tuple[ProxyManage
     pm = ProxyManager(docker=AsyncMock(), proxy_admin_token="x" * 20)
     pm._http = object()
     pm.xai_proxy_url = "http://xai-proxy:9106"
-    pm.local_llm_proxy_url = "http://local-llm-proxy:9108"
+    pm.llm_proxy_url = "http://llm-proxy:9108"
     captured: list[dict[str, Any]] = []
 
     async def fake_exec(**kwargs: Any) -> dict[str, Any]:
         captured.append(kwargs)
         body = kwargs.get("body") or {}
-        if kwargs["container"] != "local-llm-proxy" or kwargs["method"] != "POST":
+        if kwargs["container"] != "llm-proxy" or kwargs["method"] != "POST":
             return {}
         answer: dict[str, Any] = {}
         if "local_llm" in body:
@@ -67,8 +67,8 @@ async def _enrolling_manager(monkeypatch, echo: Any = True) -> tuple[ProxyManage
 async def test_each_provider_s_server_goes_to_the_local_proxy_alone_at_its_pinned_address(monkeypatch):
     pm, captured = await _enrolling_manager(monkeypatch)
     token = await pm.enroll_sandbox("sb-1", provider_servers={"openai": OPENAI, "groq": GROQ}, limits=LIMITS)
-    assert [c["container"] for c in captured] == ["xai-proxy", "local-llm-proxy"]
-    local = next(c for c in captured if c["container"] == "local-llm-proxy")
+    assert [c["container"] for c in captured] == ["xai-proxy", "llm-proxy"]
+    local = next(c for c in captured if c["container"] == "llm-proxy")
     assert (local["port"], local["path"], local["body"]["sandbox_token"]) == (9108, "/admin/enroll", token)
     assert "local_llm" not in local["body"], "a sandbox with no custom server was sent one"
     # The root keeps its name (the Host, and for https the TLS name); the address is the one the caller checked.
@@ -93,7 +93,7 @@ async def test_each_provider_s_server_goes_to_the_local_proxy_alone_at_its_pinne
 async def test_the_custom_server_and_the_providers_go_in_one_enrollment(monkeypatch):
     pm, captured = await _enrolling_manager(monkeypatch)
     await pm.enroll_sandbox("sb-1", local_llm=LOCAL, provider_servers={"openai": OPENAI}, limits=LIMITS)
-    local = [c for c in captured if c["container"] == "local-llm-proxy"]
+    local = [c for c in captured if c["container"] == "llm-proxy"]
     assert len(local) == 1, "the sandbox was enrolled with the local proxy more than once"
     assert set(local[0]["body"]) >= {"local_llm", "provider_servers"}
 
@@ -125,7 +125,7 @@ async def test_a_proxy_that_does_not_confirm_every_provider_is_refused(monkeypat
     pm, captured = await _enrolling_manager(monkeypatch, echo=echo)
     with pytest.raises(RuntimeError, match="did not confirm the sandbox's provider servers"):
         await pm.enroll_sandbox("sb-1", provider_servers={"openai": OPENAI, "groq": GROQ}, limits=LIMITS)
-    revoked = [c for c in captured if c["container"] == "local-llm-proxy" and c["method"] == "DELETE"]
+    revoked = [c for c in captured if c["container"] == "llm-proxy" and c["method"] == "DELETE"]
     assert len(revoked) == 1 and revoked[0]["path"] == "/admin/enroll/sb-1", f"not revoked: {captured}"
 
 
@@ -138,8 +138,8 @@ async def test_the_custom_provider_is_never_a_provider_server(monkeypatch):
 
 async def test_a_sandbox_on_a_provider_without_the_proxy_is_refused(monkeypatch):
     pm, captured = await _enrolling_manager(monkeypatch)
-    pm.local_llm_proxy_url = ""
-    with pytest.raises(RuntimeError, match="local-llm-proxy is not running"):
+    pm.llm_proxy_url = ""
+    with pytest.raises(RuntimeError, match="llm-proxy is not running"):
         await pm.enroll_sandbox("sb-1", provider_servers={"openai": OPENAI}, limits=LIMITS)
     assert captured == [], "a sandbox with no route to its provider was enrolled anywhere"
 
@@ -154,7 +154,7 @@ async def test_a_recreated_proxy_is_given_the_provider_servers_back(monkeypatch)
     """The servers travel in the enrollment, which the manager holds for a recreated proxy and sends it again."""
     pm = ProxyManager(docker=AsyncMock(), proxy_admin_token="x" * 20)
     pm._http = object()
-    pm.local_llm_proxy_url = "http://local-llm-proxy:9108"
+    pm.llm_proxy_url = "http://llm-proxy:9108"
     sent: list[dict[str, Any]] = []
 
     async def once(**kwargs: Any) -> dict[str, Any]:
@@ -169,7 +169,7 @@ async def test_a_recreated_proxy_is_given_the_provider_servers_back(monkeypatch)
     monkeypatch.setattr(pm, "_exec_admin_once", once)
     await pm.enroll_sandbox("sb-1", provider_servers={"openai": OPENAI}, limits=LIMITS)
     sent.clear()
-    await pm._replay("local-llm-proxy")
+    await pm._replay("llm-proxy")
     replayed = [c["body"] for c in sent if c["path"] == "/admin/enroll"]
     assert len(replayed) == 1, f"the enrollment was not given back: {sent}"
     assert replayed[0]["provider_servers"]["openai"]["api_key"] == "key-openai"
@@ -182,7 +182,7 @@ async def test_a_sandbox_on_providers_alone_is_sent_its_limits(monkeypatch):
     """#174: one set of limits per sandbox, on every path it calls: a sandbox with no custom server has them too."""
     pm, captured = await _enrolling_manager(monkeypatch)
     await pm.enroll_sandbox("sb-1", provider_servers={"openai": OPENAI}, limits=LIMITS)
-    local = next(c for c in captured if c["container"] == "local-llm-proxy")
+    local = next(c for c in captured if c["container"] == "llm-proxy")
     assert local["body"].get("limits") == {"max_request_bytes": 2048, "timeout_seconds": 60.0}, local["body"]
 
 

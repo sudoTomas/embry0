@@ -14,7 +14,7 @@ orchestrator env, reserved from repository override). They are never on argv.
 Missing either fails the run before any request. httpx only: no provider SDK is
 baked into the sandbox image.
 
-A custom provider reached through the local-llm-proxy (``EMBRY0_LLM_CUSTOM_VIA_PROXY``)
+A custom provider reached through the llm-proxy (``EMBRY0_LLM_CUSTOM_VIA_PROXY``)
 has no key in the sandbox: the run authenticates to the proxy with the
 sandbox's bearer file. Its model's context window (the operator's setting, else
 what the server's ``/models`` reports) bounds every request: old tool output is
@@ -402,7 +402,7 @@ class OpenAICompatibleExecutor:
             if not api_key:
                 return error_output(
                     invocation.agent_type,
-                    f"model {invocation.model!r} runs through the local-llm-proxy, and this sandbox holds no "
+                    f"model {invocation.model!r} runs through the llm-proxy, and this sandbox holds no "
                     "bearer for it (the orchestrator writes it at create; dispatch the job again)",
                 )
         else:
