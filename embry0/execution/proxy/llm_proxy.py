@@ -25,15 +25,19 @@ git-proxy scopes an enrolment to one repository:
   run the orchestrator declared for the sandbox.
 
 The other chat-completions providers (OpenAI, OpenRouter, Google, Groq,
-DeepSeek) take the same route: an enrollment may name, under
+DeepSeek) take the same route (ADR 0033): an enrollment names, under
 ``provider_servers``, the server a sandbox reaches each of them through (the
 job's credential for it: its id, API root and key), and the sandbox reaches it
 at ``/p/<provider>/v1/chat/completions`` and ``/p/<provider>/v1/models``, with
-the same checks. ``/p/custom/v1/...`` is the custom server's path too. A
-provider the sandbox's enrollment does not name is refused.
+the same checks, so no provider's key enters a sandbox. ``/p/custom/v1/...`` is
+the custom server's path too. A provider the sandbox's enrollment does not
+name is refused, and so is every provider but the one its current run was
+declared on (``POST /admin/runs``): a run's calls, and its tally, are its own
+provider's.
 
-The orchestrator enrolls only the sandboxes of jobs that resolved the custom
-provider, so a sandbox with no local model has no bearer this proxy accepts.
+The orchestrator enrolls only the sandboxes of jobs that resolved a
+chat-completions provider, so any other sandbox has no bearer this proxy
+accepts.
 """
 
 from __future__ import annotations
@@ -353,6 +357,14 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     sandbox_id = check_bearer(request, PROXY_NAME)
     if sandbox_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
+    # While a run is current, only its own provider's path: its tally then holds that provider's calls alone, which
+    # the orchestrator prices at the run's rates.
+    declared = request.app[METER].declared_provider(sandbox_id)
+    if declared is not None and declared != provider:
+        logger.warning("llm_proxy_provider_not_declared", sandbox_id=sandbox_id, provider=provider, declared=declared)
+        return openai_error(
+            "provider_not_declared", f"this sandbox's current run is on {declared}: {provider} is refused", 403
+        )
 
     upstream = _server_for(request.app, sandbox_id, provider)
     if upstream is None:

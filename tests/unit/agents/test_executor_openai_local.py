@@ -162,3 +162,48 @@ def test_the_ratio_follows_the_servers_count_but_never_turns_reckless() -> None:
     assert calibrated_ratio(0, 4000, 0.3) == 0.3
     assert calibrated_ratio(1, 1_000_000, 0.3) == 0.15
     assert answer_reserve(65536) == 8192 and answer_reserve(4096) == 1024
+
+
+# --- a hosted provider through the llm-proxy (ADR 0033) --------------------------------------------------------------
+
+
+def _hosted(server: Any, *, via_proxy: bool = True) -> Any:
+    """An openai run whose record the orchestrator pointed at the proxy: its path there, and the bearer file."""
+    from embry0.agents.invocation import ProviderRecord
+
+    try:
+        record = ProviderRecord(
+            name="openai",
+            runtime="chat_completions",
+            upstream_model="gpt-x",
+            rates=(1.0, 2.0),
+            cache_read_factor=0.5,
+            cache_write_factor=1.0,
+            api_root=server.url,
+            key_env="EMBRY0_LLM_OPENAI_API_KEY",
+            via_proxy=via_proxy,  # type: ignore[call-arg]
+        )
+    except TypeError as exc:
+        pytest.fail(f"a record cannot say it is reached through the llm-proxy: {exc}")
+    return _invocation(provider="openai", model="gpt-x", provider_record=record)
+
+
+def test_a_hosted_provider_s_run_through_the_proxy_calls_its_path_with_the_bearer(proxied, monkeypatch) -> None:
+    monkeypatch.delenv("EMBRY0_LLM_CUSTOM_VIA_PROXY", raising=False)
+    monkeypatch.delenv("EMBRY0_LLM_OPENAI_API_KEY", raising=False)
+    proxied.answer(completion(content="done"))
+    out = _run(_hosted(proxied))
+    assert not out.is_error, out.error_message
+    assert {r["headers"].get("Authorization") for r in proxied.requests} == {f"Bearer {_BEARER}"}, (
+        "the run did not authenticate to the proxy with its bearer"
+    )
+
+
+def test_a_hosted_provider_s_run_through_the_proxy_without_a_bearer_sends_nothing(
+    proxied, monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("EMBRY0_LLM_CUSTOM_PROXY_TOKEN_PATH", str(tmp_path / "missing"))
+    monkeypatch.setenv("EMBRY0_LLM_OPENAI_API_KEY", "a-key-the-sandbox-should-not-hold")
+    out = _run(_hosted(proxied))
+    assert out.is_error and "llm-proxy" in (out.error_message or ""), out.error_message
+    assert proxied.requests == [], "a run routed through the proxy fell back to a key in its env"

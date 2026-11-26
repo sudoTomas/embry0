@@ -6,8 +6,12 @@ from typing import Any
 
 import pytest
 
+from embry0.agents import run_charge
 from embry0.agents.invocation import ProviderRecord
 from embry0.agents.run_charge import BootTally, RunMetering, charge_run
+
+#: The chat-completions providers other than custom, which the llm-proxy carries since ADR 0033.
+_HOSTED = ("deepseek", "google", "groq", "openai", "openrouter")
 
 
 def _record(name: str = "xai", rates: tuple[float, float] | None = (2.0, 6.0)) -> ProviderRecord:
@@ -180,7 +184,7 @@ def test_a_run_its_proxies_do_not_carry_is_charged_its_sandbox_s_figure() -> Non
 
 
 def test_a_local_model_s_run_is_charged_its_proxy_s_count() -> None:
-    metering = _whole(_snapshot({"qwen": _usage(900, 30)}), proxy="llm-proxy")
+    metering = _whole({**_snapshot({"qwen": _usage(900, 30)}), "provider": "custom"}, proxy="llm-proxy")
     charge = charge_run(metering, _record("custom", (0.5, 1.0)), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
     assert charge.source == "proxy"
     assert charge.cost_usd == pytest.approx((900 * 0.5 + 30 * 1.0) / 1e6)
@@ -261,3 +265,49 @@ def test_a_run_declared_out_of_order_is_a_gap_of_its_own_kind() -> None:
         unordered=("xai-proxy",),
     )
     assert charge_run(lost, _record(), sandbox_cost_usd=1.0, sandbox_tokens=(1, 1, 0, 0)).source == "sandbox_gap"
+
+
+def _chat_record(name: str, rates: tuple[float, float] = (2.0, 6.0)) -> ProviderRecord:
+    return ProviderRecord(
+        name=name,
+        runtime="chat_completions",
+        upstream_model="gpt-x",
+        rates=rates,
+        cache_read_factor=0.25,
+        cache_write_factor=1.5,
+        resolved_at="2026-11-25T00:00:00+00:00",
+    )
+
+
+@pytest.mark.parametrize("provider", _HOSTED)
+def test_a_hosted_provider_s_run_through_the_llm_proxy_is_charged_the_proxy_s_count(provider: str) -> None:
+    """ADR 0033: every chat-completions provider's calls pass the llm-proxy, held to the run's provider."""
+    metering = _whole({**_snapshot({"gpt-x": _usage(3000, 400)}), "provider": provider}, proxy="llm-proxy")
+    charge = charge_run(metering, _chat_record(provider), **SANDBOX)
+    assert charge.source == "proxy", f"a {provider} run was not charged from the proxy: {charge.metering}"
+    assert charge.cost_usd == pytest.approx(_price(3000, 400))
+
+
+@pytest.mark.parametrize("named", ["groq", None], ids=["another-provider", "none"])
+def test_a_tally_not_held_to_the_run_s_provider_is_not_whole(named: str | None) -> None:
+    """A tally that names another provider, or none (a proxy that predates it), may hold another provider's calls:
+    charged the larger of the proxy's count and the sandbox's figure."""
+    snapshot = _snapshot({"gpt-x": _usage(3000, 400)})
+    if named is not None:
+        snapshot["provider"] = named
+    higher = {"sandbox_cost_usd": 1.0, "sandbox_tokens": (1, 1, 0, 0)}
+    charge = charge_run(_whole(snapshot, proxy="llm-proxy"), _chat_record("openai"), **higher)
+    assert charge.source == "sandbox_gap", f"a tally held to {named!r} was taken as an openai run's: {charge.source}"
+    assert charge.metering["gap"] is True
+    lower = charge_run(
+        _whole(snapshot, proxy="llm-proxy"), _chat_record("openai"), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0)
+    )
+    assert lower.source == "proxy_gap", lower.source
+
+
+def test_the_llm_proxy_carries_every_chat_completions_provider_of_the_catalogue() -> None:
+    from embry0.agents.providers import OPENAI_COMPATIBLE
+
+    carried = getattr(run_charge, "CHAT_PROVIDERS", None)
+    assert carried == {p.name for p in OPENAI_COMPATIBLE}, f"the llm-proxy carries {carried}"
+    assert run_charge.PROXY_PROVIDERS["llm-proxy"] == carried

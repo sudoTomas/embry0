@@ -7,6 +7,7 @@ import asyncio
 from datetime import timedelta
 from typing import Any
 
+import pytest
 from prometheus_client import CollectorRegistry
 
 from embry0.execution.run_meter import RunMeter
@@ -68,8 +69,11 @@ class _Proxies:
         if (proxy, call) in self.fail:
             raise self.fail[(proxy, call)]
 
-    async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str:
+    async def declare_run(
+        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+    ) -> str:
         self._maybe_fail(proxy, "declare")
+        self.declared_providers = {**getattr(self, "declared_providers", {}), (proxy, run_id): provider}
         self.tallies[proxy][run_id] = {
             "run_id": run_id,
             "sandbox_id": sandbox_id,
@@ -119,6 +123,19 @@ async def test_a_run_is_declared_where_its_sandbox_is_enrolled_and_ended_there()
     assert metering.tallies[0].snapshot["models"] == _calls(2)
     assert repo.rows[("xai-proxy", "b1", "run-1")]["final"] is True, "the final tally was not kept"
     assert ("llm-proxy", "declare") not in proxies.calls, "declared where the sandbox is not enrolled"
+
+
+async def test_a_run_is_declared_on_its_provider_at_every_proxy_it_is_enrolled_with() -> None:
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    try:
+        await meter.begin("sbx", "run-1", "job-1", provider="openai")  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared on its provider: {exc}")
+    assert getattr(proxies, "declared_providers", {}) == {
+        ("xai-proxy", "run-1"): "openai",
+        ("llm-proxy", "run-1"): "openai",
+    }, "the run was not declared on its provider"
 
 
 async def test_a_declare_that_fails_leaves_the_proxy_out_and_counts() -> None:

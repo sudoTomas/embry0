@@ -35,7 +35,7 @@ class ErrorCode(StrEnum):
     SANDBOX_GONE = (
         "ERR_SANDBOX_GONE"  # a paused job's sandbox container no longer exists or is stopped; dispatch the job again
     )
-    SANDBOX_ROUTE_RETIRED = "ERR_SANDBOX_ROUTE_RETIRED"  # a paused job's sandbox was created with the custom provider's key or server address in its env, the route ADR 0032 retired; it is not resumed with them: dispatch the job again
+    SANDBOX_ROUTE_RETIRED = "ERR_SANDBOX_ROUTE_RETIRED"  # a paused job's sandbox was created with the custom provider's key or server address in its env (ADR 0032), or another chat-completions provider's key (ADR 0033), routes those ADRs retired; it is not resumed with them: dispatch the job again
     DOCKER_TIMEOUT = "ERR_DOCKER_TIMEOUT"  # Underlying docker command timed out
     DOCKER_OUTPUT_TOO_LARGE = "ERR_DOCKER_OUTPUT_TOO_LARGE"  # a docker command printed more than its stdout cap and was stopped (embry0/execution/docker_client.py)
     MAX_AGENT_QUESTIONS = "ERR_MAX_AGENT_QUESTIONS"  # Agent exceeded the ask_user round cap
@@ -67,7 +67,7 @@ class ErrorCode(StrEnum):
     VERIFY_NEW_TEST_FAILURES = "ERR_VERIFY_NEW_TEST_FAILURES"  # the repo's configured test command fails on the job's head in a way it does not fail on the base commit (a test, or a whole test target, that is green on base and red on head — after the head re-run). Failures that are red on base too, or pass when re-run, never produce this code.
 
     # #304 — sandbox runner config transport
-    SANDBOX_IMAGE_STALE = "ERR_SANDBOX_IMAGE_STALE"  # the sandbox image was built before what this release runs agents with (the runner's execute-only interpreter, its result mark, or its config on stdin); no agent ran — rebuild the named image (prebaked QA / profile images are not covered by the standard deploy recipe)
+    SANDBOX_IMAGE_STALE = "ERR_SANDBOX_IMAGE_STALE"  # the sandbox image was built before what this release runs agents with (the runner's execute-only interpreter, its result mark, the chat-completions providers' route through the llm-proxy, or its config on stdin); no agent ran — rebuild the named image (prebaked QA / profile images are not covered by the standard deploy recipe)
     SANDBOX_RESULT_REFUSED = "ERR_SANDBOX_RESULT_REFUSED"  # the run's result was not taken: its runner's output held more than one final result, or one without this run's mark (the per-run nonce the orchestrator hands the runner on stdin), so the run is failed rather than trusting either
     SANDBOX_EXEC_STALLED = "ERR_SANDBOX_EXEC_STALLED"  # docker exec never read the agent config from stdin within the hand-off window (wedged exec / daemon); the runner was killed before any agent work
     # #305 — the duplicate-PR check fails closed

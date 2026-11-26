@@ -628,3 +628,22 @@ def test_a_custom_model_s_window_survives_the_runner_s_config() -> None:
 @pytest.mark.parametrize("window", [0, -1, True, "65536", 1.5])
 def test_a_record_with_a_window_that_is_not_a_count_is_none(window: Any) -> None:
     assert ProviderRecord.from_config({**_record().to_config(), "context_window": window}) is None
+
+
+def test_a_record_routed_through_the_llm_proxy_says_so_in_the_runner_s_config() -> None:
+    """ADR 0033: the orchestrator marks a hosted provider's record; the runner reads the mark back."""
+    try:
+        record = _record(name="openai", via_proxy=True, api_root="http://llm-proxy:9108/p/openai/v1")
+    except TypeError as exc:
+        pytest.fail(f"a record cannot say it is reached through the llm-proxy: {exc}")
+    config = json.loads(json.dumps({"agent_type": "developer", "prompt": "p", "provider_record": record.to_config()}))
+    carried = _invocation_from_config(config).provider_record
+    assert carried is not None and carried.via_proxy is True, f"the route was lost on the way: {carried}"
+    assert _record().via_proxy is False and _record().to_config().get("via_proxy") is False
+    older = {key: value for key, value in _record().to_config().items() if key != "via_proxy"}
+    assert ProviderRecord.from_config(older) == _record(), "a record from an orchestrator before the route is refused"
+
+
+@pytest.mark.parametrize("via_proxy", ["true", 1, None], ids=["text", "number", "null"])
+def test_a_record_whose_route_is_not_a_yes_or_no_is_none(via_proxy: Any) -> None:
+    assert ProviderRecord.from_config({**_record().to_config(), "via_proxy": via_proxy}) is None

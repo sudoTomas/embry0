@@ -42,7 +42,9 @@ class MeteringProxies(Protocol):
 
     def metered_proxies(self) -> list[str]: ...
     def metered_proxies_for(self, sandbox_id: str) -> list[str]: ...
-    async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str: ...
+    async def declare_run(
+        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+    ) -> str: ...
     async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None: ...
     async def read_meter(self, proxy: str) -> dict[str, Any]: ...
     def declared_unordered(self, proxy: str, run_id: str) -> bool: ...
@@ -95,13 +97,18 @@ class RunMeter:
 
     # ---- a run -----------------------------------------------------------------
 
-    async def begin(self, sandbox_id: str, run_id: str, job_id: str | None = None) -> RunWindow:
-        """Declare ``run_id`` on every metering proxy ``sandbox_id`` is enrolled with. A proxy that refuses or cannot
-        be reached is left out of ``declared``: the run's tally there will not be whole."""
+    async def begin(
+        self, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+    ) -> RunWindow:
+        """Declare ``run_id`` on every metering proxy ``sandbox_id`` is enrolled with, on ``provider`` (its provider
+        record's name). A proxy that refuses or cannot be reached is left out of ``declared``: the run's tally there
+        will not be whole."""
         window = RunWindow(sandbox_id, run_id, tuple(self._proxies.metered_proxies_for(sandbox_id)))
         for proxy in window.targets:
             try:
-                window.declared[proxy] = await self._proxies.declare_run(proxy, sandbox_id, run_id, job_id)
+                window.declared[proxy] = await self._proxies.declare_run(
+                    proxy, sandbox_id, run_id, job_id, provider=provider
+                )
             except Exception as exc:  # noqa: BLE001 — the run goes ahead; its charge allows for the gap
                 self._metrics.meter_admin_failed(proxy, "declare")
                 logger.warning("run_meter_declare_failed", proxy=proxy, run_id=run_id, error=str(exc))

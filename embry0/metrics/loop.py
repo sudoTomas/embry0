@@ -729,7 +729,8 @@ class LoopMetrics:
     def sandbox_runner_stale_image(self, outcome: str) -> None:
         """An image built before what this release runs agents with, refused before any agent ran, by what it
         lacks: ``interpreter_missing`` (the runner's execute-only interpreter), ``result_unmarked``
-        (``--result-nonce``) or ``config_stdin_missing`` (``--config-stdin``). ``argv_fallback`` and
+        (``--result-nonce``), ``llm_proxy_missing`` (``--llm-proxy``, ADR 0033) or ``config_stdin_missing``
+        (``--config-stdin``). ``argv_fallback`` and
         ``config_too_large`` were counted by releases that ran such a runner with its config on argv."""
         self._stale_image.labels(outcome=outcome).inc()
 

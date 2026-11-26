@@ -346,3 +346,74 @@ async def test_an_enrollment_for_providers_alone_still_names_its_limits(aiohttp_
     resp = await client.post("/admin/enroll", json=body, headers=_H)
     assert resp.status == 400 and "limits" in await resp.text(), f"enrolled with limits {limits!r}: {await resp.text()}"
     assert "sbx-1" not in client.server.app[llm_proxy.SERVERS_BY_SANDBOX]
+
+
+# --- a run held to its provider (ADR 0033) ---------------------------------------------------------------------------
+
+
+async def _declare(client: TestClient, run_id: str = "run-1", **fields: Any) -> Any:
+    return await client.post("/admin/runs", json={"sandbox_id": "sbx-1", "run_id": run_id, **fields}, headers=_H)
+
+
+async def test_while_a_run_is_current_only_its_provider_is_reached(aiohttp_client, upstreams):
+    openai, groq, local = await upstreams("openai"), await upstreams("groq"), await upstreams("local")
+    client = await _proxy(
+        aiohttp_client,
+        provider_servers={
+            "openai": _server(openai, "key-openai", "cred-o"),
+            "groq": _server(groq, "key-groq", "cred-g"),
+        },
+        local_llm=_server(local, "key-local", "cred-l"),
+    )
+    declared = await _declare(client, provider="openai")
+    assert declared.status == 200 and (await declared.json()).get("provider") == "openai", await declared.text()
+    chat = {"model": "gpt-x", "messages": []}
+
+    assert (await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+    for path in ("/p/groq/v1/chat/completions", "/v1/chat/completions", "/p/custom/v1/chat/completions"):
+        refused = await client.post(path, json=chat, headers=_BEARER)
+        assert refused.status == 403, f"{path} was answered {refused.status} during a run on openai"
+        assert (await refused.json())["error"]["code"] == "provider_not_declared"
+    assert (await client.get("/p/groq/v1/models", headers=_BEARER)).status == 403
+    assert groq.seen == [] and local.seen == [], "a call to another provider reached its server during the run"
+
+    meter = await (await client.get("/admin/meter", headers=_H)).json()
+    tally = next(t for t in meter["tallies"] if t.get("run_id") == "run-1")
+    assert tally["provider"] == "openai", f"the tally does not say whose calls it holds: {tally}"
+
+    ended = await client.delete("/admin/runs/run-1", json={}, headers=_H)
+    assert ended.status == 200
+    after = await client.post("/p/groq/v1/chat/completions", json=chat, headers=_BEARER)
+    assert after.status == 200, "once the run ended, the sandbox's other provider is refused still"
+
+
+async def test_a_run_declared_on_no_provider_holds_the_sandbox_to_none(aiohttp_client, upstreams):
+    openai, groq = await upstreams("openai"), await upstreams("groq")
+    client = await _proxy(
+        aiohttp_client,
+        provider_servers={"openai": _server(openai, "k-o", "cred-o"), "groq": _server(groq, "k-g", "cred-g")},
+    )
+    declared = await _declare(client)
+    assert declared.status == 200 and "provider" not in await declared.json()
+    chat = {"model": "gpt-x", "messages": []}
+    assert (await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+    assert (await client.post("/p/groq/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+
+
+@pytest.mark.parametrize(
+    "provider", ["", "OpenAI", "open ai", 7, "x" * 40], ids=["empty", "upper", "space", "int", "long"]
+)
+async def test_a_declaration_naming_a_provider_that_is_not_one_is_refused(aiohttp_client, upstreams, provider):
+    openai = await upstreams("openai")
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(openai, "k-o", "cred-o")})
+    resp = await _declare(client, provider=provider)
+    assert resp.status == 400, f"a declaration on {provider!r} was taken: {resp.status}"
+
+
+async def test_a_run_declared_again_on_another_provider_is_refused(aiohttp_client, upstreams):
+    openai = await upstreams("openai")
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(openai, "k-o", "cred-o")})
+    assert (await _declare(client, provider="openai")).status == 200
+    assert (await _declare(client, provider="openai")).status == 200, "the same declaration again was refused"
+    again = await _declare(client, provider="groq")
+    assert again.status == 409, f"the run moved to another provider: {again.status}"

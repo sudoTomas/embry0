@@ -1,12 +1,16 @@
 """Metering: the tokens each agent run's model calls cost, read at the proxy from the provider's answers.
 
-A model proxy (xai, local-llm) holds the provider's credential, so every call
-a sandbox makes with it passes here. This module reads each answer's usage as
-the answer streams through, and adds it to the run the call belongs to. The
-orchestrator says which run that is (``POST /admin/runs``): a sandbox never
-names its own run. The orchestrator reads the tallies (``GET /admin/meter``,
-cumulative, so a lost read counts nothing twice) and prices them at the run's
-rates; this module knows tokens, not prices.
+A model proxy (the xai-proxy, the llm-proxy) holds the provider's credential,
+so every call a sandbox makes with it passes here. This module reads each
+answer's usage as the answer streams through, and adds it to the run the call
+belongs to. The orchestrator says which run that is (``POST /admin/runs``): a
+sandbox never names its own run. A declaration names the run's provider too: a
+proxy that carries several providers' calls (the llm-proxy) then refuses the
+sandbox's calls to any other while the run is current, so a run's tally holds
+its own provider's calls alone, and the tally says which provider that is. The
+orchestrator reads the tallies (``GET /admin/meter``, cumulative, so a lost
+read counts nothing twice) and prices them at the run's rates; this module
+knows tokens, not prices.
 
 Everything here fails toward counting more, never less:
 
@@ -95,6 +99,8 @@ DEFAULT_MAX_TALLIES = 1000
 MAX_MODEL_CHARS = 200
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+#: A provider's name, as a run's declaration names it (a provider record's ``name``).
+PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _SANDBOX_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
@@ -543,6 +549,8 @@ class _Tally:
     job_id: str | None
     started: float
     ended: float | None = None
+    #: The provider the run was declared on; None when its declaration named none (or the sandbox had no run).
+    provider: str | None = None
     models: dict[str, _ModelTally] = field(default_factory=dict)
     errors: int = 0
     open: dict[int, _Open] = field(default_factory=dict)
@@ -553,6 +561,7 @@ class _Tally:
             "sandbox_id": self.sandbox_id,
             "job_id": self.job_id,
             "attributed": self.run_id is not None,
+            "provider": self.provider,
             "started": self.started,
             "ended": self.ended,
             "models": {
@@ -613,19 +622,29 @@ class Meter:
         for key in [k for k, t in self._unattributed.items() if t.ended is not None and t.ended <= cutoff]:
             del self._unattributed[key]
 
-    def declare(self, sandbox_id: str, run_id: str, job_id: str | None = None) -> None:
-        """Make ``run_id`` the run ``sandbox_id``'s calls count under. Declaring it again changes nothing."""
+    def declare(self, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None) -> None:
+        """Make ``run_id`` the run ``sandbox_id``'s calls count under, on ``provider`` when it names one. Declaring it
+        again changes nothing; declaring it again on another provider is refused."""
         held = self._runs.get(run_id)
         if held is not None:
-            if held.sandbox_id != sandbox_id or held.ended is not None:
-                raise ValueError(f"run {run_id} belongs to another sandbox or has ended")
+            if held.sandbox_id != sandbox_id or held.ended is not None or held.provider != provider:
+                raise ValueError(f"run {run_id} belongs to another sandbox or provider, or has ended")
             return
         self._purge()
         if len(self) >= self._max:
             raise TalliesFullError(f"the meter holds {self._max} tallies")
         self._end_current(sandbox_id)
-        self._runs[run_id] = _Tally(sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now())
+        self._runs[run_id] = _Tally(
+            sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now(), provider=provider
+        )
         self._current[sandbox_id] = run_id
+
+    def declared_provider(self, sandbox_id: str) -> str | None:
+        """The provider the sandbox's current run was declared on; None when it has no run, or its run named none."""
+        # The current run is never an ended one: ending a run, or the sandbox's next, takes it from ``_current``.
+        run_id = self._current.get(sandbox_id)
+        tally = self._runs.get(run_id) if run_id is not None else None
+        return tally.provider if tally is not None else None
 
     def _end_current(self, sandbox_id: str) -> None:
         run_id = self._current.pop(sandbox_id, None)
@@ -755,7 +774,8 @@ METER = web.AppKey("meter", Meter)
 def register_meter_routes(app: web.Application, *, proxy_name: str, require_run: bool = False) -> Meter:
     """Give ``app`` a :class:`Meter` and its admin routes, behind the enrollment's admin gate:
 
-    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?}`` declares an enrolled sandbox's run;
+    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?}`` declares an enrolled sandbox's run, on
+      ``provider`` when it names one (the answer echoes it);
     - ``DELETE /admin/runs/{run_id}`` ends it and answers its last snapshot;
     - ``GET /admin/meter`` answers every tally held.
 
@@ -776,6 +796,9 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         if not isinstance(body, dict):
             return web.json_response({"error": "bad_request"}, status=400)
         sandbox_id, run_id, job_id = body.get("sandbox_id"), body.get("run_id"), body.get("job_id")
+        provider = body.get("provider")
+        if provider is not None and (not isinstance(provider, str) or not PROVIDER_RE.fullmatch(provider)):
+            return web.json_response({"error": "bad_request"}, status=400)
         if not isinstance(sandbox_id, str) or not _SANDBOX_ID_RE.fullmatch(sandbox_id):
             return web.json_response({"error": "bad_request"}, status=400)
         if not isinstance(run_id, str) or not _RUN_ID_RE.fullmatch(run_id):
@@ -791,7 +814,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         if stale is not None:
             return stale
         try:
-            meter.declare(sandbox_id, run_id, job_id or None)
+            meter.declare(sandbox_id, run_id, job_id or None, provider)
         except TalliesFullError:
             logger.error(f"{proxy_name}_meter_full", sandbox_id=sandbox_id, run_id=run_id)
             return web.json_response({"error": "meter_full"}, status=429)
@@ -799,11 +822,14 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "run_conflict"}, status=409)
         if seq is not None:
             request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
-        logger.info(f"{proxy_name}_run_declared", sandbox_id=sandbox_id, run_id=run_id)
-        # The number echoed says this proxy orders admin requests (an older image does not).
+        logger.info(f"{proxy_name}_run_declared", sandbox_id=sandbox_id, run_id=run_id, provider=provider)
+        # The number echoed says this proxy orders admin requests (an older image does not); the provider echoed, that
+        # it holds the run to it.
         answer: dict[str, Any] = {"status": "declared", "boot_id": meter.boot_id}
         if seq is not None:
             answer["seq"] = seq
+        if provider is not None:
+            answer["provider"] = provider
         return web.json_response(answer)
 
     async def _end(request: web.Request) -> web.Response:

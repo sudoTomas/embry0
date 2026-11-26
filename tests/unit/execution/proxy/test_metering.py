@@ -264,6 +264,42 @@ def test_a_call_counts_under_the_run_its_sandbox_has() -> None:
     assert (model["input_tokens"], model["output_tokens"], model["requests"], model["estimated"]) == (3000, 400, 2, 0)
 
 
+def _declare_on(meter: Meter, sandbox_id: str, run_id: str, provider: str | None) -> None:
+    try:
+        meter.declare(sandbox_id, run_id, provider=provider)  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared on its provider: {exc}")
+
+
+def test_a_run_declared_on_a_provider_holds_its_sandbox_to_it_until_it_ends() -> None:
+    meter = Meter()
+    assert hasattr(meter, "declared_provider"), "the meter cannot say which provider a sandbox's run is on"
+    assert meter.declared_provider("sbx") is None
+    _declare_on(meter, "sbx", "run-1", "openai")
+    assert meter.declared_provider("sbx") == "openai", "the sandbox's run is not held to its provider"
+    assert _tally(meter, "run-1")["provider"] == "openai", "the tally does not say whose calls it holds"
+    meter.declare("sbx", "run-2")
+    assert meter.declared_provider("sbx") is None, "a later run on no provider kept the last one's"
+    _declare_on(meter, "sbx", "run-3", "groq")
+    meter.end("run-3")
+    assert meter.declared_provider("sbx") is None, "an ended run still holds its sandbox"
+    _declare_on(meter, "sbx", "run-4", "deepseek")
+    meter.sandbox_gone("sbx")
+    assert meter.declared_provider("sbx") is None, "a run ended with its enrollment still holds its sandbox"
+
+
+def test_a_run_declared_again_keeps_its_provider() -> None:
+    meter = Meter()
+    _declare_on(meter, "sbx", "run-1", "openai")
+    _declare_on(meter, "sbx", "run-1", "openai")
+    for other in ("groq", None):
+        try:
+            _declare_on(meter, "sbx", "run-1", other)
+        except ValueError:
+            continue
+        pytest.fail(f"the run moved from openai to {other!r}")
+
+
 def test_a_new_run_ends_the_last_and_each_keeps_its_own_calls() -> None:
     clock = [100.0]
     meter = Meter(now=lambda: clock[0])

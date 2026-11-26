@@ -81,6 +81,19 @@ describes what embry0 does rather than listing changes.
 
 ### Upgrade notes
 
+- **No chat-completions provider's key is in a sandbox.** OpenAI, OpenRouter,
+  Google, Groq and DeepSeek are reached through the llm-proxy, which holds the
+  key, as the custom provider is
+  ([ADR 0033](docs/adr/0033-chat-providers-through-the-llm-proxy.md)); their
+  runs are charged what the proxy counted. Rebuild the proxy image and every
+  sandbox image (the QA image, profile images and pre-built QA images too)
+  before the orchestrator runs this release: a sandbox image whose runner
+  predates the route refuses such a run with `ERR_SANDBOX_IMAGE_STALE`, and a
+  proxy image that predates it does not hold a run to its provider, so its
+  tallies are not taken as whole. A job on one of these providers does not
+  start while the llm-proxy is not running. A paused job whose sandbox was
+  created with a provider's key in its env is not resumed
+  (`ERR_SANDBOX_ROUTE_RETIRED`): dispatch it again.
 - **The local-llm-proxy is the llm-proxy.** Its container, its log events
   (`llm_proxy_*`, were `local_llm_proxy_*`) and the `proxy` label of its
   `embry0_meter_*` series (`llm-proxy`) take the new name: a dashboard, log

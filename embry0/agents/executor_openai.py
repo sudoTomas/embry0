@@ -8,15 +8,17 @@ Tool calling is the API's ``tools``/``tool_calls``: each call is gated by
 ``gate_tool_call`` and run in the sandbox like the CLI's tools, its result sent back
 as a ``tool`` message.
 
-The key and, for the custom provider, the base URL are read from the sandbox env
-(``EMBRY0_LLM_*``, injected at create from the credential registry or the
-orchestrator env, reserved from repository override). They are never on argv.
-Missing either fails the run before any request. httpx only: no provider SDK is
-baked into the sandbox image.
+No provider's key is in the sandbox (ADR 0033): every provider is reached
+through the llm-proxy, and the run authenticates to it with the sandbox's
+bearer file. A hosted provider's record says so (``via_proxy``) and carries its
+path at the proxy as its API root; the custom provider's root is the proxy's,
+from the sandbox env (``EMBRY0_LLM_CUSTOM_BASE_URL`` with
+``EMBRY0_LLM_CUSTOM_VIA_PROXY``). A record without either reads its key from
+the sandbox env, which no current sandbox holds: such a run fails before any
+request, saying so. httpx only: no provider SDK is baked into the sandbox
+image.
 
-A custom provider reached through the llm-proxy (``EMBRY0_LLM_CUSTOM_VIA_PROXY``)
-has no key in the sandbox: the run authenticates to the proxy with the
-sandbox's bearer file. Its model's context window (the operator's setting, else
+A custom model's context window (the operator's setting, else
 what the server's ``/models`` reports) bounds every request: old tool output is
 elided to fit it, and a conversation that still does not fit fails with
 ``ERR_CONTEXT_WINDOW_EXCEEDED`` (``embry0.agents.context_fit``).
@@ -339,6 +341,8 @@ class _Target:
     upstream_model: str
     request_extras: dict[str, Any]
     context_window: int | None = None
+    #: Reached through the llm-proxy at ``api_root``, with the sandbox's bearer (ADR 0033).
+    via_proxy: bool = False
 
     @property
     def endpoint(self) -> str:
@@ -362,6 +366,7 @@ def _target(invocation: AgentInvocation) -> _Target | str:
             record.upstream_model or invocation.model,
             dict(record.request_extras),
             record.context_window,
+            record.via_proxy,
         )
     provider = provider_named(invocation.provider)
     if provider is None or provider.runtime != "chat_completions":
@@ -396,7 +401,7 @@ class OpenAICompatibleExecutor:
                 invocation.agent_type,
                 f"no base URL for provider {provider.name!r}: {provider.base_url_env} is not set in the sandbox",
             )
-        via_proxy = provider.name == "custom" and _flag(LOCAL_LLM_PROXY_FLAG)
+        via_proxy = provider.via_proxy or (provider.name == "custom" and _flag(LOCAL_LLM_PROXY_FLAG))
         if via_proxy:
             api_key = read_local_llm_proxy_token()
             if not api_key:

@@ -43,11 +43,12 @@ _CUSTOM = _key("custom", "ollama-placeholder", {"base_url": "http://10.0.0.5:114
         ("deepseek", "EMBRY0_LLM_DEEPSEEK_API_KEY"),
     ],
 )
-def test_a_key_is_injected_under_its_reserved_name_only(provider: str, env_key: str) -> None:
+def test_a_hosted_provider_s_key_never_enters_the_env_and_its_name_stays_reserved(provider: str, env_key: str) -> None:
+    """ADR 0033: the provider is reached through the llm-proxy, which holds the key (test_sandbox_manager_provider_
+    servers.py). The name stays reserved, so a repository cannot set it either."""
     env = {"OPENAI_API_KEY": "the-repositorys-own-key"}
-    SandboxManager._inject_llm_env(env, {provider: _key(provider, "provider-secret")})
-    assert env[env_key] == "provider-secret"
-    assert env["OPENAI_API_KEY"] == "the-repositorys-own-key", "a repository's own provider key is never touched"
+    SandboxManager._inject_llm_env(env, {provider: _key(provider, "provider-secret")}, local_proxy_url="http://p:1")
+    assert env == {"OPENAI_API_KEY": "the-repositorys-own-key"}, f"the sandbox's env was given: {sorted(env)}"
     assert env_override_refusal(env_key, "x") is not None, f"{env_key} must be reserved from repository override"
 
 
@@ -64,8 +65,12 @@ def test_a_repositorys_own_provider_variables_stay_settable() -> None:
         assert env_override_refusal(key, "x") is None, f"{key} belongs to the repository's own app"
 
 
-async def test_create_declares_nothing_more_for_a_hosted_provider() -> None:
-    mgr, _, _ = _manager({"deepseek": _key("deepseek", "s")})
+async def test_create_declares_nothing_more_for_a_hosted_provider(monkeypatch) -> None:
+    from tests.fixtures.model_servers import fake_dns
+
+    fake_dns(monkeypatch, {"api.deepseek.com": ["116.205.40.120"]})
+    mgr, _, pm = _manager({"deepseek": _key("deepseek", "s")})
+    pm.llm_proxy_url = "http://llm-proxy:9108"  # reached through it (ADR 0033)
     mgr._runtime.attach_policy = AsyncMock()  # type: ignore[method-assign]
     await mgr.create(
         "job-1", repo="acme/widgets", llm_providers=["deepseek"], profile={"extra_networks": ["sandbox-internet"]}

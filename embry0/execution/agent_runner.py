@@ -25,6 +25,7 @@ from embry0.execution.docker_client import PKILL_NOTHING_MATCHED, DockerClient, 
 from embry0.execution.events import AGENT_RUN_TYPES, ORCHESTRATOR_STAMPED, parse_event
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
 from embry0.safety.redaction import redact_secrets, redacted_log_field, redacted_stderr_tail, secret_env_values
+from embry0.sandbox.local_llm_token import LLM_PROXY_URL
 
 if TYPE_CHECKING:
     # SandboxManager is only used as an __init__ type annotation. Importing
@@ -221,12 +222,35 @@ _UNRECOGNIZED_ARGUMENTS: Final = "error: unrecognized arguments:"
 #: The config key and flag the run's result nonce rides (embry0.sandbox.runner.RESULT_NONCE_KEY).
 _RESULT_NONCE_KEY = "result_nonce"
 _RESULT_NONCE_FLAG = "--result-nonce"
+#: The flag a run is started with when its provider is reached through the llm-proxy (ADR 0033): a runner that
+#: predates the route refuses it, before any call, instead of failing at the first one for want of a key.
+LLM_PROXY_FLAG: Final = "--llm-proxy"
 #: What a sandbox image built before this release lacks, by the outcome its refusal is counted under.
 STALE_IMAGE_LACKS: Final[Mapping[str, str]] = {
     "config_stdin_missing": "the runner's config on stdin (--config-stdin)",
     "interpreter_missing": f"the runner's execute-only interpreter ({RUNNER_INTERPRETER})",
     "result_unmarked": f"the runner's result mark ({_RESULT_NONCE_FLAG})",
+    "llm_proxy_missing": f"the chat-completions providers' route through the llm-proxy ({LLM_PROXY_FLAG})",
 }
+#: The chat-completions provider whose root a sandbox reads from its env: its record is not rewritten.
+_CUSTOM_PROVIDER = "custom"
+
+
+def route_through_llm_proxy(config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """``config`` with its provider record pointed at the llm-proxy, and whether it was (ADR 0033).
+
+    A chat-completions provider other than custom is reached through the proxy alone: no sandbox holds its key. Its
+    record's ``api_root`` becomes the provider's path at the proxy and ``via_proxy`` is set, so the run authenticates
+    with the sandbox's bearer file. The custom provider keeps the root its sandbox's env names (the proxy too). Any
+    other record, or none, is left as it is."""
+    record = config.get("provider_record")
+    if not isinstance(record, dict) or record.get("runtime") != "chat_completions":
+        return config, False
+    name = record.get("name")
+    if not isinstance(name, str) or not name or name == _CUSTOM_PROVIDER:
+        return config, False
+    routed = {**record, "api_root": f"{LLM_PROXY_URL}/p/{name}/v1", "via_proxy": True}
+    return {**config, "provider_record": routed}, True
 
 
 @dataclass
@@ -273,11 +297,19 @@ class _RunnerExit:
         its config on stdin but predates the run's result mark. The flag must be one of the arguments argparse's
         error line names as unrecognized: the current runner's usage line lists ``[--result-nonce]`` above any
         error of its own, which is no lack of the mark."""
+        return self._refused_flag(_RESULT_NONCE_FLAG)
+
+    def is_unrouted_runner_usage_error(self) -> bool:
+        """True only for argparse refusing ``--llm-proxy`` BEFORE any agent work: an image's runner that predates the
+        chat-completions providers' route through the llm-proxy, read the same way as the result mark's refusal."""
+        return self._refused_flag(LLM_PROXY_FLAG)
+
+    def _refused_flag(self, flag: str) -> bool:
         if self.exit_code != 2 or self.stdout_lines != 0:
             return False
         for line in self.stderr.splitlines():
             _, found, named = line.partition(_UNRECOGNIZED_ARGUMENTS)
-            if found and _RESULT_NONCE_FLAG in named.split():
+            if found and flag in named.split():
                 return True
         return False
 
@@ -334,6 +366,9 @@ class AgentRunner:
             # list too long" after the developer had already pushed. It also
             # keeps prompts out of the host's process table.
             runner = list(RUNNER_COMMAND)
+            # ADR 0033: a hosted chat-completions provider is reached through the llm-proxy, the run told so by its
+            # record and by a flag an older runner refuses.
+            config, routed = route_through_llm_proxy(config)
             # The run's mark: the runner writes it back on its result, and only a result carrying it is this run's
             # (spec 2026-11-23). On stdin with the config, never on argv or in the environment, which other
             # processes of the sandbox's user can read.
@@ -341,7 +376,7 @@ class AgentRunner:
             marked = json.dumps({**config, _RESULT_NONCE_KEY: nonce}).encode()
             output, exit_facts = await self._exec_runner(
                 container,
-                [*runner, "--config-stdin", _RESULT_NONCE_FLAG, *extra_args],
+                [*runner, "--config-stdin", _RESULT_NONCE_FLAG, *([LLM_PROXY_FLAG] if routed else []), *extra_args],
                 marked,
                 config,
                 on_event,
@@ -353,6 +388,8 @@ class AgentRunner:
                 return await self._refuse_stale_image(container, config, "interpreter_missing")
             if exit_facts.is_unmarked_runner_usage_error():
                 return await self._refuse_stale_image(container, config, "result_unmarked")
+            if routed and exit_facts.is_unrouted_runner_usage_error():
+                return await self._refuse_stale_image(container, config, "llm_proxy_missing")
             if exit_facts.is_stale_runner_usage_error():
                 # A runner older still, from before its config came on stdin (#304). It once ran again with the
                 # config on argv, its result taken unmarked; no image this release accepts can reach that.

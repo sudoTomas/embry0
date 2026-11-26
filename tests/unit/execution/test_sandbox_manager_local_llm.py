@@ -93,7 +93,8 @@ async def test_create_enrolls_the_sandbox_with_its_credential_s_server_and_write
     assert not any(token in word for c in calls for word in c.args[1]), "the bearer is never on an exec command line"
 
 
-async def test_no_model_server_host_is_ever_an_egress_exception() -> None:
+async def test_no_model_server_host_is_ever_an_egress_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_dns(monkeypatch, {"api.openai.com": ["162.159.140.245"]})  # reached through the proxy too (ADR 0033)
     mgr, _, _pm = _proxied_manager({"custom": _CUSTOM, "openai": _key("openai", "s")})
     await mgr.create(
         "job-1",
@@ -193,8 +194,9 @@ async def test_a_server_name_is_pinned_to_the_address_it_was_checked_at(monkeypa
 
 
 async def test_a_sandbox_without_the_custom_provider_is_not_enrolled_with_the_proxy() -> None:
-    mgr, _, pm = _proxied_manager({"deepseek": _key("deepseek", "s")})
-    await mgr.create("job-1", repo="acme/widgets", llm_providers=["deepseek"])
+    """Nor with no other chat-completions provider (a hosted one's server: test_sandbox_manager_provider_servers.py)."""
+    mgr, _, pm = _proxied_manager({"anthropic": _key("anthropic", "s")})
+    await mgr.create("job-1", repo="acme/widgets", llm_providers=["anthropic"])
     assert "local_llm" not in pm.enroll_sandbox.await_args.kwargs
     assert _token_writes(mgr) == []
 

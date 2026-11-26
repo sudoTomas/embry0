@@ -977,3 +977,36 @@ async def test_the_token_fetched_last_stays_at_the_proxy_whichever_push_is_sent_
     await initial
     assert proxy.app[TOKENS]["cred-a"]["access_token"] == "at-a-newer", "the token fetched first replaced the later one"
     assert mgr._admin_state["xai-proxy"]["token:cred-a"][2]["access_token"] == "at-a-newer"
+
+
+async def test_a_run_declared_on_its_provider_is_held_to_it_at_the_proxy(proxy: Any) -> None:
+    """ADR 0033: the declaration names the run's provider, the proxy echoes it, and a recreated proxy is given the run
+    back on it."""
+    meter = RunMeter(proxy.mgr, _Repo())
+    try:
+        window = await meter.begin("sbx-1", "run-1", "job-1", provider="xai")  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared on its provider: {exc}")
+    assert window.declared, "the run was not declared"
+    held_to = getattr(proxy.app[METER], "declared_provider", lambda _sandbox: None)("sbx-1")
+    assert held_to == "xai", "the proxy does not hold the run to its provider"
+    assert proxy.mgr.declared_unordered("xai-proxy", "run-1") is False, "an echoed provider left the run not whole"
+    held = proxy.mgr._admin_state["xai-proxy"]["run:run-1"][2]
+    assert held.get("provider") == "xai", f"a recreated proxy would be given the run back on no provider: {held}"
+
+
+async def test_a_proxy_that_does_not_echo_the_provider_leaves_the_run_not_whole(proxy: Any, monkeypatch) -> None:
+    """An image from before runs held to their provider counts another provider's calls under the run too."""
+    original = proxy.mgr._exec_admin_request
+
+    async def older_image(**kwargs: Any) -> dict[str, Any]:
+        answer = dict(await original(**kwargs))
+        answer.pop("provider", None)
+        return answer
+
+    monkeypatch.setattr(proxy.mgr, "_exec_admin_request", older_image)
+    try:
+        await proxy.mgr.declare_run("xai-proxy", "sbx-1", "run-1", provider="xai")  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared on its provider: {exc}")
+    assert proxy.mgr.declared_unordered("xai-proxy", "run-1"), "a run its proxy did not hold to its provider is whole"
