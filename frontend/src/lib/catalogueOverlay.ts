@@ -196,10 +196,22 @@ export function plainDecimal(value: number): string {
   return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
-/** The overlay's fields the schema types as whole numbers, written as integers: a float there is refused. */
-const WHOLE_NUMBER_KEYS = new Set(["version", "context_window"]);
-/** A model's fields of extra request body: JSON, which YAML reads as written, so their numbers stay as they are. */
-const EXTRAS_KEYS = new Set(["request_extras", "background_request_extras"]);
+/**
+ * The overlay's fields the schema types as whole numbers, written as integers: a float there is refused. The shared
+ * fixture's `whole_number_keys` pins this list, and the backend checks that list against the overlay's schema.
+ */
+export const WHOLE_NUMBER_KEYS: ReadonlySet<string> = new Set(["version", "context_window"]);
+/**
+ * A model's fields of extra request body: JSON, which YAML reads as written, so their numbers stay as they are, a bare
+ * value's too. The shared fixture's `json_keys` pins this list, and the backend checks it against the schema's
+ * free-form fields.
+ */
+export const EXTRAS_KEYS: ReadonlySet<string> = new Set(["request_extras", "background_request_extras"]);
+/**
+ * The fields written as a bare YAML date, as the catalogue reads a day; any other string is quoted. The shared
+ * fixture's `date_keys` pins this list, and the backend checks it against the schema's date fields.
+ */
+export const DATE_KEYS: ReadonlySet<string> = new Set(["from"]);
 
 function scalar(value: unknown, key: string): string {
   // Every number of the overlay but a whole-number field's (a price, a factor, hours) is a float, so a whole one is
@@ -210,7 +222,7 @@ function scalar(value: unknown, key: string): string {
     return text.includes(".") ? text : `${text}.0`;
   }
   // A price's day is a YAML date, as the catalogue reads it; any other string is quoted.
-  if (key === "from" && typeof value === "string" && DAY.test(value)) return value;
+  if (DATE_KEYS.has(key) && typeof value === "string" && DAY.test(value)) return value;
   return JSON.stringify(value) ?? "null";
 }
 
@@ -218,7 +230,7 @@ function keyText(key: string): string {
   return PLAIN_KEY.test(key) && !NOT_A_STRING.test(key) ? key : JSON.stringify(key);
 }
 
-/** A request extra's value: JSON, which YAML reads as written. Its numbers stay as they are. */
+/** A free-form field's value, whatever it is: JSON, which YAML reads as written. Its numbers stay as they are. */
 function flow(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
@@ -247,7 +259,8 @@ function block(value: unknown, indent: number, key: string, out: string[]): void
       return;
     }
     for (const [k, v] of entries) {
-      if (EXTRAS_KEYS.has(k) && v && typeof v === "object") {
+      if (EXTRAS_KEYS.has(k)) {
+        // Any value, a bare number too: through scalar() a whole one would come out 256.0.
         out.push(`${pad}${keyText(k)}: ${flow(v)}`);
       } else if (v !== null && typeof v === "object") {
         out.push(`${pad}${keyText(k)}:`);

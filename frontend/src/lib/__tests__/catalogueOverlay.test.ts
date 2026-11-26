@@ -16,10 +16,64 @@ import {
   withModel,
   withModelTakenOut,
   withoutModelEntry,
+  DATE_KEYS,
+  EXTRAS_KEYS,
+  WHOLE_NUMBER_KEYS,
   type CatalogueOverlay,
 } from "../catalogueOverlay";
 
 describe("overlayYaml", () => {
+  // Each list is the fixture's, which the backend checks against the overlay's schema: the writer decides by name.
+  const byName: [string, ReadonlySet<string> | undefined][] = [
+    ["whole_number_keys", WHOLE_NUMBER_KEYS],
+    ["date_keys", DATE_KEYS],
+    ["json_keys", EXTRAS_KEYS],
+  ];
+  // The writer must decide by these lists, not by names of its own that happen to match them today: a key added to a
+  // list for a field the schema gains is written its way at once (#748 review).
+  function withListed<T>(list: ReadonlySet<string>, key: string, run: () => T): T {
+    const set = list as Set<string>;
+    set.add(key);
+    try {
+      return run();
+    } finally {
+      set.delete(key);
+    }
+  }
+  const aModelWith = (fields: Record<string, unknown>) =>
+    ({ providers: { custom: { models: { "custom/m": { free: true, ...fields } } } } }) as CatalogueOverlay;
+
+  it("writes a day bare under any key DATE_KEYS lists, and quoted under any other", () => {
+    expect(overlayYaml(aModelWith({ retires_on: "2027-01-31" }))).toContain('retires_on: "2027-01-31"\n');
+    withListed(DATE_KEYS, "retires_on", () =>
+      expect(overlayYaml(aModelWith({ retires_on: "2027-01-31" }))).toContain("retires_on: 2027-01-31\n"),
+    );
+  });
+
+  it("writes any value under a key EXTRAS_KEYS lists as JSON, a bare number whole", () => {
+    withListed(EXTRAS_KEYS, "probe_body", () => {
+      expect(overlayYaml(aModelWith({ probe_body: { max_tokens: 256 } }))).toContain('probe_body: {"max_tokens":256}\n');
+      expect(overlayYaml(aModelWith({ probe_body: 256 }))).toContain("probe_body: 256\n");
+      expect(overlayYaml(aModelWith({ probe_body: [1, 2.5] }))).toContain("probe_body: [1,2.5]\n");
+    });
+    expect(overlayYaml(aModelWith({ probe_body: 256 }))).toContain("probe_body: 256.0\n");
+  });
+
+  it("writes a whole number under any key WHOLE_NUMBER_KEYS lists as an integer", () => {
+    expect(overlayYaml(aModelWith({ max_turns: 40 }))).toContain("max_turns: 40.0\n");
+    withListed(WHOLE_NUMBER_KEYS, "max_turns", () =>
+      expect(overlayYaml(aModelWith({ max_turns: 40 }))).toContain("max_turns: 40\n"),
+    );
+  });
+
+  for (const [key, written] of byName) {
+    it(`writes by name exactly the fields the fixture's ${key} names, which the backend checks`, () => {
+      const listed = (shared as Record<string, unknown>)[key] as string[] | undefined;
+      expect(listed, `the shared fixture names no ${key}`).toBeDefined();
+      expect([...(written ?? [])].sort()).toEqual([...(listed ?? [])].sort());
+    });
+  }
+
   for (const sample of shared.cases) {
     it(`writes ${sample.name} as the catalogue reads it`, () => {
       expect(overlayYaml(sample.overlay as CatalogueOverlay)).toBe(sample.yaml);

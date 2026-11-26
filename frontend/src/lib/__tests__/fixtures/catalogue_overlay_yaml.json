@@ -1,5 +1,16 @@
 {
-  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other. A case with \"valid\": false is no catalogue (its id routes to no provider): the backend reads it back but does not merge it.",
+  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other. A case with \"valid\": false is no catalogue (its id routes to no provider): the backend reads it back but does not merge it. The form decides by a field's name how to write it: \"whole_number_keys\" as integers (WHOLE_NUMBER_KEYS; every other number as a float), \"date_keys\" as bare days (DATE_KEYS; any other string quoted), \"json_keys\" as JSON, their numbers as they are (EXTRAS_KEYS). The backend checks each list against the overlay's schema and the frontend against the writer, so a field the schema gains cannot be written as the wrong type. A number is in this file with the type the catalogue reads it as (2.0 where it reads a float, 2 where a whole number), and the backend compares types: 256.0 is not 256.",
+  "whole_number_keys": [
+    "context_window",
+    "version"
+  ],
+  "date_keys": [
+    "from"
+  ],
+  "json_keys": [
+    "background_request_extras",
+    "request_extras"
+  ],
   "cases": [
     {
       "name": "nothing: the shipped catalogue",
@@ -54,13 +65,13 @@
               "gpt-new": {
                 "prices": [
                   {
-                    "in": 1,
-                    "out": 2
+                    "in": 1.0,
+                    "out": 2.0
                   },
                   {
                     "from": "2026-12-01",
-                    "in": 2,
-                    "out": 4
+                    "in": 2.0,
+                    "out": 4.0
                   }
                 ]
               }
@@ -90,6 +101,24 @@
         }
       },
       "yaml": "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        request_extras: {\"chat_template_kwargs\":{\"enable_thinking\":false},\"temperature\":0.2}\n"
+    },
+    {
+      "name": "request extras with a whole number, kept whole",
+      "overlay": {
+        "providers": {
+          "custom": {
+            "models": {
+              "custom/local": {
+                "free": true,
+                "request_extras": {
+                  "max_tokens": 4096
+                }
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        request_extras: {\"max_tokens\":4096}\n"
     },
     {
       "name": "a custom model's context window, a whole number",
