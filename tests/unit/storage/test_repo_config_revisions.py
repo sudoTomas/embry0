@@ -120,7 +120,14 @@ async def _apply_over(db: DatabasePool, configs: RepoQAConfigsRepository, base: 
     """A compare-and-set write in its own transaction, as an apply makes it."""
     async with db.transaction() as conn:
         _, revision_id = await configs.upsert_recorded_if_unchanged(
-            conn, REPO, text, base_updated_at=base, updated_by="dev@example.com", source="proposal", reason="proposal p"
+            conn,
+            REPO,
+            text,
+            base_updated_at=base,
+            updated_by="dev@example.com",
+            source="proposal",
+            reason="proposal p",
+            registered=[],
         )
     return revision_id
 

@@ -62,7 +62,6 @@ PARSERS: dict[tuple[str, str], str] = {
         "a prefix match: (?:\\s|$) ends the command word, the rest of the line follows"
     ),
     ("embry0/services/proposals.py", "_LOCATION"): "parses a stripped table cell into path and line",
-    ("embry0/services/proposals.py", "_LOGIN"): "takes a login out of a CODEOWNERS entry split on whitespace",
     ("embry0/services/signature_attribution.py", "_HEADING"): "parses one Markdown line into a heading",
     ("embry0/services/standards.py", "_HEADING"): "parses one stripped Markdown line into a heading",
     ("embry0/workflows/issue_to_pr/evidence.py", "_HEADING_RE"): "parses one Markdown line into a heading",

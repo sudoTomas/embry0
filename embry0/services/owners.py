@@ -20,23 +20,30 @@ OwnerSource = Literal["area", "repository", "codeowners"]
 
 @dataclass(frozen=True)
 class Owners:
-    """The logins asked about a piece of work, and where they came from; ``source`` None when nobody is."""
+    """The logins asked about a piece of work, and where they came from; ``source`` None when nobody is.
+    ``unread``: its ``CODEOWNERS`` could not be read, so who owns it is not known, which is not "nobody"."""
 
     logins: tuple[str, ...] = ()
     source: OwnerSource | None = None
+    unread: bool = False
 
 
 def repository_owners(
-    repos: Iterable[str], preferences: Mapping[str, Sequence[str]], codeowners: Mapping[str, Sequence[str]]
+    repos: Iterable[str],
+    preferences: Mapping[str, Sequence[str]],
+    codeowners: Mapping[str, Sequence[str] | None],
 ) -> dict[str, Owners]:
-    """Each of ``repos``' own owners (lower-cased): its preference when it names some, else its ``CODEOWNERS``."""
+    """Each of ``repos``' own owners (lower-cased): its preference when it names some, else its ``CODEOWNERS``
+    (None there: it could not be read, and the repository's owners are unread)."""
     out: dict[str, Owners] = {}
     for repo in repos:
         name = repo.lower()
         if preferences.get(name):
             out[name] = Owners(tuple(preferences[name]), "repository")
+        elif name in codeowners and codeowners[name] is None:
+            out[name] = Owners((), "codeowners", unread=True)
         elif codeowners.get(name):
-            out[name] = Owners(tuple(codeowners[name]), "codeowners")
+            out[name] = Owners(tuple(codeowners[name] or ()), "codeowners")
         else:
             out[name] = Owners()
     return out

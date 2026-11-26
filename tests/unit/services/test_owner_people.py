@@ -52,6 +52,22 @@ def test_a_person_owns_a_decision_through_an_identity_on_its_forge() -> None:
     )
 
 
+def test_an_owner_named_with_its_forge_is_a_login_on_that_forge_whatever_the_organization_s() -> None:
+    """#181: ``github:<login>`` and ``gitlab:<username>`` name their forge; only a bare owner is the organization's."""
+    d = _directory()
+    assert d.holder("globex/gizmos", "gitlab:@ADA") is ADA, "a GitLab owner of a GitHub organization's repository"
+    assert d.holder("acme/web", "github:bo-l") is BO, "a GitHub owner of a GitLab organization's repository"
+    assert d.holder("acme/web", "github:ada") is None, "Ada's GitLab login is not a GitHub one"
+    assert d.recipient("globex/gizmos", "gitlab:ada") == "ada@example.com"
+    assert d.recipient("acme/web", "GitHub:Cy") == "github:cy", "a login no person holds, as itself, on its forge"
+    assert d.owns(ADA, {"repo": "globex/gizmos", "owners": ["gitlab:ada"]})
+    assert d.owns(BO, {"repo": "acme/web", "owners": ["github:@bo-l"]})
+    assert not d.owns(BO, {"repo": "acme/web", "owners": ["bo-l"]}), "bare: a GitLab login on a GitLab repository"
+    assert d.live_owners({"repo": "acme/web", "owners": ["github:gone", "gitlab:ada"]}) == ["ada"], (
+        "a named owner a disabled person holds is no owner either"
+    )
+
+
 def test_a_recipient_key_names_its_person() -> None:
     d = _directory()
     assert d.of_recipient("ADA@example.com") is ADA

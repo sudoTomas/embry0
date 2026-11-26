@@ -30,16 +30,16 @@ from embry0.services.owners import Owners, repository_owners
 from embry0.services.proposal_briefs import held_by, with_briefs
 from embry0.services.proposals import (
     ACTOR,
-    CODEOWNERS_PATHS,
+    CODEOWNERS_PATHS_ON,
     KINDS,
     Proposal,
     case_proposal,
-    codeowners_for_all,
     finding_proposals,
     finding_task,
     for_owner,
     issue_proposal,
     lead_proposal,
+    read_codeowners,
     still_open,
     with_owners,
 )
@@ -82,54 +82,127 @@ def _state(request: Request, name: str) -> Any:
     return value
 
 
+class _NotRead(Exception):
+    """A repository whose ``CODEOWNERS`` embry0 does not read: its owners are not known, which is not "nobody owns
+    it". Not a failure: the answer is kept as a read's is."""
+
+
 def _repo_reader(request: Request) -> Any:
-    """Reads a file of a repository's default branch with its organization's credential; None when it cannot,
-    which includes an organization on a forge the reader does not read (GitHub's only, #181)."""
-    from embry0.services.forge_files import read_contents
+    """Reads a file of a repository's default branch with its organization's own credential, on its forge (GitHub's
+    contents, GitLab's raw file); None when the file is not there. Raises :class:`_NotRead` for a repository it does
+    not read: its organization not one embry0 holds (or one removed) on GitHub or GitLab, or a repository on another forge than its
+    organization's (so no repository of the same path on the other forge is read). Raises when the forge could not
+    be read (``forge_files.ForgeReadFailed``, a credential or network failure): "could not read" is not "no
+    file"."""
+    from embry0.services.forge_files import read_contents, read_gitlab_file
 
     organizations = getattr(request.app.state, "organizations_repo", None)
+    held: dict[str, Any] = {}
     clients: dict[str, Any] = {}
 
-    async def read(repo: str, path: str) -> str | None:
-        from embry0.api.v1.organizations import org_forge_client
+    async def read(repo: str, path: str, forge: str) -> str | None:
+        from embry0.api.v1.organizations import org_own_forge_client
 
         owner = repo.split("/", 1)[0]
+        if owner not in held:
+            held[owner] = await organizations.get(owner) if organizations is not None else None
+        org = held[owner]
+        if org is None:
+            logger.info("codeowners_not_read_unknown_organization", repo=repo)
+            raise _NotRead(repo)
+        if org.status == "removed":
+            # Removed is as good as unknown; a paused organization is still read.
+            logger.info("codeowners_not_read_removed_organization", repo=repo)
+            raise _NotRead(repo)
+        if org.forge not in ("github", "gitlab"):
+            logger.info("codeowners_not_read_unsupported_forge", repo=repo, organization_forge=org.forge)
+            raise _NotRead(repo)
+        if org.forge != forge:
+            logger.info("codeowners_not_read_other_forge", repo=repo, repo_forge=forge, organization_forge=org.forge)
+            raise _NotRead(repo)
         if owner not in clients:
-            org = await organizations.get(owner) if organizations is not None else None
-            clients[owner] = await org_forge_client(request, org) if org is not None and org.forge == "github" else None
-        client = clients[owner]
-        return await read_contents(client.get, repo, path) if client is not None else None
+            clients[owner] = await org_own_forge_client(request, org)
+        if forge == "gitlab":
+            return await read_gitlab_file(clients[owner], repo, path)
+        return await read_contents(clients[owner].get, repo, path)
 
     return read
 
 
-async def _codeowners(request: Request, repos: set[str]) -> dict[str, list[str]]:
-    """Each repository's CODEOWNERS users for every file, read with its organization's credential and cached.
+async def _codeowners(request: Request, repos: set[str]) -> dict[str, list[str] | None]:
+    """Each repository's CODEOWNERS owners for every file, read on its forge with its organization's credential, in
+    that forge's order of places and syntax (:func:`embry0.services.proposals.read_codeowners`), and cached until
+    it expires or the repository's or its organization's registration is written (``registrations``).
 
-    A repository whose organization embry0 does not hold, or whose file
-    cannot be read, has none.
+    A repository with no file at any place has none (``[]``). One whose owners are not known is unread (None),
+    which is not "nobody": kept as a read's answer is when embry0 does not read its file (its forge named nowhere,
+    its organization not one embry0 holds, or a repository on another forge than its organization's), and not kept
+    when its file or its forge could not be read (a refused or failed read, not "not there"), so the next read
+    tries again. An entry left out (a team or group, a role, an email address) is logged once per read, with why.
     """
-    cache: dict[str, tuple[float, list[str]]] = request.app.state.__dict__.setdefault("codeowners_cache", {})
+    from embry0.storage.repositories import registrations
+
+    cache: dict[str, tuple[float, list[str] | None, int]] = request.app.state.__dict__.setdefault(
+        "codeowners_cache", {}
+    )
     now = time.monotonic()
-    wanted = [r for r in repos if r not in cache or cache[r][0] < now]
+    # Before any lookup: a registration written while this reads makes the next read read again.
+    filled_at = registrations.count()
+
+    def fresh(repo: str) -> bool:
+        """Kept, and neither the repository's registration nor its organization's written since (#181)."""
+        expires, _owners, at = cache[repo]
+        return (
+            expires >= now
+            and not registrations.changed_since("repo", repo, at)
+            and not registrations.changed_since("organization", repo.split("/", 1)[0], at)
+        )
+
+    wanted = [r for r in repos if r not in cache or not fresh(r)]
+    forges, unread = await _forges(request, set(wanted)) if wanted else ({}, set())
     reader = _repo_reader(request)
     gate = asyncio.Semaphore(_CODEOWNERS_READS)
 
     async def read(repo: str) -> None:
-        owners: list[str] = []
+        if repo.lower() in unread:
+            return
+        owners: list[str] | None = []
+        forge = forges.get(repo.lower())
         async with gate:
             try:
-                for path in CODEOWNERS_PATHS:
-                    text = await reader(repo, path)
+                places = CODEOWNERS_PATHS_ON.get(forge or "", ())
+                if forge is None:
+                    # Nothing names where it lives (no registration, no organization, no default forge): not
+                    # "nothing to read", but not known.
+                    logger.info("codeowners_not_read_unknown_forge", repo=repo)
+                    raise _NotRead(repo)
+                if not places:
+                    logger.info("codeowners_not_read_unsupported_forge", repo=repo, repo_forge=forge)
+                    raise _NotRead(repo)
+                for path in places:
+                    text = await reader(repo, path, forge)
                     if text is not None:
-                        owners = codeowners_for_all(text)
+                        found = read_codeowners(text, forge)
+                        owners = list(found.owners)
+                        if found.skipped:
+                            logger.info(
+                                "codeowners_entries_skipped",
+                                repo=repo,
+                                path=path,
+                                skipped=[f"{entry}: {why}" for entry, why in found.skipped],
+                            )
                         break
-            except Exception:  # noqa: BLE001 - a repository we cannot read has no CODEOWNERS owners
-                logger.info("codeowners_unread", repo=repo, exc_info=True)
-        cache[repo] = (now + CODEOWNERS_TTL_SECONDS, owners)
+            except _NotRead:
+                owners = None
+            except Exception:  # noqa: BLE001 - unread, not "no owners", and not cached
+                logger.warning("codeowners_unread", repo=repo, exc_info=True)
+                unread.add(repo.lower())
+                return
+        cache[repo] = (now + CODEOWNERS_TTL_SECONDS, owners, filled_at)
 
     await asyncio.gather(*(read(r) for r in wanted))
-    return {r: cache[r][1] for r in repos if r in cache}
+    found: dict[str, list[str] | None] = {r: cache[r][1] for r in repos if r in cache}
+    return found | {r: None for r in wanted if r.lower() in unread}
 
 
 async def _areas(request: Request, repos: set[str]) -> dict[str, list[Any]]:
@@ -140,9 +213,57 @@ async def _areas(request: Request, repos: set[str]) -> dict[str, list[Any]]:
     return dict(await store.areas_of(repos))
 
 
+async def _forges(request: Request, repos: set[str]) -> tuple[dict[str, str | None], set[str]]:
+    """Each repository's own forge, keyed lower-cased: its registration's; for one nobody registered, its
+    organization's when embry0 holds the organization, else the configured default (None when nothing says, and
+    then it has no ``CODEOWNERS`` owners). Its ``CODEOWNERS`` is read only when that is its organization's forge
+    too, so no repository of the same path on another forge is read (#181). With no registry, GitHub, as before
+    forges were named.
+
+    The second value: the repositories whose forge could not be looked up (the registry or the organizations
+    failed), whose owners are unread, not none."""
+    registry = getattr(request.app.state, "repos_repo", None)
+    organizations = getattr(request.app.state, "organizations_repo", None)
+    names = sorted({r.lower() for r in repos})
+    if registry is None:
+        return dict.fromkeys(names, "github"), set()
+    unread: set[str] = set()
+
+    async def forge_of(repo: str) -> str | None:
+        try:
+            if await registry.registered_as(repo) is None and organizations is not None:
+                org = await organizations.get(repo.split("/", 1)[0])
+                if org is not None and org.forge:
+                    return str(org.forge)
+            forge = await registry.forge_or_none(repo)
+        except Exception:  # noqa: BLE001 - not looked up is not "no forge": its owners are unread
+            logger.warning("owners_forge_unread", repo=repo, exc_info=True)
+            unread.add(repo)
+            return None
+        return str(forge) if forge else None
+
+    found = dict(zip(names, await asyncio.gather(*(forge_of(r) for r in names)), strict=True))
+    return found, unread
+
+
+async def owned_by(request: Request, proposals: list[Proposal], owner: str | None) -> list[Proposal]:
+    """``proposals`` ``owner`` owns (:func:`embry0.services.proposals.for_owner`), each bare owner read on its
+    repository's organization's forge (``owner_people.forges_of``, as asks and who may decide read it)."""
+    if not owner:
+        return proposals
+    from embry0.services.owner_people import forges_of
+
+    state = request.app.state
+    forges = await forges_of(
+        getattr(state, "organizations_repo", None), getattr(state, "repos_repo", None), {p.repo for p in proposals}
+    )
+    return for_owner(proposals, owner, forges)
+
+
 async def owner_sources(request: Request, repos: set[str]) -> tuple[dict[str, Owners], dict[str, list[Any]]]:
-    """Each of ``repos``' own owners (preference, else ``CODEOWNERS``) and its areas, both keyed lower-cased:
-    what :func:`embry0.services.owners.owners_for` reads for the feed and the decisions alike."""
+    """Each of ``repos``' own owners (preference, else ``CODEOWNERS``) and its areas, both keyed lower-cased, each
+    owner as written (``github:<login>``, ``gitlab:<username>``, or bare on the organization's forge, #181): what
+    :func:`embry0.services.owners.owners_for` reads for the feed and the decisions alike."""
     proposals_repo = _state(request, "proposals_repo")
     preferences = await proposals_repo.owners()
     unowned = {r.lower() for r in repos} - set(preferences)
@@ -254,7 +375,7 @@ async def list_proposals(
     """The proposals still asked, newest first: what an assistant reads to message owners."""
     if kind is not None and kind not in KINDS:
         raise HTTPException(status_code=422, detail=f"kind is one of {', '.join(KINDS)}")
-    proposals = for_owner(readable(request, await feed(request)), owner)
+    proposals = await owned_by(request, readable(request, await feed(request)), owner)
     if kind is not None:
         proposals = [p for p in proposals if p.kind == kind]
     if since is not None:

@@ -475,7 +475,7 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
   - A quest to review's `Checks` fact reads its merge approval's checks (`passing`, `failing`, `running`), else the job's [verification](verification.md) gate verdict: `verified` (`passed`, good), `verification failed` (`new_failures`, bad), `no new failures, some unstable` (`unstable`, warn) or `could not verify` (`error`, warn). A verification that ran no test (`not_configured`, `no_matching_targets`) adds no fact.
   - `actions`: on offer `start`, `decline`, `later`, `send_to`; to review, what the quest allows (`merge`, `send_back`, `reject`, `run_again`, `good`, `bad`, `dismiss`), then `send_to`.
   - `links`: `proposal` and `url` on offer; to review, `job`, `pr` and `merge_approval` when there is one, and `areas_map`, the map a map of the repository's areas left waiting for a person ([areas](areas.md#map-areas)), which the card links to while it still waits: gone once it is applied, rejected or retired.
-  - `owner` keeps the quests on offer a GitHub login owns; `include_held=false` leaves out what a chat does not ask.
+  - `owner` keeps the quests on offer an owner owns: `github:<login>`, `gitlab:<username>`, or a bare GitHub login; each quest's bare owners are read on its repository's organization's forge; `include_held=false` leaves out what a chat does not ask.
 - `GET /api/v1/decisions/{id}`: one decision by its id; 404 for an answered proposal or an unknown job.
 
 ## People
@@ -483,7 +483,7 @@ Every choice waiting on a person, a quest on offer or a quest to review, in one 
 Who embry0 asks and names as an owner, whether or not they sign in (#179, [the design](superpowers/specs/2026-11-23-people-and-agent-questions-design.md)). A person is `{"id", "name", "email", "user_id", "timezone", "hours", "weekdays", "disabled", "identities", "updated_at"}`; an identity is `{"kind", "value"}`, a login on a forge (`github`, `gitlab`) or a handle in a chat (`telegram`, `slack`, `teams`, `discord`), one person's per kind whatever its case. `hours`, `weekdays` and `timezone` take the [`asks` section](configuration.md#settings-document)'s grammar. Operators and admins read; admins write. People are the deployment's: a key with a [repository allowlist](#repository-allowlist) reads nobody and writes nothing.
 
 - `GET /api/v1/people` (`?include_disabled=true` for the disabled too): every person by name, as `{"people", "count"}`.
-- `GET /api/v1/people/suggestions`: who could be added, since embry0 adds nobody by itself: `users`, each user who signs in with no person (`{"user_id", "email", "name", "github_login"}`), and `owners`, each owner login embry0 keeps (a repository's `owners` preference, an area's owners) that nobody holds on its repository's forge, as [the asks read it](#asks): `{"forge", "login", "repos"}`, with the repositories that name it. Nobody means no person, and no user who signs in with no person under that GitHub login: the asks already reach that user, who is listed under `users` instead, and their Add takes the login with them. An owner read from `CODEOWNERS` is not listed. The dashboard's People page (`/people`) lists the people and these suggestions, each with an Add that starts the form from them.
+- `GET /api/v1/people/suggestions`: who could be added, since embry0 adds nobody by itself: `users`, each user who signs in with no person (`{"user_id", "email", "name", "github_login"}`), and `owners`, each owner embry0 keeps (a repository's `owners` preference, an area's owners) that nobody holds on its forge, as [the asks read it](#asks): `{"forge", "login", "repos"}`, with the repositories that name it. A named owner (`github:<login>`, `gitlab:<username>`) is on its own forge, a bare one on its repository's organization's (#181). Nobody means no person, and no user who signs in with no person under that GitHub login: the asks already reach that user, who is listed under `users` instead, and their Add takes the login with them. An owner read from `CODEOWNERS` is not listed. The dashboard's People page (`/people`) lists the people and these suggestions, each with an Add that starts the form from them.
 - `GET /api/v1/people/{id}`: one person; the `ETag` is their `updated_at`.
 - `POST /api/v1/people` (201): add a person, `name` and any other field, and `identities`.
 - `PATCH /api/v1/people/{id}`: change the fields given (`null` clears an optional one); with `identities`, make them exactly the person's. `If-Match` with the `ETag` a read answered is required (428 without it, 412 for one that names no version), and a change someone made in between is refused (409), so an identity added or a user linked since is never undone unseen.
@@ -510,7 +510,7 @@ Send a decision to the teammate better placed to make it; it is then theirs to d
 
 One message to one person about one decision, tracked from `queued` to `answered`, `expired` or `withdrawn`, for a chat assistant to send ([the design](superpowers/specs/2026-10-27-decisions-design.md)). embry0 decides who is asked about what and when; the assistant only renders, sends, and passes a button press back. No model turns a reply into an answer. Off until `asks.enabled` is true in the [settings document](configuration.md#settings-document), whose `asks` section holds the policy below; the ask loop reads it every tick and the feed on every request, so a change needs no restart. A `propose` key may call all of these.
 
-- **Who is asked.** While a hand-off is open, only its person. Otherwise each owner of a decision that is not `held` (a `held` one too when `asks.include_held` is true, behind the rest of their queue): as the [people](#people) name them (#179). An owner is a login on the forge of the decision's repository's organization (else the repository's own, else GitHub), looked up among the people's identities: a person is asked by their email, else as `<forge>:<login>`, and a login no person holds is asked as `<forge>:<login>` too, for someone to add as a person. A disabled person is not asked and is no owner. Until `users.github_login` is retired, a user who signs in with a GitHub login and is not a person yet counts as one holding that login. A decision nobody owns, or only disabled people do, goes to `group:<name>` when `asks.unowned_group` names a group, and to nobody otherwise; the assistant knows how to reach the group, and anyone embry0 knows may answer those.
+- **Who is asked.** While a hand-off is open, only its person. Otherwise each owner of a decision that is not `held` (a `held` one too when `asks.include_held` is true, behind the rest of their queue): as the [people](#people) name them (#179). An owner named with its forge (`gitlab:<username>`) is a login on that forge; a bare one is a login on the forge of the decision's repository's organization (else the repository's own, else GitHub) ([owners](#repository-preferences)). Each is looked up among the people's identities: a person is asked by their email, else as `<forge>:<login>`, and a login no person holds is asked as `<forge>:<login>` too, for someone to add as a person. A disabled person is not asked and is no owner. Until `users.github_login` is retired, a user who signs in with a GitHub login and is not a person yet counts as one holding that login. A decision nobody owns, or only disabled people do, goes to `group:<name>` when `asks.unowned_group` names a group, and to nobody otherwise; the assistant knows how to reach the group, and anyone embry0 knows may answer those.
 - **When.** Within `asks.hours` on `asks.weekdays` in `asks.timezone`, or within a person's own `hours`, on their `weekdays`, in their `timezone`, each set on the person winning over the organization's field by field; a group follows the organization. A person holds at most `asks.max_open_per_person` (3) unanswered asks about one organization's decisions at once; the next, worst first, is released as one is answered or expires, within working hours too: a slot freed outside them leaves the next ask queued until the next working time. A hand-off goes first and past that limit, within working hours: someone chose this person, and behind the rest of their list it might never be seen. Once sent it counts toward the limit like any other. One reminder after `asks.remind_hours` unanswered. After `asks.expire_days` the ask expires, which answers nothing: that person is not asked about that decision again.
 - **Whose policy.** Each ask follows the organization its decision's repository belongs to (the first segment of the slug): that organization's [layer](configuration.md#settings-document) may set any of the six keys above (`PUT /api/v1/config/settings?owner=acme`), and the deployment's document supplies the rest. So two organizations' asks go out in their own working hours in the same tick, and someone asked about both organizations' decisions may hold each one's number. An ask about a decision with no repository, such as a non-git job's, follows the deployment's document, and its limit counts apart from every organization's. `asks.enabled`, `asks.lease_minutes` and `asks.tick_seconds` are the deployment's alone. `GET /api/v1/config/settings/effective?owner=acme` shows what an organization's asks read.
 - **Hand-out.** A plain call to `GET /asks/due` is the assistant's hand-out: each ask on its page, a reminder included, is leased to that call for `asks.lease_minutes` (15). While the lease runs the ask counts toward its person's limit and no other call is handed it; `POST /asks/{id}/sent` ends it. If it lapses unreported, a later call hands the same ask out again, before any other ask of its person, so an assistant that polls again before it reports gets nothing new rather than more of one person's asks. Calls decide and lease one at a time, so two at once, through one key or two, never get the same ask, nor together more of one person's asks than the limit. `GET /asks/due?peek=1` returns the page a call would hand out and leases and stamps nothing. Only the assistant's `propose` key, an operator or admin key or session, and the master key hand asks out; any other caller, a read or merge key, reads the page as `peek=1` does, so it cannot hold asks away from the assistant. A page puts the asks never handed out before those handed out again, so a person's fresh ask reaches it within a few polls however many asks of people the assistant skips are waiting.
@@ -921,9 +921,51 @@ The PUT replaces every field it does not mention — except `verification`
 (the orchestrator-run test gate and tier path rules, `docs/verification.md`):
 omitted or `null` keeps the stored value, `{}` clears it.
 
-`owners` is a list of GitHub logins that answer for the repository's owner
+`owners` is a list of the owners that answer for the repository's owner
 proposals (below); `null` or `[]` falls back to the users its `CODEOWNERS`
-names for every file. A login is validated and kept once, without its `@`.
+names for every file. An owner is named with its forge, `github:<login>` or
+`gitlab:<username>` (each checked by its forge's own pattern), or bare, a
+GitHub login (letters, digits and single hyphens, up to 39), which is read on
+the forge of the repository's organization: every owner written before forges
+were named reads that way. A GitLab username GitHub would not take (an
+underscore, a dot) is written `gitlab:<username>`. Each is validated and kept
+once as written, without its `@`, its forge lower-cased, and shown as written.
+
+`CODEOWNERS` is read on the repository's own forge (its registration's; for
+one nobody registered, its organization's) with its organization's
+credential, where
+that forge looks for it and in its order (GitHub: `.github/`, the root,
+`docs/`; GitLab: the root, `docs/`, `.gitlab/`), the first one there: on
+GitHub the last rule for every file (`*`, `**`, `**/*`) names the owners; on
+GitLab, each section's (`[Name]`, `^[Name]`, `[Name][2]`, a `#` in a name
+included, and the rules before the first heading) last such rule, or the
+section's default owners when it names none, and every section's owners are
+the file's. A section that excludes every file (GitLab's `!*`, within its
+section) has no owners for every file; an exclusion of some paths leaves them.
+A file that is not at any place means no owners, kept for an hour, and so does
+an empty GitLab project (no default branch). One that could not be read (a
+refused or failed read, a rate limit, a 5xx, a project or repository the forge
+does not show), or a repository whose forge could not be looked up, leaves the
+repository's owners unread, which is not nobody's: its proposals and decisions
+say `owners_unread`, only an admin or the person a decision was handed to
+answers it from a chat, and the next read asks the forge again. A repository
+whose file is not read at all has its owners unread too, kept for the hour: one
+registered on another forge than its organization's
+(`codeowners_not_read_other_forge`), one of an organization embry0 does not
+hold (`codeowners_not_read_unknown_organization`) or holds as removed
+(`codeowners_not_read_removed_organization`; a paused one is still read), one
+on a forge whose
+`CODEOWNERS` embry0 does not read, its own or its organization's
+(`codeowners_not_read_unsupported_forge`), and one whose forge nothing names,
+no registration, organization or default forge
+(`codeowners_not_read_unknown_forge`). A registration written in the
+orchestrator, the repository's or its organization's, drops the repository's
+kept answer at once; one written by another process (the CLI) takes effect
+when the answer expires. A user
+(`@login`) is an owner, bare (`gitlab:<username>` for a GitLab username a
+bare owner may not be); a team or group (`@org/team`), a role (`@@developer`)
+and an email address are left out, each logged with why
+(`codeowners_entries_skipped`).
 
 ## Repository history and undo
 

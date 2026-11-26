@@ -56,6 +56,8 @@ class Decision:
     yes_starts: str | None
     actions: tuple[str, ...]
     owners: tuple[str, ...] = ()
+    #: Its owners could not be read: not "nobody owns it", so only an admin or its hand-off's person answers it.
+    owners_unread: bool = False
     #: Shown on the page but not asked in a chat (a low-readiness ticket, a weed, a crack below break).
     held: bool = False
     links: Mapping[str, str] = field(default_factory=dict)
@@ -77,6 +79,7 @@ class Decision:
             "yes_starts": self.yes_starts,
             "actions": list(self.actions),
             "owners": list(self.owners),
+            **({"owners_unread": True} if self.owners_unread else {}),
             "held": self.held,
             "assigned_to": None,
             "links": dict(self.links),
@@ -165,6 +168,7 @@ def offered(p: Mapping[str, Any], *, ask_min: int) -> Decision:
         yes_starts=_first_sentence((brief or {}).get("fix")) or (known and known.starts) or str(p.get("action") or ""),
         actions=OFFER_ACTIONS,
         owners=tuple(str(o) for o in p.get("owners") or []),
+        owners_unread=bool(p.get("owners_unread")),
         held=bool(p.get("held")),
         links={k: str(v) for k, v in (("proposal", p.get("id")), ("url", p.get("url"))) if v},
         details=str(p.get("details") or ""),
@@ -359,6 +363,7 @@ def done(q: Mapping[str, Any], *, game: bool = True) -> Decision:
         yes_starts=None,
         actions=done_actions(outcome, q.get("pr_url")),
         owners=tuple(str(o) for o in q.get("owners") or ()),
+        owners_unread=bool(q.get("owners_unread")),
         links={
             k: str(v)
             for k, v in (

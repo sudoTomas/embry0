@@ -33,7 +33,7 @@ from typing import Any, Final
 
 import yaml
 
-from embry0.forge_logins import GITHUB_LOGIN_RE
+from embry0.forge_logins import parse_owner
 from embry0.services.areas import Area, slug_of
 from embry0.text_documents import DuplicateKey, load_json, structure_problems, yaml_problem_text
 from embry0.text_documents import text_diff as shared_text_diff
@@ -47,6 +47,8 @@ MAX_AREAS: Final = 200
 MAX_PATHS: Final = 200
 MAX_LOGS: Final = 50
 MAX_OWNERS: Final = 20
+#: The longest owner: ``gitlab:@`` and a GitLab username of up to 255.
+MAX_OWNER: Final = len("gitlab:@") + 255
 MAX_NAME: Final = 100
 MAX_LOG: Final = 200
 MAX_GLOB: Final = 300
@@ -308,20 +310,21 @@ def check_area(raw: Any, loc: Loc) -> tuple[dict[str, Any] | None, list[Problem]
             logs.append(text)
     owners: list[str] = []
     for i, item in enumerate(_list(raw.get("owners"), (*loc, "owners"), problems, limit=MAX_OWNERS, what="owners")):
-        text = _text(item, (*loc, "owners", i), problems, limit=40, what="An owner")
+        text = _text(item, (*loc, "owners", i), problems, limit=MAX_OWNER, what="An owner")
         if text is None:
             continue
-        login = text.removeprefix("@")
-        if not GITHUB_LOGIN_RE.fullmatch(login):
+        owner = parse_owner(text)
+        if owner is None:
             problems.append(
                 Problem(
                     (*loc, "owners", i),
                     "invalid_login",
-                    "An owner is a login: letters, digits and single hyphens, up to 39, with or without a leading @.",
+                    "An owner is a login (letters, digits and single hyphens, up to 39), read on the forge of the "
+                    "repository's organization, or github:<login> or gitlab:<username>; with or without a leading @.",
                 )
             )
-        elif login.lower() not in (o.lower() for o in owners):
-            owners.append(login)
+        elif str(owner).lower() not in (o.lower() for o in owners):
+            owners.append(str(owner))
     if problems or name is None:
         return None, problems
     return {"name": name, "paths": paths, "logs": logs, "owners": owners}, []
@@ -398,7 +401,7 @@ def areas_of(data: Mapping[str, Any] | None) -> list[Area]:
             value = entry.get(key)
             return tuple(s for s in value if isinstance(s, str) and s) if isinstance(value, list) else ()
 
-        owners = tuple(o for o in strings("owners") if GITHUB_LOGIN_RE.fullmatch(o))
+        owners = tuple(str(name) for o in strings("owners") if (name := parse_owner(o)) is not None)
         out.append(Area(entry["name"].strip(), strings("paths"), strings("logs"), owners))
     return out
 

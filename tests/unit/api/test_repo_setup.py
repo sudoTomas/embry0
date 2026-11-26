@@ -475,6 +475,29 @@ async def test_apply_writes_a_proposal_revision_that_undo_takes_back_to_the_base
 
 
 @pytest.mark.requires_postgres
+async def test_an_apply_that_registers_the_repository_notes_it_once_committed(client, app) -> None:
+    """Applying a setup to a repository nobody registered registers it (the QA config needs the row). A cache read
+    through a registration (a repository's CODEOWNERS, #181) must drop what it kept, so the write is noted, and only
+    once the transaction commits: inside it, the registration cannot be read yet."""
+    from embry0.storage.repositories import registrations
+    from tests.unit.storage.test_registrations_written import watch_commits
+
+    assert await app.state.repos_repo.get(REPO) is None, "the repository starts unregistered"
+    proposal_id = await _proposal(app, base_updated_at=None)
+    before = registrations.count()
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        open_ = watch_commits(monkeypatch, app.state.db, lambda: registrations.changed_since("repo", REPO, before))
+        resp = await client.post(f"{SETUP}/proposal/{proposal_id}/apply", json={"acknowledged": []})
+    finally:
+        monkeypatch.undo()
+    assert resp.status_code == 200, resp.text
+    assert await app.state.repos_repo.get(REPO) is not None, "the apply registered the repository"
+    assert open_ and not any(open_), f"noted while a transaction was open: {open_}"
+    assert registrations.changed_since("repo", REPO, before), "noted once it committed"
+
+
+@pytest.mark.requires_postgres
 async def test_apply_after_someone_saved_the_setup_is_stale_and_writes_nothing(client, app) -> None:
     proposal_id = await _proposal(app, base_updated_at=None)
     await client.put(QA, content=V1)

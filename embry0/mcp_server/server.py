@@ -934,7 +934,7 @@ async def proposal_list(owner: str | None = None, kind: str | None = None, since
     and then passed on the same commit), "review" (review threads nobody answered),
     "crack" (a crack the scout found in the code) or "weed" (dead or duplicated code the
     scout or a knowledge map found). The tool lead_kinds names every kind and how to say it.
-    owner: a GitHub login, only its repositories' proposals. since: an ISO time, only
+    owner: an owner, github:<login>, gitlab:<username> or a bare GitHub login: only its proposals. since: an ISO time, only
     proposals asked after it. Message an owner with the brief (its title, problem and fix)
     when there is one, else the summary; keep the id for the answer, which is
     proposal_accept, proposal_decline or proposal_snooze, naming the id."""

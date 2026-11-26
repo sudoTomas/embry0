@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
-from embry0.forge_logins import GITHUB_LOGIN_RE as GITHUB_LOGIN_RE
+from embry0.forge_logins import parse_owner
 from embry0.git_refs import REF_RULE, valid_ref
 from embry0.workflows.verification.config import VerificationConfig
 
@@ -121,22 +121,28 @@ class RepoPreferencesUpdateRequest(BaseModel):
     verification: VerificationConfig | None = None
     # #30: pull request review settings, stored whole.
     pr_review: PrReviewSettings | None = None
-    # Owner proposals (spec 2026-10-24): GitHub logins; null or [] falls back to CODEOWNERS.
+    # Owner proposals (spec 2026-10-24): owners, ``github:<login>``, ``gitlab:<username>`` or a bare login on the
+    # forge of the repository's organization (#181); null or [] falls back to CODEOWNERS.
     owners: list[str] | None = Field(default=None, max_length=20)
 
     @field_validator("owners")
     @classmethod
-    def _logins(cls, v: list[str] | None) -> list[str] | None:
+    def _owners(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return None
-        logins: list[str] = []
+        owners: list[str] = []
+        seen: set[tuple[str | None, str]] = set()
         for raw in v:
-            login = raw.strip().removeprefix("@")
-            if not GITHUB_LOGIN_RE.fullmatch(login):
-                raise ValueError(f"{raw!r} is not a GitHub login (letters, digits and single hyphens, up to 39)")
-            if login.lower() not in (seen.lower() for seen in logins):
-                logins.append(login)
-        return logins or None
+            name = parse_owner(raw)
+            if name is None:
+                raise ValueError(
+                    f"{raw!r} is not an owner: not a GitHub login (letters, digits and single hyphens, up to 39), "
+                    "read on the forge of the repository's organization, nor github:<login> or gitlab:<username>"
+                )
+            if (name.forge, name.login.lower()) not in seen:
+                seen.add((name.forge, name.login.lower()))
+                owners.append(str(name))
+        return owners or None
 
     @field_validator("base_branch")
     @classmethod
