@@ -18,6 +18,8 @@ vi.mock("@/api/cases", () => ({
 }));
 
 import { IssuesPage } from "../IssuesPage";
+import { settle } from "@/test/settle";
+import { holdFirstPaint } from "@/test/firstPaint";
 
 const NOW = new Date().toISOString();
 
@@ -94,10 +96,11 @@ describe("IssuesPage", () => {
   });
 
   it("paints the drafts and the list together, so the drafts never push the list down", async () => {
+    holdFirstPaint();
     let answer: (proposals: unknown) => void = () => {};
     mockFetchProposals.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     renderPage();
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     // Painted before the drafts answered, the list was in view when they
     // landed above it and pushed it down by their height.
     expect(screen.queryByText("An accepted piece of work")).not.toBeInTheDocument();

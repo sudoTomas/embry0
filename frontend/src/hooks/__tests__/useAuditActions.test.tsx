@@ -7,6 +7,7 @@ const get = vi.fn();
 vi.mock("@/api/client", () => ({ api: { get: (...args: unknown[]) => get(...args) } }));
 
 import { AUDIT_ACTIONS_KEY, useAuditActions } from "../useAuditActions";
+import { settle } from "@/test/settle";
 
 const REGISTRY = [
   { action: "apikey.repo_refused", label: "API key refused a repository", replaced_by: null },
@@ -47,7 +48,7 @@ describe("useAuditActions: the audit action registry from GET /audit/actions (#4
     expect(second.result.current.vocabulary.label("apikey.repo_refused"), "drawn from the kept answer").toBe(
       "API key refused a repository",
     );
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await settle(20);
     expect(get, "the registry changes only with a release: it is not read again").toHaveBeenCalledTimes(1);
   });
 

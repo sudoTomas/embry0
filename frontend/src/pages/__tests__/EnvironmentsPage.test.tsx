@@ -36,6 +36,8 @@ vi.mock("@/components/environments/PullRequestReviewCard", () => ({
 
 import { EnvironmentsPage } from "../EnvironmentsPage";
 import type { EnvVar } from "@/lib/types/environment";
+import { settle } from "@/test/settle";
+import { holdFirstPaint } from "@/test/firstPaint";
 
 const REPOS = [
   {
@@ -82,10 +84,11 @@ beforeEach(() => {
 
 describe("EnvironmentsPage — RAV-1294 discoverability", () => {
   it("paints the summary and the sections together, so neither pushes the other", async () => {
+    holdFirstPaint();
     let answer: (repos: unknown) => void = () => {};
     mockFetchRepos.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     renderPage();
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     expect(screen.queryByRole("heading", { name: "App config" })).not.toBeInTheDocument();
     answer(REPOS);
     expect(await screen.findByTestId("repo-env-summary")).toBeInTheDocument();

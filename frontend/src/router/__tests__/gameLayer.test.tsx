@@ -59,6 +59,7 @@ vi.mock("@/components/dashboard/BriefBar", () => ({ BriefBar: () => <div data-te
 vi.mock("@/hooks/useAwaitingIndicator", () => ({ useAwaitingIndicator: () => 0 }));
 
 import { router } from "@/router";
+import { settle } from "@/test/settle";
 
 let client: QueryClient;
 
@@ -228,9 +229,7 @@ describe("the game layer, as the settings document's ui section sets it (#177)",
   it("on a first visit waits for the read, then draws with the defaults once a read that never answers times out", async () => {
     http.uiMode = "never";
     await draw("/");
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    });
+    await settle(200);
     expect(screen.queryByTestId("sidebar"), "a first visit waits for the read, so the game never flashes").toBeNull();
     expect(screen.queryByRole("heading", { name: "guild page" })).toBeNull();
     await waitFor(

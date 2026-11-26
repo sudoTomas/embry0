@@ -15,6 +15,7 @@ vi.mock("sonner", () => ({ toast: { error: toastError, success: vi.fn(), info: v
 import { api } from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
 import { AgentsPage } from "@/pages/AgentsPage";
+import { settle } from "@/test/settle";
 
 const AGENTS = [
   { type: "helper", description: "Custom", model: "claude-opus-5", tools: [], skills: [], system_prompt: "",
@@ -54,6 +55,7 @@ describe("a refused write", () => {
     answerDelete(409, "Agent helper is used by 2 pipeline templates");
     await deleteHelper();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
+    await settle(20);
     expect(toastError.mock.calls.map((c) => c[0])).toEqual([
       "Failed to delete: Agent helper is used by 2 pipeline templates",
     ]);
@@ -64,7 +66,7 @@ describe("a refused write", () => {
     answerDelete(500, "database unavailable");
     await deleteHelper();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     expect(toastError.mock.calls.map((c) => c[0])).toEqual(["Server error (500): database unavailable"]);
   });
 
@@ -73,7 +75,7 @@ describe("a refused write", () => {
     answerDelete(422, [{ type: "value_error", loc: ["path", "type"], msg: "unknown agent type", input: "x" }]);
     await deleteHelper();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     expect(toastError.mock.calls.map((c) => c[0])).toEqual(["Validation error: type: unknown agent type"]);
   });
 });

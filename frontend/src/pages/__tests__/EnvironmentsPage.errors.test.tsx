@@ -17,6 +17,7 @@ vi.mock("@/components/environments/PullRequestReviewCard", () => ({ PullRequestR
 import { api } from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
 import { EnvironmentsPage } from "@/pages/EnvironmentsPage";
+import { settle } from "@/test/settle";
 
 const GLOBAL = [{ key: "LOG_LEVEL", value: "info", var_type: "config", description: "", required: false, scope: "app" }];
 
@@ -43,7 +44,7 @@ async function deleteVariable() {
   );
   fireEvent.click(await screen.findByRole("button", { name: "Delete variable" }));
   await waitFor(() => expect(toastError).toHaveBeenCalled());
-  await new Promise((r) => setTimeout(r, 20));
+  await settle(20);
   return toastError.mock.calls.map((c) => c[0]);
 }
 

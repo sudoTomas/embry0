@@ -73,6 +73,8 @@ vi.mock("@/api/provider", () => ({ fetchModelsCatalog: () => mockFetchModelsCata
 vi.mock("@/api/qaConfig", () => ({ fetchQaConfig: () => Promise.resolve(null) }));
 
 import { RepoDetailPage } from "../RepoDetailPage";
+import { settle } from "@/test/settle";
+import { holdFirstPaint } from "@/test/firstPaint";
 
 const GOLD = /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/;
 
@@ -310,6 +312,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
   });
 
   it("paints a page opened on a section once that section's body has its answers", async () => {
+    holdFirstPaint();
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
     const bindings = held();
     const accounts = held();
@@ -321,10 +324,10 @@ describe("RepoDetailPage (RAV-1253)", () => {
     await waitFor(() => expect(mockFetchReadiness).toHaveBeenCalled());
     // Fetched beside the details, not once the page has drawn the body.
     expect(mockFetchRepoCredentials).toHaveBeenCalledWith("acme/widgets");
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     bindings.answer({ repo: "acme/widgets", bindings: [], effective: {} });
     accounts.answer([]);
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     // The body's height still waits on the catalog: no page under it yet.
     expect(screen.queryByRole("heading", { name: "acme/widgets" })).not.toBeInTheDocument();
     catalog.answer({ providers: [] });
@@ -434,12 +437,13 @@ describe("RepoDetailPage (RAV-1253)", () => {
   });
 
   it("paints the page once the setup status is known, so nothing moves under the reader", async () => {
+    holdFirstPaint();
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
     let answer: (value: unknown) => void = () => {};
     mockFetchReadiness.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     renderPage();
     await waitFor(() => expect(mockFetchRepoDetail).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     expect(screen.queryByRole("heading", { name: "acme/widgets" })).not.toBeInTheDocument();
     answer(READINESS);
     await screen.findByRole("heading", { name: "acme/widgets" });

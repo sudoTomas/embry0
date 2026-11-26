@@ -30,6 +30,8 @@ import { useAuthStore } from "@/stores/authStore";
 import { org } from "@/components/orgs/__tests__/fixtures";
 import { ownerStandards, standard, state } from "@/components/standards/__tests__/fixtures";
 import { StandardsPage } from "../StandardsPage";
+import { settle } from "@/test/settle";
+import { holdFirstPaint } from "@/test/firstPaint";
 
 function renderPage(path = "/orgs/Acme/standards") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -191,6 +193,7 @@ describe("StandardsPage — the first paint", () => {
   };
 
   it.each(Object.keys(sources))("holds the page until %s is in, then paints it whole", async (name) => {
+    holdFirstPaint();
     const fetcher = sources[name as keyof typeof sources]();
     const answer = fetcher.getMockImplementation() as () => Promise<unknown>;
     let release: () => void = () => {};
@@ -198,7 +201,7 @@ describe("StandardsPage — the first paint", () => {
     renderPage();
 
     await waitFor(() => expect(api.standards).toHaveBeenCalledWith("acme"));
-    await act(() => new Promise((r) => setTimeout(r, 20)));
+    await settle(20);
     expect(screen.queryByTestId("standards-page")).toBeNull();
 
     await act(async () => release());

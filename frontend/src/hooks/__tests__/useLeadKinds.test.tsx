@@ -43,12 +43,18 @@ describe("useLeadKinds: the lead-kind catalogue from GET /lead-kinds (#166)", ()
   });
 
   it("is empty when the backend does not serve it, so each kind reads as its own id, and does not ask again", async () => {
-    get.mockRejectedValue(notFound());
-    const { result } = renderHook(() => useLeadKinds(), { wrapper: wrapper() });
-    await waitFor(() => expect(get).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(result.current.size).toBe(0);
-    expect(get, "a 404 is an older backend: trying again cannot change it").toHaveBeenCalledTimes(1);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      get.mockRejectedValue(notFound());
+      const { result } = renderHook(() => useLeadKinds(), { wrapper: wrapper() });
+      await waitFor(() => expect(get).toHaveBeenCalled());
+      // Past every try again a failed read would get (one second, then two), so a retry would have been made.
+      await vi.advanceTimersByTimeAsync(leadKindsRetryDelay(0) + leadKindsRetryDelay(1) + 1_000);
+      expect(result.current.size).toBe(0);
+      expect(get, "a 404 is an older backend: trying again cannot change it").toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("tries a failed read again twice, waiting longer each time, before naming kinds by their ids", () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -13,6 +13,7 @@ vi.mock("@/api/settings", () => ({
 vi.mock("@/stores/authStore", () => ({ useIsAdmin: () => true }));
 
 import { ContextAuditSetting } from "../ContextAuditSetting";
+import { settle } from "@/test/settle";
 
 function view(days: unknown, source = "organization") {
   return {
@@ -77,7 +78,10 @@ describe("ContextAuditSetting", () => {
   it("shows nothing for a server without the section", async () => {
     mockFetchEffectiveSettings.mockResolvedValue({ generation: 1, sections: [], unknown_sections: [], unknown_keys: [] });
     const { container } = renderSetting();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(container).toBeEmptyDOMElement();
+    // Read only once the settings were asked for and React drew their answer: before, the check could read
+    // the empty first frame whatever the answer drew.
+    await waitFor(() => expect(mockFetchEffectiveSettings).toHaveBeenCalled());
+    await settle(20);
+    expect(container, "a server without the section shows nothing, not the audit as off").toBeEmptyDOMElement();
   });
 });
