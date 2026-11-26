@@ -63,6 +63,7 @@ Built by the server, from data embry0 already has, so the dashboard and a chat r
 **Send to…** on any decision: pick a teammate (anyone who can sign in) and add a note. The decision is now theirs: it shows in their **Waiting for me**, a chat assistant asks them (below), and whatever they do (start, decline, merge, reject, send back) is the decision. The sender is told the outcome. A hand-off can be passed on again or sent back.
 
 - **People.** `users.github_login` links a person who signs in to the GitHub login owners are named by, so embry0 knows which owner is looking. How a chat reaches a person is the deployment's, keyed by email.
+- **Since #179** (spec 2026-11-23, people and agent questions), a person is a row of their own (`people`, migration 154), with or without a sign-in, and has identities of a kind: a login on a forge (`github`, `gitlab`) or a handle in a chat (`telegram`, `slack`, `teams`, `discord`). Owners resolve to people through those identities (an owner named with its forge on that forge, a bare one on the forge of the decision's repository's organization), and who may decide is matched by identity, not by `users.github_login`. A chat reaches a person through their chat handles: `GET /asks/due` gives each recipient's as `chat: [{channel, id}]`, with the time zone its ask is timed by, to a caller who may read the people (an operator or an admin) and to the assistant's `propose` key, never through a repository allowlist. A hand-off still names its person by email. `users.github_login` is kept only as a bridge until it is retired (spec 2026-11-23, section 3).
 - **Who decided.** Every answer records the actor the server resolved (session, then key), never a name the client sends. A key that acts for people (`propose`) passes the person, and the server checks that person may decide: an owner of the repository or area, the hand-off's recipient, or an admin.
 - **Rights.** The recipient of an open hand-off may take every action the decision lists, including merge, for that one decision only.
 - `handoffs` table:
@@ -76,7 +77,9 @@ Built by the server, from data embry0 already has, so the dashboard and a chat r
 embry0 keeps one row per message it wants a person to get: `asks` (`id`, `decision_id`, `recipient_email`, `code`, `state`, `due_at`, `sent_at`, `message_ref`, `reminders`, `answered_at`, `answer`).
 
 - **Who is asked.** Each owner of a decision that is not held (the same rule as today). The recipient of a hand-off is asked too, and is the only one asked while it is open.
+  - **Since #179**, an owner is a person: asked by their email, else as `<forge>:<login>`. A login no person holds is asked as `<forge>:<login>` too, marked `unknown` in the feed for someone to add, and a disabled person is not asked. The text is the ask's `recipient` (the column's name; this spec said `recipient_email`).
 - **When.** Within the recipient's working hours (`ASK_HOURS`, `ASK_TIMEZONE`). A reminder goes after `ASK_REMIND_HOURS` unanswered, once. The ask expires after `ASK_EXPIRE_DAYS`, and expiring answers nothing: the decision stays open on the page.
+  - **Since #179**, a person's own `timezone`, `hours` and `weekdays` win over the organization's, field by field. The reminder, the expiry and `max_open_per_person` stay the organization's.
 - **Since the settings document** (spec 2026-10-28), these and the other `ASK*` variables are keys of its `asks` section (`asks.hours`, `asks.timezone`, `asks.remind_hours`, `asks.expire_days`, and so on), imported from the variables once and read every tick.
 - **Since the settings layers** (spec 2026-10-29), an ask follows the layer of its decision's organization for the hours, weekdays, time zone, reminder, expiry and `max_open_per_person`, which counts per person within an organization; an ask about a decision with no repository follows the deployment's document.
 - **Since #295**, an ask expires `expire_days` after it was sent, not after it was queued: one still queued does not expire, and only a sent ask that expired keeps its person from being asked again for good. One the feed handed out but no one reported sent expires `expire_days` after it was first handed out (`asks.handed_out_at`), and keeps its person from being asked again for `expire_days`.
@@ -87,6 +90,7 @@ embry0 keeps one row per message it wants a person to get: `asks` (`id`, `decisi
 **The deployment's part** (not in embry0):
 - a sender with no model in it: polls the feed, renders each decision as a card with its actions as buttons, sends it, reports `sent`;
 - a button handler that checks the clicker and calls the answer endpoint with them as `person`.
+- **Since #179**, the sender finds where to send each ask in its recipient's chat handles (`chat`), when the person has one; for one with none, it decides where the ask goes, as before.
 
 A chat model may still answer questions about a quest; it never turns a reply into an answer.
 
@@ -102,7 +106,7 @@ One `DecisionCard`: the verdict and where it is on the first line, the title, a 
 
 1. The decision model and `GET /decisions` (this spec).
 2. Decision cards in the dashboard, and the words.
-3. Hand-offs, `users.github_login`, server-resolved deciders.
+3. Hand-offs, `users.github_login`, server-resolved deciders. (Since #179, people and their identities stand where `users.github_login` stood.)
 4. Asks, and the deployment's card sender and button handler.
 
 ## Later: everything reaches someone (2026-11-03)
