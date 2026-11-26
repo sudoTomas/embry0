@@ -174,6 +174,12 @@ _DEFAULT_PROFILE: dict[str, Any] = {
 }
 
 
+def _local_llm_kwargs(local_server: Any) -> dict[str, Any]:
+    """``local_llm`` for ``enroll_sandbox`` when the sandbox has a custom server; nothing otherwise, so a proxy manager
+    that predates it is called as before."""
+    return {"local_llm": local_server} if local_server is not None else {}
+
+
 class SandboxManager:
     """Manages sandbox container lifecycle for job execution."""
 
@@ -893,7 +899,7 @@ class SandboxManager:
                 job_id=job_id,
                 # Only a sandbox on the custom provider gets a bearer the local-llm-proxy accepts, for its own
                 # credential's server alone (ADR 0032).
-                **({"local_llm": local_server} if local_server is not None else {}),
+                **_local_llm_kwargs(local_server),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.
@@ -1099,7 +1105,7 @@ class SandboxManager:
                 git_push=git_push,
                 git_push_branches=git_push_branches,
                 job_id=job_id,
-                **({"local_llm": local_server} if local_server is not None else {}),
+                **_local_llm_kwargs(local_server),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.

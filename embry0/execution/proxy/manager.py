@@ -33,7 +33,7 @@ import asyncio
 import secrets
 import socket
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 import aiohttp
@@ -52,7 +52,12 @@ from embry0.execution.proxy.git_scope import (
     normalize_push_branch,
     normalize_upstream,
 )
-from embry0.execution.proxy.local_llm_proxy import LOCAL_LLM_FIELD, Upstream
+from embry0.execution.proxy.local_llm_proxy import (
+    CUSTOM_PROVIDER,
+    LOCAL_LLM_FIELD,
+    PROVIDER_SERVERS_FIELD,
+    Upstream,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -542,6 +547,7 @@ class ProxyManager:
         git_push_branches: Sequence[str] = (),
         job_id: str | None = None,
         local_llm: Upstream | None = None,
+        provider_servers: Mapping[str, Upstream] | None = None,
     ) -> str:
         """Enroll a new sandbox with all running credential proxies.
 
@@ -596,6 +602,14 @@ class ProxyManager:
         enrolled with the local-llm-proxy for that server alone (ADR 0032). A
         local-llm-proxy that does not echo the server runs an image from before
         per-sandbox servers: refused the same way as the git-proxy's grant.
+
+        ``provider_servers`` is, per chat-completions provider other than
+        custom, the server the sandbox reaches it through on the same proxy
+        (``/p/<provider>/v1``): the job's credential for that provider, its id,
+        API root and key, and the address the caller resolved and checked for
+        it (``server_address.pin_server``), sent and confirmed per provider the
+        same way as ``local_llm``. A proxy that does not echo every one of them
+        exactly is refused.
 
         Raises RuntimeError if any enrollment exec fails, if such a stale
         proxy cannot be revoked, or if the git-proxy does not confirm its
@@ -654,6 +668,19 @@ class ProxyManager:
                 "address": local_llm.address,
                 "api_key": local_llm.api_key,
             }
+        provider_payload: dict[str, dict[str, str]] = {}
+        for provider, server in sorted((provider_servers or {}).items()):
+            if provider == CUSTOM_PROVIDER:
+                raise ValueError("the custom provider's server is local_llm, not a provider server")
+            if not self.local_llm_proxy_url:
+                raise RuntimeError(f"the local-llm-proxy is not running: a sandbox on {provider} has no route")
+            provider_payload[provider] = {
+                "credential_id": server.credential_id,
+                "upstream": server.root.rstrip("/"),
+                "address": server.address,
+                "api_key": server.api_key,
+            }
+        if local_server is not None or provider_payload:
             targets.append(("local-llm-proxy", 9108))
         # context-proxy is deliberately ABSENT from this broadcast: log access is
         # per-job opt-in (watcher analysis jobs only). init_node calls
@@ -678,6 +705,8 @@ class ProxyManager:
                     body[JOB_FIELD] = job_id
             if name == "local-llm-proxy" and local_server is not None:
                 body[LOCAL_LLM_FIELD] = local_server
+            if name == "local-llm-proxy" and provider_payload:
+                body[PROVIDER_SERVERS_FIELD] = provider_payload
             response = await self._exec_admin_request(
                 container=name,
                 method="POST",
@@ -691,6 +720,8 @@ class ProxyManager:
                 await self._confirm_git_grant(port, sandbox_id, git_grant, response)
             if name == "local-llm-proxy" and local_server is not None:
                 await self._confirm_local_server(port, sandbox_id, local_server, response)
+            if name == "local-llm-proxy" and provider_payload:
+                await self._confirm_provider_servers(port, sandbox_id, provider_payload, response)
 
         if xai_credential_id:
             logger.info("sandbox_xai_credential", sandbox_id=sandbox_id, credential_id=xai_credential_id)
@@ -810,6 +841,39 @@ class ProxyManager:
         )
         raise RuntimeError(
             "local-llm-proxy did not confirm the sandbox's server (proxy image older than the orchestrator?)"
+        )
+
+    async def _confirm_provider_servers(
+        self, port: int, sandbox_id: str, servers: dict[str, dict[str, str]], response: dict[str, Any]
+    ) -> None:
+        """Refuse a local-llm-proxy that did not echo every provider's server exactly: its image predates the paths per
+        provider, and could route the sandbox to a server it was not given."""
+        echoed = (response if isinstance(response, dict) else {}).get(PROVIDER_SERVERS_FIELD)
+        wanted = {
+            p: {"credential_id": s["credential_id"], "upstream": s["upstream"], "address": s["address"]}
+            for p, s in servers.items()
+        }
+        if isinstance(echoed, dict) and echoed == wanted:
+            return
+        logger.error(
+            "local_llm_proxy_provider_servers_unconfirmed",
+            sandbox_id=sandbox_id,
+            providers=sorted(servers),
+            detail=(
+                "the local-llm-proxy did not confirm the sandbox's provider servers: its image predates the paths per "
+                "provider, so the sandbox is unenrolled there and refused; rebuild the proxy image"
+            ),
+        )
+        await self._exec_admin_request(
+            container="local-llm-proxy",
+            method="DELETE",
+            path=f"/admin/enroll/{sandbox_id}",
+            port=port,
+            body=None,
+            accept_404=True,
+        )
+        raise RuntimeError(
+            "local-llm-proxy did not confirm the sandbox's provider servers (proxy image older than the orchestrator?)"
         )
 
     async def set_git_push_branches(self, sandbox_id: str, branches: Sequence[str]) -> None:
