@@ -202,8 +202,9 @@ export function plainDecimal(value: number): string {
  */
 export const WHOLE_NUMBER_KEYS: ReadonlySet<string> = new Set(["version", "context_window"]);
 /**
- * A model's fields of extra request body: JSON, which YAML reads as written, so their numbers stay as they are. The
- * shared fixture's `json_keys` pins this list, and the backend checks it against the schema's free-form fields.
+ * A model's fields of extra request body: JSON, which YAML reads as written, so their numbers stay as they are, a bare
+ * value's too. The shared fixture's `json_keys` pins this list, and the backend checks it against the schema's
+ * free-form fields.
  */
 export const EXTRAS_KEYS: ReadonlySet<string> = new Set(["request_extras", "background_request_extras"]);
 /**
@@ -229,7 +230,7 @@ function keyText(key: string): string {
   return PLAIN_KEY.test(key) && !NOT_A_STRING.test(key) ? key : JSON.stringify(key);
 }
 
-/** A request extra's value: JSON, which YAML reads as written. Its numbers stay as they are. */
+/** A free-form field's value, whatever it is: JSON, which YAML reads as written. Its numbers stay as they are. */
 function flow(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
@@ -258,7 +259,8 @@ function block(value: unknown, indent: number, key: string, out: string[]): void
       return;
     }
     for (const [k, v] of entries) {
-      if (EXTRAS_KEYS.has(k) && v && typeof v === "object") {
+      if (EXTRAS_KEYS.has(k)) {
+        // Any value, a bare number too: through scalar() a whole one would come out 256.0.
         out.push(`${pad}${keyText(k)}: ${flow(v)}`);
       } else if (v !== null && typeof v === "object") {
         out.push(`${pad}${keyText(k)}:`);

@@ -33,10 +33,28 @@ def _json_form(value: Any) -> Any:
     return value
 
 
+def _differences(read: Any, meant: Any, where: str = "") -> list[str]:
+    """Where ``read`` is not ``meant``, types included: 256.0 is not 256, though Python finds them equal."""
+    if isinstance(meant, dict):
+        if not isinstance(read, dict) or read.keys() != meant.keys():
+            return [f"{where or '.'}: {read!r} is not {meant!r}"]
+        return [d for key in meant for d in _differences(read[key], meant[key], f"{where}.{key}")]
+    if isinstance(meant, list):
+        if not isinstance(read, list) or len(read) != len(meant):
+            return [f"{where}: {read!r} is not {meant!r}"]
+        return [
+            d for i, (r, m) in enumerate(zip(read, meant, strict=True)) for d in _differences(r, m, f"{where}[{i}]")
+        ]
+    return [] if type(read) is type(meant) and read == meant else [f"{where}: {read!r} is not {meant!r}"]
+
+
 @pytest.mark.parametrize("case", CASES, ids=[case["name"] for case in CASES])
 def test_what_the_form_writes_reads_back_as_the_overlay_it_meant(case: dict[str, Any]) -> None:
+    """The catalogue reads what the form wrote as the overlay it meant, each value of its type: the fixture holds 2.0
+    where the catalogue reads a float, 2 where a whole number, so a whole number written as 2.0 fails here."""
     loaded = load_text(case["yaml"]) if case["yaml"] else {}
-    assert _json_form(loaded) == case["overlay"], f"the catalogue reads {case['name']!r} as another overlay"
+    wrong = _differences(_json_form(loaded), case["overlay"])
+    assert not wrong, f"the catalogue reads {case['name']!r} as another overlay: {wrong}"
     if case.get("valid", True):
         catalogue.merge(catalogue.seed().document, loaded or None)
 
@@ -154,3 +172,59 @@ def test_each_whole_number_field_has_a_case_the_form_writes() -> None:
         if case.get("valid", True):
             _keys_with_int(case["overlay"], written)
     assert listed <= written, f"no valid case writes {sorted(listed - written)} with a whole number"
+
+
+def _read_values(value: Any, key: str) -> list[Any]:
+    """Every value under ``key`` in ``value``, as the catalogue read it."""
+    found: list[Any] = []
+    if isinstance(value, dict):
+        for name, item in value.items():
+            if name == key:
+                found.append(item)
+            found += _read_values(item, key)
+    elif isinstance(value, list):
+        for item in value:
+            found += _read_values(item, key)
+    return found
+
+
+def test_each_day_field_has_a_case_the_form_writes_as_a_day() -> None:
+    """A case per day field pins on both sides that the form writes it bare, a date the catalogue reads as one: a
+    quoted day is a string, which it refuses."""
+    days = set()
+    for case in CASES:
+        if case.get("valid", True) and case["yaml"]:
+            loaded = load_text(case["yaml"])
+            days |= {
+                key
+                for key in _listed("date_keys")
+                if any(isinstance(v, datetime.date) for v in _read_values(loaded, key))
+            }
+    assert _listed("date_keys") <= days, f"no valid case writes {sorted(_listed('date_keys') - days)} as a day"
+
+
+def test_each_json_field_has_a_case_the_form_writes_as_json() -> None:
+    """A case per free-form JSON field pins on both sides that the form writes it as JSON on its key's line, a whole
+    number in it kept whole: written field by field, it would read 256 as 256.0."""
+    written = set()
+    for case in CASES:
+        if not case.get("valid", True):
+            continue
+        for key in _listed("json_keys"):
+            for line in case["yaml"].splitlines():
+                head, sep, text = line.strip().partition(": ")
+                if head == key and sep and text[:1] in "{[":
+                    value = json.loads(text)
+                    if any(isinstance(v, int) and not isinstance(v, bool) for v in _leaves(value)):
+                        written.add(key)
+    assert _listed("json_keys") <= written, (
+        f"no valid case writes {sorted(_listed('json_keys') - written)} as JSON with a whole number in it"
+    )
+
+
+def _leaves(value: Any) -> list[Any]:
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in _leaves(item)]
+    if isinstance(value, list):
+        return [leaf for item in value for leaf in _leaves(item)]
+    return [value]
