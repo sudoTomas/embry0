@@ -135,7 +135,7 @@ async def test_a_row_that_cannot_be_deleted_holds_up_no_start(db_with_migrations
 async def test_a_document_that_keeps_changing_keeps_the_row_for_the_next_start(
     db_with_migrations: DatabasePool,
 ) -> None:
-    """Written under every check, the value is refused this start and kept, never written over the latest write."""
+    """Written under every check, the value waits for the next start, never written over the latest write."""
     db = db_with_migrations
 
     class Busy(SettingsStore):
@@ -145,7 +145,10 @@ async def test_a_document_that_keeps_changing_keeps_the_row_for_the_next_start(
             return read
 
     await _carry(db, "local_models.max_runs", 3)
-    done = await _write()(db, Busy(db))
-    assert done == {"local_models.max_runs": "refused"}, done
+    with capture_logs() as logs:
+        done = await _write()(db, Busy(db))
+    assert done == {"local_models.max_runs": "deferred"}, done
     assert await _left(db) == ["local_models.max_runs"], "a value never written was dropped"
+    events = [(e["event"], e["log_level"]) for e in logs if e["event"].startswith("settings_carried")]
+    assert events == [("settings_carried_deferred", "warning")], f"nothing refused the value: {events}"
     assert "local_models" not in (await SettingsStore(db).document())["data"]

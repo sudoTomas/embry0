@@ -9,8 +9,10 @@ start after it writes each value into the deployment's document through the
 store, as a revision of its own (source ``upgrade``), unless the document sets
 that key already, and deletes the row. The write names the generation the
 check read, so a person's write in between is never overwritten: the document
-is read again and checked again. A value the document refuses stays in its
-row, logged at error level at every start, for an admin to set by hand.
+is read again and checked again. A document that changes under every write
+leaves the row for the next start (``settings_carried_deferred``). A value the
+document refuses stays in its row, logged at error level at every start, for
+an admin to set by hand.
 """
 
 from __future__ import annotations
@@ -55,7 +57,8 @@ async def _carry(store: Any, section: str, field: str, value: Any, from_where: s
 
 async def write_carried_settings(db: Any, store: Any) -> dict[str, str]:
     """Write each carried setting into the deployment's document; each key with what became of it: ``written``,
-    ``already_set`` (the document sets it: the row is dropped) or ``refused`` (kept). Never raises."""
+    ``already_set`` (the document sets it: the row is dropped), ``deferred`` (the document kept changing: kept for
+    the next start) or ``refused`` (kept). Never raises."""
     try:
         rows = await db.fetch("SELECT key, value, from_where FROM settings_carried ORDER BY key")
     except Exception:  # noqa: BLE001 - a start never waits on this
@@ -67,6 +70,10 @@ async def write_carried_settings(db: Any, store: Any) -> dict[str, str]:
         section, _, field = key.partition(".")
         try:
             outcome = await _carry(store, section, field, value, from_where)
+        except _KeptChanging as exc:  # nothing refused the value: the next start writes it
+            logger.warning("settings_carried_deferred", key=key, from_where=from_where, error=str(exc)[:300])
+            done[key] = "deferred"
+            continue
         except Exception as exc:  # noqa: BLE001 - the row stays, and the next start tries again
             logger.error("settings_carried_refused", key=key, from_where=from_where, error=str(exc)[:300])
             done[key] = "refused"

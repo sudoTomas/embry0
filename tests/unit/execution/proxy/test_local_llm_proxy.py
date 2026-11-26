@@ -423,6 +423,7 @@ async def test_a_revoked_sandbox_gets_nothing(aiohttp_client, upstream):
     assert held is not None and "sbx-1" not in client.server.app[held], (
         "a revoked sandbox's server, and its key, stayed in the proxy's memory"
     )
+    assert "sbx-1" not in client.server.app[local_llm_proxy.LIMITS_BY_SANDBOX], "a revoked sandbox's limits stayed"
 
 
 async def test_a_request_over_the_size_limit_is_refused(aiohttp_client, upstream):
