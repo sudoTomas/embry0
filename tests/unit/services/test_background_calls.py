@@ -91,7 +91,8 @@ def _answering(sent: list[dict[str, Any]], usage: dict[str, Any] | None) -> http
 
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "openai", "custom")
+    # The operator's own server: a custom model runs only listed, here free (#173).
+    enable_providers(monkeypatch, "openai", "custom", custom={"models": {"custom/qwen": {"free": True}}})
 
 
 def _proposal(repo: str = "acme/widgets") -> Proposal:
@@ -259,3 +260,93 @@ async def test_each_feature_reads_its_own_key_per_repository_from_one_snapshot()
     assert scout("acme/widgets") == "", "false: no model"
     with pytest.raises(ValueError):
         module.background_model(Store(), "default")
+
+
+async def test_a_priced_custom_model_is_held_to_the_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A paid gateway behind the custom provider bills per token: its calls ask the caps as a hosted model's do."""
+    enable_providers(
+        monkeypatch, "custom", custom={"models": {"custom/gateway": {"prices": [{"in": 1.0, "out": 2.0}]}}}
+    )
+    module = _module()
+    spend, gate = Spend(), Gate(allowed=False)
+    calls = module.BackgroundCalls(resolver=Resolver(), spend=spend, gate=gate)
+    endpoint = await calls.endpoint("slop_judge", "custom/gateway", "acme/widgets")
+    assert endpoint is not None
+    sent: list[dict[str, Any]] = []
+    async with _answering(sent, {"prompt_tokens": 900, "completion_tokens": 40}) as client:
+        with pytest.raises(module.BackgroundCallRefused):
+            await calls.ask(
+                "slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j"
+            )
+    assert (gate.checks, sent) == (1, []), "a priced custom model's call asks the caps, and the caps refuse it"
+
+
+@pytest.mark.parametrize("structured", [True, False], ids=["held to a schema", "not"])
+async def test_a_call_sends_the_model_s_extras_and_its_schema_only_where_the_catalogue_says(
+    monkeypatch: pytest.MonkeyPatch, structured: bool
+) -> None:
+    """Before, every custom model was sent a JSON schema and its thinking turned off; now its catalogue entry says
+    which it takes, and the call's own fields win over its extras."""
+    entry: dict[str, Any] = {
+        "free": True,
+        "request_extras": {"chat_template_kwargs": {"enable_thinking": False}, "temperature": 0.9},
+    }
+    if structured:
+        entry["structured_output"] = "json_schema"
+    enable_providers(monkeypatch, "custom", custom={"models": {"custom/qwen": entry}})
+    module = _module()
+    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
+    assert endpoint is not None
+    sent: list[dict[str, Any]] = []
+    schema = {"type": "object"}
+    async with _answering(sent, {"prompt_tokens": 9, "completion_tokens": 4}) as client:
+        await calls.ask(
+            "slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema=schema, name="j"
+        )
+    (body,) = sent
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}, "the model's own extras are sent"
+    assert body["temperature"] == 0.3, "the call's own fields win over the model's extras"
+    if structured:
+        assert body["response_format"] == {"type": "json_schema", "json_schema": {"name": "j", "schema": schema}}
+    else:
+        assert "response_format" not in body, "a model the catalogue does not hold to a schema is sent none"
+
+
+async def test_a_custom_model_with_no_entry_sends_no_thinking_switch_and_no_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The local server's fields are the model's entry's now, not every custom model's (#173)."""
+    enable_providers(monkeypatch, "openai", "custom", custom={"models": {"custom/qwen": {"free": True}}})
+    module = _module()
+    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
+    assert endpoint is not None
+    sent: list[dict[str, Any]] = []
+    async with _answering(sent, {"prompt_tokens": 9, "completion_tokens": 4}) as client:
+        await calls.ask("slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j")
+    assert "chat_template_kwargs" not in sent[0] and "response_format" not in sent[0], sent[0]
+
+
+async def test_a_background_call_sends_the_model_s_background_extras_over_its_own_extras(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A field a background call alone needs (a local server's thinking switch) is the model's
+    background_request_extras: sent after, so over, its request_extras, and never over the call's own fields."""
+    entry: dict[str, Any] = {
+        "free": True,
+        "request_extras": {"chat_template_kwargs": {"enable_thinking": True}, "top_p": 0.8},
+        "background_request_extras": {"chat_template_kwargs": {"enable_thinking": False}, "temperature": 0.9},
+    }
+    enable_providers(monkeypatch, "custom", custom={"models": {"custom/qwen": entry}})
+    module = _module()
+    calls = module.BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    endpoint = await calls.endpoint("slop_judge", "custom/qwen", "acme/widgets")
+    assert endpoint is not None
+    sent: list[dict[str, Any]] = []
+    async with _answering(sent, {"prompt_tokens": 9, "completion_tokens": 4}) as client:
+        await calls.ask("slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j")
+    (body,) = sent
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}, "the background extras win over the model's own"
+    assert body["top_p"] == 0.8, "the model's own extras still go where the background ones say nothing"
+    assert body["temperature"] == 0.3, "the call's own fields win over both"

@@ -24,7 +24,7 @@ from embry0.services.proposal_briefs import (
 from embry0.services.proposals import Proposal
 from embry0.settings.sections.leads import LeadsSettings
 from tests.fixtures.leads import MemorySettings, brief_reader, leads_policy, leads_section
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers, kept_local_model
 
 T0 = datetime(2026, 10, 25, 12, tzinfo=UTC)
 GOOD = {
@@ -142,7 +142,10 @@ def test_the_feed_shows_a_brief_only_while_it_matches_the_proposal() -> None:
     assert stale["brief"] is None
 
 
-async def test_a_local_model_is_asked_for_json_without_thinking(custom_enabled: None) -> None:
+async def test_a_local_model_is_asked_for_json_without_thinking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model the catalogue holds to a schema, with its server's thinking switch: as every custom model was sent
+    before #173, and as a deployment's are kept at its first start."""
+    enable_providers(monkeypatch, "custom", **kept_local_model("custom/local-27b"))
     sent: list[httpx.Request] = []
     briefs = FakeBriefs()
     assert await _writer(briefs, [_proposal()], [], sent=sent).tick() == ["case:hc-1"]
@@ -251,7 +254,7 @@ def _writer(
 
 @pytest.fixture
 def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "custom")
+    enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
 
 
 async def test_the_writer_fills_missing_briefs_a_few_a_tick_cases_first(custom_enabled: None) -> None:

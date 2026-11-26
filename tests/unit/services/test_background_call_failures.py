@@ -24,7 +24,7 @@ from structlog.testing import capture_logs
 
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 
 BRIEF = {"title": "Stop retrying a saved email", "problem": "It retries.", "fix": "Stop it.", "size": "small"}
 
@@ -81,7 +81,7 @@ def _body(usage: str | None) -> str:
 
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "openai", "custom")
+    enable_providers(monkeypatch, "openai", "custom", **LOCAL_SERVER)
 
 
 async def _ask(calls: Any, model: str, client: httpx.AsyncClient, feature: str = "job_brief") -> str:

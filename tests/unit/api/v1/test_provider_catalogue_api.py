@@ -354,6 +354,110 @@ async def test_an_agent_is_checked_against_the_stored_catalogue(
     assert off.status_code == 422 and off.json()["detail"][0]["loc"] == ["references", "agent_definitions", "developer"]
 
 
+#: DeepSeek on with a model this process does not ship; a template or a review names it once it is saved.
+DEEPSEEK_NEXT = DEEPSEEK_ON + "    models:\n      deepseek-next: {prices: [{in: 3.0, out: 9.0}]}\n"
+#: That, and a local model this process installs, which another process then takes out of the stored catalogue.
+CUSTOM_GONE = DEEPSEEK_NEXT + "  custom:\n    enabled: true\n    models:\n      custom/gone: {free: true}\n"
+CUSTOM_TAKEN_OUT = DEEPSEEK_NEXT + "  custom:\n    enabled: true\n"
+
+
+def _template(name: str, model: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "graph_definition": {
+            "nodes": [
+                {"node_id": "t", "agent_type": "triage"},
+                {"node_id": "d", "agent_type": "developer", "config": {"model": model}},
+            ],
+            "edges": [{"edge_id": "e1", "source": "t", "target": "d", "edge_type": "flow"}],
+        },
+    }
+
+
+async def _taken_out_elsewhere(client: AsyncClient) -> None:
+    """This process installs :data:`CUSTOM_GONE`; another stores :data:`CUSTOM_TAKEN_OUT` (custom/gone out), and
+    this one has not looked since."""
+    import yaml
+
+    put = await _put(client, CUSTOM_GONE)
+    assert put.status_code == 200, put.text
+    await _db(client).execute(
+        "UPDATE provider_catalogue SET yaml_text = $1, data = $2::jsonb, generation = generation + 1",
+        CUSTOM_TAKEN_OUT,
+        yaml.safe_load(CUSTOM_TAKEN_OUT),
+    )
+
+
+async def _template_saver(client: AsyncClient, write: str) -> Any:
+    """A save of a template whose developer step runs ``model``: a new template, or a new graph for one."""
+    templates = "/api/v1/pipelines/templates"
+    existing = None
+    if write == "update":
+        made = await client.post(templates, json=_template("acme-flow", "claude-sonnet-5"))
+        assert made.status_code == 201, made.text
+        existing = made.json()["id"]
+
+    async def save(name: str, model: str) -> Any:
+        body = _template(name, model)
+        if existing:
+            return await client.put(f"{templates}/{existing}", json={"graph_definition": body["graph_definition"]})
+        return await client.post(templates, json=body)
+
+    return save
+
+
+@pytest.mark.parametrize("write", ["create", "update"])
+async def test_a_template_may_name_a_model_the_stored_catalogue_offers(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch, write: str
+) -> None:
+    from tests.fixtures.provider_catalogue import enable_providers
+
+    save = await _template_saver(client, write)
+    await _written_elsewhere(client, DEEPSEEK_NEXT)
+    enable_providers(monkeypatch, "deepseek")  # what this process had: DeepSeek on, no deepseek-next
+    taken = await save("acme-next", "deepseek-next")
+    assert taken.status_code in (200, 201), f"{write}: a model the stored catalogue prices was refused: {taken.text}"
+    off = await _put(client, DEEPSEEK_ON)
+    assert off.status_code == 422 and off.json()["detail"][0]["loc"][:2] == ["references", "pipeline_templates"]
+
+
+@pytest.mark.parametrize("write", ["create", "update"])
+async def test_a_template_may_not_name_a_model_another_process_took_out(client: AsyncClient, write: str) -> None:
+    save = await _template_saver(client, write)
+    await _taken_out_elsewhere(client)
+    refused = await save("acme-gone", "custom/gone")
+    assert refused.status_code == 422, (
+        f"{write}: a template naming a model another process took out of the stored catalogue was saved: "
+        f"{refused.status_code} {refused.text}"
+    )
+
+
+REVIEW = "/api/v1/repos/acme/widgets/-/preferences"
+
+
+async def test_a_review_may_name_a_model_the_stored_catalogue_offers(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.fixtures.provider_catalogue import enable_providers
+
+    await _written_elsewhere(client, DEEPSEEK_NEXT)
+    enable_providers(monkeypatch, "deepseek")  # what this process had: DeepSeek on, no deepseek-next
+    taken = await client.put(REVIEW, json={"pr_review": {"enabled": True, "model": "deepseek-next"}})
+    assert taken.status_code == 200, f"a model the stored catalogue prices was refused: {taken.text}"
+    off = await _put(client, DEEPSEEK_ON)
+    assert off.status_code == 422
+    assert off.json()["detail"][0]["loc"] == ["references", "repo_preferences", "acme/widgets", "pr_review"]
+
+
+async def test_a_review_may_not_name_a_model_another_process_took_out(client: AsyncClient) -> None:
+    await _taken_out_elsewhere(client)
+    refused = await client.put(REVIEW, json={"pr_review": {"enabled": True, "model": "custom/gone"}})
+    assert refused.status_code == 422, (
+        f"a review model another process took out of the stored catalogue was saved: {refused.status_code} "
+        f"{refused.text}"
+    )
+
+
 async def test_a_settings_write_is_checked_against_the_stored_catalogue(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -427,6 +531,49 @@ async def test_the_lifespan_installs_the_stored_catalogue_and_what_another_proce
                 break
             await asyncio.sleep(0.025)
         assert [p.name for p in providers.enabled_openai_compatible()] == ["groq"], "the write was never picked up"
+
+
+async def test_the_lifespan_keeps_the_custom_models_a_deployment_used_before_it_installs_the_catalogue(
+    db_with_migrations: DatabasePool,
+    stub_container_runtime: Any,  # noqa: F811
+    tmp_path: Any,
+) -> None:
+    """A custom model a tier names, from before the custom provider's defaults changed (#173), runs after the start:
+    the start keeps it free before the catalogue that no longer prices it is installed."""
+    import os
+    from unittest.mock import patch
+
+    from embry0.agents.providers import offered_problem
+    from embry0.api.app import create_app, lifespan
+    from embry0.config import Embry0Config
+    from embry0.services.provider_catalogue_store import CatalogueStore
+
+    await CatalogueStore(db_with_migrations).save("providers:\n  custom: {enabled: true}\n", actor="ops@example.com")
+    await db_with_migrations.execute(
+        "INSERT INTO provider_config (id, model_light) VALUES ('default', 'custom/qwen') "
+        "ON CONFLICT (id) DO UPDATE SET model_light = EXCLUDED.model_light"
+    )
+    catalogue.install(None)
+    with patch.dict(os.environ, {}, clear=True):
+        config = Embry0Config(  # type: ignore[call-arg]
+            _env_file=None,
+            database_url=db_with_migrations._url,  # noqa: SLF001
+            auth_dev_mode=True,
+            webhook_dev_mode=True,
+            api_key="",
+            watcher_enabled=False,
+            volume_reaper_enabled=False,
+            linear_reconcile_mode="off",
+            telegram_bot_token="",
+            xai_proxy_enabled=False,
+            auth_proxy_enabled=False,
+            context_proxy_enabled=False,
+            slop_meter_data_path=str(tmp_path / "slop-meter"),
+        )
+    app = create_app(config)
+    async with lifespan(app):
+        assert offered_problem("custom/qwen") is None, "the start must keep the tier's custom model, free"
+        assert offered_problem("custom/never-used") == "the catalogue has no price for it"
 
 
 @pytest.mark.parametrize("as_text", [True, False], ids=["text", "Path"])

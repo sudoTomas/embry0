@@ -93,6 +93,7 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "provider_catalogue.change_undone": DEPLOYMENT,
     "provider_catalogue.bootstrapped": DEPLOYMENT,
     "provider_catalogue.refused": DEPLOYMENT,
+    "provider_catalogue.custom_imported": DEPLOYMENT,
     "slop_meter.pruned": _REPO,
     "slop_meter.prune.refused": _REPO,
     "background_enrollment.blocked": _REPO,

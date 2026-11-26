@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
@@ -298,11 +299,33 @@ def is_custom_model(model: str, catalogue: Catalogue | None = None) -> bool:
     """Whether ``model`` is a ``custom/<id>`` the enabled custom provider serves.
 
     The operator's own server lists no catalogue: any id it serves routes by
-    the prefix and is priced at $0. Local models (docs/providers.md) let such
-    an id be the watcher's local-first model and a fallback model.
+    the prefix, and runs only once the deployment's catalogue prices it or
+    marks it ``free`` (a model with neither is refused, :func:`offered_problem`).
+    Local models (docs/providers.md) let such an id be the watcher's
+    local-first model and a fallback model.
     """
     provider = provider_for_model(model, catalogue) if model else None
     return provider is not None and provider.name == CUSTOM.name and len(model) > len(provider.model_prefixes[0])
+
+
+def structured_output(model: str, catalogue: Catalogue | None = None) -> bool:
+    """Whether a call may hold ``model`` to a JSON schema while it decodes (its catalogue entry's
+    ``structured_output: json_schema``)."""
+    provider = provider_for_model(model, catalogue) if model else None
+    return provider is not None and model in provider.structured_output_models
+
+
+def request_extras(model: str, catalogue: Catalogue | None = None) -> dict[str, Any]:
+    """The chat-completions body fields ``model``'s catalogue entry gives it (``request_extras``); {} for none."""
+    provider = provider_for_model(model, catalogue) if model else None
+    return dict(provider.request_extras.get(model, {})) if provider is not None else {}
+
+
+def background_request_extras(model: str, catalogue: Catalogue | None = None) -> dict[str, Any]:
+    """The body fields ``model``'s catalogue entry gives a background call only (``background_request_extras``),
+    sent after its ``request_extras``; {} for none. An agent's run never sends them."""
+    provider = provider_for_model(model, catalogue) if model else None
+    return dict(provider.background_request_extras.get(model, {})) if provider is not None else {}
 
 
 def offered_problem(model: str, catalogue: Catalogue | None = None) -> str | None:

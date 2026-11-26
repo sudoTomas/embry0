@@ -12,6 +12,7 @@ from embry0.api.repo_allowlist import deployment_writes
 from embry0.api.schemas import TemplateCreateRequest, TemplateDuplicateRequest, TemplateUpdateRequest
 from embry0.api.served import ServedRoute
 from embry0.api.v1._skill_writes import check_added_skills
+from embry0.api.v1.provider_catalogue import catalogue_held
 from embry0.services.model_enablement import UnpricedModelError, ensure_models_priced
 from embry0.services.slop_routing import TemplateInUse, slop_route_guard
 from embry0.services.world import forget_rows
@@ -207,6 +208,15 @@ async def create_template(
     request: Request,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
 ) -> dict[str, Any]:
+    # Its steps' models are checked and stored against the stored provider catalogue, which no change can take them
+    # out of meanwhile.
+    async with catalogue_held(request):
+        return await _create_template(req, request, repo)
+
+
+async def _create_template(
+    req: TemplateCreateRequest, request: Request, repo: PipelineTemplatesRepository
+) -> dict[str, Any]:
     # RAV-601: templates are runtime control-flow now — only executable
     # graphs (single linear chain of known agent types) may save.
     rows = await _agent_rows(request)
@@ -246,6 +256,17 @@ async def update_template(
     req: TemplateUpdateRequest,
     request: Request,
     repo: PipelineTemplatesRepository = Depends(get_templates_repo),
+) -> dict[str, Any]:
+    if req.graph_definition is None:
+        return await _update_template(template_id, req, request, repo)
+    # A new graph's models are checked and stored against the stored provider catalogue, which no change can take
+    # them out of meanwhile.
+    async with catalogue_held(request):
+        return await _update_template(template_id, req, request, repo)
+
+
+async def _update_template(
+    template_id: str, req: TemplateUpdateRequest, request: Request, repo: PipelineTemplatesRepository
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     # Only these fields' null is a write: default_for_kind's clears the default

@@ -32,7 +32,7 @@ from embry0.settings.sections import CATALOG
 from embry0.settings.store import Snapshot, build_snapshot
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.scout import ScoutRunsRepository
-from tests.fixtures.provider_catalogue import store_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, store_providers
 from tests.fixtures.settings_reads import snapshots_taken
 from tests.unit.metrics.test_lifespan_wiring import stub_container_runtime  # noqa: F401 - a fixture
 
@@ -68,7 +68,7 @@ async def app(
     """The real app through its real lifespan, with ``acme``, ``globex`` and ``quiet`` registered, and the
     operator's own server offered (the provider catalogue, as stored before the start), so a write may name
     ``custom/<model>``."""
-    await store_providers(db_with_migrations, "custom")
+    await store_providers(db_with_migrations, "custom", **LOCAL_SERVER)
     with patch.dict(os.environ, {}, clear=True):
         config = Embry0Config(  # type: ignore[call-arg]
             _env_file=None,

@@ -109,6 +109,19 @@ describes what embry0 does rather than listing changes.
   not name this machine or a link-local address, in any spelling or by a name
   that resolves there; one stored that way is refused when a job or a call uses
   it.
+- **A custom model runs priced or free.** The `custom` provider (any
+  OpenAI-compatible server) no longer prices every model at $0 or doubles its
+  turn and time budgets, and its background calls send a JSON schema and the
+  server's thinking switch only to a model whose catalogue entry says so
+  (`structured_output: json_schema`, `background_request_extras`, which an
+  agent's run never sends). A `custom/` model runs only once the provider
+  catalogue lists it with its prices or `free: true`.
+  The first start keeps what a deployment relied on, once: each custom model
+  its stored configuration names or a run was traced on is written into its
+  overlay at the old defaults, with the old factors
+  ([docs/providers.md](docs/providers.md#the-custom-providers-models)). A
+  custom model named nowhere then (a job request's, a new tier's) needs its
+  entry first.
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

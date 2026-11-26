@@ -71,6 +71,10 @@ def _invocation(provider: str = "custom", model: str = "custom/llama3.3:70b", **
         "channel_config": None,
         "provider": provider,
     }
+    if provider == "custom":
+        # The rates the orchestrator sends a run on a custom model the catalogue lists free: the provider prices
+        # none of its own (#173).
+        base["pricing_usd_per_mtok"] = (0.0, 0.0)
     base.update(kw)
     return AgentInvocation(**base)
 

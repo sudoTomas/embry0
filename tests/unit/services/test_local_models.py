@@ -11,7 +11,7 @@ from embry0.agents.fallback import Pause, runnable_fallback_models
 from embry0.services._executor_run import _resolve_local_first
 from embry0.services.credentials.fallback import plan_model_fallbacks
 from embry0.services.local_slots import LocalSlots
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 from tests.unit.services.test_provider_fallback_precheck import FakeResolver, _policy
 from tests.unit.services.test_watcher import _config, _service
 
@@ -20,7 +20,7 @@ _LOCAL = "custom/qwen"
 
 @pytest.fixture(autouse=True)
 def _custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "custom", "openrouter")
+    enable_providers(monkeypatch, "custom", "openrouter", **LOCAL_SERVER)
 
 
 class _Leases:

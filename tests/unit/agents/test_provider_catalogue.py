@@ -108,14 +108,12 @@ _TABLE_IT_REPLACED = (
         model_prefixes=("custom/",),
         models=(),
         pricing_usd_per_mtok={},
-        turn_budget_factor=2.0,
-        timeout_factor=2.0,
+        # Since #173 (plan item 5): no $0 for any model, no doubled budgets (tests/unit/agents/test_custom_defaults.py).
         runtime="chat_completions",
         sandbox_key_env="EMBRY0_LLM_CUSTOM_API_KEY",
         base_url_env="CUSTOM_LLM_BASE_URL",
         sandbox_base_url_env="EMBRY0_LLM_CUSTOM_BASE_URL",
         strip_routing_prefix=True,
-        default_pricing_usd_per_mtok=(0.0, 0.0),
     ),
 )
 
@@ -266,10 +264,11 @@ def test_free_and_prices_replace_each_other() -> None:
 
 
 def test_null_takes_out_a_default_price() -> None:
-    doc = _merged({"providers": {"custom": {"default_price": None}}})
+    priced = _merged({"providers": {"custom": {"default_price": {"in": 0.0, "out": 0.0}}}})
+    assert Catalogue.build(priced).default_rates("custom/qwen3") == (0.0, 0.0)
+    doc = merge(priced, {"providers": {"custom": {"default_price": None}}})
     assert doc.providers["custom"].default_price is None
     assert Catalogue.build(doc).default_rates("custom/qwen3") is None
-    assert catalogue.seed().default_rates("custom/qwen3") == (0.0, 0.0)
 
 
 def test_no_overlay_is_the_seed() -> None:
@@ -786,7 +785,13 @@ def test_a_withheld_model_is_unpriced_even_on_openrouter_s_live_list() -> None:
 def test_a_withheld_model_has_no_rates_of_its_own_nor_its_provider_s_default() -> None:
     """custom/qwen's price is refused while the custom provider keeps its default: neither prices it."""
     overlay = {
-        "providers": {"custom": {"enabled": True, "models": {"custom/qwen": {"prices": [{"in": -1.0, "out": 1.0}]}}}}
+        "providers": {
+            "custom": {
+                "enabled": True,
+                "default_price": {"in": 0.0, "out": 0.0},
+                "models": {"custom/qwen": {"prices": [{"in": -1.0, "out": 1.0}]}},
+            }
+        }
     }
     read = catalogue.merge_stored(catalogue.seed().document, overlay)
     built = catalogue.Catalogue.build(read.document, withheld=read.withheld)

@@ -43,3 +43,18 @@ async def store_providers(db: Any, *names: str, **overlay: Any) -> catalogue.Cat
     )
     catalogue.install(built)
     return built
+
+
+#: The custom provider with every model it serves priced at $0, as a deployment whose server is its own hardware may
+#: set it (``default_price``). The shipped one lists no model and prices none, so a custom model runs only once the
+#: catalogue lists it priced or free (#173): give this to ``enable_providers`` or ``store_providers``.
+LOCAL_SERVER: dict[str, Any] = {"custom": {"default_price": {"in": 0.0, "out": 0.0}}}
+
+
+def kept_local_model(model: str) -> dict[str, Any]:
+    """:data:`LOCAL_SERVER` with ``model`` listed as a release's first start keeps a custom model the deployment used
+    (``provider_catalogue_store.RELIED_ON_MODEL``): free, held to a background call's JSON schema, and that call's
+    server thinking off."""
+    from embry0.services.provider_catalogue_store import RELIED_ON_MODEL
+
+    return {"custom": {**LOCAL_SERVER["custom"], "models": {model: dict(RELIED_ON_MODEL)}}}

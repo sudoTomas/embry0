@@ -86,10 +86,12 @@ def test_every_listed_model_of_every_provider_is_priced() -> None:
     assert unpriced == [], f"listed models without a price: {unpriced}"
 
 
-def test_an_unlisted_model_of_a_metered_provider_is_refused(enable) -> None:
+def test_an_unlisted_model_of_a_metered_provider_is_refused(enable, monkeypatch) -> None:
     enable("openai", "custom")
     assert catalog.unpriced_models(["gpt-7-unlisted"]) == ["gpt-7-unlisted"]
-    assert catalog.unpriced_models(["custom/qwen3:32b"]) == [], "a self-hosted model is priced at $0, not refused"
+    assert catalog.unpriced_models(["custom/qwen3:32b"]) == ["custom/qwen3:32b"], "a custom model is listed or refused"
+    enable_providers(monkeypatch, "custom", custom={"models": {"custom/qwen3:32b": {"free": True}}})
+    assert catalog.unpriced_models(["custom/qwen3:32b"]) == [], "one listed free, as a self-hosted one is, runs"
     assert catalog.price_usage("custom/qwen3:32b", input_tokens=10**6, output_tokens=10**6) == 0.0
 
 

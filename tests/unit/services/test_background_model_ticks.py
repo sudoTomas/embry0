@@ -23,7 +23,7 @@ from embry0.services.proposal_briefs import ProposalBriefWriter
 from embry0.services.scout import ScoutLoop
 from embry0.services.slop_meter.loop import SlopMeterLoop
 from tests.fixtures.leads import brief_reader
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 
 BRIEF = {
     "title": "Stop retrying a saved email",
@@ -90,7 +90,7 @@ def _client(sent: list[str], content: dict[str, Any]) -> httpx.AsyncClient:
 
 @pytest.fixture(autouse=True)
 def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "custom")
+    enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
 
 
 async def test_the_proposal_briefs_read_their_model_at_every_tick() -> None:

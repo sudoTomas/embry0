@@ -79,7 +79,7 @@ longer read.
 | `google` | `gemini-…` | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY` | `gemini-3.8-flash` 0.75 / 3.75, `gemini-4-argon` 2.00 / 10.00 | yes: Gemini's OpenAI-compatible endpoint takes `tools` |
 | `groq` | `groq/<model>` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `groq/openai/gpt-oss-120b` 0.15 / 0.60, `groq/openai/gpt-oss-20b` 0.075 / 0.30 | yes: Groq states every hosted model supports tool use |
 | `deepseek` | `deepseek-…` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-flash` 0.30 / 1.20, `deepseek-v4-pro` 1.32 / 3.96 | yes |
-| `custom` | `custom/<model>` | the operator's: the credential's `metadata.base_url`, or `CUSTOM_LLM_BASE_URL` | `CUSTOM_LLM_API_KEY` | any model the server serves, recorded at $0 | what the server and model support (below) |
+| `custom` | `custom/<model>` | the operator's: the credential's `metadata.base_url`, or `CUSTOM_LLM_BASE_URL` | `CUSTOM_LLM_API_KEY` | any model the server serves that the catalogue lists, at its prices or `free: true` ([below](#the-custom-providers-models)) | what the server and model support (below) |
 
 The `openrouter/`, `groq/` and `custom/` prefixes only route: embry0 strips
 them, so the provider is asked for `openai/gpt-oss-120b`, or for the
@@ -96,10 +96,11 @@ upstream price through and charges a fee on credit purchases, which is not
 modelled. A model of these providers runs only when it is listed with a price,
 as for grok (#219); to bring another into service, add it under its provider's
 `models` in the catalogue overlay, with its `prices`. OpenRouter's models and prices come from its
-live list instead (below). A custom server bills nothing per token, so
-any `custom/` model is priced at $0 instead of refused, and a job's
-`budget_usd` does not bound it. A `custom/` id is not listed, so it cannot be
-the default model; an agent definition or a job's `agent_models` can name it.
+live list instead (below). A `custom/` model too runs only once the
+catalogue lists it, with its `prices`, or `free: true` for one on the
+operator's own hardware ([The custom provider's models](#the-custom-providers-models)):
+a custom server may be a paid gateway, which a job's `budget_usd` and the
+background caps then bound.
 
 ### Gemini's thinking tokens
 
@@ -402,10 +403,12 @@ by a 422 naming every problem and never a value: the YAML's own (a syntax
 error, an alias, a key written twice), past 256 KiB (413), an overlay field
 it may not set, a catalogue it makes that cannot be (a chat-completions model
 without a price, prefixes of two providers that are on overlapping), a
-`request_extras` value past 4,096 bytes as JSON or nested deeper than 32, and
-any model a tier, the fallback order, an agent definition or a
-`background_models` value names that the change would take out, leave without
-a price or turn off (`loc` `references.<where>`). Change what names it first.
+`request_extras` or `background_request_extras` value past 4,096 bytes as
+JSON or nested deeper than 32, and any model a tier, the fallback order, an
+agent definition, a pipeline template's step (its `config.model`, or a legacy
+top-level `model`), a repository's review model (`pr_review.model`) or a
+`background_models` value names that the change would take out, leave
+without a price or turn off (`loc` `references.<where>`). Change what names it first.
 A write of any of those, in turn, is checked against the stored catalogue
 with its row held, so a change of the catalogue and a write naming a model
 never pass each other.
@@ -452,6 +455,68 @@ runs on. Either way each part left out is named in `refused` by
 ([metrics.md](ops/metrics.md#provider-catalogue)). Write the catalogue again
 without those parts: the write names each one, and puts the whole overlay in
 force.
+
+### The custom provider's models
+
+The `custom` provider is any OpenAI-compatible server the operator points
+embry0 at: its own hardware (vLLM, Ollama, LM Studio), or a gateway that bills
+per token. It ships no models and no default price, and its turn and time
+factors are 1.0 (#173). A `custom/<model>` runs only once the overlay lists
+it, with its `prices`, or `free: true` for one that bills nothing; one with
+neither is refused wherever a model is configured or a run resolves, like any
+unpriced model. Per model it may also say what its server needs:
+
+- `structured_output: json_schema`: the server can hold the model to a JSON
+  schema while it decodes, so a background call (the briefs, the judge) sends
+  its answer's schema as `response_format`. A model without it is sent none.
+- `request_extras`: chat-completions fields from the allowlist above, sent
+  with every call of the model, an agent's and a background call's; a call's
+  own fields win.
+- `background_request_extras`: fields from the same allowlist that only a
+  background call sends, after (so over) the model's `request_extras`; an
+  agent's run never sends them. A local server's thinking switch goes here
+  when the briefs and the judge should run without thinking while agents keep
+  the server's default.
+
+```yaml
+providers:
+  custom:
+    enabled: true
+    factors: {turns: 2.0, timeout: 2.0}   # a slower server
+    models:
+      custom/qwen3-32b:
+        free: true
+        structured_output: json_schema
+        background_request_extras:
+          chat_template_kwargs: {enable_thinking: false}
+      custom/gateway-model: {prices: [{in: 0.4, out: 1.2}]}
+```
+
+**What a deployment relied on, kept once.** Before #173 every `custom/` model
+was priced at $0, its turn and time budgets doubled, and every background
+call to it sent its schema with the server's thinking turned off. At the first
+start of the release that changed that, each custom model the deployment's
+stored configuration names (a tier or the default model, the fallback order,
+an agent definition, a pipeline template's step, a repository's review model,
+a `background_models` value at any layer, a job's `agent_models` override) or
+a run was traced on is written into the overlay as `free: true`,
+`structured_output: json_schema` and
+`background_request_extras: {chat_template_kwargs: {enable_thinking: false}}`:
+background calls keep their schema and run without thinking, and agents keep
+the server's default, as before. Each factor the overlay does not set gets its
+old value (2.0). A model the overlay already lists keeps everything it sets,
+its price included, and gains only `structured_output` and
+`background_request_extras` where it sets neither.
+With a `default_price` of the overlay's own the models are written at that
+price instead of `free`: a model's entry needs prices of its own or `free`, so
+they are pinned at it, and a later change of the default does not move them.
+It is one revision (source `upgrade`) and one
+`provider_catalogue.custom_imported` audit row, and the `imported` ledger
+(`custom.relied_on`) keeps it from running again, whether or not there was
+anything to keep. An overlay the catalogue would refuse with these entries is
+left as it is and not marked: the start logs
+`provider_catalogue_custom_import_refused` at error level, and the first
+start after the overlay is fixed keeps them.
 
 ### Adding a key
 
@@ -554,9 +619,10 @@ nothing is opened: no model server's host is ever an egress exception
   Run one developer and review loop per model before relying on it, as for grok.
 - **Image rebuild.** The executor runs in the sandbox, so it takes effect after
   the sandbox images are rebuilt ([`docs/ops/deploy.md`](ops/deploy.md)).
-- **Turn and time budgets.** These providers declare no turn or time factor
-  except `custom`, which doubles both (a model on the operator's own server is
-  usually slower per call; see [Turn and time budgets](#turn-and-time-budgets)).
+- **Turn and time budgets.** These providers declare no turn or time factor,
+  `custom` included since #173: a slower server's are raised in the overlay,
+  and a deployment that used custom models before keeps the old 2.0 (see
+  [Turn and time budgets](#turn-and-time-budgets)).
   How many turns the hosted providers' models need for embry0's agents is not
   measured.
 - **Retries, no fallback.** 408, 409, 429 and 5xx answers are retried twice;
@@ -712,8 +778,8 @@ log says `agent_model_provider_fallback`.
 `PUT /config/provider` answers 422 to a list with an unknown, unpriced,
 chat-only, disabled or repeated id, and to disabling a model the list names.
 A `custom/<model>` of the operator's own server is accepted while the custom
-provider is enabled: no catalogue lists its models, and it is priced at $0
-([Local models](#local-models)). Put it last, so the local server only takes
+provider is enabled and the catalogue lists it, priced or `free`
+([The custom provider's models](#the-custom-providers-models)). Put it last, so the local server only takes
 the work no other provider can.
 
 ## Spent account waits
@@ -799,8 +865,9 @@ records the same action.
 ## Local models
 
 A model server on the operator's own hardware (vLLM, Ollama, LM Studio) runs
-agents through the `custom` provider: any `custom/<model>` it serves, priced
-at $0, with tool calling as the server and the model provide it
+agents through the `custom` provider: any `custom/<model>` it serves that the
+catalogue lists, `free` for one on the operator's own hardware
+([The custom provider's models](#the-custom-providers-models)), with tool calling as the server and the model provide it
 ([what tool calling requires](#what-tool-calling-requires)). Such a server is
 usually shared hardware on the operator's network, so three things keep it
 safe to point embry0 at.
@@ -1005,7 +1072,14 @@ each call goes the way a job's run would:
   it is not sent, the feature logs `background_model_refused` (a warning,
   then once an hour while it lasts) and its loop goes on, trying again on
   its next tick.
-  A `custom/` model bills nothing and is never refused for spend;
+  A `custom/` model the catalogue marks `free` bills nothing and is never
+  refused for spend; one it prices (a paid gateway behind the server) is held
+  to the caps as a hosted one is;
+- the call's body carries the model's `background_request_extras` (a local
+  server's thinking switch, say), then its `request_extras`, the call's own
+  fields winning over both, and its answer's
+  JSON schema as `response_format` only for a model whose entry says
+  `structured_output: json_schema`;
 - a call to a `custom/` model holds a slot of its server while it is made,
   and is not made while every slot is taken: the feature logs
   `background_model_busy` and goes on as when the caps refuse a call
@@ -1140,12 +1214,15 @@ turn cap. A grok developer therefore gets 80 turns and 3600 s, a review 50
 turns and 600 s, triage 30 turns and 360 s. The job's `budget_usd` still
 bounds spend.
 
-`custom` doubles both too: a model on the operator's own server is usually
-slower per call than a hosted one, and on Claude-sized budgets log analyses
-on such a model timed out. A context audit on a `custom/` model therefore
-gets 80 turns and 40 minutes. A `custom/` model is priced at $0, so
-`budget_usd` does not bound it; the turn and time caps and `local_max_runs`
-do.
+`custom` declares 1.0 for both. A model on the operator's own server is
+often slower per call than a hosted one (on Claude-sized budgets log analyses
+on a 27B model on one card timed out), so raise them in the overlay
+(`providers.custom.factors`). A deployment that used custom models before
+#173 keeps the old 2.0 for both, written once into its overlay at the first
+start of that release: a context audit on a `custom/` model there still gets
+80 turns and 40 minutes. A `free` custom model is not bounded by
+`budget_usd`; the turn and time caps and `local_max_runs` are; a priced one
+is bounded like any other.
 
 A run that reaches its cap is reported as `ERR_AGENT_MAX_TURNS` by both
 executors. That is what lets triage and review resume once to decide from

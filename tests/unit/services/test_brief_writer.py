@@ -29,7 +29,7 @@ import pytest
 from embry0.services import job_briefs, proposal_briefs
 from embry0.services.proposals import Proposal
 from tests.fixtures.model_servers import fake_dns
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import enable_providers, kept_local_model
 
 GOLDEN = json.loads((Path(__file__).resolve().parents[2] / "fixtures" / "brief_requests.json").read_text())
 #: The headers a brief request sets; the client library adds the rest.
@@ -51,7 +51,9 @@ GOOD_JOB = {
 
 @pytest.fixture(autouse=True)
 def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "custom")
+    # The recorded model, kept as a deployment's custom models are at the release's first start (#173): the
+    # requests it was sent before carry its schema and its server's thinking switch.
+    enable_providers(monkeypatch, "custom", **kept_local_model(GOLDEN["model"]))
 
 
 class Store:

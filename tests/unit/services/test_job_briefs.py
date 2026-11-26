@@ -20,7 +20,7 @@ from embry0.services.job_briefs import (
     parse_job_brief,
     user_prompt,
 )
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers, kept_local_model
 
 GOOD = {
     "title": "Find why the worker crash-looped and stop it",
@@ -105,7 +105,9 @@ def test_the_prompt_says_what_the_job_delivers_and_carries_no_job_id() -> None:
     assert "an analysis of the production logs, and a ticket when it finds a problem worth one" in watcher
 
 
-async def test_a_local_model_is_held_to_the_job_brief_schema_without_thinking(custom_enabled: None) -> None:
+async def test_a_local_model_is_held_to_the_job_brief_schema_without_thinking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model the catalogue holds to a schema, with its server's thinking switch (#173)."""
+    enable_providers(monkeypatch, "custom", **kept_local_model("custom/local-27b"))
     sent: list[httpx.Request] = []
     store = FakeStore([_job()])
     assert await _writer(store, [], sent=sent).tick() == ["job-1"]
@@ -192,7 +194,7 @@ def _writer(
 
 @pytest.fixture
 def custom_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_providers(monkeypatch, "custom")
+    enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
 
 
 async def test_the_writer_takes_jobs_in_the_store_s_order_a_few_a_tick(custom_enabled: None) -> None:
