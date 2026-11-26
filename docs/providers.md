@@ -787,14 +787,21 @@ the work no other provider can.
 A spent or rate-limited account never fails a job. The job moves to a ready
 model of the fallback order, or it waits for the account's reset
 ([the design](superpowers/specs/2026-10-25-spent-account-waits-design.md)).
+Whether it waits, and how long, is the settings document's `account_wait`
+section ([below](#whether-a-job-waits)).
 
 **What counts.** A pause with a known end:
 
 - a registry account quarantined until a time;
 - a run of the job that ended with `ERR_PROVIDER_QUOTA_EXHAUSTED` or
-  `ERR_PROVIDER_RATE_LIMITED`: until the reset the provider named, capped at
-  eight days, else the quarantine window for the code;
-- the local model with every slot taken (`local_busy`): five minutes.
+  `ERR_PROVIDER_RATE_LIMITED`: until the reset the provider named, else the
+  quarantine window for the code;
+- the local model with every slot taken (`local_busy`): five minutes
+  (`account_wait.local_busy_retry_seconds`).
+
+A wait's end is cut at eight days (`account_wait.max_wait_seconds`) from
+when the job is parked: the job then asks again, and waits again while the
+account is still spent.
 
 No key at all, a disabled key, a refused token and a provider this
 deployment does not enable still fail the job, because waiting would not end
@@ -860,7 +867,74 @@ code as its own `error_code`, not `ERR_QA_INCONCLUSIVE`.
 question about the analysis job it would start. If the job would wait, the
 tick records `skipped_account_paused`, starts no job and leaves the window
 for the next tick. An analysis parked mid-run is cancelled, and the tick
-records the same action.
+records the same action. It asks with the default `account_wait` values,
+not the repository's: a job that would fail at once is not started either.
+
+### Whether a job waits
+
+The settings document's `account_wait` section
+([the reference](configuration.md#account_wait)):
+
+```yaml
+account_wait:
+  enabled: true                   # false: with nowhere to move, the job fails at once
+  max_wait_seconds: 691200        # the furthest one wait's end may be: eight days
+  max_total_wait_seconds: 2592000 # all of a job's waits together: thirty days
+  local_busy_retry_seconds: 300
+```
+
+A document that sets none of it keeps what every job did before the
+section, and bounds all of a job's waits together at thirty days.
+`enabled: false` is for a team that would rather see the failure than wait
+for it. A spent account still moves the job to a ready model of the fallback
+order. With none, the job fails at once with the account's own code, as jobs
+did before waits:
+
+- `ERR_PROVIDER_QUOTA_EXHAUSTED` for a spent usage window or an xAI
+  spending limit;
+- `ERR_PROVIDER_RATE_LIMITED` for a rate limit;
+- `ERR_LOCAL_MODEL_BUSY` for the local model's slots.
+
+Found by the account pre-check, it fails before any sandbox exists; found
+by an agent run, the run is not started (or its failure stands) and the job
+fails as a run the account refused does. Nothing is parked and no
+`account_wait` is written, in every pipeline. The run that finds an account
+spent still quarantines it at once, so the next job's pre-check sees it.
+
+A forced run on the local model still waits for a free slot inside the run
+first, for `LOCAL_LLM_SLOT_WAIT_SECONDS` (900 by default), whatever the
+section says. Only when no slot came free does it park for
+`local_busy_retry_seconds`, or, when the job may not wait, fail with
+`ERR_LOCAL_MODEL_BUSY`.
+
+**The total.** `max_total_wait_seconds` bounds all of a job's waits
+together, over every wait, resume and relaunch. The job's row keeps the sum
+(`account_waited_seconds`, migration 160): each park records when it began,
+by the database's clock in the park's own write, and the account-wait loop
+adds the time since then when it takes the job back (Try now does the same).
+A new wait is cut to what is left of the total, and once it is spent the job
+fails with the account's own code, as with `enabled: false`; its error says
+the total was reached. What is not a wait for an account does not count: the
+five minutes a woken job waits when the proxies would not take its sandbox
+back, and a wait parked before the release that added the sum.
+
+The total belongs to the job. A relaunch of the same job (one parked before
+it started, a qa, onboard or pr-review job, a start after a restart) keeps
+it; **Run again** in the world starts a new job, with a total of its own.
+
+An organization's layer and a repository's may set every key. A job reads
+the section for its repository when it starts and keeps those values through
+every pause, answer and restart, so a change reaches the next job that
+starts: a job already waiting goes on waiting. A job that starts again from
+its beginning (a `relaunch`: one parked before it started, or a qa, onboard
+or pr-review job) reads the section again, and keeps the time it has waited.
+
+Both reads fail open. When a resumed job's checkpoint cannot be read, it
+runs on the section's defaults (`enabled: true`) and logs
+`account_wait_settings_unread`; when its row cannot be read, it counts
+nothing waited and logs `account_waited_unread`. Neither fails a job, but a
+row holding a value too deep to read fails it, as every read of a job's run
+does (`ERR_STORAGE`).
 
 ## Local models
 
@@ -966,8 +1040,9 @@ ends. A lease expires by itself five minutes after the run's own time limit,
 so one left by a process that died frees its slot. A run that has to use the
 local model (it is the fallback, or the job named it) waits for a slot up to
 `LOCAL_LLM_SLOT_WAIT_SECONDS` (900), saying so in a `progress` event. Then
-the job is parked for five minutes and tries again
-([Spent account waits](#spent-account-waits)).
+the job is parked for `account_wait.local_busy_retry_seconds` (five minutes)
+and tries again, or, when it may not wait, fails with `ERR_LOCAL_MODEL_BUSY`
+([Whether a job waits](#whether-a-job-waits)).
 
 A background call to a local model (a proposal or job brief, a
 Slop-O-Meter judgment) holds a slot of its server for the length of the

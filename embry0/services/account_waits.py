@@ -13,6 +13,15 @@ failure. Where nothing ready can take the run, the job is parked:
   ``ShutdownInterrupt``, so no node's failure path turns it into a failure).
 - The executor writes the park and raises :class:`JobParked` out of the
   runners, which their ``except Exception`` failure paths do not see either.
+
+Whether a job waits, and how long, is its ``account_wait`` settings
+(:mod:`embry0.settings.sections.account_wait`), read for its repository when
+it started, and the time it has waited so far (``jobs.account_waited_seconds``,
+summed when each wait ends): :class:`WaitPolicy`. A job that may not wait
+(``enabled`` false, or ``max_total_wait_seconds`` spent) still moves to a
+ready model; with none, it fails at once with the account's own code
+(:func:`account_error_code`): the pre-check raises :class:`AccountSpent`, and
+an agent run ends as a run the account refused.
 """
 
 from __future__ import annotations
@@ -27,20 +36,19 @@ from typing import Any, Literal, Protocol
 import structlog
 
 from embry0.agents.fallback import Pause
+from embry0.safety.error_codes import ErrorCode
+from embry0.settings.sections.account_wait import ACCOUNT_WAIT, AccountWaitSettings
 
 logger = structlog.get_logger(__name__)
 
 #: A forced run on the local model that found every slot taken.
 LOCAL_BUSY = "local_busy"
-#: How long a job parked on the local model's slots waits before it tries again.
-LOCAL_BUSY_RETRY = timedelta(minutes=5)
 #: How long a woken job whose sandbox the proxies would not take back waits before it tries again.
 REENROLL_RETRY = timedelta(minutes=5)
-#: The longest a wait may last: the cap the quarantine of a spent usage window has
-#: (``QUOTA_RESET_QUARANTINE_MAX``). A reset further out is more likely misread than real.
-WAIT_MAX = timedelta(days=8)
 #: How often the loop looks at the parked jobs.
 POLL_SECONDS = 60.0
+#: Where a run's graph config carries its job's :class:`WaitPolicy` (:func:`job_wait_policy`).
+CONFIG_KEY = "account_wait"
 
 # The quarantine window CredentialHealth gives each account code, for a pause that names no end.
 _WINDOW_ATTRS: dict[str, str] = {
@@ -78,6 +86,11 @@ class AccountWait:
     # The answer a person gave the resume that was parked (a Command's value),
     # handed to the resume that goes on; None for none.
     resume_with: Any = None
+    # When the job was parked, by the database's clock (JobsRepository.update's
+    # count_account_wait): the account-wait loop adds the time from then to
+    # jobs.account_waited_seconds when it goes on. None for a wait not parked
+    # yet, and for one that does not count (a park for the proxies).
+    since: datetime | None = None
 
     def record(self) -> dict[str, Any]:
         """The JSON ``jobs.account_wait`` holds; ``until`` in UTC ISO."""
@@ -93,6 +106,8 @@ class AccountWait:
         }
         if self.resume_with is not None:
             record["resume_with"] = self.resume_with
+        if self.since is not None:
+            record["since"] = _aware(self.since).astimezone(UTC).isoformat()
         return record
 
     @classmethod
@@ -103,6 +118,10 @@ class AccountWait:
             until = _aware(datetime.fromisoformat(str(raw["until"])))
         except ValueError:
             return None
+        try:
+            since = _aware(datetime.fromisoformat(str(raw["since"]))) if raw.get("since") else None
+        except ValueError:
+            since = None
         mode: Mode = "relaunch" if raw.get("mode") == "relaunch" else "resume"
         return cls(
             provider=str(raw["provider"]),
@@ -114,6 +133,7 @@ class AccountWait:
             watch=bool(raw.get("watch")),
             mode=mode,
             resume_with=raw.get("resume_with"),
+            since=since,
         )
 
     def with_mode(self, mode: Mode) -> AccountWait:
@@ -144,6 +164,83 @@ class AccountWait:
             "ready. The job goes on when the account is ready again."
         )
 
+    def not_taken(self, why: str) -> str:
+        """The wait in words, for the failure of a job that may not take it (``why``, :meth:`WaitPolicy.why_not`)."""
+        on = f" for {self.model}" if self.model else ""
+        if self.reason == LOCAL_BUSY:
+            state = "busy: every slot of the local model is taken"
+        else:
+            state = f"{self.reason.replace('_', ' ')} until {_aware(self.until).astimezone(UTC).isoformat()}"
+        return f"the {self.provider} account{on} is {state}, no other model of the fallback order is ready, and {why}"
+
+
+def _hours(seconds: int) -> str:
+    return f"{round(seconds / 3600, 1):g} h"
+
+
+@dataclass(frozen=True)
+class WaitPolicy:
+    """Whether a job may wait for an account now, and how long: its ``account_wait`` values and what it has waited.
+
+    ``waited_seconds`` is ``jobs.account_waited_seconds``: the time the job
+    has spent parked for accounts, over every wait, resume and relaunch.
+    """
+
+    settings: AccountWaitSettings
+    waited_seconds: int = 0
+
+    @property
+    def left_seconds(self) -> int:
+        """What is left of ``max_total_wait_seconds``."""
+        return max(0, self.settings.max_total_wait_seconds - self.waited_seconds)
+
+    @property
+    def may_wait(self) -> bool:
+        """``enabled``, and the job has not waited ``max_total_wait_seconds`` yet."""
+        return self.settings.enabled and self.left_seconds > 0
+
+    def longest(self, seconds: int) -> timedelta:
+        """A wait of ``seconds`` cut to what the job has left of its total, when it has any left."""
+        left = self.left_seconds
+        return timedelta(seconds=min(seconds, left) if left > 0 else seconds)
+
+    def why_not(self) -> str:
+        """Why the job may not wait, for its failure."""
+        if not self.settings.enabled:
+            return "this job does not wait for an account (account_wait.enabled is false)"
+        return (
+            f"this job has waited {_hours(self.waited_seconds)} for accounts, its "
+            f"account_wait.max_total_wait_seconds ({_hours(self.settings.max_total_wait_seconds)})"
+        )
+
+
+def account_error_code(reason: str) -> ErrorCode:
+    """The code a run that may not wait fails with: the one its account's state is.
+
+    The local model's slots all taken is ``ERR_LOCAL_MODEL_BUSY``, a rate
+    limit ``ERR_PROVIDER_RATE_LIMITED``, and any other spent account (a usage
+    window, an xAI spending limit) ``ERR_PROVIDER_QUOTA_EXHAUSTED``.
+    """
+    if reason == LOCAL_BUSY:
+        return ErrorCode.LOCAL_MODEL_BUSY
+    if reason == "rate_limited":
+        return ErrorCode.PROVIDER_RATE_LIMITED
+    return ErrorCode.PROVIDER_QUOTA_EXHAUSTED
+
+
+def job_wait_policy(configurable: Mapping[str, Any]) -> WaitPolicy:
+    """The :class:`WaitPolicy` of the job a run belongs to, as its graph config carries it.
+
+    The executor puts it there for every run and every resume
+    (``_execute_workflow_stream``): the job's own ``account_wait`` values,
+    read off its state, and what it has waited, read off its row. The config
+    reaches every node and every qa app's sub-graph, whose states are built
+    fresh. A config without it (a graph run outside the executor) reads the
+    defaults and nothing waited, what every job had before the section.
+    """
+    policy = configurable.get(CONFIG_KEY)
+    return policy if isinstance(policy, WaitPolicy) else WaitPolicy(ACCOUNT_WAIT.defaults())
+
 
 class AccountWaitRequired(Exception):
     """The account pre-check found the job's provider spent with nothing to move to."""
@@ -151,6 +248,21 @@ class AccountWaitRequired(Exception):
     def __init__(self, wait: AccountWait) -> None:
         super().__init__(wait.describe())
         self.wait = wait
+
+
+class AccountSpent(Exception):
+    """The account pre-check found the job's provider spent with nothing to move to, and the job may not wait.
+
+    Its ``account_wait.enabled`` is false, or it has waited its
+    ``max_total_wait_seconds``, so it fails before any sandbox exists, with
+    the account's own code (:func:`account_error_code`), which the runners'
+    failure paths read off the exception.
+    """
+
+    def __init__(self, wait: AccountWait, policy: WaitPolicy) -> None:
+        self.wait = wait
+        self.error_code = account_error_code(wait.reason)
+        super().__init__(f"{self.error_code.value}: {wait.not_taken(policy.why_not())}")
 
 
 class AccountWaitInterrupt(BaseException):
@@ -180,6 +292,7 @@ def wait_for(
     config: Any,
     now: datetime,
     *,
+    policy: WaitPolicy,
     model: str | None = None,
     agent: str | None = None,
     chosen: bool = False,
@@ -190,7 +303,11 @@ def wait_for(
     A pause with no time of its own ends after the quarantine window its
     reason has (rate limit, spent usage window); any other reason without an
     end (no key, a disabled key, a refused token) is not a wait: the job
-    fails as it did.
+    fails as it did. An end further out than the job's
+    ``account_wait.max_wait_seconds`` is cut to it, and to what is left of its
+    ``max_total_wait_seconds``. Whether the job may wait at all
+    (``policy.may_wait``) is its caller's to ask: a wait that may not be taken
+    is still what says the run fails, and with which code.
     """
     if pause is None:
         return None
@@ -200,15 +317,17 @@ def wait_for(
         if attr is None:
             return None
         until = now + timedelta(seconds=int(getattr(config, attr, 0) or 0))
-    until = min(_aware(until), now + WAIT_MAX)
+    until = min(_aware(until), now + policy.longest(policy.settings.max_wait_seconds))
     if until <= now:
         return None
     return AccountWait(pause.provider, pause.reason, until, model=model, agent=agent, chosen=chosen, watch=watch)
 
 
-def local_busy_wait(model: str, agent: str | None, now: datetime) -> AccountWait:
-    """A forced run on the local model that found no slot: try again in a few minutes."""
-    return AccountWait("custom", LOCAL_BUSY, now + LOCAL_BUSY_RETRY, model=model, agent=agent)
+def local_busy_wait(model: str, agent: str | None, now: datetime, *, policy: WaitPolicy) -> AccountWait:
+    """A forced run on the local model that found no slot: try again after the job's ``local_busy_retry_seconds``,
+    or what is left of its total."""
+    retry = policy.longest(policy.settings.local_busy_retry_seconds)
+    return AccountWait("custom", LOCAL_BUSY, now + retry, model=model, agent=agent)
 
 
 def main_provider(agent_definitions: Iterable[Mapping[str, Any]], model_policy: Mapping[str, Any] | None) -> str:

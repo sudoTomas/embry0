@@ -46,6 +46,7 @@ from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
 
 if TYPE_CHECKING:
+    from embry0.services.account_waits import WaitPolicy
     from embry0.settings.sections.budget import BudgetSettings
 
 logger = structlog.get_logger(__name__)
@@ -680,11 +681,16 @@ def _slot_wait_seconds(config: Any) -> float:
     return float(_env_cap("LOCAL_LLM_SLOT_WAIT_SECONDS", 900))
 
 
-def _local_busy_updates(agent_type: str, model: str, wait_seconds: float, state: dict[str, Any]) -> dict[str, Any]:
+def _local_busy_updates(
+    agent_type: str, model: str, wait_seconds: float, state: dict[str, Any], policy: WaitPolicy
+) -> dict[str, Any]:
     """The failed run's state update when no local slot came free: nothing ran.
 
     The entry carries the wait (spent account waits), for a pipeline that
-    parks at a point of its own rather than from inside the run.
+    parks at a point of its own rather than from inside the run, unless the
+    job may not wait (``policy``: its ``account_wait`` values and what it has
+    waited): then the run fails with ``ERR_LOCAL_MODEL_BUSY``, as it did
+    before waits.
     """
     from embry0.services.account_waits import local_busy_wait
 
@@ -697,19 +703,31 @@ def _local_busy_updates(agent_type: str, model: str, wait_seconds: float, state:
     entry = updates["agent_outputs"][0]
     entry["error_code"] = exc.error_code.value
     entry["provider"] = "custom"
-    entry["account_wait"] = local_busy_wait(model, agent_type, datetime.now(UTC)).record()
+    if policy.may_wait:
+        entry["account_wait"] = local_busy_wait(model, agent_type, datetime.now(UTC), policy=policy).record()
     return updates
 
 
-def _spent_before_run_updates(agent_type: str, wait: Any, state: dict[str, Any]) -> dict[str, Any]:
-    """The state update of a run not started because its account is spent: the wait rides on the entry."""
-    code = ErrorCode.PROVIDER_RATE_LIMITED if wait.reason == "rate_limited" else ErrorCode.PROVIDER_QUOTA_EXHAUSTED
-    exc = AuthConfigError(code, f"not started: {wait.describe()}")
+def _spent_before_run_updates(agent_type: str, wait: Any, state: dict[str, Any], policy: WaitPolicy) -> dict[str, Any]:
+    """The state update of a run not started because its account is spent.
+
+    The wait rides on the entry when the job may wait (``policy``), for a
+    pipeline that parks at a point of its own; when it may not
+    (``account_wait.enabled`` false, or its ``max_total_wait_seconds``
+    spent), the run fails with the account's own code and nothing waits.
+    """
+    from embry0.services.account_waits import account_error_code
+
+    code = account_error_code(wait.reason)
+    exc = AuthConfigError(
+        code, f"not started: {wait.describe() if policy.may_wait else wait.not_taken(policy.why_not())}"
+    )
     updates = _auth_error_updates(agent_type, exc, state)
     entry = updates["agent_outputs"][0]
     entry["error_code"] = code.value
     entry["provider"] = wait.provider
-    entry["account_wait"] = wait.record()
+    if policy.may_wait:
+        entry["account_wait"] = wait.record()
     return updates
 
 
@@ -808,9 +826,11 @@ async def _after_spent_account(
     when the order has a ready model whose key the sandbox holds and the
     model is not one a person chose; raises :class:`AccountWaitInterrupt`
     when there is none and the job may wait; else None, and the run's
-    failure stands as before.
+    failure stands as before. A job whose ``account_wait.enabled`` is false
+    still moves; it never waits, so its run's failure, with the account's
+    own code, stands.
     """
-    from embry0.services.account_waits import AccountWaitInterrupt, wait_for
+    from embry0.services.account_waits import AccountWaitInterrupt, job_wait_policy, wait_for
 
     provider = str(output_entry.get("provider") or "anthropic")
     await _quarantine_now(configurable, provider, code, result)
@@ -843,21 +863,24 @@ async def _after_spent_account(
             watch = bool(await resolver.job_uses_registry(job_id, provider))
         except Exception:  # noqa: BLE001 - the wait then ends at its time
             watch = False
+    policy = job_wait_policy(configurable)
     wait = wait_for(
         pause,
         configurable.get("embry0_config"),
         datetime.now(UTC),
+        policy=policy,
         model=model,
         agent=agent_type,
         chosen=pinned or chosen_model,
         watch=watch,
     )
-    if wait is not None and account_waits:
+    if wait is None or not policy.may_wait:
+        return None
+    if account_waits:
         raise AccountWaitInterrupt(wait)
-    if wait is not None:
-        # A pipeline that parks at a point of its own (qa, onboard, pr-review,
-        # every qa per-app run) reads the wait off the entry.
-        output_entry["account_wait"] = wait.record()
+    # A pipeline that parks at a point of its own (qa, onboard, pr-review,
+    # every qa per-app run) reads the wait off the entry.
+    output_entry["account_wait"] = wait.record()
     return None
 
 
@@ -981,6 +1004,12 @@ async def run_agent_node(
     # when its account is spent with nothing ready to move to. Only pipelines
     # whose graph resumes from a checkpoint; the others fail as before.
     account_waits = bool(configurable.get("account_waits"))
+    # Whether the job may wait at all, and how long: its own account_wait
+    # values and what it has waited. A job that may not still moves; with
+    # nowhere to move, the run fails with the account's own code.
+    from embry0.services.account_waits import job_wait_policy
+
+    wait_policy = job_wait_policy(configurable)
     app_config = configurable.get("embry0_config")
 
     def _resolve(local_first_model: str | None, fallbacks: dict[str, ModelFallback] | None = None) -> Any:
@@ -1040,15 +1069,17 @@ async def run_agent_node(
                 pause,
                 app_config,
                 datetime.now(UTC),
+                policy=wait_policy,
                 model=resolved.model,
                 agent=agent_type,
                 chosen=pinned or chosen_model,
                 watch=watch,
             )
-            if wait is not None and account_waits:
+            if wait is not None and account_waits and wait_policy.may_wait:
                 raise AccountWaitInterrupt(wait)
             # A pipeline that parks at a point of its own: the run is not
-            # started, and its entry carries the wait to that point.
+            # started, and its entry carries the wait to that point. A job
+            # that may not wait: the run is not started, and fails.
             spent_wait = wait
             return resolved
         return resolved
@@ -1058,7 +1089,11 @@ async def run_agent_node(
     except AuthConfigError as exc:
         return _stamp_loaded_preferences(_auth_error_updates(agent_type, exc, state), state, loaded_prefs)
     if spent_wait is not None:
-        return _stamp_loaded_preferences(_spent_before_run_updates(agent_type, spent_wait, state), state, loaded_prefs)
+        return _stamp_loaded_preferences(
+            _spent_before_run_updates(agent_type, spent_wait, state, wait_policy),
+            state,
+            loaded_prefs,
+        )
 
     # Local models: a run on the operator's own server holds one of its slots
     # for the length of the run. A local-first run takes one only if it is
@@ -1090,7 +1125,9 @@ async def run_agent_node(
                         )
                     if spent_wait is not None:
                         return _stamp_loaded_preferences(
-                            _spent_before_run_updates(agent_type, spent_wait, state), state, loaded_prefs
+                            _spent_before_run_updates(agent_type, spent_wait, state, wait_policy),
+                            state,
+                            loaded_prefs,
                         )
                     if on_event is not None:
                         on_event(
@@ -1127,12 +1164,16 @@ async def run_agent_node(
                     on_wait=_waiting,
                 )
                 if lease_id is None:
-                    if account_waits:
+                    if account_waits and wait_policy.may_wait:
                         from embry0.services.account_waits import AccountWaitInterrupt, local_busy_wait
 
-                        raise AccountWaitInterrupt(local_busy_wait(invocation.model, agent_type, datetime.now(UTC)))
+                        raise AccountWaitInterrupt(
+                            local_busy_wait(invocation.model, agent_type, datetime.now(UTC), policy=wait_policy)
+                        )
                     return _stamp_loaded_preferences(
-                        _local_busy_updates(agent_type, invocation.model, wait_seconds, state), state, loaded_prefs
+                        _local_busy_updates(agent_type, invocation.model, wait_seconds, state, wait_policy),
+                        state,
+                        loaded_prefs,
                     )
     if invocation.local_first is not None and on_event is not None:
         on_event(

@@ -20,8 +20,10 @@ from embry0.orchestration.restart import NOT_RESUMABLE_PIPELINES, ShutdownInterr
 from embry0.safety.error_codes import ErrorCode, classify_failure, classify_qa_outcome
 from embry0.safety.redaction import register_known_secrets
 from embry0.services._cost import resolve_job_total_cost
+from embry0.services.account_waits import WaitPolicy
 from embry0.services.healing.lifecycle import Origin
 from embry0.services.healing.recorder import record_case_event
+from embry0.settings.sections.account_wait import ACCOUNT_WAIT
 from embry0.storage.database import StoredValueTooDeep
 from embry0.storage.repositories.jobs import FAILABLE_JOB_STATUSES, RELEASED_JOB_STATUSES, StatusTransitionConflict
 from embry0.storage.repositories.repo_setup_proposals import RepoSetupProposalsRepository
@@ -271,6 +273,18 @@ async def _fail_the_run(self: IssueExecutor, job_id: str, **fields: Any) -> bool
     return False
 
 
+async def _runner_settings(self: IssueExecutor, repo: str) -> dict[str, dict[str, Any]]:
+    """The settings a qa, onboard or pr-review job keeps from its start: ``account_wait``, for its repository.
+
+    These pipelines start again from their beginning when they go on, so each
+    start reads them again. getattr: unit tests build the executor via
+    ``__new__`` and set only what their path touches.
+    """
+    from embry0.services.job_settings import RUNNER_SECTIONS, read_for_job
+
+    return await read_for_job(getattr(self, "_settings", None), repo, RUNNER_SECTIONS)
+
+
 async def _run_onboard_workflow(
     self: IssueExecutor,
     job_id: str,
@@ -337,6 +351,9 @@ async def _run_onboard_workflow(
             # Who started it rides in the pipeline's own state: write_config reads it (embry0.services.shared_build_cache).
             "onboard": {"by_allowlisted_key": by_allowlisted_key},
         }
+        from embry0.services.job_settings import STATE_KEY
+
+        initial_state[STATE_KEY] = await _runner_settings(self, repo)
         if agent_models:
             initial_state["agent_models_override"] = dict(agent_models)
 
@@ -546,6 +563,9 @@ async def _run_pr_review_workflow(self: IssueExecutor, job_id: str) -> None:
             # the provider the review will use.
             "agent_models_override": {AGENT_TYPE: await _pr_review_model(self, review, job_id)},
         }
+        from embry0.services.job_settings import STATE_KEY
+
+        initial_state[STATE_KEY] = await _runner_settings(self, repo)
         if not review.get("from_fork") and review.get("depth") != "read_only":
             env_vars = await self._load_merged_env_vars(repo, job_id)
             if env_vars:
@@ -841,6 +861,7 @@ async def _wait_before_start(
     providers: tuple[str, ...],
     plan: dict[str, Any],
     local_first_model: Any,
+    policy: WaitPolicy,
 ) -> Any:
     """The wait that keeps this job from starting, or None (spent account waits, spec 2026-10-25).
 
@@ -888,7 +909,15 @@ async def _wait_before_start(
             continue
         seen.add((provider, chosen))
         pause, watch, pinned = await provider_pause(resolver, repo, provider, job_id=job_id, job_failures=failures)
-        wait = wait_for(pause, getattr(self, "_config", None), now, model=model, chosen=chosen or pinned, watch=watch)
+        wait = wait_for(
+            pause,
+            getattr(self, "_config", None),
+            now,
+            policy=policy,
+            model=model,
+            chosen=chosen or pinned,
+            watch=watch,
+        )
         if wait is not None:
             logger.info(
                 "account_wait_before_start",
@@ -907,7 +936,10 @@ async def _account_wait_before_start(self: IssueExecutor, repo: str, pipeline_co
 
     The account pre-check's question asked before a job exists (the
     watcher's analyses): the main provider and the chosen models, with the
-    fallback plan, the local-first model and no job of its own.
+    fallback plan, the local-first model and no job of its own. Asked with
+    the default ``account_wait`` values and nothing waited, whatever the
+    repository's are: a job that would wait and one that would fail at once
+    are both a job the watcher does not start.
     """
     resolver = getattr(self, "_credential_resolver", None)
     if resolver is None:
@@ -930,6 +962,7 @@ async def _account_wait_before_start(self: IssueExecutor, repo: str, pipeline_co
         providers=providers,
         plan=plan,
         local_first_model=(pipeline_config or {}).get("local_first_model"),
+        policy=WaitPolicy(ACCOUNT_WAIT.defaults()),
     )
 
 
@@ -937,6 +970,8 @@ async def _precheck_llm_accounts(
     self: IssueExecutor,
     job_id: str,
     input_value: Any,
+    *,
+    wait_policy: WaitPolicy,
 ) -> tuple[Any, tuple[str, ...], dict[str, str], dict[str, str], dict[str, dict[str, Any]]]:
     """Resolve the job's LLM accounts before a container can exist.
 
@@ -952,6 +987,12 @@ async def _precheck_llm_accounts(
     sets a fallback order and one of the job's providers has no usable
     account. A planned stand-in's provider joins the set, so its key is in
     the sandbox; the paused provider stays only while it still resolves.
+
+    A provider spent with nothing to move to raises
+    :class:`~embry0.services.account_waits.AccountWaitRequired`, the job's
+    park, or when the job may not wait (``wait_policy``: its ``account_wait``
+    values and what it has waited) :class:`~embry0.services.account_waits.AccountSpent`,
+    which fails it at once with the account's code.
     """
     resolver = getattr(self, "_credential_resolver", None)
     if resolver is None:
@@ -996,13 +1037,25 @@ async def _precheck_llm_accounts(
             providers=providers,
             plan=plan,
             local_first_model=state.get("local_first_model"),
+            policy=wait_policy,
         )
     except Exception:  # noqa: BLE001 - a check that cannot be made never parks a job
         logger.warning("account_wait_check_failed", job_id=job_id, exc_info=True)
         wait = None
     if wait is not None:
-        from embry0.services.account_waits import AccountWaitRequired
+        from embry0.services.account_waits import AccountSpent, AccountWaitRequired
 
+        if not wait_policy.may_wait:
+            logger.info(
+                "account_spent_before_start",
+                job_id=job_id,
+                provider=wait.provider,
+                reason=wait.reason,
+                until=wait.until.isoformat(),
+                enabled=wait_policy.settings.enabled,
+                waited_seconds=wait_policy.waited_seconds,
+            )
+            raise AccountSpent(wait, wait_policy)
         raise AccountWaitRequired(wait)
     if plan:
         required = tuple(sorted((set(providers) - set(plan)) | {fallback.provider for fallback in plan.values()}))
@@ -1031,6 +1084,45 @@ async def _precheck_llm_accounts(
     return input_value, providers, kinds, ids, {paused: fallback.to_config() for paused, fallback in plan.items()}
 
 
+async def _job_wait_policy(self: IssueExecutor, workflow: Any, input_value: Any, job_id: str) -> WaitPolicy:
+    """Whether the job may wait for an account, and how long: :class:`~embry0.services.account_waits.WaitPolicy`.
+
+    Its ``account_wait`` values as it read them when it started
+    (:mod:`embry0.services.job_settings`): a fresh run's are on the state it
+    starts with, a resume's on its last checkpoint, read before the account
+    pre-check, which needs them before the graph runs. And what it has waited
+    so far, ``jobs.account_waited_seconds``, off its row. Both fail open: a
+    checkpoint that cannot be read gives the defaults (``enabled`` true), and
+    a row that cannot be read nothing waited, so a job is never failed for
+    want of them. A row with a value too deep to read is the one exception:
+    ``StoredValueTooDeep`` fails the run, as at every read on its path (#527).
+    """
+    from embry0.services.job_settings import job_section
+
+    if isinstance(input_value, Mapping):
+        settings = job_section(input_value, ACCOUNT_WAIT)
+    else:
+        try:
+            async with checkpointer_context(self._database_url) as saver:
+                graph = workflow.compile(config={"checkpointer": saver})
+                snapshot = await graph.aget_state({"configurable": {"thread_id": job_id}})
+            values = getattr(snapshot, "values", None)
+            settings = job_section(values if isinstance(values, Mapping) else {}, ACCOUNT_WAIT)
+        except Exception:  # noqa: BLE001 - the defaults are what a job without the section reads
+            logger.warning("account_wait_settings_unread", job_id=job_id, exc_info=True)
+            settings = ACCOUNT_WAIT.defaults()
+    waited = 0
+    jobs = getattr(self, "_jobs", None)
+    if jobs is not None:
+        try:
+            waited = int(((await jobs.get(job_id)) or {}).get("account_waited_seconds") or 0)
+        except StoredValueTooDeep:
+            raise  # #527: a row too deep to read fails the run, as every read on its path does
+        except Exception:  # noqa: BLE001 - nothing waited is what every job had before the cap
+            logger.warning("account_waited_unread", job_id=job_id, exc_info=True)
+    return WaitPolicy(settings, waited)
+
+
 async def _execute_workflow_stream(
     self: IssueExecutor,
     input_value: Any,
@@ -1056,12 +1148,16 @@ async def _execute_workflow_stream(
     from embry0.services.account_waits import AccountWaitInterrupt, AccountWaitRequired
 
     resuming = input_value is None or isinstance(input_value, Command)
+    # Whether the job may wait for a spent account, and how long: its own
+    # values and what it has waited, for the pre-check and, through the graph
+    # config, every run.
+    wait_policy = await _job_wait_policy(self, workflow, input_value, job_id)
     # Resolve every declared LLM provider before graph config, and therefore
     # before any node can create a container. There is no ``_run_graph``;
     # this function is the only caller of ``_build_graph_config``.
     try:
         input_value, llm_providers, llm_kinds, llm_ids, model_fallbacks = await _precheck_llm_accounts(
-            self, job_id, input_value
+            self, job_id, input_value, wait_policy=wait_policy
         )
     except AccountWaitRequired as exc:
         # Spent account waits: nothing has run, so nothing is lost. A resume
@@ -1077,6 +1173,7 @@ async def _execute_workflow_stream(
         llm_credential_kinds=llm_kinds,
         model_fallbacks=model_fallbacks,
         account_waits=pipeline not in NOT_RESUMABLE_PIPELINES,
+        account_wait=wait_policy,
     )
 
     # What the graph streamed, for the sandbox a relaunch park destroys when
@@ -1114,7 +1211,9 @@ async def _park_for_account(self: IssueExecutor, job_id: str, wait: Any) -> NoRe
     from embry0.execution import events
     from embry0.services.account_waits import JobParked
 
-    await self._jobs.update(job_id, status="paused", account_wait=wait.record())
+    # Its since is set by the database in the same write (count_account_wait), from the clock the account-wait loop
+    # subtracts it from when it adds this wait to the job's account_waited_seconds.
+    await self._jobs.update(job_id, status="paused", account_wait=wait.record(), count_account_wait=True)
     logger.info(
         "job_parked_for_account",
         job_id=job_id,
@@ -2094,6 +2193,9 @@ async def _run_qa_workflow(
             "qa_active": True,
             "qa": qa_block,
         }
+        from embry0.services.job_settings import STATE_KEY
+
+        initial_state[STATE_KEY] = await _runner_settings(self, repo)
 
         # Per-agent model override — run_agent_node folds it into the
         # resolver's pipeline_config.agent_models, and the QA orchestrator

@@ -18,10 +18,8 @@ VERSION = 159
 pytestmark = [pytest.mark.requires_postgres]
 
 
-def test_the_lease_server_comment_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_158.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must restate the lease server's comment"
+def test_the_lease_server_comment_migration_is_listed_once() -> None:
+    """The last-entry assertion moved to tests/unit/storage/test_migration_160.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

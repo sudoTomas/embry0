@@ -17,6 +17,32 @@ version: 1
 # document on the dashboard too.
 # managed_by: file
 
+# Whether a job waits for a spent LLM account or a busy local model, or fails
+# at once, and how long a wait may last.
+account_wait:
+  # Whether a job whose LLM account is spent or rate limited, or whose run
+  # must use the local model while every slot is taken, waits for it when no
+  # model of the fallback order is ready. false: it still moves to a ready
+  # model of the fallback order; with none, it fails at once with the
+  # account's own error code (ERR_PROVIDER_QUOTA_EXHAUSTED,
+  # ERR_PROVIDER_RATE_LIMITED, ERR_LOCAL_MODEL_BUSY).
+  # enabled: true
+
+  # The furthest a wait's end may be, in seconds from when the job is parked.
+  # A reset further out is cut to it; the job then asks again, and waits again
+  # while the account is still spent.
+  # max_wait_seconds: 691200
+
+  # The longest a job may spend waiting for accounts, all its waits together,
+  # in seconds, over every wait, resume and relaunch. A wait is cut to what is
+  # left of it; once it is spent, the job fails with the account's own error
+  # code instead of waiting again.
+  # max_total_wait_seconds: 2592000
+
+  # How long a job whose run found every slot of the local model taken waits
+  # before it tries again, in seconds.
+  # local_busy_retry_seconds: 300
+
 # How many rounds of questions a job's agents may ask a person, and how many
 # times a person may send a job back to try again.
 agent_questions:

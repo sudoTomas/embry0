@@ -10,13 +10,20 @@ slop, where a code job judged slop is routed and what its reviewer checks
 agents may stop to ask a person and how often a person may send it back to
 try again (#179), and the ``budget`` section's ``continue_past_ceiling_max``,
 how many of those continues may take a job past the deployment's ceiling; the
-job reads the budget's other keys when it checks them. A job reads them for its repository when it starts (``_run_workflow``,
+job reads the budget's other keys when it checks them. So is the
+``account_wait`` section, whether a job waits for a spent account and how
+long. A job reads them for its repository when it starts (``_run_workflow``,
 one snapshot) and keeps what it read on its state, under :data:`STATE_KEY`.
+The qa, onboard and pr-review runners read only :data:`RUNNER_SECTIONS`:
+their jobs read no other.
 The state is checkpointed, so every node of the job reads the same values,
 and so does the job after a pause, an answer or a restart: a change to the
 document reaches the next job that starts, never one that is running. The
 graph config (``configurable``) cannot keep them: it is built again for every
-run and every resume.
+run and every resume. It carries the ``account_wait`` values all the same,
+copied from the state for each run and each resume
+(``_execute_workflow_stream``), because a qa app's sub-graph starts from a
+state of its own.
 
 A job that started before a release added these sections has no
 :data:`STATE_KEY`; it reads each section's defaults, which are the values it
@@ -33,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Final
 import structlog
 
 from embry0.settings.registry import Section, SectionModel, SectionRefused
+from embry0.settings.sections.account_wait import ACCOUNT_WAIT
 from embry0.settings.sections.agent_questions import AGENT_QUESTIONS
 from embry0.settings.sections.budget import BUDGET
 from embry0.settings.sections.context_audit import CONTEXT_AUDIT
@@ -47,6 +55,7 @@ logger = structlog.get_logger(__name__)
 
 #: The sections a job reads when it starts.
 JOB_SECTIONS: Final[tuple[Section[Any], ...]] = (
+    ACCOUNT_WAIT,
     AGENT_QUESTIONS,
     BUDGET,
     CONTEXT_AUDIT,
@@ -54,23 +63,27 @@ JOB_SECTIONS: Final[tuple[Section[Any], ...]] = (
     SALVAGE,
     SLOP_POLICY,
 )
+#: The sections a qa, onboard or pr-review job reads when it starts: the others are an issue job's.
+RUNNER_SECTIONS: Final[tuple[Section[Any], ...]] = (ACCOUNT_WAIT,)
 #: Where a job keeps them: a ``JobState`` key, each section's values as plain JSON under its name.
 STATE_KEY: Final = "job_settings"
 
 
-async def read_for_job(store: SettingsStore | None, repo: str | None) -> dict[str, dict[str, Any]]:
-    """Each of :data:`JOB_SECTIONS` as ``repo`` reads it now, as plain JSON for the job's state.
+async def read_for_job(
+    store: SettingsStore | None, repo: str | None, sections: tuple[Section[Any], ...] = JOB_SECTIONS
+) -> dict[str, dict[str, Any]]:
+    """Each of ``sections`` (:data:`JOB_SECTIONS`) as ``repo`` reads it now, as plain JSON for the job's state.
 
     One snapshot of ``store`` (a :class:`embry0.settings.store.SettingsStore`).
     A job with no repository reads the deployment's values. Without a store,
     or when it cannot be read, every section's defaults: settings never stop
     a job from starting.
     """
-    models: dict[str, SectionModel] = {section.name: section.defaults() for section in JOB_SECTIONS}
+    models: dict[str, SectionModel] = {section.name: section.defaults() for section in sections}
     if store is not None:
         try:
             snapshot = await store.snapshot()
-            models = {section.name: snapshot.get(section, repo=repo or None) for section in JOB_SECTIONS}
+            models = {section.name: snapshot.get(section, repo=repo or None) for section in sections}
         except Exception:  # noqa: BLE001 - the job runs on the defaults
             logger.warning("job_settings_read_failed", repo=repo, exc_info=True)
     return {name: model.model_dump(mode="json") for name, model in models.items()}

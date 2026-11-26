@@ -18,6 +18,8 @@ import asyncpg
 import pytest
 
 from embry0.safety.error_codes import classify_failure
+from embry0.services.account_waits import WaitPolicy
+from embry0.settings.sections.account_wait import ACCOUNT_WAIT
 from embry0.storage.database import StoredValueTooDeep
 from tests.unit.services.test_failed_job_pr import PR, _executor, _patches
 
@@ -156,4 +158,5 @@ async def test_the_precheck_does_not_take_no_overrides_for_the_jobs() -> None:
     ex._credential_resolver = MagicMock()
     ex._jobs.get = AsyncMock(side_effect=ConnectionResetError("down"))
     with pytest.raises(ConnectionResetError, match="down"):
-        await _precheck_llm_accounts(ex, "job-1", object())  # a resume Command: the overrides come from the row
+        # a resume Command: the overrides come from the row
+        await _precheck_llm_accounts(ex, "job-1", object(), wait_policy=WaitPolicy(ACCOUNT_WAIT.defaults()))

@@ -107,6 +107,7 @@ async def _run(
     state: dict[str, Any] | None = None,
     workspace_config: bool = True,
     shipped: list[dict[str, Any]] | None = None,
+    account_wait: Any = None,
 ) -> tuple[dict[str, Any], list[str], _Traces, _Health, list[dict[str, Any]]]:
     ran: list[str] = []
     queue = list(results or [AgentOutput(agent_type=agent_type, output="done")])
@@ -133,6 +134,9 @@ async def _run(
         "credential_health": health,
         "account_waits": waits,
     }
+    if account_wait is not None:
+        # The job's own account_wait values, as the executor puts them in every run's graph config.
+        configurable["account_wait"] = account_wait
     updates = await run_agent_node(
         state={
             "sandbox_container_id": "c1",
