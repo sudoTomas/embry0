@@ -241,6 +241,46 @@ describe("CatalogueEditor", () => {
     expect(within(first).getByRole("button", { name: "Take out" })).toBeInTheDocument();
   });
 
+  it("breaks a long model id after a slash, a hyphen or a dot, never inside a word", async () => {
+    const id = "openrouter/openai/gpt-5.1-mini";
+    const shipped = {
+      ...SHIPPED,
+      providers: {
+        ...SHIPPED.providers,
+        openrouter: {
+          runtime: "chat_completions",
+          enabled: true,
+          model_prefixes: ["openrouter/"],
+          models: { [id]: model([{ in: 1, out: 2 }]) },
+        },
+      },
+    } as ProviderCatalogueDocument["shipped"];
+    api.fetchProviderCatalogue.mockResolvedValue(doc({ shipped, catalogue: shipped }));
+    renderEditor();
+    const row = await screen.findByTestId(`catalogue-model-openrouter-${id}`);
+    const shown = within(row).getByText(id);
+    expect(shown.innerHTML, "the id may break only after its separators").toBe(
+      "openrouter/<wbr>openai/<wbr>gpt-<wbr>5.<wbr>1-<wbr>mini",
+    );
+    expect(shown.className, "no break inside a word").not.toMatch(/break-all/);
+  });
+
+  it("names each model's switches beside them, for a row stacked in a narrow card without the table's header", async () => {
+    renderEditor();
+    const row = await screen.findByTestId("catalogue-model-deepseek-deepseek-flash");
+    const free = within(row).getByRole("switch", { name: "deepseek-flash free" });
+    const chatOnly = within(row).getByRole("switch", { name: "deepseek-flash chat-only" });
+    expect(free.closest("td"), "the free switch's cell names it").toHaveTextContent("Free");
+    expect(chatOnly.closest("td"), "the chat-only switch's cell names it").toHaveTextContent("Chat-only");
+    // Laid out by the card's width (a container query), not the window's: the header and the row's table layout
+    // are only for a card wide enough for the table.
+    const table = row.closest("table")!;
+    expect(table.querySelector("thead")!.className).toMatch(/(^| )hidden( |$)/);
+    expect(table.querySelector("thead")!.className).toMatch(/@lg:table-header-group/);
+    expect(row.className).toMatch(/flex-wrap/);
+    expect(row.className).toMatch(/@lg:table-row/);
+  });
+
   it("shows a reader the catalogue and nothing to change it with", async () => {
     renderEditor(false);
     const deepseek = await screen.findByTestId("catalogue-provider-deepseek");

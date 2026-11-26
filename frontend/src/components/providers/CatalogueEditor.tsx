@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { apiErrorMessage, isConflict } from "@/api/errorDetail";
 import type { ProviderCatalogueDocument } from "@/api/providerCatalogue";
@@ -55,6 +55,37 @@ function price(value: string): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+/** A model row: a table row in a card wide enough for the table, else its cells wrap under its id. */
+const STACKED_ROW = "flex flex-wrap items-center gap-x-3 gap-y-1 py-1 @lg:table-row @lg:py-0";
+const STACKED_CELL = "block @lg:table-cell @lg:py-1 @lg:pr-2";
+/** A switch's cell: its name and the switch on one line when stacked. */
+const SWITCH_CELL = "flex items-center gap-1 @lg:table-cell @lg:py-1 @lg:pr-2";
+
+/** A switch's name beside it in a stacked row, where the table's header is not shown; its own label names it to a
+ * screen reader. */
+function SwitchName({ children }: { children: ReactNode }) {
+  return (
+    <span aria-hidden className="text-xs text-fg-muted @lg:hidden">
+      {children}
+    </span>
+  );
+}
+
+/** A model id that may break after a "/", "-" or ".", never inside a word (a word longer than the line still wraps). */
+function ModelId({ id }: { id: string }) {
+  const segments = id.match(/[^/.-]*[/.-]|[^/.-]+$/g) ?? [id];
+  return (
+    <>
+      {segments.map((segment, index) => (
+        <Fragment key={index}>
+          {segment}
+          {index < segments.length - 1 && <wbr />}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function ModelRowEditor({
   provider,
   row,
@@ -93,8 +124,9 @@ function ModelRowEditor({
     );
   }
 
-  // The marker and the row's action sit under the id, in the first column, so a phone reaches them without a
-  // sideways scroll.
+  // The marker and the row's action sit under the id, in the first column. In a card narrower than the table
+  // (a phone) the row stacks: the id on a line of its own, then the prices and the switches, each switch named
+  // beside it, so nothing needs a sideways scroll.
   const action =
     disabled ? null : row.source === "taken out" ? (
       <Button size="xs" variant="ghost" onClick={() => onReplace(withoutModelEntry(overlay, provider, row.id))}>
@@ -114,8 +146,10 @@ function ModelRowEditor({
       </Button>
     );
   const idCell = (
-    <td className="py-1 pr-2 align-top">
-      <div className={cn("break-all font-mono text-xs", model === null && "line-through")}>{row.id}</div>
+    <td className={cn(STACKED_CELL, "w-full align-top @lg:w-auto")}>
+      <div className={cn("break-words font-mono text-xs", model === null && "line-through")}>
+        <ModelId id={row.id} />
+      </div>
       <div className="mt-0.5 flex flex-wrap items-center gap-1">
         <Badge tone={row.source === "shipped" ? "neutral" : row.source === "taken out" ? "warning" : "info"}>
           {SOURCE_LABEL[row.source]}
@@ -127,18 +161,18 @@ function ModelRowEditor({
 
   if (model === null) {
     return (
-      <tr data-testid={testId} className="text-fg-muted">
+      <tr data-testid={testId} className={cn(STACKED_ROW, "text-fg-muted")}>
         {idCell}
-        <td colSpan={4} className="py-1 pr-2 align-top text-xs">
+        <td colSpan={4} className={cn(STACKED_CELL, "align-top text-xs")}>
           Taken out of the catalogue
         </td>
       </tr>
     );
   }
   return (
-    <tr data-testid={testId}>
+    <tr data-testid={testId} className={STACKED_ROW}>
       {idCell}
-      <td className="py-1 pr-2">
+      <td className={STACKED_CELL}>
         {dated ? (
           <span className="text-xs text-fg-muted" title="Edit dated prices under Advanced">
             Dated prices
@@ -158,7 +192,7 @@ function ModelRowEditor({
           />
         )}
       </td>
-      <td className="py-1 pr-2">
+      <td className={STACKED_CELL}>
         {dated ? null : (
           <Input
             aria-label={`${row.id} output price`}
@@ -174,7 +208,8 @@ function ModelRowEditor({
           />
         )}
       </td>
-      <td className="py-1 pr-2">
+      <td className={SWITCH_CELL}>
+        <SwitchName>Free</SwitchName>
         <Switch
           label={`${row.id} free`}
           checked={model.free}
@@ -182,7 +217,8 @@ function ModelRowEditor({
           onCheckedChange={(free) => edit({ free })}
         />
       </td>
-      <td className="py-1 pr-2">
+      <td className={SWITCH_CELL}>
+        <SwitchName>Chat-only</SwitchName>
         <Switch
           label={`${row.id} chat-only`}
           checked={model.chat_only}
@@ -469,9 +505,9 @@ function Editor({ doc, isAdmin }: { doc: ProviderCatalogueDocument; isAdmin: boo
                     {alwaysOn && <span className="text-xs text-fg-muted">Always on</span>}
                   </div>
                   {view.models.length > 0 && (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="text-left text-xs text-fg-muted">
+                    <div className="@container overflow-x-auto">
+                      <table className="block w-full text-sm @lg:table">
+                        <thead className="hidden text-left text-xs text-fg-muted @lg:table-header-group">
                           <tr>
                             <th className="pr-2 font-normal">Model</th>
                             <th className="pr-2 font-normal">In</th>
@@ -480,7 +516,7 @@ function Editor({ doc, isAdmin }: { doc: ProviderCatalogueDocument; isAdmin: boo
                             <th className="pr-2 font-normal">Chat-only</th>
                           </tr>
                         </thead>
-                        <tbody>
+                        <tbody className="block @lg:table-row-group">
                           {view.models.map((row) => (
                             <ModelRowEditor
                               key={`${row.id}-${epoch}`}
