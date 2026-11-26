@@ -152,6 +152,8 @@ Level requirements that change what a character may do, like the requirements to
 
 New parts and items (the Divine tier and the class ladders, mastery cloaks, paper crowns, the harvest mask, the converted characters) are drawn with PixelLab and stored as the roster stores everything: palette-indexed text grids compiled to SVG. A generation takes our current sprite as its starting image and style, and the roster palette as its forced palette; its output is cut into the layer it belongs to and checked in the contact sheet. No image file enters the repository, and the roster directory's source budget rises from 120 KB to 200 KB.
 
+*Corrected 2026-11-25 (#178):* the roster's parts are still text grids, but image files do enter the repository: the world view's art, generated with PixelLab, is checked in under `frontend/public/world/` (`SOURCES.md` there records each image). How this slice's four new shapes were made was not recorded, so #718 redrew them by hand as new grids; `frontend/src/components/roster/appearance/SOURCES.md` records each shape's provenance. All of it ships under MIT with the repository (`THIRD_PARTY_NOTICES.md`, Images).
+
 ## API
 
 `GET /api/v1/progression` (read tier):

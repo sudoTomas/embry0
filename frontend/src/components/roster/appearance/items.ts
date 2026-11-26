@@ -2,7 +2,8 @@
  * The equipment catalogue: everything an adventurer can wear, one shape per
  * kind of thing drawn once over the three-tone key of palette.ts, so a
  * helm is every metal tier of itself and a robe every order of mage. Every
- * shape is original pixel art. Positions follow the body kit of parts.ts:
+ * shape is original pixel art; SOURCES.md records how each was made, as far
+ * as the history says. Positions follow the body kit of parts.ts:
  * the weapon hand is the left (viewer's left) one, down at x 8..10 rows
  * 19..21 and raised at x 7..9 rows 7..8; the shield arm is the right one.
  */
@@ -115,36 +116,36 @@ const MINING_HELMET: Frame = { x: 11, y: 1, rows: [
   "oooooooooo",
 ] };
 
-/** An open-faced helm: the crown and cheek guards in metal, the face and beard showing. The ladder's helm (progression spec 2026-10-24), so a character stays recognisable in its gear. */
+/** An open-faced helm: a ridged dome, a riveted brow band and cheek guards in metal, the face and beard showing. The ladder's helm (progression spec 2026-10-24), so a character stays recognisable in its gear (redrawn in #718). */
 const OPEN_HELM: Frame = { x: 10, y: 1, rows: [
-  "..oooooooo..",
-  ".o32222221o.",
-  "o3322222211o",
-  "o32oooooo11o",
-  "o3o......o1o",
-  "o3o......o1o",
-  ".o........o.",
+  "....oooo....",
+  "..oo3322oo..",
+  ".o23332221o.",
+  "o3o222222o1o",
+  "o33......11o",
+  ".o3o....o1o.",
+  "..o......o..",
 ] };
 
-/** A paper crown with three points: a head item a rare can wear. */
+/** A paper crown with four points and a patterned band: a head item a rare can wear (redrawn in #718). */
 const PAPER_CROWN: Frame = { x: 11, y: 0, rows: [
-  ".o..oo..o.",
-  "o2oo22oo2o",
-  "o32222221o",
-  "o11111111o",
+  "o..o..o..o",
+  "ooo2oo2ooo",
+  "o33222211o",
+  "o21212121o",
   "oooooooooo",
 ] };
 
-/** A grinning mask over the whole head: the rare a merge on 31 October earns. */
+/** A round, leaf-veined mask over the whole head: the rare a merge on 31 October earns (redrawn in #718). */
 const HARVEST_MASK: Frame = { x: 11, y: 2, rows: [
-  ".oooooooo.",
-  "o32222221o",
-  "o32222221o",
-  "o2oo22oo1o",
-  "o22222221o",
-  "o2o2o2o21o",
-  ".o222221o.",
   "..oooooo..",
+  ".o332221o.",
+  "o33232221o",
+  "o3o2222o1o",
+  "o23223221o",
+  ".o232221o.",
+  "..o2321o..",
+  "...oooo...",
 ] };
 
 // --- body slot ---------------------------------------------------------------
@@ -369,12 +370,12 @@ const TRIMMED_CAPE: Frame = { x: 5, y: 11, rows: [
   "oooooooooooooooooooooo",
 ] };
 
-/** A mastery cloak over the shoulders, where the pauldrons sit: the colours that say which 99 it is. */
+/** A mastery cloak over the shoulders, where the pauldrons sit: the colours that say which 99 it is (redrawn in #718). */
 const CAPE_DRAPE: Frame = { x: 7, y: 11, rows: [
-  "oooo..........oooo",
-  "occ5..........5cco",
-  "oCC5..........5CCo",
-  ".ooo..........ooo.",
+  "ooo............ooo",
+  "oc5o..........o5co",
+  "oCco..........ocCo",
+  "o5o............o5o",
 ] };
 
 // --- weapons: rest in the down hand, raised above the up hand ----------------
@@ -919,6 +920,52 @@ function cloakItem(id: string): Item | undefined {
   cloaks.set(id, item);
   return item;
 }
+
+/**
+ * The catalogue's drawings, by the name SOURCES.md records each under (#178): one per shape, however many items
+ * wear it in other colours or tiers. shapes.test.ts holds this to what the items draw.
+ */
+export const ITEM_SHAPES: Readonly<Record<string, Frame | { rest: Frame; raised: Frame }>> = {
+  FULL_HELM,
+  CRESTED_HELM,
+  WIZARD_HAT,
+  BANDED_HAT,
+  GEMMED_HAT,
+  HOOD,
+  TRICORNE,
+  MINING_HELMET,
+  OPEN_HELM,
+  PAPER_CROWN,
+  HARVEST_MASK,
+  CHESTPLATE,
+  PAULDRONS,
+  TRIMMED_CHESTPLATE,
+  TRIMMED_PAULDRONS,
+  ROBE_TOP,
+  JERKIN,
+  STRAPPED_BODY,
+  STRIPED_SHIRT,
+  TRIMMED_LEGS,
+  SKIRT,
+  BANDED_SKIRT,
+  RUNED_SKIRT,
+  HEATER_SHIELD,
+  AMULET,
+  PENDANT,
+  CAPE,
+  TRIMMED_CAPE,
+  CAPE_DRAPE,
+  SABRE,
+  GREATSWORD,
+  STAFF,
+  ORB_STAFF,
+  GLASS_STAFF,
+  SHORTBOW,
+  LONGBOW,
+  CROSSBOW,
+  AXE,
+  PICKAXE,
+};
 
 /** The item an id names: one of the catalogue, or a cloak composed from the colours in its id. */
 export function itemOf(id: ItemId): Item | undefined {
