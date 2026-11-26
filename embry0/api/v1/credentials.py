@@ -161,8 +161,15 @@ def _xai_oauth_secret(refresh_token: str, client_id: str, token_endpoint: str) -
 
 
 # Path fragments whose request bodies carry secrets or environment values; their 422s never echo input:
-# credentials, environment variables, sandbox profiles (env_defaults) and agents (an MCP server's env).
-_NO_ECHO_PATH_MARKERS: tuple[str, ...] = ("/credentials", "/environment", "/sandbox-profiles", "/agents")
+# credentials, environment variables, sandbox profiles (env_defaults), agents (an MCP server's env) and the
+# integrations (the webhook secret, the chat and tracker keys).
+_NO_ECHO_PATH_MARKERS: tuple[str, ...] = (
+    "/credentials",
+    "/environment",
+    "/sandbox-profiles",
+    "/agents",
+    "/config/integrations",
+)
 
 
 def _not_json(value: Any) -> bool:

@@ -483,3 +483,49 @@ async def test_no_route_echoes_the_value_under_an_unknown_field() -> None:
     resp = await validation_error_handler(request, RequestValidationError([unknown, wrong]))
     detail = json.loads(resp.body)["detail"]
     assert [("input" in e) for e in detail] == [False, True], f"only the unknown field's value is left out: {detail}"
+
+
+# --- the integrations' 422 carries no input values, as a credential route's does ---
+
+_VALUE = "value-sent-with-the-wrong-type-0123456789"
+_WRONG_TYPES = [
+    pytest.param({"webhook_secret": 8675309123}, ["body", "webhook_secret"], "8675309123", id="number"),
+    pytest.param({"slack_webhook_url": [_VALUE]}, ["body", "slack_webhook_url"], _VALUE, id="list"),
+    pytest.param({"linear_api_key": {"k": _VALUE}}, ["body", "linear_api_key"], _VALUE, id="object"),
+    pytest.param([_VALUE], ["body"], _VALUE, id="not-an-object"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("body", "loc", "value"), _WRONG_TYPES)
+async def test_an_integrations_value_of_the_wrong_type_never_comes_back(app, body, loc, value) -> None:
+    """The integrations hold the webhook secret and the chat and tracker keys: a value sent with the wrong JSON type
+    is refused naming where it was, as on a credential route, and never repeated."""
+    app.state.integration_repo = MagicMock(update=AsyncMock(return_value={}), get=AsyncMock(return_value={}))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(
+            "/api/v1/config/integrations", json=body, headers={"X-Requested-With": "XMLHttpRequest"}
+        )
+    assert resp.status_code == 422, resp.text
+    assert value not in resp.text, f"the integrations' 422 repeated the value sent: {resp.text}"
+    detail = resp.json()["detail"]
+    assert loc in [e.get("loc") for e in detail], f"the refusal does not say where: {resp.text}"
+    assert all("input" not in e and "ctx" not in e for e in detail), detail
+    app.state.integration_repo.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [("/api/v1/config/context", {"system_context": 5}), ("/api/v1/config/provider", {"default_model": ["m"]})],
+    ids=["context", "provider"],
+)
+async def test_another_config_route_keeps_its_422_as_it_was(app, path, body) -> None:
+    """Only the integrations join the routes whose 422 carries no input: another config route answers as before."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(path, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert resp.status_code == 422, resp.text
+    sent = next(iter(body.values()))
+    assert [e.get("input") for e in resp.json()["detail"]] == [sent], f"{path}'s 422 changed: {resp.text}"
