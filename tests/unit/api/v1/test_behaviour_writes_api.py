@@ -40,8 +40,10 @@ TEMPLATE = {"id": "t-1", "name": "scout-pass", "graph_definition": GRAPH, "sandb
 def app() -> Any:
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
     agents = MagicMock()
-    agents.list_all = AsyncMock(return_value=[AGENT, {**AGENT, "type": "developer"}])
-    agents.get = AsyncMock(return_value=AGENT)
+    # The developer's row holds the coder role (#395), as the seed and the migration write it.
+    rows = {"scout": AGENT, "developer": {**AGENT, "type": "developer", "roles": ["coder"]}}
+    agents.list_all = AsyncMock(return_value=list(rows.values()))
+    agents.get = AsyncMock(side_effect=lambda agent_type: rows.get(agent_type, AGENT))
     agents.create = AsyncMock(return_value=AGENT)
     agents.update = AsyncMock(return_value=AGENT)
     app.state.agent_defs_repo = agents
@@ -119,10 +121,15 @@ async def test_a_save_that_keeps_a_stored_task_or_leader_is_not_refused_for_it(a
 
 
 async def test_an_agent_says_whether_it_codes(app: Any) -> None:
+    """Read from the row's coder role (#395), whatever the agent is called."""
+    rows = await app.state.agent_defs_repo.list_all()
+    app.state.agent_defs_repo.list_all = AsyncMock(
+        return_value=[*rows, {**AGENT, "type": "scribe", "roles": ["coder"]}]
+    )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         listed = (await client.get("/api/v1/agents")).json()
         one = (await client.get("/api/v1/agents/scout")).json()
-    assert {a["type"]: a["coding_agent"] for a in listed} == {"scout": False, "developer": True}, listed
+    assert {a["type"]: a["coding_agent"] for a in listed} == {"scout": False, "developer": True, "scribe": True}, listed
     assert one["coding_agent"] is False
 
 
@@ -271,3 +278,59 @@ async def test_a_fixed_route_with_a_qa_step_is_told_its_qa_never_runs(app: Any) 
     assert any("qa step never runs" in w for w in resp.json()["warnings"]), resp.json()["warnings"]
     resp = await _send(app, "PUT", "/api/v1/pipelines/templates/t-1", {"fixed_route": False})
     assert not any("qa step" in w for w in resp.json()["warnings"]), resp.json()["warnings"]
+
+
+#: A route whose two steps both have the coder role (#395).
+TWO_CODERS = {
+    "nodes": [
+        {"node_id": "t", "agent_type": "triage"},
+        {"node_id": "d", "agent_type": "developer"},
+        {"node_id": "s", "agent_type": "scribe"},
+    ],
+    "edges": [
+        {"edge_id": "e1", "source": "t", "target": "d", "edge_type": "flow"},
+        {"edge_id": "e2", "source": "d", "target": "s", "edge_type": "flow"},
+    ],
+}
+
+
+async def test_a_template_with_two_coder_steps_is_refused_however_it_is_written(app: Any) -> None:
+    """A route has at most one step whose agent has the coder role (#395), read from the agents' rows: the branch,
+    its salvage, the review loop's return and the credit are one coder's."""
+    rows = await app.state.agent_defs_repo.list_all()
+    app.state.agent_defs_repo.list_all = AsyncMock(
+        return_value=[*rows, {**AGENT, "type": "scribe", "roles": ["coder"]}]
+    )
+    for method, path, body in (
+        ("POST", "/api/v1/pipelines/templates", {"name": "two", "graph_definition": TWO_CODERS}),
+        ("PUT", "/api/v1/pipelines/templates/t-1", {"graph_definition": TWO_CODERS}),
+    ):
+        resp = await _send(app, method, path, body)
+        assert resp.status_code == 422, f"{method} {path}: {resp.status_code} {resp.text}"
+        assert "steps whose agent has the coder role" in resp.json()["detail"], resp.json()
+    checked = (await _send(app, "POST", "/api/v1/pipelines/validate", {"name": "two", **TWO_CODERS})).json()
+    assert checked["valid"] is False and any("at most one" in e for e in checked["errors"]), checked
+
+    # The same route, with scribe holding no role: one coder step, and the template saves.
+    app.state.agent_defs_repo.list_all = AsyncMock(return_value=[*rows, {**AGENT, "type": "scribe", "roles": []}])
+    resp = await _send(app, "POST", "/api/v1/pipelines/templates", {"name": "one", "graph_definition": TWO_CODERS})
+    assert resp.status_code == 201, resp.text
+
+
+async def test_a_copy_of_a_template_that_now_has_two_coders_says_so(app: Any) -> None:
+    """A template saved with one coder can come to hold two (an agent given the role later): its copy is made, as
+    the template is now, with a warning; plan_route skips either at plan time (#395)."""
+    rows = await app.state.agent_defs_repo.list_all()
+    app.state.templates_repo.duplicate = AsyncMock(
+        return_value={**TEMPLATE, "id": "t-2", "name": "copy", "graph_definition": TWO_CODERS}
+    )
+    app.state.agent_defs_repo.list_all = AsyncMock(
+        return_value=[*rows, {**AGENT, "type": "scribe", "roles": ["coder"]}]
+    )
+    copied = await _send(app, "POST", "/api/v1/pipelines/templates/t-1/duplicate", {"name": "copy"})
+    assert copied.status_code == 201, copied.text
+    assert any("2 steps whose agent has the coder role" in w for w in copied.json()["warnings"]), copied.json()
+
+    app.state.agent_defs_repo.list_all = AsyncMock(return_value=[*rows, {**AGENT, "type": "scribe", "roles": []}])
+    copied = await _send(app, "POST", "/api/v1/pipelines/templates/t-1/duplicate", {"name": "copy"})
+    assert copied.status_code == 201 and copied.json()["warnings"] == [], copied.json()

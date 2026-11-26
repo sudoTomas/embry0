@@ -47,6 +47,7 @@ async def seed_missing_builtin_agents(repo: AgentDefinitionsRepository) -> None:
             triage_may_add_skills=seed_fields.get("triage_may_add_skills", []),
             station=seed_fields["station"],
             quest_template=seed_fields["quest_template"],
+            roles=list(seed_fields.get("roles") or []),
         )
         # create() marks rows non-builtin (it serves the custom-agent API);
         # only seeders may set is_builtin, so flip it via direct SQL — the

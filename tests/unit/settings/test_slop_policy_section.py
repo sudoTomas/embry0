@@ -184,7 +184,9 @@ def _templates(*, without: str = "") -> dict[str, Any]:
         pytest.fail("a settings write is not checked against the pipeline templates")
     rows = [{"name": name, **seed} for name, seed in BUILTIN_PIPELINE_TEMPLATES.items() if name != without]
     rows.append({"name": "tidy-up", **BUILTIN_PIPELINE_TEMPLATES["quick-fix"], "default_for_kind": None})
-    return {"route_templates": route_template_checker(rows)}
+    from embry0.workflows.row_behaviour import builtin_coders
+
+    return {"route_templates": route_template_checker(rows, builtin_coders())}
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,14 @@ part the way the built-in ones do. A template's row says:
 
 An agent's row says:
 
+- ``roles``: what a job lets it do beyond its tools (#395). ``coder``
+  (:data:`CODER`) runs it on the developer node: the job's branch, the pull
+  request, salvage and the credit for the job; a route has at most one coder
+  step. ``docs`` (:data:`DOCS`) lets a step that is no coder put files on the
+  job's branch (triage's spec, the reviewer's notes, an audit's patch). Either
+  makes the job's branch pushable from the first step that holds one. plan_route
+  records each step's roles when it plans the job (:func:`step_roles`), so a
+  later edit of the row changes no job planned;
 - ``station``: where the guild hall draws it when it is home;
 - ``quest_template``: whether the guild can give it a task, and what that
   task runs: NULL is no task, ``''`` a task that names no template (triage
@@ -58,12 +66,19 @@ DELIVERS_MAX: Final = 300
 #: The longest name a template or an agent column may hold (``pipeline_templates.name`` is at most 100).
 NAME_MAX: Final = 100
 
-#: The agent types the developer node runs: the developer, and the Slopmaster on a slop-cleanup route
-#: (spec 2026-10-25, slop dungeon). They are the graph's own vocabulary (``_validation.FIXED_NODE_TYPES``),
-#: not rows: route_plan maps their steps to the developer node, salvage reads their outputs, and plan_route
-#: records the one a job's route runs (``jobs.coding_agent``), whom its pull request is credited to.
-CODING_AGENT_TYPES: Final[tuple[str, ...]] = ("developer", "slopmaster")
-#: The coding agent of a route that names no other, and of a job that recorded none.
+#: The role that runs an agent on the developer node (#395): route_plan sends its step there, salvage reads its
+#: output, and plan_route records the agent a job's route runs as its coder (``jobs.coding_agent``), whom its pull
+#: request is credited to. An agent holds it on its row (``agent_definitions.roles``).
+CODER: Final = "coder"
+#: The role that lets a step that is no coder put files on the job's branch (#395): triage's spec or design, the
+#: reviewer's notes, a context audit's checked patch.
+DOCS: Final = "docs"
+#: Every role an agent may hold; ``agent_definitions.roles`` is checked against the same list.
+ROLES: Final[tuple[str, ...]] = (CODER, DOCS)
+#: The roles that make the job's branch pushable, from the first step that holds one to the job's end.
+PUSH_ROLES: Final[frozenset[str]] = frozenset({CODER, DOCS})
+#: The coding agent of a route that names no other, and of a job that recorded none. It always holds
+#: :data:`CODER`.
 DEFAULT_CODER: Final = "developer"
 #: The agent types of a route's review step and of its QA step, the graph's own vocabulary too: a job pinned to
 #: the full pipeline (#306) keeps both whatever route a policy sends it to (:func:`full_pipeline_problem`).
@@ -74,8 +89,10 @@ QA_AGENT_TYPE: Final = "qa"
 TEMPLATE_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType(
     {"fixed_route": False, "offered_to_triage": True, "job_kind": None, "delivers": "", "leader_agent": None}
 )
-#: Each column #167 added to ``agent_definitions``, with what a row without it means.
-AGENT_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({"station": DEFAULT_STATION, "quest_template": None})
+#: Each column #167 and #395 added to ``agent_definitions``, with what a row without it means.
+AGENT_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType(
+    {"station": DEFAULT_STATION, "quest_template": None, "roles": ()}
+)
 
 #: The pipelines the code defines, which have no template row: a job of one names it in
 #: ``pipeline_template`` (``POST /jobs`` with ``pipeline``). What they lead with and deliver is the
@@ -142,26 +159,41 @@ def leader(template: Mapping[str, Any] | None) -> str | None:
     return str(_column(template, "leader_agent", TEMPLATE_DEFAULTS) or "") or None
 
 
-def code_job_problem(template: Mapping[str, Any]) -> str | None:
+def code_job_problem(template: Mapping[str, Any], coders: Collection[str]) -> str | None:
     """Why a code job cannot be sent to ``template`` by a policy (``slop_policy.route_template``); None when it can.
 
     The row says how a job of the template is recorded (:func:`recorded_kind`):
     one recorded as another kind, the research default or a route of
     specialists, would not run a code job as one. And its route needs a
-    coding step (:data:`CODING_AGENT_TYPES`), or the job would change
-    nothing. The words name the template, never a value of another key.
+    coding step, a step whose agent is one of ``coders`` (the agents with the
+    :data:`CODER` role, :func:`coder_types`), or the job would change nothing. The
+    words name the template, never a value of another key.
     """
     name = str(template.get("name") or "")
     kind = recorded_kind(template)
     if kind is not None and kind != "code":
         return f"{name!r} records its jobs as {kind} jobs, so a code job sent to it would not run as one"
-    nodes = (template.get("graph_definition") or {}).get("nodes") or []
-    if not any(str(node.get("agent_type") or "") in CODING_AGENT_TYPES for node in nodes):
-        return (
-            f"{name!r} has no coding step ({', '.join(CODING_AGENT_TYPES)}), so a code job sent to it would change "
-            "nothing"
-        )
+    if not coder_steps(template.get("graph_definition"), coders):
+        return f"{name!r} has no coding step (an agent with the {CODER} role), so a code job sent to it would change nothing"
     return None
+
+
+def coder_steps(graph: Mapping[str, Any] | None, coders: Collection[str]) -> list[str]:
+    """The node ids of ``graph``'s steps whose agent is one of ``coders``, in the graph's order."""
+    return [
+        str(node.get("node_id") or "")
+        for node in (graph or {}).get("nodes") or []
+        if str(node.get("agent_type") or "") in coders
+    ]
+
+
+def coder_steps_problem(name: str, graph: Mapping[str, Any] | None, coders: Collection[str]) -> str | None:
+    """Why ``graph`` cannot be a route: it has more than one coder step (#395). The branch, its salvage, the review
+    loop's return and the job's credit are one coder's; a reviewer sends work back to that one step."""
+    steps = coder_steps(graph, coders)
+    if len(steps) <= 1:
+        return None
+    return f"{name!r} has {len(steps)} steps whose agent has the {CODER} role ({', '.join(steps)}); a route has at most one"
 
 
 def analysis_job_problem(template: Mapping[str, Any]) -> str | None:
@@ -200,6 +232,90 @@ def full_pipeline_problem(template: Mapping[str, Any]) -> str | None:
 
 
 # --- what an agent's row says ------------------------------------------------------------------------------
+
+
+def roles(agent: Mapping[str, Any] | None) -> frozenset[str]:
+    """The roles the agent's row holds, of :data:`ROLES`; none for a row without the column."""
+    value = _column(agent, "roles", AGENT_DEFAULTS)
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        return frozenset()
+    return frozenset(str(role) for role in value) & frozenset(ROLES)
+
+
+def is_coder(agent: Mapping[str, Any] | None) -> bool:
+    """Whether the agent runs on the developer node: its row holds :data:`CODER`."""
+    return CODER in roles(agent)
+
+
+#: The graph's own steps that never run on the developer node, whatever a row says: the selector, the review, QA
+#: and output steps have nodes of their own.
+NEVER_CODERS: Final[frozenset[str]] = frozenset({"triage", "output", QA_AGENT_TYPE, *REVIEW_AGENT_TYPES})
+
+
+def coder_types(agents: Iterable[Mapping[str, Any]]) -> frozenset[str]:
+    """The types of ``agents`` that hold :data:`CODER`; never one of :data:`NEVER_CODERS`."""
+    return frozenset(str(agent.get("type") or "") for agent in agents if is_coder(agent)) - {""} - NEVER_CODERS
+
+
+def roles_by_type(agents: Iterable[Mapping[str, Any]]) -> dict[str, frozenset[str]]:
+    """The roles each agent a job can run holds, read from every row of ``agents``: each row that runs in jobs, and
+    each built-in that has no row yet, as its seed says (a deployment's seeder writes the row when it starts). The
+    graph's own non-coding steps never hold :data:`CODER` (:data:`NEVER_CODERS`); an agent that holds nothing is
+    left out."""
+    rows = list(agents)
+    present = {str(agent.get("type") or "") for agent in rows}
+    found: dict[str, frozenset[str]] = {}
+    for agent in rows:
+        if agent.get("runs_in_jobs", True) is not False:
+            found[str(agent.get("type") or "")] = roles(agent)
+    for name, held in builtin_roles().items():
+        if name not in present:
+            found[name] = held
+    return {
+        name: held - {CODER} if name in NEVER_CODERS else held
+        for name, held in found.items()
+        if name and (held - ({CODER} if name in NEVER_CODERS else set()))
+    }
+
+
+def coders_of(agents: Iterable[Mapping[str, Any]]) -> frozenset[str]:
+    """The agents a job can run on the developer node (:func:`roles_by_type`'s that hold :data:`CODER`)."""
+    return frozenset(name for name, held in roles_by_type(agents).items() if CODER in held)
+
+
+def builtin_roles() -> dict[str, frozenset[str]]:
+    """The roles each built-in agent holds as the seeders write them; the ones that hold none left out."""
+    from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+    held = {name: roles({"type": name, **seed}) for name, seed in BUILTIN_SEED.items()}
+    return {name: value for name, value in held.items() if value}
+
+
+def builtin_coders() -> frozenset[str]:
+    """The built-in agents that hold :data:`CODER` as the seeders write them: what answers without a database."""
+    from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
+
+    return coder_types({"type": name, **seed} for name, seed in BUILTIN_SEED.items())
+
+
+def step_roles(step: Mapping[str, Any]) -> frozenset[str]:
+    """The roles a planned route step runs with: the ones plan_route recorded on it (``roles``).
+
+    A step planned before roles were recorded (#395) has no ``roles`` key: the roles its built-in agent is seeded
+    with answer, so a job paused mid-route resumes where it was. An agent of the deployment's own held none then.
+    """
+    if "roles" in step:
+        recorded = step.get("roles")
+        return roles({"roles": recorded if isinstance(recorded, list | tuple) else []})
+    from embry0.workflows.issue_to_pr.route_plan import step_run_type
+
+    agent_type = step_run_type(str(step.get("agent_type") or ""))
+    return builtin_roles().get(agent_type, frozenset()) - ({CODER} if agent_type in NEVER_CODERS else frozenset())
+
+
+def is_coder_step(step: Mapping[str, Any]) -> bool:
+    """Whether a planned route step runs on the developer node: it holds :data:`CODER`."""
+    return CODER in step_roles(step)
 
 
 def station(agent: Mapping[str, Any] | None) -> str:
@@ -279,6 +395,17 @@ def checked_quest_template(value: Any) -> str | None:
     return _checked_name("quest_template", value, empty_ok=True)
 
 
+def checked_roles(value: Any) -> list[str]:
+    """``roles`` as stored: a list of :data:`ROLES`, each once, in that order. ValueError naming the field
+    otherwise."""
+    if isinstance(value, str) or not isinstance(value, list | tuple):
+        raise ValueError(f"roles must be a list of {', '.join(ROLES)}; got {value!r}")
+    unknown = [str(role) for role in value if role not in ROLES]
+    if unknown:
+        raise ValueError(f"roles must be a list of {', '.join(ROLES)}; got {', '.join(map(repr, unknown))}")
+    return [role for role in ROLES if role in value]
+
+
 def checked_station(value: Any) -> str:
     """``station`` as stored: one of the guild hall's stations (``identity.STATIONS``)."""
     if not isinstance(value, str):
@@ -294,14 +421,14 @@ def leader_problem(value: str | None, agent_types: Collection[str] | None) -> st
     return f"leader_agent: no agent named {value!r} runs in jobs"
 
 
-def untemplated_task_problem(agent_type: str, value: str | None) -> str | None:
+def untemplated_task_problem(agent_type: str, value: str | None, *, coder: bool) -> str | None:
     """Why ``agent_type`` cannot take a task that names no template: such a task runs the route triage picks,
-    whose coding step is a coding agent's, so it is only a coding agent's (:data:`CODING_AGENT_TYPES`)."""
-    if value != "" or agent_type in CODING_AGENT_TYPES:
+    whose coding step is a coder's, so it is only an agent's with the :data:`CODER` role (``coder``)."""
+    if value != "" or coder:
         return None
     return (
-        "quest_template: '' (a task that names no template) runs the route triage picks, which only a coding "
-        f"agent ({', '.join(CODING_AGENT_TYPES)}) works on; name a template for {agent_type!r}"
+        "quest_template: '' (a task that names no template) runs the route triage picks, which only an agent with "
+        f"the {CODER} role works on; name a template for {agent_type!r}"
     )
 
 

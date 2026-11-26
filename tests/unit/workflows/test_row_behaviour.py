@@ -51,9 +51,9 @@ def test_a_route_of_specialists_only_is_analysis_whatever_it_is_named() -> None:
     assert rb.derived_kind(_graph("analysis")) is None, "the analysis agent is no specialist"
 
 
-def test_the_coding_agents_are_the_developer_nodes_fixed_types() -> None:
-    assert set(rb.CODING_AGENT_TYPES) <= FIXED_NODE_TYPES, "a coding agent is a node of the graph's vocabulary"
-    assert rb.DEFAULT_CODER in rb.CODING_AGENT_TYPES
+def test_the_built_in_coders_are_the_developer_nodes_fixed_types() -> None:
+    assert rb.builtin_coders() <= FIXED_NODE_TYPES, "a built-in coder is a node of the graph's vocabulary"
+    assert rb.DEFAULT_CODER in rb.builtin_coders()
 
 
 def test_the_job_kinds_are_the_job_kind_vocabulary() -> None:
@@ -107,12 +107,16 @@ def test_a_well_formed_value_is_stored_trimmed() -> None:
     assert rb.checked_station("map_table") == "map_table"
 
 
-def test_a_task_naming_no_template_is_a_coding_agents_only() -> None:
-    assert rb.untemplated_task_problem("developer", "") is None
-    assert rb.untemplated_task_problem("slopmaster", "") is None
-    assert rb.untemplated_task_problem("scout", "why") is None and rb.untemplated_task_problem("scout", None) is None
-    problem = rb.untemplated_task_problem("scout", "")
+def test_a_task_naming_no_template_is_a_coders_only() -> None:
+    """Read from the row's role (#395), not the agent's name: an agent of the operator's own with the role takes one,
+    the developer without it would not."""
+    assert rb.untemplated_task_problem("developer", "", coder=True) is None
+    assert rb.untemplated_task_problem("scout", "", coder=True) is None
+    assert rb.untemplated_task_problem("scout", "why", coder=False) is None
+    assert rb.untemplated_task_problem("scout", None, coder=False) is None
+    problem = rb.untemplated_task_problem("scout", "", coder=False)
     assert problem is not None and problem.startswith("quest_template: ") and "'scout'" in problem, problem
+    assert rb.untemplated_task_problem("developer", "", coder=False) is not None
 
 
 def test_a_template_cannot_take_a_code_pipelines_name() -> None:
@@ -212,5 +216,6 @@ def test_each_builtin_agent_says_what_its_name_said(agent_type: str) -> None:
 
 
 def test_the_coding_agents_are_the_ones_both_lists_named() -> None:
-    assert frozenset(rb.CODING_AGENT_TYPES) == before.CODING_AGENTS
+    """The built-in agents seeded with the coder role (#395) are the ones the lists named."""
+    assert rb.builtin_coders() == before.CODING_AGENTS
     assert rb.builtin_agent("my-own-agent") is None and rb.builtin_template("my-own-template") is None

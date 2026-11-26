@@ -32,14 +32,20 @@ from embry0.workflows.issue_to_pr.route_plan import (
     build_route_plan,
     coding_agent_of,
     triage_template_config,
+    with_roles,
 )
 from embry0.workflows.row_behaviour import (
+    CODER,
+    builtin_coders,
+    builtin_roles,
     builtin_template,
     code_job_problem,
+    coder_steps_problem,
     full_pipeline_problem,
     leader,
     offered_to_triage,
     recorded_kind,
+    roles_by_type,
 )
 
 logger = structlog.get_logger(__name__)
@@ -140,11 +146,10 @@ class TemplateInvalidError(RuntimeError):
 # this (via each graph node's ``physical_node``) to light nodes up live.
 # ``qa`` is special — the QA chain streams qa_* events, not node_started.
 # Every type not listed is an agent_definitions row and runs on
-# generic_agent (spec 3.5), so the lookup defaults to it.
+# generic_agent (spec 3.5), so the lookup defaults to it, but for a coder's,
+# which runs on the developer node (#395).
 _PHYSICAL_NODE: dict[str, str] = {
     "triage": "triage",
-    "developer": "developer",
-    "slopmaster": "developer",
     "reviewer": "review",
     "review": "review",
     "qa": "qa",
@@ -163,6 +168,7 @@ def build_pipeline_graph(
     plan: list[dict[str, Any]],
     graph_definition: dict[str, Any] | None = None,
     template_name: str | None = None,
+    coders: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """The job's real pipeline graph, in the frontend PipelineGraph shape.
 
@@ -174,8 +180,11 @@ def build_pipeline_graph(
     prepended when the template doesn't declare one: triage always runs as
     the selector, and a live view that hides the first minute of the job
     would look broken. Every node carries ``physical_node`` so the frontend
-    can map node_started/node_completed events onto graph nodes.
+    can map node_started/node_completed events onto graph nodes. A step of one
+    of ``coders`` (the agents with the coder role; the built-in ones when not
+    given) is the developer node's.
     """
+    coder_set = builtin_coders() if coders is None else coders
 
     def _mk_node(node_id: str, agent_type: str, index: int, source: dict[str, Any] | None = None) -> dict[str, Any]:
         position = (source or {}).get("position") or {}
@@ -187,7 +196,9 @@ def build_pipeline_graph(
                 "x": position.get("x", _NODE_BASE_X + index * _NODE_SPACING_X),
                 "y": position.get("y", _NODE_BASE_Y),
             },
-            "physical_node": _PHYSICAL_NODE.get(agent_type, "generic_agent"),
+            "physical_node": "developer"
+            if agent_type in coder_set
+            else _PHYSICAL_NODE.get(agent_type, "generic_agent"),
         }
 
     nodes: list[dict[str, Any]] = []
@@ -369,6 +380,28 @@ async def _known_agent_types(config: RunnableConfig) -> set[str] | None:
         return None
 
 
+async def _known_roles(config: RunnableConfig) -> dict[str, frozenset[str]]:
+    """The roles each agent a job can run holds now (#395, ``row_behaviour.roles_by_type``); the built-in ones'
+    without a database.
+
+    A read failure is logged and answered by the built-in ones, as
+    :func:`_known_agent_types` treats one: a template naming an agent of the
+    deployment's own is then skipped by the validator anyway.
+    """
+    db = config["configurable"].get("db")
+    if db is None:
+        return builtin_roles()
+    try:
+        from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
+
+        return roles_by_type(await AgentDefinitionsRepository(db).list_all())
+    except StoredValueTooDeep:
+        raise  # routing would know no agents (#527)
+    except Exception:
+        logger.warning("plan_route_roles_unavailable", exc_info=True)
+        return builtin_roles()
+
+
 async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
     """Resolve template → route_plan snapshot. Resolution order:
 
@@ -478,6 +511,9 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
     resolved_graph: dict[str, Any] | None = None
     resolved_row: dict[str, Any] | None = None
     explicit_invalid = False
+    # #395: the roles each agent holds, as their rows say now; recorded on the plan's steps below.
+    held = await _known_roles(config)
+    coders = frozenset(name for name, roles in held.items() if CODER in roles)
 
     if templates_repo is not None:
         candidates: list[tuple[str, dict[str, Any] | None]] = []
@@ -500,7 +536,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                     )
                 continue
             if tier == "slop":
-                unfit = code_job_problem(row)
+                unfit = code_job_problem(row, coders)
                 if unfit is None and state.get("pin_full_pipeline"):
                     unfit = full_pipeline_problem(row)
                 if unfit is not None:
@@ -512,6 +548,9 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                     continue
             graph = row.get("graph_definition") or {}
             problems = validate_graph_definition(row["name"], graph, agent_types)
+            # A role set on an agent after the template was saved can give it a second coder step.
+            if (two_coders := coder_steps_problem(str(row["name"]), graph, coders)) is not None:
+                problems = [*problems, two_coders]
             if problems:
                 logger.warning("plan_route_template_invalid", template=row["name"], problems=problems)
                 if tier == "explicit":
@@ -533,6 +572,8 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
         # Legacy fallback — today's behavior, also covers pre-RAV-601 jobs.
         plan = [dict(step) for step in LEGACY_ROUTE_PLAN]
         resolved_name = None
+    # #395: each step's roles as the rows say now, so a later edit of an agent's row changes no job planned.
+    plan = with_roles(plan, held)
 
     # RAV-1075: report the kind the resolved template actually runs, not
     # triage's opinion. When a template wins (user-requested or kind-default)
@@ -599,6 +640,7 @@ async def plan_route_node(state: dict[str, Any], config: RunnableConfig) -> dict
                 plan=plan,
                 graph_definition=resolved_graph,
                 template_name=resolved_name,
+                coders=coders,
             ),
             node="plan_route",
         )

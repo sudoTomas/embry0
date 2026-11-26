@@ -16,7 +16,9 @@ from embry0.workflows.issue_to_pr.route_plan import (
     cursor_at,
     next_route,
     step_template_config,
+    with_roles,
 )
+from embry0.workflows.row_behaviour import builtin_roles
 
 SLOP = {"nature": "slop", "slop_score": 72, "kinds": ["symptom_patch"], "evidence": [{"path": "a.py", "why": "x"}]}
 
@@ -54,10 +56,13 @@ def _no_stream_writer():
 def test_the_cleanup_template_is_valid_and_its_slopmaster_runs_on_the_developer_node() -> None:
     graph = BUILTIN_PIPELINE_TEMPLATES["slop-cleanup"]["graph_definition"]
     assert validate_graph_definition("slop-cleanup", graph) == []
-    plan = build_route_plan(graph)
+    plan = with_roles(build_route_plan(graph), builtin_roles())
     assert [s["agent_type"] for s in plan] == ["slopmaster", "reviewer", "qa", "output"]
-    assert AGENT_TYPE_TO_NODE["slopmaster"] == "developer"
+    assert [s["roles"] for s in plan] == [["coder"], ["docs"], [], []], "the Slopmaster codes; the reviewer writes docs"
+    assert "slopmaster" not in AGENT_TYPE_TO_NODE, "a coder's node is its role's, not its name's"
     assert next_route({"route_plan": plan, "route_cursor": 0}) == "developer"
+    unrecorded = build_route_plan(graph)
+    assert next_route({"route_plan": unrecorded, "route_cursor": 0}) == "developer", "a plan before roles resumes"
     assert coding_agent_of(plan) == "slopmaster"
     assert cursor_at({"route_plan": plan}, "developer") == 0, "a QA retry of the coder returns to the Slopmaster"
     assert advance({"route_plan": plan, "route_cursor": 0}) == {"route_cursor": 1}

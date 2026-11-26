@@ -20,7 +20,7 @@ from embry0.storage.repositories.pipeline_templates import Guard, PipelineTempla
 from embry0.storage.repositories.settings_documents import SettingsDocumentsRepository
 from embry0.workflows._validation import validate_graph_definition
 from embry0.workflows.issue_to_pr.route_plan import node_config, step_run_type
-from embry0.workflows.row_behaviour import leader_problem
+from embry0.workflows.row_behaviour import coder_steps_problem, leader_problem
 
 logger = structlog.get_logger(__name__)
 
@@ -108,6 +108,25 @@ def _job_agent_types(rows: list[dict[str, Any]] | None) -> set[str] | None:
 async def _known_agent_types(request: Request) -> set[str] | None:
     """The agent_definitions types a job can run now; None when they cannot be read (``_job_agent_types``)."""
     return _job_agent_types(await _agent_rows(request))
+
+
+async def _coders(request: Request) -> frozenset[str]:
+    """The agents that hold the coder role now, read from the rows; the built-in ones without them (#395)."""
+    from embry0.workflows.row_behaviour import builtin_coders, coders_of
+
+    rows = await _agent_rows(request)
+    return builtin_coders() if rows is None else coders_of(rows)
+
+
+def _route_problems(name: str, graph: dict[str, Any], rows: list[dict[str, Any]] | None) -> list[str]:
+    """What keeps ``graph`` from running: the validator's problems, and a second coder step (#395), read from
+    ``rows`` (the built-in coders without them, as at plan time)."""
+    from embry0.workflows.row_behaviour import builtin_coders, coder_steps_problem, coders_of
+
+    problems = validate_graph_definition(name, graph, _job_agent_types(rows))
+    coders = builtin_coders() if rows is None else coders_of(rows)
+    two = coder_steps_problem(name, graph, coders)
+    return [*problems, two] if two is not None else problems
 
 
 def _no_shell_step_warnings(rows: list[dict[str, Any]] | None, graph: dict[str, Any] | None) -> list[str]:
@@ -220,7 +239,7 @@ async def _create_template(
     # RAV-601: templates are runtime control-flow now — only executable
     # graphs (single linear chain of known agent types) may save.
     rows = await _agent_rows(request)
-    problems = validate_graph_definition(req.name, req.graph_definition, _job_agent_types(rows))
+    problems = _route_problems(req.name, req.graph_definition, rows)
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(req.graph_definition)
@@ -291,7 +310,7 @@ async def _update_template(
     rows: list[dict[str, Any]] | None = None
     if "graph_definition" in updates:
         rows = await _agent_rows(request)
-        problems = validate_graph_definition(str(template_id), updates["graph_definition"], _job_agent_types(rows))
+        problems = _route_problems(str(template_id), updates["graph_definition"], rows)
         if problems:
             raise HTTPException(status_code=422, detail="; ".join(problems))
     _reject_unpriced(graph)
@@ -360,12 +379,15 @@ async def duplicate_template(
     except asyncpg.UniqueViolationError:
         raise _template_name_taken(req.name) from None
     forget_rows(request.app.state, "templates")
-    return copy
+    # A copy is the template as it is now: one that has come to hold two coder steps since it was saved (an agent
+    # given the role later) is copied, with a warning; plan_route skips either at plan time (#395).
+    two = coder_steps_problem(str(copy.get("name") or ""), copy.get("graph_definition"), await _coders(request))
+    return {**copy, "warnings": [*(copy.get("warnings") or []), *([two] if two is not None else [])]}
 
 
 @router.post("/pipelines/validate")
 async def validate_pipeline(graph: dict[str, Any], request: Request) -> dict[str, Any]:
     # Delegates to the same validator the save path uses so the frontend
     # editor gets identical diagnostics (RAV-601).
-    errors = validate_graph_definition(graph.get("name") or "pipeline", graph, await _known_agent_types(request))
+    errors = _route_problems(graph.get("name") or "pipeline", graph, await _agent_rows(request))
     return {"valid": len(errors) == 0, "errors": errors}

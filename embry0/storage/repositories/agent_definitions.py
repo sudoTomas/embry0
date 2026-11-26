@@ -25,7 +25,7 @@ from embry0.workflows.issue_to_pr.specialist_agents import SPECIALIST_SYSTEM_PRO
 from embry0.workflows.onboard.agent_seed import SYSTEM_PROMPT as _ONBOARDING_SYSTEM_PROMPT
 from embry0.workflows.pr_review.agent_seed import PR_REVIEWER_AGENT_SEED as _PR_REVIEWER_AGENT_SEED
 from embry0.workflows.qa.agent_seed import QA_AGENT_SEED as _QA_AGENT_SEED
-from embry0.workflows.row_behaviour import AGENT_DEFAULTS, checked_quest_template, checked_station
+from embry0.workflows.row_behaviour import AGENT_DEFAULTS, checked_quest_template, checked_roles, checked_station
 
 logger = structlog.get_logger(__name__)
 
@@ -75,7 +75,7 @@ BUILTIN_SEED: dict[str, dict[str, Any]] = {
     },
     # Slop dungeon (spec 2026-10-25): a code job triage judged slop runs the
     # slop-cleanup template, whose slopmaster step runs on the developer node
-    # (row_behaviour.CODING_AGENT_TYPES) with this definition. Behavior is the
+    # (its coder role, row_behaviour.CODER, #395) with this definition. Behavior is the
     # system prompt; branch, push and PR mechanics are the developer node's.
     "slopmaster": {
         "description": (
@@ -415,6 +415,18 @@ _GUILD: dict[str, dict[str, Any]] = {
 }
 for _agent_type, _guild in _GUILD.items():
     BUILTIN_SEED[_agent_type].update(_guild)
+# What a job lets each built-in do beyond its tools (#395, row_behaviour.ROLES; migration 163 writes the same on
+# an upgrade). The two coding agents run on the developer node; triage, the reviewer and the context auditor put
+# files on the job's branch (a spec, review notes, an audit's checked patch). Every other built-in holds none.
+_ROLES: dict[str, list[str]] = {
+    "developer": ["coder"],
+    "slopmaster": ["coder"],
+    "triage": ["docs"],
+    "review": ["docs"],
+    "context-auditor": ["docs"],
+}
+for _agent_type, _roles in _ROLES.items():
+    BUILTIN_SEED[_agent_type]["roles"] = _roles
 # Every builtin runs in jobs unless its entry says otherwise (migration 138's
 # default), triage may add none of its skills unless it says so (142's), and
 # it sits at a desk with no guild task unless it says so (143's).
@@ -422,7 +434,7 @@ for _seed in BUILTIN_SEED.values():
     _seed.setdefault("runs_in_jobs", True)
     _seed.setdefault("triage_may_add_skills", [])
     for _key, _default in AGENT_DEFAULTS.items():
-        _seed.setdefault(_key, _default)
+        _seed.setdefault(_key, list(_default) if isinstance(_default, tuple) else _default)
 
 _ALLOWED_UPDATE_FIELDS = {
     "description",
@@ -441,6 +453,15 @@ _ALLOWED_UPDATE_FIELDS = {
     "station",
     "quest_template",
 }
+
+
+async def coders_on(conn: Any, *, share: bool = False) -> frozenset[str]:
+    """The agents with the coder role that a job can run now (#395), read on ``conn``; ``share`` reads their rows
+    ``FOR SHARE``, for a write that is checked against them inside its transaction."""
+    from embry0.workflows.row_behaviour import coders_of
+
+    rows = await conn.fetch("SELECT type, roles, runs_in_jobs FROM agent_definitions" + (" FOR SHARE" if share else ""))
+    return coders_of(dict(row) for row in rows)
 
 
 class AgentDefinitionsRepository:
@@ -480,8 +501,11 @@ class AgentDefinitionsRepository:
         triage_may_add_skills: list[str] | None = None,
         station: str = AGENT_DEFAULTS["station"],
         quest_template: str | None = None,
+        roles: list[str] | None = None,
     ) -> dict[str, Any]:
         """Insert a new custom agent definition; ``runs_in_jobs`` is the seeder's to set (the API never passes it).
+
+        ``roles`` is the seeders' to set here (#395): the agents API writes no role through this method.
 
         ``triage_may_add_skills``, ``station`` and ``quest_template`` are
         checked (``checked_triage_may_add``, ``row_behaviour``): a malformed
@@ -493,14 +517,14 @@ class AgentDefinitionsRepository:
         """
         check_agent_tools(agent_type, tools or [], mcp_servers=mcp_servers)
         may_add = checked_triage_may_add(triage_may_add_skills or [])
-        guild = (checked_station(station), checked_quest_template(quest_template))
+        guild = (checked_station(station), checked_quest_template(quest_template), checked_roles(roles or []))
         row = await self._db.fetchrow(
             """
             INSERT INTO agent_definitions
                 (type, description, model, tools, skills, system_prompt, is_builtin, execution_mode, auth_mode,
                  mcp_servers, display_name, avatar, color, tagline, runs_in_jobs, triage_may_add_skills,
-                 station, quest_template)
-            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                 station, quest_template, roles)
+            VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             RETURNING *
             """,
             agent_type,
@@ -604,6 +628,7 @@ class AgentDefinitionsRepository:
                 triage_may_add_skills = $15,
                 station = $16,
                 quest_template = $17,
+                roles = $18,
                 updated_at = NOW()
             WHERE type = $13 AND is_builtin
             RETURNING *
@@ -625,6 +650,7 @@ class AgentDefinitionsRepository:
             checked_triage_may_add(seed.get("triage_may_add_skills", [])),
             checked_station(seed.get("station", AGENT_DEFAULTS["station"])),
             checked_quest_template(seed.get("quest_template")),
+            checked_roles(seed.get("roles", [])),
         )
         if row is None:
             if await self.get(agent_type) is not None:

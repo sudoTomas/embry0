@@ -31,7 +31,7 @@ from embry0.services.provider_readiness import (
 from embry0.services.tool_catalog import unknown_tools, unknown_tools_message
 from embry0.services.world import forget_rows
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
-from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, quest_template_problem, untemplated_task_problem
+from embry0.workflows.row_behaviour import is_coder, quest_template_problem, untemplated_task_problem
 
 # Agent definitions run in every repository's jobs: not a key with a repository allowlist's to change.
 router = APIRouter(dependencies=[deployment_writes("change the deployment's agents")], route_class=ServedRoute)
@@ -195,12 +195,12 @@ async def _template_names(request: Request) -> set[str] | None:
     return {str(t["name"]) for t in await repo.list_all()}
 
 
-async def _reject_unrunnable_task(request: Request, agent_type: str, value: str | None) -> None:
+async def _reject_unrunnable_task(request: Request, agent_type: str, value: str | None, *, coder: bool) -> None:
     """A ``quest_template`` the guild could not run is a 422 naming the field (#167): one that names no
     template (the task would run the kind default instead of what the operator chose), or '' for an agent
-    that does not code. Only a value the write changes is checked: a stored one whose template was deleted
-    since does not stop the agent's other fields from saving."""
-    problem = untemplated_task_problem(agent_type, value)
+    without the coder role (``coder``, #395). Only a value the write changes is checked: a stored one whose
+    template was deleted since does not stop the agent's other fields from saving."""
+    problem = untemplated_task_problem(agent_type, value, coder=coder)
     if problem is None and value:
         problem = quest_template_problem(value, await _template_names(request))
     if problem:
@@ -208,9 +208,9 @@ async def _reject_unrunnable_task(request: Request, agent_type: str, value: str 
 
 
 def _with_coding(agent: dict[str, Any]) -> dict[str, Any]:
-    """The row with ``coding_agent``, read-only: whether the developer node runs it, so it can take a guild
-    task that names no template."""
-    return {**agent, "coding_agent": str(agent.get("type") or "") in CODING_AGENT_TYPES}
+    """The row with ``coding_agent``, read-only: whether the developer node runs it (its row holds the coder
+    role, #395), so it can take a guild task that names no template."""
+    return {**agent, "coding_agent": is_coder(agent)}
 
 
 @router.post("/agents", status_code=201, dependencies=[require_admin])
@@ -227,7 +227,8 @@ async def create_agent(
 
 async def _create_agent(req: AgentCreateRequest, request: Request, repo: AgentDefinitionsRepository) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
-    await _reject_unrunnable_task(request, req.type, req.quest_template)
+    # A new agent holds no role (#395): roles are not written through this route.
+    await _reject_unrunnable_task(request, req.type, req.quest_template, coder=False)
     servers = _servers_sent(req.mcp_servers, {})
     warnings = await check_added_skills(request, req.skills or [])
     try:
@@ -303,7 +304,7 @@ async def _update_agent(
     if "quest_template" in updates:
         current = await repo.get(agent_type) or {}
         if updates["quest_template"] != current.get("quest_template"):
-            await _reject_unrunnable_task(request, agent_type, updates["quest_template"])
+            await _reject_unrunnable_task(request, agent_type, updates["quest_template"], coder=is_coder(current))
     if updates.get("system_prompt"):
         # A definition no job runs is a brief writer's voice (#166): the answer's format is the code's, so a voice
         # that defines one of its keys would fight the format added after it.

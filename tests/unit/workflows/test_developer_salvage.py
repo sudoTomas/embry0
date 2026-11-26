@@ -323,10 +323,10 @@ def _reasons() -> list[str]:
 
 
 def test_the_default_subject_is_the_old_one_for_every_reason():
-    from embry0.workflows.row_behaviour import CODING_AGENT_TYPES
+    from embry0.workflows.row_behaviour import builtin_coders
 
     template = _default_subject()
-    for agent in sorted(CODING_AGENT_TYPES):
+    for agent in sorted(builtin_coders()):
         for reason in _reasons():
             old = f"wip: unfinished — {agent} stopped ({reason})"
             assert _subject(agent, reason, template) == old, f"the default must render the code's old subject: {old!r}"
