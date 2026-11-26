@@ -45,33 +45,15 @@ from embry0.services.brief_writer import (
     cut_title,
     system_prompt,
 )
-from embry0.services.brief_writer import (
-    warn_retired_cadence as warn_retired,
-)
 from embry0.services.lead_kinds import id_pattern
 from embry0.storage.database import read_jsonb_text
 from embry0.workflows.row_behaviour import WORKFLOW_PIPELINES, builtin_template, delivers
 
 #: How many briefs a tick writes, and the seconds between ticks. Not settings (#665), as the proposal briefs' are not
 #: (#168): a brief is written once per version of its job, its calls count against the budget caps, and the pace only
-#: says how soon a job reads in plain words. ``JOB_BRIEFS_PER_TICK`` and ``JOB_BRIEF_INTERVAL_SECONDS`` set them
-#: before.
+#: says how soon a job reads in plain words.
 PER_TICK: Final = 3
 INTERVAL_SECONDS: Final = 60.0
-#: What runs instead of the retired variables, as the warning and ``embry0 config`` say it.
-CADENCE: Final = f"the job brief writer writes at most {PER_TICK} briefs every {INTERVAL_SECONDS:g} s"
-#: Each variable that set the cadence before, as ``Embry0Config`` holds it, and the value that runs now.
-_RETIRED: Final = {
-    "job_briefs_per_tick": ("JOB_BRIEFS_PER_TICK", float(PER_TICK)),
-    "job_brief_interval_seconds": ("JOB_BRIEF_INTERVAL_SECONDS", INTERVAL_SECONDS),
-}
-
-
-def warn_retired_cadence(config: Any) -> list[str]:
-    """Warn once, at startup, for each of ``JOB_BRIEFS_PER_TICK`` and ``JOB_BRIEF_INTERVAL_SECONDS`` still set:
-    neither is read any more (#665). Returns the variables warned about
-    (:func:`embry0.services.brief_writer.warn_retired_cadence`)."""
-    return warn_retired(config, _RETIRED, writer=CADENCE)
 
 
 #: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next

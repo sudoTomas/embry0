@@ -43,9 +43,6 @@ from embry0.services.brief_writer import (
     cut_title,
     system_prompt,
 )
-from embry0.services.brief_writer import (
-    warn_retired_cadence as warn_retired,
-)
 from embry0.services.lead_kinds import KINDS, id_pattern
 from embry0.services.leads import LEAD_KINDS
 from embry0.services.proposals import Proposal
@@ -56,14 +53,9 @@ logger = structlog.get_logger(__name__)
 
 #: How many briefs a tick writes, and the seconds between ticks. Not settings (#168): a brief is written once per
 #: version of its proposal, its calls count against the budget caps, and the pace only says how soon a new proposal
-#: reads in plain words. ``PROPOSAL_BRIEFS_PER_TICK`` and ``PROPOSAL_BRIEF_INTERVAL_SECONDS`` set them before.
+#: reads in plain words.
 PER_TICK: Final = 3
 INTERVAL_SECONDS: Final = 60.0
-#: Each variable that set the cadence before (#168), as ``Embry0Config`` holds it, and the value that runs now.
-_RETIRED: Final = {
-    "proposal_briefs_per_tick": ("PROPOSAL_BRIEFS_PER_TICK", float(PER_TICK)),
-    "proposal_brief_interval_seconds": ("PROPOSAL_BRIEF_INTERVAL_SECONDS", INTERVAL_SECONDS),
-}
 
 #: Part of every brief's input hash: a change to the user prompt or the schema rewrites the briefs on the next
 #: ticks. The system prompt is the agent definition's, which an operator edits (see brief_writer).
@@ -334,17 +326,6 @@ class ProposalBriefWriter(BriefWriter[Proposal, BriefSettings, Brief]):
             client=client,
             clock=clock,
         )
-
-
-#: What runs instead of the retired variables, as the warning and ``embry0 config`` say it.
-CADENCE: Final = f"the proposal brief writer writes at most {PER_TICK} briefs every {INTERVAL_SECONDS:g} s"
-
-
-def warn_retired_cadence(config: Any) -> list[str]:
-    """Warn once, at startup, for each of ``PROPOSAL_BRIEFS_PER_TICK`` and ``PROPOSAL_BRIEF_INTERVAL_SECONDS`` still
-    set: neither is read any more (#168). Returns the variables warned about
-    (:func:`embry0.services.brief_writer.warn_retired_cadence`)."""
-    return warn_retired(config, _RETIRED, writer=CADENCE)
 
 
 def with_briefs(

@@ -4,8 +4,7 @@
   its templates, its in-flight cap and each job's hard cap.
 - The daily cap counts the scouting jobs stored in the last 24 hours.
 - A bad value is a 422 naming its key, never repeating it, and nothing is stored.
-- The real lifespan builds the scout loop with a reader of the document, not a value read once,
-  and warns once while the retired ``SCOUT_TICK_SECONDS`` is still set.
+- The real lifespan builds the scout loop with a reader of the document, not a value read once.
 
 The section is taken from the application's catalog by name, and each test
 first writes or reads it, so each fails with its own message on a tree that
@@ -23,7 +22,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from structlog.testing import capture_logs
 
 from embry0.api.app import create_app, lifespan
 from embry0.api.deps import bust_api_key_cache
@@ -258,29 +256,22 @@ async def test_the_lifespan_builds_the_scout_loop_with_a_reader_of_the_document(
         xai_proxy_enabled=False,
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
-        scout_tick_seconds="60",
     )
     first = create_app(config)
-    with capture_logs() as logs:
-        async with lifespan(first):
-            loop = first.state.scout
-            assert callable(loop.settings), (
-                "the scout loop is built with a reader of the settings document, not a value read once at startup"
-            )
-            assert (await loop.settings()).section.deployment().revisit_hours == _scout().defaults().revisit_hours, (
-                "nothing stored: the running loop's reader reads the section's default"
-            )
-            text = "scout:\n  revisit_hours: 3\n"
-            await first.state.settings.save(text, load_yaml(text), actor="alex@example.com")
-            assert (await loop.settings()).section.deployment().revisit_hours == 3.0, (
-                "a write reaches the running loop's reader"
-            )
-            kept = len(await first.state.settings.revisions())
-    retired = [e.get("variable") for e in logs if e["event"] == "settings_env_retired"]
-    assert retired == ["SCOUT_TICK_SECONDS"], (
-        f"the real startup warns once that SCOUT_TICK_SECONDS is set and no longer read: {retired}"
-    )
-
+    async with lifespan(first):
+        loop = first.state.scout
+        assert callable(loop.settings), (
+            "the scout loop is built with a reader of the settings document, not a value read once at startup"
+        )
+        assert (await loop.settings()).section.deployment().revisit_hours == _scout().defaults().revisit_hours, (
+            "nothing stored: the running loop's reader reads the section's default"
+        )
+        text = "scout:\n  revisit_hours: 3\n"
+        await first.state.settings.save(text, load_yaml(text), actor="alex@example.com")
+        assert (await loop.settings()).section.deployment().revisit_hours == 3.0, (
+            "a write reaches the running loop's reader"
+        )
+        kept = len(await first.state.settings.revisions())
     second = create_app(config)
     async with lifespan(second):
         assert (await second.state.scout.settings()).section.deployment().revisit_hours == 3.0, (

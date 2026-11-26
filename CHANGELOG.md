@@ -129,6 +129,18 @@ describes what embry0 does rather than listing changes.
   ([docs/providers.md](docs/providers.md#the-custom-providers-models)). A
   custom model named nowhere then (a job request's, a new tier's) needs its
   entry first.
+- **Old names kept beside their replacements are removed before 0.1.0.**
+  Builds of `main` before pull request #741 kept them so a deployment could
+  move off them; nothing was ever released with them.
+  `SCOUT_TICK_SECONDS`, `PROPOSAL_BRIEF_INTERVAL_SECONDS`,
+  `PROPOSAL_BRIEFS_PER_TICK`, `JOB_BRIEF_INTERVAL_SECONDS` and
+  `JOB_BRIEFS_PER_TICK` have not been read since #168 and #665: while one is
+  still set, startup logs `settings_env_retired` and `embry0 config` names it
+  as no longer read, removed before 0.1.0, so remove it from `.env`. A
+  knowledge map is served with `groups` and each part's `group` alone, not
+  `areas` and `area` beside them (#180; an upload may still use the old
+  names), and `GET /api/v1/progression` answers `account.cloak_trim` alone,
+  not `divine_trim` (#176).
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

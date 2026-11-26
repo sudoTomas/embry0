@@ -554,39 +554,3 @@ async def test_a_job_s_provider_check_reads_only_the_definitions_a_job_runs(monk
     seeds = await _executor_run._agent_definitions_for_precheck(SimpleNamespace(_db=None))  # type: ignore[arg-type]
     shipped = {seed["system_prompt"] for seed in seeds}
     assert not {proposal_briefs.VOICE, job_briefs.VOICE} & shipped, "nor, without a database, from the seeds"
-
-
-@pytest.mark.parametrize(
-    ("module", "variable", "hint"),
-    [
-        (
-            job_briefs,
-            "JOB_BRIEFS_PER_TICK",
-            "no longer read: the job brief writer writes at most 3 briefs every 60 s, constants; remove the variable",
-        ),
-        (
-            proposal_briefs,
-            "PROPOSAL_BRIEF_INTERVAL_SECONDS",
-            "no longer read: the proposal brief writer writes at most 3 briefs every 60 s, constants; "
-            "remove the variable",
-        ),
-    ],
-)
-def test_each_writer_s_retired_variable_warning_says_exactly_what_runs_and_what_to_do(
-    module: Any, variable: str, hint: str
-) -> None:
-    """The one hint both writers share (``brief_writer.warn_retired_cadence``), word for word: what runs now, that
-    it is fixed, and what the operator does."""
-    import os
-    from unittest.mock import patch
-
-    from structlog.testing import capture_logs
-
-    from embry0.config import Embry0Config
-
-    with patch.dict(os.environ, {variable: "7"}, clear=True):
-        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    with capture_logs() as logs:
-        module.warn_retired_cadence(config)
-    hints = [e.get("hint") for e in logs if e["event"] == "settings_env_retired"]
-    assert hints == [hint], f"{variable}: {hints}"

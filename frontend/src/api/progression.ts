@@ -82,10 +82,8 @@ export interface Account {
   characters: number;
   /** The points of every quest completed. */
   quest_points: number;
-  /** A completed quest that trims every cloak in the Divine metal; absent from a backend older than the content pack. */
-  cloak_trim?: boolean;
-  /** The same, under its name before the content pack; kept for one release. */
-  divine_trim: boolean;
+  /** A completed quest that trims every cloak in the Divine metal. */
+  cloak_trim: boolean;
 }
 
 export interface LevelUp {

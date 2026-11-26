@@ -61,17 +61,15 @@ describe("knowledge maps API: owners (#180)", () => {
 describe("mapGroups", () => {
   const ring = { id: "ops", label: "Ops", summary: null, x: 1, y: 2, r: 3 };
 
-  it("reads a map's rings as groups, and as areas, their old name, from a backend before #180", () => {
-    expect(maps.mapGroups({ groups: [ring], areas: [] })).toEqual([ring]);
-    expect(maps.mapGroups({ areas: [ring] })).toEqual([ring]);
+  it("reads a map's rings as its groups, and none without them", () => {
+    expect(maps.mapGroups({ groups: [ring] })).toEqual([ring]);
     expect(maps.mapGroups({})).toEqual([]);
   });
 });
 
 describe("nodeGroup", () => {
-  it("reads a part's group, and area, its old name, from a backend before #180", () => {
-    expect(maps.nodeGroup({ group: "ops", area: "ops" })).toBe("ops");
-    expect(maps.nodeGroup({ area: "ops" })).toBe("ops");
+  it("reads a part's group, and none without one", () => {
+    expect(maps.nodeGroup({ group: "ops" })).toBe("ops");
     expect(maps.nodeGroup({})).toBeNull();
   });
 });

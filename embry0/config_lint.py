@@ -31,7 +31,7 @@ from pydantic import AliasChoices
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 
-from embry0.config_retired import MOVED_TO_DOCUMENTS
+from embry0.config_retired import MOVED_TO_DOCUMENTS, REMOVED_BEFORE_0_1_0
 from embry0.execution.auth_provider import RESERVED_ENV_KEYS, RESERVED_ENV_PREFIXES
 
 # Per-owner GitHub / per-namespace GitLab tokens (see execution/github_tokens.py
@@ -104,7 +104,7 @@ def find_unknown_env_vars(environ: Mapping[str, str], declared: set[str]) -> lis
     for name in sorted(environ):
         if name in declared or name in RESERVED_ENV_KEYS or name in _UNDECLARED_KEYS or name in providers:
             continue
-        if name in MOVED_TO_DOCUMENTS:  # no longer read, and said so on its own (embry0.settings.env)
+        if name in MOVED_TO_DOCUMENTS or name in REMOVED_BEFORE_0_1_0:  # said so on its own (embry0.settings.env)
             continue
         if name.startswith(_IGNORED_PREFIXES):
             continue

@@ -10,7 +10,7 @@ export function OutfitProvider({ children }: { children: ReactNode }) {
   const lookup = useMemo<OutfitLookup>(() => {
     if (!data) return () => null;
     const pack = gamePackOf(data);
-    const trim = data.account.cloak_trim ?? data.account.divine_trim;
+    const trim = data.account.cloak_trim;
     const outfits = new Map(data.characters.map((c) => [c.agent_type, outfitOf(c, pack, trim)]));
     return (agentType) => (agentType ? outfits.get(resolveAgentType(agentType)) ?? null : null);
   }, [data]);

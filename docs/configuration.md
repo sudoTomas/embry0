@@ -106,7 +106,6 @@ The scout's policy is the `scout` section of the [settings document](#settings-d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SCOUT_TICK_SECONDS` | — | No longer read: the scout looks every 5 minutes (300 s), which is also how soon a change to its section applies. While it is still set, startup logs `settings_env_retired` naming it and `embry0 config` says it is no longer read; remove it. The next release stops reading it at all |
 
 ### Proposal and job briefs
 
@@ -123,8 +122,6 @@ Both loops are one brief writer (`embry0/services/brief_writer.py`), each writin
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PROPOSAL_BRIEF_INTERVAL_SECONDS` / `PROPOSAL_BRIEFS_PER_TICK` | — | No longer read: the proposal brief writer writes at most 3 briefs every 60 s, constants (#168). What it spends is bounded by the budget caps and its model is `background_models.proposal_brief`; the pace only says how soon a new proposal reads in plain words. While either is still set, startup logs `settings_env_retired` naming it and `embry0 config` says it is no longer read; remove it. The next release stops reading them at all |
-| `JOB_BRIEF_INTERVAL_SECONDS` / `JOB_BRIEFS_PER_TICK` | — | No longer read: the job brief writer writes at most 3 briefs every 60 s, constants (#665), as the proposal brief writer does. What it spends is bounded by the budget caps and its model is `background_models.job_brief`; the pace only says how soon a job reads in plain words. While either is still set, startup logs `settings_env_retired` naming it and `embry0 config` says it is no longer read; remove it. The next release stops reading them at all |
 
 ### Slop-O-Meter
 
@@ -279,6 +276,13 @@ Each of these set a feature's policy before the feature moved into a document st
 | `SLOP_METER_EXCLUDE` | background.slop_meter in the settings document (each repository, organization or the deployment) |
 | `OPENAI_COMPATIBLE_PROVIDERS` | the provider catalogue's providers.<name>.enabled |
 | `OPENROUTER_CATALOG_REFRESH_HOURS` | the provider catalogue's openrouter.refresh_hours |
+
+`SCOUT_TICK_SECONDS`, `PROPOSAL_BRIEFS_PER_TICK`,
+`PROPOSAL_BRIEF_INTERVAL_SECONDS`, `JOB_BRIEFS_PER_TICK` and
+`JOB_BRIEF_INTERVAL_SECONDS` set cadences that are constants now (#168,
+#665), and were removed before 0.1.0: nothing reads them. While one is still
+set, startup logs `settings_env_retired` and `embry0 config` names it as no
+longer read, removed before 0.1.0.
 
 ## Secrets at rest
 

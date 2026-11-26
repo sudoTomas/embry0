@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from structlog.testing import capture_logs
 
-from embry0.config import Embry0Config
 from embry0.orchestration import dispatch_actors
 from embry0.services.areas import Area
 from embry0.services.scout import (
@@ -25,7 +22,6 @@ from embry0.services.scout import (
     parse_weed,
     task,
     units,
-    warn_retired_tick,
     weed_leads,
 )
 from embry0.settings.sections.scout import ScoutSettings
@@ -123,31 +119,6 @@ def test_never_scouted_units_go_first_then_the_longest_ago_and_a_recent_one_wait
     assert due([a, b, c], last, T0, {**day, "acme/c": timedelta(hours=1)}) == [b, a, c], (
         "each unit waits its own repository's revisit: acme/c, scouted 2 hours ago, comes back after 1"
     )
-
-
-def _retired_tick_warnings(**env: str) -> tuple[bool, list[dict[str, Any]]]:
-    with patch.dict(os.environ, env, clear=True):
-        config = Embry0Config(_env_file=None)  # type: ignore[call-arg]
-    with capture_logs() as logs:
-        warned = warn_retired_tick(config)
-    return warned, [e for e in logs if e["event"] == "settings_env_retired"]
-
-
-@pytest.mark.parametrize(("value", "matches"), [("60", False), ("300", True), ("soon", False)])
-def test_a_tick_variable_still_set_is_named_in_one_warning_saying_the_tick_is_fixed(value: str, matches: bool) -> None:
-    """SCOUT_TICK_SECONDS is no longer read; the config ignores what it does not read, so only this says so."""
-    warned, events = _retired_tick_warnings(SCOUT_TICK_SECONDS=value)
-    assert warned and len(events) == 1, (
-        f"SCOUT_TICK_SECONDS={value!r} is set and no longer read: startup says so once, not silently: {events}"
-    )
-    (event,) = events
-    assert (event["log_level"], event["variable"], event["matches"]) == ("warning", "SCOUT_TICK_SECONDS", matches)
-    assert "300 s" in event["hint"], "the warning says the tick is fixed at 300 s"
-    assert set(event) == {"event", "log_level", "variable", "matches", "hint"}, "the value itself is not logged"
-
-
-def test_an_unset_tick_variable_warns_nothing() -> None:
-    assert _retired_tick_warnings() == (False, []), "nothing set, nothing to say"
 
 
 # ---- reading deliverables ----
@@ -339,7 +310,6 @@ async def test_a_tick_starts_jobs_pinned_to_the_local_model_up_to_the_in_flight_
 async def test_a_removed_organization_s_repository_is_skipped_and_the_others_still_start() -> None:
     """#721: the job store refuses a job on a removed organization's repository; the scout logs it and goes on to the
     next unit, of another repository, instead of ending its pass there."""
-    from structlog.testing import capture_logs
 
     from embry0.storage.repositories.jobs import OrganizationRemoved
 
