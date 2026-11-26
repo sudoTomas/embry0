@@ -1,10 +1,10 @@
 """Hand-offs (spec 2026-10-27): send a decision to a teammate, who then decides it.
 
-- ``GET /handoffs/people``: who a decision can be sent to (the users who sign in;
-  ``/people`` is the people directory since #179).
-- ``PUT /me/github-login``: the GitHub login a person is named by, which links
-  them to the quests they own (an admin names someone else's with
-  ``PUT /users/{id}/github-login``, in the admin-only users router).
+- ``GET /handoffs/people``: who a decision can be sent to (the users who sign in
+  and the people with an email; ``/people`` is the people directory since #179).
+  Which logins a person is named by is the people's identities, which an admin
+  writes (``/people``); the GitHub login a user named themselves by,
+  ``PUT /me/github-login``, was retired with ``users.github_login`` (#179).
 - ``POST /decisions/{id}/send-to``, ``GET /handoffs``,
   ``POST /handoffs/{id}/return`` and ``/cancel``.
 """
@@ -21,10 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from embry0.api.deployment_reads import deployment_hidden
 from embry0.api.deps import ensure_admin, request_actor
 from embry0.api.repo_allowlist import covered_slugs, hide_unless_covered, key_covers
-from embry0.api.session import request_session
 from embry0.audit.actions import AuditAction
 from embry0.audit.helpers import emit_audit
-from embry0.forge_logins import GITHUB_LOGIN_RE
 from embry0.services.handoffs import notify, view
 
 logger = structlog.get_logger(__name__)
@@ -34,9 +32,9 @@ router = APIRouter()
 _SIGNED_IN = ("operator", "admin")
 
 
-def _can_be_sent(tier: str, github_login: str | None) -> bool:
-    """Someone who signs in, or who is named by a GitHub login: a chat assistant can ask them, signed in or not."""
-    return tier in _SIGNED_IN or bool(github_login)
+def _can_be_sent(entry: dict[str, Any]) -> bool:
+    """Someone who signs in, or a person (#179): a chat assistant can ask them, signed in or not."""
+    return entry["tier"] in _SIGNED_IN or bool(entry.get("person"))
 
 
 def _repo(request: Request, name: str) -> Any:
@@ -47,97 +45,44 @@ def _repo(request: Request, name: str) -> Any:
 
 
 def _person(u: Any) -> dict[str, Any]:
-    return {"id": u.id, "email": u.email, "name": u.name or u.email, "github_login": u.github_login, "tier": u.tier}
+    return {"id": u.id, "email": u.email, "name": u.name or u.email, "tier": u.tier, "person": False}
 
 
 async def people_by_email(request: Request) -> dict[str, dict[str, Any]]:
-    """Everyone who signs in, by lowercased email; {} without a users table."""
+    """Everyone a decision can name, by lowercased email: the users not disabled, and the people not disabled with an
+    email (#179), a person's name over their user's. A person keeps their user's ``id`` and ``tier``, one with no
+    sign-in has their own ``id`` and no tier. {} when neither can be read."""
+    out: dict[str, dict[str, Any]] = {}
     users = getattr(request.app.state, "users_repo", None)
-    if users is None:
-        return {}
+    people = getattr(request.app.state, "people_repo", None)
     try:
-        return {u.email.lower(): _person(u) for u in await users.people()}
+        if users is not None:
+            out = {u.email.lower(): _person(u) for u in await users.people()}
+        if people is not None:
+            off = await users.disabled_ids() if users is not None else set()
+            for p in await people.all():
+                if not p.email or (p.user_id and p.user_id in off):
+                    continue
+                entry = out.get(p.email.lower()) or {"id": p.id, "email": p.email, "tier": ""}
+                out[p.email.lower()] = {**entry, "name": p.name or p.email, "person": True}
     except Exception:  # noqa: BLE001 - a card without its assignee's name still shows the email
         logger.warning("people_unread", exc_info=True)
-        return {}
+    return out
 
 
 @router.get("/handoffs/people")
 async def list_people(request: Request) -> dict[str, Any]:
-    """The people a decision can be sent to: everyone who signs in to the dashboard or is named by a GitHub login. To a
-    key with a repository allowlist, as a deployment with none (embry0.api.deployment_reads). It answered at
-    ``/people`` until the people API took that path (#179)."""
+    """The people a decision can be sent to: everyone who signs in to the dashboard, and every person with an email
+    (#179), whom a chat assistant can ask. To a key with a repository allowlist, as a deployment with none
+    (embry0.api.deployment_reads). It answered at ``/people`` until the people API took that path (#179)."""
     if deployment_hidden(request):
         return {"people": [], "count": 0}
-    people = [p for p in (await people_by_email(request)).values() if _can_be_sent(p["tier"], p["github_login"])]
+    people = [
+        {key: value for key, value in p.items() if key != "person"}
+        for p in sorted((await people_by_email(request)).values(), key=lambda p: (str(p["name"]).lower(), p["id"]))
+        if _can_be_sent(p)
+    ]
     return {"people": people, "count": len(people)}
-
-
-class LoginBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    #: A GitHub login, or empty to clear it.
-    login: str = Field(default="", max_length=39)
-
-
-def _checked_login(raw: str) -> str | None:
-    login = raw.strip().removeprefix("@")
-    if not login:
-        return None
-    if not GITHUB_LOGIN_RE.fullmatch(login):
-        raise HTTPException(status_code=422, detail="not a GitHub login")
-    return login
-
-
-async def set_login(request: Request, user_id: str, raw: str) -> dict[str, Any]:
-    """Names (or, empty, clears) a person's GitHub login: 422 for a malformed one, 409 for one held by someone else.
-
-    A user with no person gets the login alone, as before people (#179, D6), and is listed among the people API's
-    suggestions to add. For a user who is a person, the person's ``github`` identity follows; a cleared login falls to
-    the person's oldest GitHub identity left, and the answer says so (``fell_back_to`` and ``message``)."""
-    users = _repo(request, "users_repo")
-    login = _checked_login(raw)
-    from embry0.services.people import PersonInvalid
-    from embry0.storage.repositories.people import PersonConflict
-
-    taken = HTTPException(
-        status_code=409,
-        detail=f"{login} is already someone else's"
-        if login
-        else "the GitHub login your person would fall back to is someone else's",
-    )
-    try:
-        row = await users.set_github_login(user_id, login, actor=request_actor(request))
-    except PersonInvalid as exc:  # the login the user's person would get (#179): GITHUB_LOGIN_RE checks it first
-        raise HTTPException(status_code=422, detail=f"not a GitHub login: {exc.problem}") from exc
-    except PersonConflict as exc:  # another person holds it as an identity (#179)
-        raise taken from exc
-    except Exception as exc:  # the unique index: another user has that login
-        if "uq_users_github_login_lower" in str(exc) or "unique" in str(exc).lower():
-            raise taken from exc
-        raise
-    if row is None:
-        raise HTTPException(status_code=404, detail="no such user")
-    answer = _person(row)
-    if login is None and row.github_login:
-        answer["fell_back_to"] = row.github_login
-        answer["message"] = (
-            f"The login was cleared, and {row.github_login}, the oldest GitHub login of the person you are, names "
-            "you now. Take it from the person to name you by none."
-        )
-    return answer
-
-
-@router.put("/me/github-login")
-async def set_my_github_login(body: LoginBody, request: Request) -> dict[str, Any]:
-    """Name the GitHub login you are: the quests your login owns become yours to decide."""
-    session = request_session(request)
-    if session is None or not session.email:
-        raise HTTPException(status_code=403, detail="only a signed-in person has a GitHub login")
-    me = await _repo(request, "users_repo").get_by_email(session.email)
-    if me is None:
-        raise HTTPException(status_code=404, detail="you are not in the users table yet: sign in again")
-    return await set_login(request, me.id, body.login)
 
 
 class SendBody(BaseModel):
@@ -163,18 +108,17 @@ async def hand_off(request: Request, decision_id: str, *, to: str, note: str, ac
     from embry0.api.v1.decisions import read_decision
 
     decision = await read_decision(request, decision_id, action="hand off a decision")
-    users = _repo(request, "users_repo")
-    person = await users.get_by_email(to.strip())
-    if person is None or person.disabled or not _can_be_sent(person.tier, person.github_login):
-        raise HTTPException(status_code=422, detail="send it to someone who signs in to embry0 or has a GitHub login")
-    if person.email.lower() == actor.lower():
+    person = (await people_by_email(request)).get(to.strip().lower())
+    if person is None or not _can_be_sent(person):
+        raise HTTPException(status_code=422, detail="send it to someone who signs in to embry0 or is a person in it")
+    if str(person["email"]).lower() == actor.lower():
         raise HTTPException(status_code=422, detail="it is yours already: answer it")
     row = await _repo(request, "handoffs_repo").send(
         decision_id=decision["id"],
         repo=str(decision.get("repo") or ""),
         title=str(decision.get("title") or ""),
         from_actor=actor,
-        to_email=person.email,
+        to_email=person["email"],
         note=note.strip(),
         now=datetime.now(UTC),
     )
@@ -182,7 +126,7 @@ async def hand_off(request: Request, decision_id: str, *, to: str, note: str, ac
         getattr(request.app.state, "db", None),
         "handoff.created",
         actor=actor,
-        details={"handoff_id": row["id"], "decision_id": decision["id"], "to": person.email},
+        details={"handoff_id": row["id"], "decision_id": decision["id"], "to": person["email"]},
         audit_log_path=getattr(request.app.state.config, "audit_log_path", None),
     )
     notify(request.app.state, "handoff.created", row)

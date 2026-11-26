@@ -44,12 +44,9 @@ async def people_app(db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch) -
         yield app, keys
 
 
-async def _user(app: Any, user_id: str, email: str, login: str | None = None) -> None:
+async def _user(app: Any, user_id: str, email: str) -> None:
     await app.state.db.execute(
-        "INSERT INTO users (id, auth0_sub, email, name, tier, github_login) VALUES ($1, $1, $2, '', 'operator', $3)",
-        user_id,
-        email,
-        login,
+        "INSERT INTO users (id, auth0_sub, email, name, tier) VALUES ($1, $1, $2, '', 'operator')", user_id, email
     )
 
 
@@ -139,19 +136,22 @@ async def test_a_write_with_problems_names_every_one_by_where_and_never_its_valu
 
 async def test_a_value_someone_else_holds_is_a_409(people_app: tuple[Any, Any]) -> None:
     app, _keys = people_app
-    await _user(app, "usr-cy", "cy@example.com", "cy-login")
+    cy = await _call(
+        app, "POST", PEOPLE, MASTER, {"name": "Cy", "identities": [{"kind": "github", "value": "cy-login"}]}
+    )
+    assert cy.status_code == 201, cy.text
     first = await _call(app, "POST", PEOPLE, MASTER, {"name": "Ada", "email": "ada@example.com"})
     assert first.status_code == 201
     for body, field in (
         ({"name": "Ada again", "email": "ADA@example.com"}, "email"),
-        ({"name": "Not Cy", "identities": [{"kind": "github", "value": "CY-login"}]}, "github login"),
+        ({"name": "Not Cy", "identities": [{"kind": "github", "value": "CY-login"}]}, "identity"),
     ):
         refused = await _call(app, "POST", PEOPLE, MASTER, body)
         assert refused.status_code == 409 and field in refused.json()["detail"], (field, refused.text)
     given = await _call(
         app, "POST", f"{PEOPLE}/{first.json()['id']}/identities", MASTER, {"kind": "github", "value": "cy-login"}
     )
-    assert given.status_code == 409, f"another user's login was given to a person not theirs: {given.text}"
+    assert given.status_code == 409, f"another person's login was given to a person not theirs: {given.text}"
     made_theirs = await _call(
         app,
         "PATCH",
@@ -160,8 +160,8 @@ async def test_a_value_someone_else_holds_is_a_409(people_app: tuple[Any, Any]) 
         {"identities": [{"kind": "github", "value": "Cy-Login"}]},
         if_match=first.headers["etag"],
     )
-    assert made_theirs.status_code == 409 and "github login" in made_theirs.json()["detail"], (
-        f"another user's login was made a person's identities: {made_theirs.text}"
+    assert made_theirs.status_code == 409 and "identity" in made_theirs.json()["detail"], (
+        f"another person's login was made a person's identities: {made_theirs.text}"
     )
 
 
@@ -183,7 +183,7 @@ async def test_operators_read_admins_write_and_a_limited_key_reads_nobody(people
 
 async def test_the_hand_off_list_moved_and_people_answers_the_directory(people_app: tuple[Any, Any]) -> None:
     app, _keys = people_app
-    await _user(app, "usr-da", "da@example.com", "da-login")
+    await _user(app, "usr-da", "da@example.com")
     handoffs = (await _call(app, "GET", "/api/v1/handoffs/people", MASTER)).json()["people"]
     assert [p["email"] for p in handoffs] == ["da@example.com"], f"who a decision can be sent to: {handoffs}"
     assert (await _call(app, "GET", PEOPLE, MASTER)).json() == {"people": [], "count": 0}, "nobody is a person yet"
@@ -278,43 +278,3 @@ async def test_an_owner_is_suggested_on_its_forge_and_only_that_forge_s_identity
         (o["forge"], o["login"]) for o in (await _call(app, "GET", f"{PEOPLE}/suggestions", MASTER)).json()["owners"]
     }
     assert ("gitlab", "theo") in org and ("github", "theo") not in org, org
-
-
-async def test_a_login_route_makes_no_person_and_says_when_a_cleared_login_falls_back(
-    people_app: tuple[Any, Any],
-) -> None:
-    app, _keys = people_app
-    await _user(app, "usr-fy", "fy@example.com")
-    alone = await _call(app, "PUT", "/api/v1/users/usr-fy/github-login", MASTER, {"login": "fy"})
-    assert alone.status_code == 200 and (await _call(app, "GET", PEOPLE, MASTER)).json()["count"] == 0, (
-        "a user with no person gets the login alone"
-    )
-    await _user(app, "usr-gu", "gu@example.com", "gu-a")
-    made = await _call(
-        app,
-        "POST",
-        PEOPLE,
-        MASTER,
-        {
-            "name": "Gu",
-            "user_id": "usr-gu",
-            "identities": [{"kind": "github", "value": "gu-a"}, {"kind": "github", "value": "gu-b"}],
-        },
-    )
-    assert made.status_code == 201, made.text
-    cleared = await _call(app, "PUT", "/api/v1/users/usr-gu/github-login", MASTER, {"login": ""})
-    assert cleared.status_code == 200, cleared.text
-    assert cleared.json()["github_login"] == cleared.json()["fell_back_to"] == "gu-b", cleared.json()
-    assert "gu-b" in cleared.json()["message"] and "oldest" in cleared.json()["message"]
-    taken = await _call(app, "PUT", "/api/v1/users/usr-fy/github-login", MASTER, {"login": "GU-B"})
-    assert taken.status_code == 409 and "someone else's" in taken.json()["detail"], (
-        f"another person's identity was made a user's login: {taken.text}"
-    )
-    nobody = await _call(
-        app, "POST", PEOPLE, MASTER, {"name": "Hz", "identities": [{"kind": "github", "value": "hz-login"}]}
-    )
-    assert nobody.status_code == 201, nobody.text
-    held = await _call(app, "PUT", "/api/v1/users/usr-fy/github-login", MASTER, {"login": "HZ-login"})
-    assert held.status_code == 409, (
-        f"the identity of a person who signs in as nobody was made another user's login: {held.text}"
-    )

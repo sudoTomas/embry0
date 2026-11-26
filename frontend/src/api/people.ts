@@ -50,7 +50,6 @@ export interface SuggestedUser {
   user_id: string;
   email: string;
   name: string;
-  github_login: string | null;
 }
 
 /** An owner login no person holds, on its repository's organization's forge, with the repositories naming it. */

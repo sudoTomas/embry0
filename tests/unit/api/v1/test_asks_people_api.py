@@ -70,9 +70,10 @@ async def test_the_feed_names_an_unknown_login_and_gives_a_person_s_chat_and_tim
         f"a caller with no allowlist reads the person's chat handles: {due['a1']}"
     )
     assert due["a1"].get("timezone") == "Europe/Paris", "the time zone Ada's ask is timed by: her own"
-    assert (due["a2"].get("unknown"), due["a2"]["github_login"], due["a2"].get("chat")) == (True, "bo", []), (
+    assert (due["a2"].get("unknown"), due["a2"]["key"], due["a2"].get("chat")) == (True, "github:bo", []), (
         f"bo, whom no person holds, is asked as github:bo, for someone to add: {due['a2']}"
     )
+    assert not any("github_login" in due[a] for a in due), f"no recipient names a user's GitHub login (#179): {due}"
 
 
 async def _answer(

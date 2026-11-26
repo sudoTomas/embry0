@@ -93,7 +93,6 @@ DEPLOYMENT_WIDE: dict[tuple[str, str], Callable[[Mapping[str, str]], Any]] = {
     ("POST", "/api/v1/hosts/import/tailnet"): lambda v: {"confirm": True},
     ("PUT", "/api/v1/users/{user_id}/disabled"): lambda v: {"disabled": True},
     ("POST", "/api/v1/users/{user_id}/force-logout"): lambda v: None,
-    ("PUT", "/api/v1/users/{user_id}/github-login"): lambda v: {"login": "someone-else"},
     # People (#179): the deployment's directory.
     ("POST", "/api/v1/people"): lambda v: {"name": "Cy", "identities": [{"kind": "github", "value": "cy-login"}]},
     ("PATCH", "/api/v1/people/{person_id}"): lambda v: {"timezone": "UTC"},
@@ -156,7 +155,6 @@ OTHER_RULES: dict[tuple[str, str], str] = {
         )
     },
     ("POST", "/api/v1/asks/answer"): "a decision named by its code (test_offered_work_actions_inventory.py)",
-    ("PUT", "/api/v1/me/github-login"): "a signed-in person's own login; a key is refused",
     ("POST", "/api/v1/auth/logout"): "ends the caller's own session",
     ("POST", "/api/v1/internal/qa/presign"): "a sandbox's own request, with its sandbox token, not an API key",
     ("POST", "/api/v1/telegram/callback"): "Telegram's, signed with the bot's secret, not an API key",

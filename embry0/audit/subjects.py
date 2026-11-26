@@ -198,6 +198,7 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "person.deleted": DEPLOYMENT,
     "person.identity.added": DEPLOYMENT,
     "person.identity.removed": DEPLOYMENT,
+    "user.github_login_retired": DEPLOYMENT,
 }
 
 

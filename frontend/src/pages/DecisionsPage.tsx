@@ -8,11 +8,9 @@ import { RunWithControl } from "@/components/runwith/RunWithControl";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Skeleton } from "@/components/ui/PageSkeleton";
-import { useDecisions, usePeople, useSetMyGithubLogin } from "@/hooks/useDecisions";
+import { useDecisions } from "@/hooks/useDecisions";
 import { useLeadKinds } from "@/hooks/useLeadKinds";
 import { useUiSettings } from "@/hooks/useUiSettings";
-import { toastApiError } from "@/api/errorToast";
-import { toast } from "sonner";
 import { useAuthStore, useIsAdmin } from "@/stores/authStore";
 
 type Stage = "mine" | "done" | "offered";
@@ -29,7 +27,7 @@ const WORDS: Record<"game" | "plain", { intro: string; stages: StageTab[] }> = {
   game: {
     intro: "Every quest waiting on someone: finished work to review, and work embry0 found that its owners could start. The worst come first.",
     stages: [
-      { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no quest on offer is owned by your GitHub login." },
+      { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no quest on offer is owned by one of your logins. An admin names your logins on the People page." },
       { stage: "done", label: "Quests to review", empty: "Nothing waits for a review." },
       { stage: "offered", label: "Quests on offer", empty: "No quest on offer right now." },
     ],
@@ -37,37 +35,12 @@ const WORDS: Record<"game" | "plain", { intro: string; stages: StageTab[] }> = {
   plain: {
     intro: "Everything waiting on someone: finished work to review, and work embry0 found that its owners could start. The worst come first.",
     stages: [
-      { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no work on offer is owned by your GitHub login." },
+      { stage: "mine", label: "Waiting for me", empty: "Nothing waits for you: nothing was sent to you, and no work on offer is owned by one of your logins. An admin names your logins on the People page." },
       { stage: "done", label: "Jobs to review", empty: "Nothing waits for a review." },
       { stage: "offered", label: "Work on offer", empty: "No work on offer right now." },
     ],
   },
 };
-
-/** Name your GitHub login once, so the quests your login owns wait for you here. */
-function LinkLogin() {
-  const set = useSetMyGithubLogin();
-  const [login, setLogin] = useState("");
-  return (
-    <form
-      className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-white/[0.02] p-2 text-sm"
-      data-testid="link-github-login"
-      onSubmit={(e) => {
-        e.preventDefault();
-        set.mutate(login.trim(), {
-          onSuccess: (me) => toast.success(`You are @${me.github_login}`),
-          onError: (err: Error) => toastApiError(err, "Not linked"),
-        });
-      }}
-    >
-      <span className="text-fg-secondary">Owners are named by GitHub login. Which one is yours?</span>
-      <Input aria-label="Your GitHub login" className="h-8 w-44" placeholder="octocat" value={login} onChange={(e) => setLogin(e.target.value)} />
-      <Button size="sm" type="submit" disabled={!login.trim() || set.isPending}>
-        Link
-      </Button>
-    </form>
-  );
-}
 
 function CardList({
   decisions,
@@ -123,11 +96,9 @@ export function DecisionsPage() {
   const waiting = useDecisions({ stage: "all", for: "me" });
   // The kinds filter names kinds as the quest board's does: the catalogue's plural (GET /lead-kinds, #166).
   const kindNames = useLeadKinds();
-  const people = usePeople();
   const isAdmin = useIsAdmin();
   const by = useAuthStore((s) => s.user?.email) ?? "dashboard";
   const me = (useAuthStore((s) => s.user?.email) ?? "").toLowerCase();
-  const myLogin = (people.data ?? []).find((p) => p.email.toLowerCase() === me)?.github_login;
   const [runWith, setRunWith] = useState<RunWith>({});
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -193,7 +164,6 @@ export function DecisionsPage() {
           ))}
         </div>
       )}
-      {stage === "mine" && me && people.data && !myLogin && <LinkLogin />}
       {isAdmin && <RunWithControl value={runWith} onChange={setRunWith} repo={repos.length === 1 ? repos[0] : null} />}
       {source.isError ? (
         <PageError message="Decisions did not load" onRetry={() => void source.refetch()} />

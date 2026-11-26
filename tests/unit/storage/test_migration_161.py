@@ -18,10 +18,8 @@ from embry0.storage.migrations.runner import MIGRATIONS, run_migrations
 VERSION = 161
 
 
-def test_the_local_max_runs_migration_is_the_last_entry() -> None:
-    """The newest migration owns this assertion; it passes to the next one
-    (it came from tests/unit/storage/test_migration_160.py)."""
-    assert MIGRATIONS[-1][0] == VERSION, f"migration {VERSION} must carry local_max_runs into the settings document"
+def test_the_local_max_runs_migration_is_listed_once() -> None:
+    """The last-entry assertion moved to tests/unit/storage/test_migration_162.py."""
     assert [v for v, _, _ in MIGRATIONS].count(VERSION) == 1, f"migration {VERSION} must be listed once"
 
 

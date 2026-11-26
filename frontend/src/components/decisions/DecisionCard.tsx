@@ -91,7 +91,6 @@ function SendTo({ decision, me, onDone }: { decision: Decision; me: string; onDo
         {choices.map((p) => (
           <option key={p.email} value={p.email}>
             {p.name}
-            {p.github_login ? ` (@${p.github_login})` : ""}
           </option>
         ))}
       </select>

@@ -327,10 +327,9 @@ CROSSED_TASK = "Fix the header\n\nThe header overlaps the menu."
 
 async def _starter(db: DatabasePool) -> None:
     """The person who started the crossing jobs, known to embry0, as a chat names them."""
-    await db.execute(
-        "INSERT INTO users (id, auth0_sub, email, name, tier, github_login) VALUES ('usr-ada', 'auth0|ada', "
-        "'ada@example.com', 'ada', 'operator', 'ada') ON CONFLICT DO NOTHING"
-    )
+    from tests.fixtures.people_directory import stored_person
+
+    await stored_person(db, user_id="usr-ada", email="ada@example.com", name="ada", github="ada")
 
 
 async def _crossed_jobs(db: DatabasePool) -> None:

@@ -1,7 +1,8 @@
 """Who may answer a decision from a chat, and who reads a person's handles, on the real people and users (#179).
 
-- A caller owns a decision only as the person the directory names for one of its owners: a user whose login is
-  left over after their person was unlinked owns nothing, and neither does anyone once that person is disabled.
+- A caller owns a decision only as the person the directory names for one of its owners: a user unlinked from
+  their person owns nothing, nor does a user who signs in with no person, and nobody does once that person is
+  disabled.
 - A disabled person answers nothing, a group's decision included, whether or not they have a sign-in; a disabled
   user is no user, and a person whose sign-in is disabled is disabled.
 - A person's chat handles and hours in ``GET /asks/due`` go to whoever may read people and to the assistant's
@@ -39,14 +40,13 @@ async def _users(db: Any, *rows: tuple[str, str, str]) -> None:
         )
 
 
-async def test_a_login_left_over_on_an_unlinked_user_owns_nothing(
+async def test_a_user_unlinked_from_their_person_owns_nothing(
     db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
-        people, users, req = app.state.people_repo, app.state.users_repo, SimpleNamespace(app=app)
+        people, req = app.state.people_repo, SimpleNamespace(app=app)
         await _users(app.state.db, ("usr-u", "u@x.example", "operator"))
         monkeypatch.setattr(asks_api, "ask_policy", _group(""))
-        await users.set_github_login("usr-u", "alice", actor="t")
         alice = await people.create(
             {"name": "Alice", "email": "alice@corp.example", "user_id": "usr-u"},
             identities=[("github", "alice")],
@@ -62,7 +62,7 @@ async def test_a_login_left_over_on_an_unlinked_user_owns_nothing(
         await people.update(alice.id, {"disabled": True}, actor="t", expect_updated_at=alice.updated_at)
         disabled = {who: await asks_api._may_decide(req, ALICE, who) for who in ("u@x.example", "alice@corp.example")}
     assert unlinked == {"u@x.example": False, "alice@corp.example": True}, (
-        f"the login left on the unlinked user owns what Alice, who holds it, owns: {unlinked}"
+        f"the user unlinked from Alice owns what she owns: {unlinked}"
     )
     assert mine == [], "nor does the user see it as theirs"
     assert disabled == {"u@x.example": False, "alice@corp.example": False}, (
@@ -124,21 +124,19 @@ async def test_a_person_whose_sign_in_is_disabled_is_neither_asked_nor_an_owner(
     assert not decides, "a person whose sign-in is disabled answers what they own"
 
 
-async def test_a_stand_in_sharing_a_person_s_email_answers_what_it_is_asked(
+async def test_a_user_who_signs_in_with_no_person_owns_nothing(
     db_with_migrations: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A user not yet linked, whose email a person also has: asked by that email as the login's holder, and the
-    answer by that email is theirs."""
+    """Since ``users.github_login`` was retired (#179), a user owns a decision only as a person an admin made: one who
+    signs in with no person is not asked as an owner, and answers nothing an owner may."""
     async with repository_writes_app(db_with_migrations, monkeypatch) as (app, _keys, _values):
-        people, users, req = app.state.people_repo, app.state.users_repo, SimpleNamespace(app=app)
+        req = SimpleNamespace(app=app)
         await _users(app.state.db, ("usr-s", "s@x.example", "operator"))
-        await users.set_github_login("usr-s", "kit", actor="t")
-        await people.create({"name": "Kit elsewhere", "email": "s@x.example"}, actor="t")
         monkeypatch.setattr(asks_api, "ask_policy", _group(""))
         directory = await directory_of(app.state, ["acme/web"])
         decides = await asks_api._may_decide(req, {**ALICE, "owners": ["kit"]}, "s@x.example")
-    assert directory.recipient("acme/web", "kit") == "s@x.example"
-    assert decides, "asked by their email as the login's holder, and refused when they answer by it"
+    assert directory.recipient("acme/web", "kit") == "github:kit", "kit, whom no person holds, is asked as itself"
+    assert not decides, "a user with no person owns nothing"
 
 
 def _request(*, kind: str = "key", tier: str = "", allowed: tuple[str, ...] | None = None, session: Any = None) -> Any:

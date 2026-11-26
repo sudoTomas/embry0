@@ -2,8 +2,8 @@
 
 Repository owners (``repo_preferences.owners``), area owners (the areas
 document, spec 2026-11-10), ``CODEOWNERS``, the people a chat assistant may
-ask, a user's GitHub login (``users.github_login``) and a person's ``github``
-and ``gitlab`` identities (``person_identities``, #179) are all matched against
+ask and a person's ``github`` and ``gitlab`` identities (``person_identities``,
+#179) are all matched against
 each other, so each forge's logins are checked with that forge's own pattern:
 a login the forge would not let anyone sign up with can be nobody's.
 

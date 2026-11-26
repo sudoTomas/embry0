@@ -7,15 +7,10 @@ one transaction with its ``audit_log`` row (``person.created``,
 audit row cannot be stored does not happen. Values are checked by
 :mod:`embry0.services.people` before they are stored.
 
-**A linked user's GitHub login, for one release.** Owners are matched by the
-people's identities (:mod:`embry0.services.owner_people`), a user with no
-person by ``users.github_login`` until it is retired. While a person is linked to a user, that
-login is one of the person's ``github`` identities: the one it names when it
-still is one, else the person's oldest, else none. A change of the person's
-GitHub identities, or of their link, writes it in the same transaction, and
-:meth:`embry0.storage.repositories.users.UsersRepository.set_github_login`
-writes the identity it replaces (:func:`follow_user_login`). Unlinking or
-deleting a person leaves the user's login as it was.
+Owners are matched by the people's identities alone
+(:mod:`embry0.services.owner_people`). The user's GitHub login that stood in
+for them, ``users.github_login``, and the sync that kept it one of a linked
+person's identities, were retired with migration 162 (#179).
 """
 
 from __future__ import annotations
@@ -59,7 +54,7 @@ class Person:
 
 
 class PersonConflict(Exception):
-    """A value another person, or another user, holds already: ``field`` names which."""
+    """A value another person holds already: ``field`` names which."""
 
     def __init__(self, field: str) -> None:
         super().__init__(f"{field} is someone else's already")
@@ -71,7 +66,6 @@ _CONFLICTS = {
     "uq_people_email_lower": "email",
     "uq_people_user": "user_id",
     "uq_person_identities_kind_value": "identity",
-    "uq_users_github_login_lower": "github login",
 }
 
 
@@ -88,36 +82,6 @@ class PersonChanged(Exception):
     def __init__(self, updated_at: datetime) -> None:
         super().__init__(f"the person changed at {updated_at.isoformat()}")
         self.updated_at = updated_at
-
-
-#: The advisory lock a GitHub login is taken under: ``f"{GITHUB_LOGIN_LOCK}:{login.lower()}"``.
-GITHUB_LOGIN_LOCK = "github_login"
-
-
-async def lock_github_logins(conn: Any, logins: Iterable[str]) -> None:
-    """Hold each login's advisory lock for the transaction, in one order (#691 review).
-
-    A write that gives a person a GitHub identity reads ``users`` for the
-    login, and one that sets a user's login reads ``person_identities``: each
-    checks the other's table, so two at once could each see the login free
-    and both take it. Both take the login's lock before they check, so the
-    second waits for the first and then sees what it wrote. Taken sorted, so
-    two writes of several logins never wait on each other in a circle.
-    """
-    for login in sorted({login.lower() for login in logins if login}):
-        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"{GITHUB_LOGIN_LOCK}:{login}")
-
-
-async def _check_login_free(conn: Any, user_id: str | None, login: str) -> None:
-    """A GitHub login another user signs in as is not another person's to hold (#672 review): the person linked to
-    that user may hold it, nobody else. Without this, a person could hold it, and the next fall back of their own
-    user's login would find it taken. Called after the identity's insert, in its transaction: a value another person
-    holds is refused as that ``identity`` first, and this refusal rolls the insert back."""
-    other = await conn.fetchval(
-        "SELECT id FROM users WHERE LOWER(github_login) = LOWER($1) AND id IS DISTINCT FROM $2", login, user_id
-    )
-    if other is not None:
-        raise PersonConflict("github login")
 
 
 #: The audit events a transaction wrote, to append to the audit file once it commits.
@@ -176,83 +140,6 @@ async def _one(conn: Any, person_id: str) -> Person | None:
     return people[0] if people else None
 
 
-async def sync_user_login(conn: Any, person_id: str) -> None:
-    """Keep the GitHub login of the user ``person_id`` is linked to one of the person's ``github`` identities: the
-    one it names while it still is one, else the oldest, else none. Nothing for a person linked to no user."""
-    user_id = await conn.fetchval("SELECT user_id FROM people WHERE id = $1", person_id)
-    if not user_id:
-        return
-    current = await conn.fetchval("SELECT github_login FROM users WHERE id = $1", user_id)
-    logins = [
-        row["value"]
-        for row in await conn.fetch(
-            "SELECT value FROM person_identities WHERE person_id = $1 AND kind = 'github' ORDER BY created_at, value",
-            person_id,
-        )
-    ]
-    if current and current.lower() in {login.lower() for login in logins}:
-        return
-    await conn.execute("UPDATE users SET github_login = $2 WHERE id = $1", user_id, logins[0] if logins else None)
-
-
-async def follow_user_login(
-    conn: Any, user_id: str, old: str | None, new: str | None, *, actor: str, into: Written
-) -> None:
-    """A user's GitHub login changed from ``old`` to ``new``, on ``conn`` in the change's transaction (#179, for one
-    release): the person linked to the user, if any, follows.
-
-    - ``new`` the person holds already, as another of their GitHub logins: their identities stay as they are.
-    - Otherwise ``new`` takes the place of ``old`` among them (``old`` goes, ``new`` comes); one another person
-      holds raises the unique violation, as one another user holds does.
-    - Then the user's login is one of the person's again (:func:`sync_user_login`): clearing it names their oldest
-      GitHub identity left, if they have one.
-
-    A user linked to no person is left so: embry0 makes a person only when someone adds one.
-    """
-    person_id = await conn.fetchval("SELECT id FROM people WHERE user_id = $1", user_id)
-    if not person_id or (old or "").lower() == (new or "").lower():
-        return
-    login = check_identity("github", new)[1] if new else None
-    holder = None
-    if login:
-        holder = await conn.fetchval(
-            "SELECT person_id FROM person_identities WHERE kind = 'github' AND LOWER(value) = LOWER($1)", login
-        )
-    if holder != person_id:
-        if old:
-            removed = await conn.fetchval(
-                "DELETE FROM person_identities WHERE person_id = $1 AND kind = 'github' AND LOWER(value) = LOWER($2) "
-                "RETURNING value",
-                person_id,
-                old,
-            )
-            if removed:
-                await _audit(
-                    conn,
-                    "person.identity.removed",
-                    actor=actor,
-                    details={
-                        "person_id": person_id,
-                        "kind": "github",
-                        "value": removed,
-                        "source": "users.github_login",
-                    },
-                    into=into,
-                )
-        if login:
-            await conn.execute(
-                "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, 'github', $2)", person_id, login
-            )
-            await _audit(
-                conn,
-                "person.identity.added",
-                actor=actor,
-                details={"person_id": person_id, "kind": "github", "value": login, "source": "users.github_login"},
-                into=into,
-            )
-    await sync_user_login(conn, person_id)
-
-
 class PeopleRepository:
     """Reads and writes ``people`` and ``person_identities``."""
 
@@ -307,7 +194,6 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
-                await lock_github_logins(conn, (value for kind, value in checked if kind == "github"))
                 await conn.execute(
                     "INSERT INTO people (id, name, email, user_id, timezone, hours, weekdays, disabled, created_by) "
                     "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
@@ -328,9 +214,6 @@ class PeopleRepository:
                         kind,
                         value,
                     )
-                    if kind == "github":
-                        await _check_login_free(conn, values.get("user_id"), value)
-                await sync_user_login(conn, person_id)
                 await _audit(
                     conn,
                     "person.created",
@@ -370,7 +253,6 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
-                await lock_github_logins(conn, (value for kind, value in wanted or () if kind == "github"))
                 before = await conn.fetchrow(f"SELECT {_COLUMNS} FROM people WHERE id = $1 FOR UPDATE", person_id)
                 if before is None:
                     return None
@@ -392,11 +274,7 @@ class PeopleRepository:
                         },
                         into=written,
                     )
-                moved = await self._replace_identities(
-                    conn, person_id, wanted, values.get("user_id", before["user_id"]), actor=actor, into=written
-                )
-                if "user_id" in changed or moved:
-                    await sync_user_login(conn, person_id)
+                await self._replace_identities(conn, person_id, wanted, actor=actor, into=written)
                 person = await _one(conn, person_id)
         except asyncpg.UniqueViolationError as exc:
             raise _conflict(exc) from None
@@ -410,18 +288,16 @@ class PeopleRepository:
         conn: Any,
         person_id: str,
         wanted: list[tuple[str, str]] | None,
-        user_id: str | None,
         *,
         actor: str,
         into: Written,
-    ) -> bool:
-        """Make the person's identities exactly ``wanted`` (nothing when None); whether a GitHub one changed."""
+    ) -> None:
+        """Make the person's identities exactly ``wanted`` (nothing when None)."""
         if wanted is None:
-            return False
+            return
         rows = await conn.fetch("SELECT kind, value FROM person_identities WHERE person_id = $1", person_id)
         held = {(row["kind"], row["value"].lower()): row["value"] for row in rows}
         want = {(kind, value.lower()): value for kind, value in wanted}
-        github = False
         for key in sorted(set(held) - set(want)):
             await conn.execute(
                 "DELETE FROM person_identities WHERE person_id = $1 AND kind = $2 AND LOWER(value) = $3",
@@ -429,7 +305,6 @@ class PeopleRepository:
                 key[0],
                 key[1],
             )
-            github = github or key[0] == "github"
             await _audit(
                 conn,
                 "person.identity.removed",
@@ -442,9 +317,6 @@ class PeopleRepository:
             await conn.execute(
                 "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, $2, $3)", person_id, kind, value
             )
-            if kind == "github":
-                await _check_login_free(conn, user_id, value)
-                github = True
             await _audit(
                 conn,
                 "person.identity.added",
@@ -454,11 +326,9 @@ class PeopleRepository:
             )
         if set(held) != set(want):
             await conn.execute("UPDATE people SET updated_at = now() WHERE id = $1", person_id)
-        return github
 
     async def delete(self, person_id: str, *, actor: str) -> bool:
-        """Delete the person and their identities, audited as ``person.deleted``. False when there is none. A user
-        they were linked to keeps their GitHub login."""
+        """Delete the person and their identities, audited as ``person.deleted``. False when there is none."""
         written: Written = []
         async with self._db.transaction() as conn:
             before = await _one(conn, person_id)
@@ -487,19 +357,13 @@ class PeopleRepository:
         written: Written = []
         try:
             async with self._db.transaction() as conn:
-                if kind == "github":
-                    await lock_github_logins(conn, (value,))
                 holder = await conn.fetchrow("SELECT user_id FROM people WHERE id = $1 FOR UPDATE", person_id)
                 if holder is None:
                     return None
                 await conn.execute(
                     "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, $2, $3)", person_id, kind, value
                 )
-                if kind == "github":
-                    await _check_login_free(conn, holder["user_id"], value)
                 await conn.execute("UPDATE people SET updated_at = now() WHERE id = $1", person_id)
-                if kind == "github":
-                    await sync_user_login(conn, person_id)
                 await _audit(
                     conn,
                     "person.identity.added",
@@ -533,8 +397,6 @@ class PeopleRepository:
                 if removed is None:
                     return None
                 await conn.execute("UPDATE people SET updated_at = now() WHERE id = $1", person_id)
-                if kind == "github":
-                    await sync_user_login(conn, person_id)
                 await _audit(
                     conn,
                     "person.identity.removed",
@@ -558,7 +420,7 @@ class PeopleRepository:
         not listed."""
         async with self._db.transaction() as conn:
             users = await conn.fetch(
-                "SELECT u.id, u.email, u.name, u.github_login FROM users u "
+                "SELECT u.id, u.email, u.name FROM users u "
                 "WHERE NOT u.disabled AND NOT EXISTS (SELECT 1 FROM people p WHERE p.user_id = u.id) "
                 "ORDER BY LOWER(COALESCE(NULLIF(u.name, ''), u.email)), u.id"
             )
@@ -579,9 +441,6 @@ class PeopleRepository:
                 """
             )
         return {
-            "users": [
-                {"user_id": r["id"], "email": r["email"], "name": r["name"], "github_login": r["github_login"]}
-                for r in users
-            ],
+            "users": [{"user_id": r["id"], "email": r["email"], "name": r["name"]} for r in users],
             "owners": [{"repo": r["repo"], "owner": r["login"]} for r in owners],
         }

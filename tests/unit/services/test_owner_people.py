@@ -123,36 +123,27 @@ async def test_each_repository_s_forge_is_its_organization_s_else_its_own_else_g
     ), "the organization's forge, else the repository's own registration's, else GitHub's"
 
 
-async def test_a_user_with_no_person_stands_in_with_their_github_login() -> None:
-    """For one release (#179): a user who signed in after the people were made, not yet a person, keeps being asked
-    by their email and owning what their GitHub login owns. A person holding the login wins."""
-    linked = person("Lin", email="lin@example.com", identities=[("github", "lin")], user_id="usr-lin")
-    holder = person("Held", email="held@example.com", identities=[("github", "taken")])
-    users = _Users(
-        SimpleNamespace(id="usr-new", email="new@example.com", name="New", github_login="newbie"),
-        SimpleNamespace(id="usr-lin", email="lin@example.com", name="Lin", github_login="lin"),
-        SimpleNamespace(id="usr-dup", email="dup@example.com", name="Dup", github_login="taken"),
-        SimpleNamespace(id="usr-none", email="none@example.com", name="None", github_login=None),
-    )
-    d = await read_directory(_People(linked, holder), None, None, ["globex/gizmos"], users)
-    assert d.recipient("globex/gizmos", "newbie") == "new@example.com", "the user stands in, asked by email"
-    assert d.owns(d.by_email("new@example.com"), {"repo": "globex/gizmos", "owners": ["newbie"]})
-    assert d.holder("globex/gizmos", "lin") is linked, "a user who is a person is that person, not a stand-in"
-    assert d.holder("globex/gizmos", "taken") is holder, "a person holding the login wins over a user's"
-    assert d.by_email("none@example.com") is None, "a user with no login stands in for nothing"
-
-
-async def test_a_person_whose_sign_in_is_disabled_reads_as_disabled_and_a_disabled_user_stands_in_for_nobody() -> None:
+async def test_a_user_with_no_person_is_nobody_in_the_directory() -> None:
+    """Since ``users.github_login`` was retired (#179), a user who signs in with no person is in the directory as
+    nobody: not asked by their email, owning nothing, until an admin adds them as a person. A user who is a person
+    is that person."""
     linked = person("Lin", email="lin@example.com", identities=[("github", "lin")], user_id="usr-lin")
     users = _Users(
-        SimpleNamespace(id="usr-lin", email="lin@example.com", name="Lin", github_login="lin"),
-        SimpleNamespace(id="usr-off", email="off@example.com", name="Off", github_login="offy"),
-        disabled=("usr-lin", "usr-off"),
+        SimpleNamespace(id="usr-new", email="new@example.com", name="New"),
+        SimpleNamespace(id="usr-lin", email="lin@example.com", name="Lin"),
     )
+    d = await read_directory(_People(linked), None, None, ["globex/gizmos"], users)
+    assert d.by_email("new@example.com") is None, "a user with no person stands in for nobody"
+    assert d.recipient("globex/gizmos", "newbie") == "github:newbie", "an owner no person holds is asked as itself"
+    assert d.holder("globex/gizmos", "lin") is linked, "a user who is a person is that person"
+
+
+async def test_a_person_whose_sign_in_is_disabled_reads_as_disabled() -> None:
+    linked = person("Lin", email="lin@example.com", identities=[("github", "lin")], user_id="usr-lin")
+    users = _Users(SimpleNamespace(id="usr-lin", email="lin@example.com", name="Lin"), disabled=("usr-lin",))
     d = await read_directory(_People(linked), None, None, ["globex/gizmos"], users)
     assert d.recipient("globex/gizmos", "lin") is None, "a person whose sign-in is disabled is not asked"
     assert not d.owns(d.by_email("lin@example.com"), {"repo": "globex/gizmos", "owners": ["lin"]})
-    assert d.holder("globex/gizmos", "offy") is None, "a disabled user stands in for nobody"
 
 
 def test_a_caller_is_every_person_their_email_and_sign_in_name_and_owns_only_as_a_login_s_holder() -> None:

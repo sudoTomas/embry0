@@ -21,12 +21,9 @@ among the people's identities, so asks and who may decide receive people:
 Everything here reads one :class:`Directory`, built once a tick or a request
 (:func:`read_directory`): the people, and each repository's forge.
 
-**A user with no person, for one release.** A user who signed in after the
-people were made from the users (migration 154) has no person until someone
-adds one, but may have a GitHub login (``users.github_login``), which owners
-were matched by until now. Such a user stands in as a person with that one
-``github`` identity, read and never stored, so they are asked and decide as
-before; a person holding the login wins. This goes with the column.
+A user who signs in is no owner until an admin adds them as a person with
+their identities (D6): the GitHub login a user stood in for one by
+(``users.github_login``) was retired with migration 162 (#179).
 """
 
 from __future__ import annotations
@@ -37,7 +34,7 @@ from typing import Any
 
 from embry0.forge_logins import split_owner
 from embry0.settings.scope import organization_of
-from embry0.storage.repositories.people import Identity, Person
+from embry0.storage.repositories.people import Person
 
 #: The forge an owner's login is read on when nothing names the repository's: the one owners were before.
 DEFAULT_FORGE = "github"
@@ -163,33 +160,10 @@ def chat(person: Person | None) -> list[dict[str, str]]:
     return [{"channel": i.kind, "id": i.value} for i in sorted(handles, key=lambda i: rank[i.kind])]
 
 
-def _stand_ins(users: Iterable[Any], linked: set[str]) -> tuple[Person, ...]:
-    """Each user not disabled with a GitHub login and no person, as a person holding that login (one release)."""
-    return tuple(
-        Person(
-            id=f"user:{u.id}",
-            name=u.name or u.email,
-            email=u.email,
-            user_id=u.id,
-            timezone=None,
-            hours=None,
-            weekdays=None,
-            disabled=False,
-            created_by="",
-            created_at=None,
-            updated_at=None,
-            identities=(Identity(kind="github", value=str(u.github_login)),),
-        )
-        for u in users
-        if u.github_login and u.id not in linked
-    )
-
-
 def unheld_owners(owners: Iterable[Mapping[str, Any]], directory: Directory) -> list[dict[str, Any]]:
     """The owner logins nobody holds, from ``owners`` (``{repo, owner}`` each, as stored): each login on its forge
     (:meth:`Directory.handle`: a named owner's own, a bare one's repository's), ``{forge, login, repos}``, with the
-    repositories naming it, by forge and login. What the People page offers to add (D6). Nobody means no person, and
-    no user standing in for one by their GitHub login: that user is suggested as a user, whose Add takes the login."""
+    repositories naming it, by forge and login. What the People page offers to add (D6). Nobody means no person."""
     found: dict[tuple[str, str], set[str]] = {}
     for row in owners:
         repo, owner = str(row.get("repo") or ""), row.get("owner")
@@ -205,15 +179,13 @@ async def read_directory(
 ) -> Directory:
     """The people, and the forge of each repository in ``asked_about``: its organization's when the organization is
     registered, else the repository's own registration's, else GitHub's. ``people``, ``organizations``, ``repos``
-    and ``users`` are the repositories; a missing one reads as none. A user with no person stands in as one, and a
-    person whose user is disabled reads as disabled."""
+    and ``users`` are the repositories; a missing one reads as none. A person whose user is disabled reads as
+    disabled."""
     everyone = tuple(await people.all(include_disabled=True)) if people is not None else ()
     if users is not None:
-        # A person whose sign-in is disabled is disabled with it; a disabled user stands in for nobody.
+        # A person whose sign-in is disabled is disabled with it.
         off = await users.disabled_ids()
         everyone = tuple(replace(p, disabled=True) if p.user_id in off and not p.disabled else p for p in everyone)
-        linked = {p.user_id for p in everyone if p.user_id}
-        everyone = (*_stand_ins(await users.people(), linked), *everyone)
     return Directory(people=everyone, forges=await forges_of(organizations, repos, asked_about))
 
 

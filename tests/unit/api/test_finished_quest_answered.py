@@ -36,13 +36,10 @@ async def _finished_quest(app: Any, db: DatabasePool) -> str:
         NOW - timedelta(minutes=10),
         f"https://github.com/{COVERED}/pull/7",
     )
+    from tests.fixtures.people_directory import stored_person
+
     for user_id, email, login in (("usr-ada", "ada@example.com", "ada"), ("usr-bo", "bo@example.com", "bo")):
-        await db.execute(
-            "INSERT INTO users (id, auth0_sub, email, name, tier, github_login) VALUES ($1, $1, $2, $3, 'operator', $3)",
-            user_id,
-            email,
-            login,
-        )
+        await stored_person(db, user_id=user_id, email=email, name=login, github=login)
     await app.state.repo_preferences_repo.upsert(COVERED, owners=["ada"])
     settings = {"asks": {"enabled": True, "unowned_group": "triage", "hours": "00-24", "weekdays": "mon-sun"}}
     put = await call(app, "PUT", "/api/v1/config/settings", MASTER, settings)

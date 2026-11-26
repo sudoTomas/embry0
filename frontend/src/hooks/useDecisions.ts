@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type Decision, type DecisionAction, type DecisionFilters, fetchDecision, fetchDecisions } from "@/api/decisions";
-import { fetchPeople, returnHandoff, sendDecision, setMyGithubLogin } from "@/api/handoffs";
+import { fetchPeople, returnHandoff, sendDecision } from "@/api/handoffs";
 import { answerOwnerProposal } from "@/api/ownerProposals";
 import { type RunWith, runWithBody } from "@/api/runWith";
 import { dismissJob, evaluateJob, rejectJob, runJobAgain, sendJobBack } from "@/api/jobReview";
@@ -120,6 +120,3 @@ export function useReturnHandoff() {
   return useDecisionsMutation((v: { handoffId: string; note: string }) => returnHandoff(v.handoffId, v.note));
 }
 
-export function useSetMyGithubLogin() {
-  return useDecisionsMutation((login: string) => setMyGithubLogin(login), ["people"]);
-}

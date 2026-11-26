@@ -33,8 +33,6 @@ class UserRow:
     first_login_at: datetime | None
     last_login_at: datetime | None
     created_at: datetime | None
-    #: The GitHub login owners are named by (decisions, spec 2026-10-27); None until set.
-    github_login: str | None = None
 
 
 def _row(r: Any) -> UserRow:
@@ -50,7 +48,6 @@ def _row(r: Any) -> UserRow:
         first_login_at=r["first_login_at"],
         last_login_at=r["last_login_at"],
         created_at=r["created_at"],
-        github_login=r.get("github_login") if hasattr(r, "get") else None,
     )
 
 
@@ -146,48 +143,6 @@ class UsersRepository:
     async def disabled_ids(self) -> set[str]:
         """The users who may not sign in: no person they are linked to is asked, owns or decides (#179)."""
         return {str(r["id"]) for r in await self._db.fetch("SELECT id FROM users WHERE disabled")}
-
-    async def set_github_login(self, user_id: str, login: str | None, *, actor: str = "system") -> UserRow | None:
-        """Set (or clear, with None) the GitHub login a person is named by; one person per login.
-
-        For one release (#179), the person linked to the user, if any, gets the login as a ``github`` identity in
-        place of the one it replaces, in the same transaction, audited as ``actor``'s
-        (:func:`embry0.storage.repositories.people.follow_user_login`). A login another person holds as an
-        identity raises :class:`~embry0.storage.repositories.people.PersonConflict`, checked under the login's
-        lock (``lock_github_logins``); one another user holds raises a unique violation.
-        """
-        from embry0.storage.repositories.people import (
-            PersonConflict,
-            Written,
-            append_audit_file,
-            follow_user_login,
-            lock_github_logins,
-        )
-
-        written: Written = []
-        async with self._db.transaction() as conn:
-            if login:
-                # Under the login's lock, as a person's GitHub identity is given (#691 review): one of two at once wins.
-                await lock_github_logins(conn, (login,))
-                # A login another person holds as an identity is theirs (#672 review), as one another user has is.
-                held = await conn.fetchval(
-                    "SELECT 1 FROM person_identities i JOIN people p ON p.id = i.person_id "
-                    "WHERE i.kind = 'github' AND LOWER(i.value) = LOWER($1) AND p.user_id IS DISTINCT FROM $2",
-                    login,
-                    user_id,
-                )
-                if held is not None:
-                    raise PersonConflict("github login")
-            old = await conn.fetchval("SELECT github_login FROM users WHERE id = $1 FOR UPDATE", user_id)
-            row = await conn.fetchrow(
-                "UPDATE users SET github_login = $2 WHERE id = $1 RETURNING *", user_id, login or None
-            )
-            if row is not None:
-                await follow_user_login(conn, user_id, old, login or None, actor=actor, into=written)
-                # The person's identities may name another login now (a cleared one falls to their oldest).
-                row = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
-        append_audit_file(written, self._audit_log_path)
-        return _row(row) if row else None
 
     async def bump_epoch(self, user_id: str) -> UserRow | None:
         """Invalidate every session cookie minted under the current epoch."""

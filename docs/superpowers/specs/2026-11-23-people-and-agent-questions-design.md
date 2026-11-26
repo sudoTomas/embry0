@@ -118,6 +118,9 @@ person_identities
   person's oldest GitHub identity left. Unlinking or deleting a person leaves the user's login, so linking the
   person to another user is refused while the first still holds it. The release after section 4 drops the column
   and this sync.
+  - **Retired (2026-11-26, migration 162, pull request 8).** The column, this sync, the login routes and the
+    stand-in below are gone. Each login no person held was written to a `user.github_login_retired` audit row before
+    the column went, for an admin to add on the People page.
 - **Audit.** Every write of a person or an identity is audited in its own transaction, and appended to the audit
   file once it commits, as every audited write is; who and what changed:
   `person.created`, `person.updated` (each field before and after), `person.deleted`, `person.identity.added` and
@@ -143,6 +146,7 @@ It now returns, for each login, the person its identity names, or the login mark
     and the People page lists it with "add" (pull request 6). A disabled person is not asked and is no owner.
   - For one release, a user who signed in with a GitHub login and has no person yet counts as a person holding
     that login, read and never stored, so a user who signed in after the backfill keeps being asked and deciding.
+    Retired with the column (pull request 8): a user with no person owns nothing until an admin adds them.
 - **Hand-offs** name a person by email. An email with no person is listed as unknown with "add", as a login is.
 - **Who may decide.** `_may_decide` resolves the email the assistant verified to a person, signed in or not, and
   compares that person's identities with the decision's owners on its forge, instead of `users.github_login`
@@ -249,7 +253,11 @@ agent_questions:
    - link a sign-in;
    - add identities;
    - work through the unknown logins.
-7. **`chore(settings): retire the agent_questions import`**: one release after pull request 1 first deploys.
+7. **`chore(settings): retire the agent_questions import`**: one release after pull request 1 first deploys. Done
+   by #682, which stopped every such import at once.
+8. **`feat(people): retire users.github_login`** (decided 2026-11-26): the column, its sync, the stand-in, the
+   login routes (`PUT /me/github-login`, `PUT /users/{id}/github-login`) and `github_login` in every answer, in
+   one release once pull request 4 runs. A hand-off may go to anyone who signs in or is a person with an email.
 
 ## 8. Acceptance
 
@@ -264,13 +272,15 @@ agent_questions:
 | Every user is one person | Migration 154 makes one person per user, linked, with their name (else email), email, `disabled` and GitHub login as a `github` identity, each audited; a second run makes nobody; an email or login only blanks set apart from another's is left off (`tests/unit/storage/test_migration_154.py`). |
 | An identity is one person's, any case | A second person given `github:ADA-L` after `github:ada-l`, or `ADA@example.com` after `ada@example.com`, is refused naming the field; a person is found by either case (`tests/unit/storage/test_people_repo.py`). |
 | Every write is audited with it | Each write leaves one audit row naming who and what changed; a write whose audit row fails is not stored. |
-| The GitHub login stays in step | A linked person's GitHub identities set the user's login, and setting the user's login moves the person's identity; a login another person holds is refused and changes nothing. |
+| The GitHub login stays in step | A linked person's GitHub identities set the user's login, and setting the user's login moves the person's identity; a login another person holds is refused and changes nothing. Until pull request 8 retired it. |
 | People (pull requests 3 to 6) | Each pull request states its own, against sections 3 to 5. |
 
 ## 9. To decide in their pull requests
 
-- Who may write people: admin alone (decided for pull request 3). Whether an owner may add themselves stays open.
-- Whether an identity needs proof (a sign-in through that forge) before asks reach its person.
+- Who may write people: admin alone (decided for pull request 3). An owner may not add themselves: admins only
+  (decided 2026-11-26), so the self-service login route went with pull request 8.
+- Whether an identity needs proof (a sign-in through that forge) before asks reach its person: no (decided
+  2026-11-26). The admin who adds it vouches for it.
 - Whether a person's handle may name more than one chat: yes, decided for pull request 2 (D4).
 
 ## 10. Out of scope
