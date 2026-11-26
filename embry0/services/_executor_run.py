@@ -1347,7 +1347,7 @@ async def _reenroll_paused_sandbox(
     precheck just resolved for this resume; the proxy injects an account's
     token only for an oauth account, as at create. ``git_push`` restores the
     push right the sandbox was created with (#521), for the one branch the
-    checkpoint names (#559). ``configurable`` is the graph's, the one init_node
+    checkpoint names (#559), once the job opened it (#395). ``configurable`` is the graph's, the one init_node
     read: the log scope is worked out again from it as init_node works it out.
     Raises what ``SandboxManager.reenroll`` raises: ``SANDBOX_GONE`` fails the resume,
     ``SandboxReenrollError`` leaves the job paused (``IssueExecutor.resume``).
@@ -1380,7 +1380,9 @@ async def _reenroll_paused_sandbox(
             granted = values["case_log_containers"]
             context_scope = await developer_job_scope(job_repo, granted, configurable, config) or None
     git_push_branches: list[str] = []
-    if git_push:
+    # #395: the branch once a step that holds coder or docs opened it (push_open, step_start); none before. A
+    # checkpoint written before the flag was enrolled with its branch, and keeps it.
+    if git_push and values.get("push_open", True) is not False:
         # #559: the branch the paused job may push, from its checkpoint: the
         # developer's chosen branch once it has one (init_node's rule).
         from embry0.orchestration.branch_names import job_push_branch

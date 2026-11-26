@@ -77,6 +77,7 @@ from embry0.workflows.issue_to_pr.nodes import (
 from embry0.workflows.issue_to_pr.plan_route import finalize_output_node, plan_route_node
 from embry0.workflows.issue_to_pr.route_plan import next_route
 from embry0.workflows.issue_to_pr.routing import route_after_qa_report
+from embry0.workflows.issue_to_pr.step_start import starts_a_step
 from embry0.workflows.qa.orchestrator import (
     init_orchestrator_node,
     qa_orchestrator_node,
@@ -174,19 +175,21 @@ class IssueToprWorkflow:
         # destinations= declares the Command-routing targets so the static
         # graph (introspection, viz, wiring tests) stays complete — the
         # nodes route dynamically via Command(goto=...) (RAV-1152).
+        # #395: each node a step starts at first stops what earlier steps left running in the sandbox, and opens the
+        # job's branch at the first step that holds coder or docs (embry0.workflows.issue_to_pr.step_start).
         builder.add_node(
             "triage",
-            triage_node,  # type: ignore[type-var]
+            starts_a_step(triage_node, "triage"),  # type: ignore[arg-type]
             destinations=("plan_route", "developer", "max_retries", "ask_user_interrupt", "init_orchestrator", END),
         )
         # RAV-601: templates are interpreted over this fixed node superset —
         # plan_route snapshots the selected template into state and the
         # next_route dispatcher picks the next physical node at each seam.
         builder.add_node("plan_route", plan_route_node)  # type: ignore[type-var]
-        builder.add_node("finalize_output", finalize_output_node)  # type: ignore[type-var]
+        builder.add_node("finalize_output", starts_a_step(finalize_output_node, "output"))  # type: ignore[arg-type]
         builder.add_node(
             "developer",
-            developer_node,  # type: ignore[type-var]
+            starts_a_step(developer_node, "developer"),  # type: ignore[arg-type]
             # "developer": the done-when check's retries of the coding step; END: its
             # done_when.on_unmet fail (#182).
             destinations=(
@@ -202,7 +205,7 @@ class IssueToprWorkflow:
         )
         builder.add_node(
             "review",
-            review_node,  # type: ignore[type-var]
+            starts_a_step(review_node, "review"),  # type: ignore[arg-type]
             destinations=(
                 "retry",
                 "max_retries",
@@ -221,13 +224,13 @@ class IssueToprWorkflow:
         # test failures, else the route plan's next step.
         builder.add_node(
             "verify",
-            verify_node,  # type: ignore[type-var]
+            starts_a_step(verify_node, "verify"),  # type: ignore[arg-type]
             destinations=("retry", "init_orchestrator", "finalize_output", "generic_agent", "review", END),
         )
         # RAV-604: one physical node serves every non-code agent type
         # (research/analysis/ops) — it reads the current route step to know
         # which agent definition to run.
-        builder.add_node("generic_agent", generic_agent_node)  # type: ignore[type-var]
+        builder.add_node("generic_agent", starts_a_step(generic_agent_node, "agent"))  # type: ignore[arg-type]
         builder.add_node("retry", retry_node)  # type: ignore[type-var]
         builder.add_node("max_retries", max_retries_node)  # type: ignore[type-var]
         # #459: a "merge as is" opens its change request here; a refusal goes back to the pause it came from.
@@ -246,7 +249,7 @@ class IssueToprWorkflow:
         )
 
         # Multi-app QA subpath nodes (Phase 1 C1 fix).
-        builder.add_node("init_orchestrator", init_orchestrator_node)  # type: ignore[type-var]
+        builder.add_node("init_orchestrator", starts_a_step(init_orchestrator_node, "qa"))  # type: ignore[arg-type]
         builder.add_node("orchestrate_qa", _branch_qa_orchestrator_node)  # type: ignore[type-var]
         builder.add_node("qa_report", qa_report_node)  # type: ignore[type-var]
         # Phase 5 Task 6: bookkeeping + exhaustion sink for the QA failure loop.

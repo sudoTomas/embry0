@@ -1548,6 +1548,36 @@ class SandboxManager:
         logger.info("sandbox_agent_stopped", container=container)
         return True
 
+    async def stop_leftover_processes(self, container: str) -> int:
+        """Stop every process earlier steps left running in ``container`` but its init and its keep-alive, before
+        the next step starts (#395, ``embry0.execution.sandbox_processes``); how many the clean run stopped.
+
+        A run that ends without a pass finding nothing left (a process that keeps coming back), or that is itself
+        stopped, is run again, up to ``ATTEMPTS`` runs. Raises ``LeftoversNotStopped`` when none ends clean: a step
+        that may push must not start beside a process that was not stopped (``step_start``).
+        """
+        from embry0.execution.sandbox_processes import ATTEMPTS, LeftoversNotStopped, leftover_stop_command
+
+        why = "no run of the stop"
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                out = await self._docker.run_cmd(
+                    self._docker.build_exec_cmd(container, leftover_stop_command()), timeout=30
+                )
+            except RuntimeError as exc:  # it exited non-zero: not clean, or stopped itself
+                why = str(exc)[:200] or "the stop exited non-zero"
+                logger.warning("sandbox_leftover_stop_not_clean", container=container, attempt=attempt, error=why)
+                continue
+            lines = str(out).strip().splitlines()
+            stopped = int(lines[-1]) if lines and lines[-1].isdigit() else -1
+            if stopped < 0:
+                why = "the stop said nothing it could be read by"
+                continue
+            if stopped:
+                logger.info("sandbox_leftover_processes_stopped", container=container, stopped=stopped)
+            return stopped
+        raise LeftoversNotStopped(container, why)
+
     async def connect_network(self, container: str, network: str) -> None:
         """Connect sandbox to an additional network."""
         cmd = self._docker.build_network_cmd("connect", network, container)

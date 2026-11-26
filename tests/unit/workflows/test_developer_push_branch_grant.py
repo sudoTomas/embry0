@@ -151,3 +151,22 @@ async def test_a_branch_the_agent_reports_instead_of_its_own_is_not_recorded():
 
     assert update["branch_name"] == OWN, f"the agent's reported branch was recorded: {update['branch_name']!r}"
     assert "developer_reported_other_branch" in [e["event"] for e in logs]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("push_open", "granted"), [(True, True), (None, True), (False, False)])
+async def test_the_shared_branch_is_named_in_place_of_the_jobs_own_only_while_the_branch_is_open(
+    push_open: bool | None, granted: bool
+) -> None:
+    """#395: the step start opens the job's branch; one it did not open stays closed, and naming another branch in
+    its place would open it. A checkpoint from before the flag (None) was enrolled with its branch, as before."""
+    proxy = _proxy()
+
+    prompt, update = await _run(_state(push_open=push_open), docker=_Docker(), proxy=proxy)
+
+    if granted:
+        proxy.set_git_push_branches.assert_awaited_once_with("C", [SHARED])
+        assert update["branch_name"] == SHARED
+    else:
+        proxy.set_git_push_branches.assert_not_awaited()
+        assert update["branch_name"] == OWN and f"1. Create branch: {OWN}" in prompt, prompt

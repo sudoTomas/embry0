@@ -525,6 +525,9 @@ class JobState(TypedDict, total=False):
     # LangGraph's merge reducer silently drops undeclared keys.
     work_nature: Annotated[dict[str, Any] | None, FoldingLastValue]
     coding_agent: Annotated[str | None, FoldingLastValue]
+    # #395: whether the job's branch is open to push: False from init, True once the first step that holds coder or
+    # docs started (embry0.workflows.issue_to_pr.step_start). A resume enrolls the sandbox with what this says.
+    push_open: Annotated[bool | None, FoldingLastValue]
     # Done when (spec 2026-10-26): the finish line (embry0.services.done_when)
     # with the coding run's report on it, the one-shot instructions of its
     # retry, and how many retries the check sent (one per job).

@@ -75,6 +75,17 @@ Decided 2026-11-26.
 - **D7. A step starts with no process of an earlier step running.** Before each step starts, and so before the push
   window opens, the processes the earlier steps left in the sandbox are stopped: everything but its init and the
   process that keeps it alive. A process a step starts in the background ends with that step.
+  - Each process is stopped with its whole process group, and the stop goes over the process table again until a
+    pass finds nothing left; it is run again a few times when it does not end clean, or is itself stopped.
+  - When no run ends clean, a step that may push (it holds `coder` or `docs`, or the branch is open already) does
+    not start: the job fails with `ERR_SANDBOX_LEFTOVERS`. A step with no role, before the branch is open, still
+    runs, and opens nothing.
+  - **The stop covers processes only.** Files a step leaves in the sandbox stay for the steps after it: a git hook
+    in the workspace, a program earlier on the `PATH`, a shell start-up file. A later step that may push runs with
+    them. As seeded, triage holds `docs`, so the branch opens before the first step and every step of a job can push
+    it; a file a step leaves gives a later step nothing that step could not do itself. An operator who takes `docs`
+    from triage, to keep the early steps of a job closed, keeps them from pushing, not from changing the sandbox a
+    later coder works in: holding those steps to a sandbox of their own is outside this design.
 
 ## 3. Data
 

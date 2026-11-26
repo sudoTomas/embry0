@@ -25,6 +25,8 @@ PAUSED_STATE = {
     "repo": "acme/widgets",
     "case_log_containers": ["widgets-backend"],
     "branch_name": "embry0/iss-1-fix-widgets",
+    # #395: a step that holds coder or docs had opened the job's branch when it paused.
+    "push_open": True,
 }
 
 
@@ -383,6 +385,29 @@ async def test_a_resume_enrolls_the_one_branch_the_checkpoint_names(extra, branc
 
     expected = branch or "embry0/iss-1-fix-widgets-1a2b3c4d"
     assert order[0][2]["git_push_branches"] == [expected], order[0][2]
+
+
+@pytest.mark.asyncio
+async def test_a_resume_restores_no_branch_where_the_job_had_none():
+    """#395: the job's branch is open only once a step that holds coder or docs started, so a job paused before
+    that is given back the push right with no branch."""
+    order: list[Any] = []
+    ex = _executor(order, state={**PAUSED_STATE, "push_open": False})
+
+    await ex._execute_workflow_stream(Command(resume={"q1": "yes"}), "iss-1", "job-1")
+
+    assert order[0][2]["git_push"] is True and order[0][2]["git_push_branches"] == [], order[0][2]
+
+
+@pytest.mark.asyncio
+async def test_a_checkpoint_from_before_the_window_keeps_its_branch():
+    """A job paused before the window existed was enrolled with its branch, and is given it back."""
+    order: list[Any] = []
+    ex = _executor(order, state={k: v for k, v in PAUSED_STATE.items() if k != "push_open"})
+
+    await ex._execute_workflow_stream(Command(resume={"q1": "yes"}), "iss-1", "job-1")
+
+    assert order[0][2]["git_push_branches"] == ["embry0/iss-1-fix-widgets"], order[0][2]
 
 
 @pytest.mark.asyncio

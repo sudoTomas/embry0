@@ -305,12 +305,13 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
             repo=repo,
             forge=forge,
             llm_providers=tuple(config["configurable"].get("llm_providers") or ()),
-            # The developer pushes its branch from this sandbox (#521). Every
+            # The job's coder pushes its branch from this sandbox (#521). Every
             # other sandbox (QA, onboarding, warmers, image builds) only reads.
             git_push=True,
-            # #559: and only that branch. Until the developer chooses, the
-            # job's own name; developer_node swaps in the chosen one.
-            git_push_branches=[_job_push_branch(state)],
+            # #395: but no branch yet. The first step that holds coder or docs
+            # opens the job's own branch (#559, step_start), and developer_node
+            # swaps in the one it chooses.
+            git_push_branches=[],
         )
         logger.info("sandbox_created", job_id=job_id, container_id=container_id)
         writer(events.progress(message="Sandbox container created", node="init"))
@@ -399,6 +400,8 @@ async def init_node(state: dict[str, Any], config: RunnableConfig) -> dict[str, 
     writer(events.node_completed(node="init"))
     update: dict[str, Any] = {
         "sandbox_container_id": container_id,
+        # #395: enrolled with no branch; the first step that holds coder or docs opens it (step_start).
+        "push_open": False,
         "current_stage": "initialized",
         "retry_count": 0,
         "base_branch": base_branch,

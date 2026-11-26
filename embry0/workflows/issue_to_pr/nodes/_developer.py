@@ -127,13 +127,14 @@ async def _developer_working_branch(
 
 
 async def _grant_push_branch(state: dict[str, Any], configurable: dict[str, Any], branch: str) -> str:
-    """Let the sandbox push ``branch``, or fall back to the branch it may already push (#559).
+    """Let the sandbox push ``branch`` in place of the job's own name, or fall back to the job's own (#559).
 
-    init_node enrolled the sandbox for the job's own name (``job_push_branch``).
-    When the developer chose another branch (the issue's shared name, found
-    free on origin), the git-proxy is told to accept that one instead. If it
-    cannot be told, the job keeps its own name rather than pushing to a
-    branch the proxy would refuse.
+    The first step that holds coder or docs opened the job's own branch (``job_push_branch``; step_start, #395).
+    When the developer chose another branch (the issue's shared name, found free on origin), the git-proxy is told
+    to accept that one instead, but only while the job's branch is open: one the step start did not open stays
+    closed, and this never opens it (``push_open`` False; a checkpoint from before the flag, None, was enrolled
+    with its branch). If the proxy cannot be told, the job keeps its own name rather than pushing to a branch the
+    proxy would refuse.
     """
     from embry0.orchestration.branch_names import job_push_branch
 
@@ -146,6 +147,8 @@ async def _grant_push_branch(state: dict[str, Any], configurable: dict[str, Any]
     )
     if branch == enrolled:
         return branch
+    if state.get("push_open") is False:
+        return enrolled  # the branch is not open: no other may be named in its place
     proxy_mgr = configurable.get("proxy_manager")
     container_id = state.get("sandbox_container_id")
     if not proxy_mgr or not getattr(proxy_mgr, "git_proxy_url", "") or not container_id:

@@ -272,3 +272,20 @@ async def test_the_swap_route_is_admin_only_and_checks_its_input(proxy, forge):
         "/admin/git-push-branches/sbx-ro", json={"git_push_branches": ["x"]}, headers={"X-Admin-Token": ADMIN}
     )
     assert resp.status == 409, "a read-only sandbox must not gain push branches"
+
+
+async def test_an_enrollment_naming_no_branch_yet_refuses_every_push_quietly(proxy, forge, tmp_path):
+    """#395: a job's sandbox is enrolled with an empty list until its route is planned with a coder step. Every push
+    is refused, as for an older orchestrator, but the proxy does not warn: this is the expected state."""
+    with structlog.testing.capture_logs() as logs:
+        echoed = await _enroll(proxy, forge, git_push_branches=[])
+    assert echoed["git_push_branches"] == []
+    events = [e["event"] for e in logs]
+    assert "git_proxy_enrollment_without_push_branches" not in events, events
+    assert "git_proxy_enrollment_no_push_branch_yet" in events, events
+    home, work = await _workspace(tmp_path, proxy, forge)
+    await run_git("checkout", "-b", JOB_BRANCH, home=home, cwd=work)
+    await _commit(home, work, "x.md")
+    rc, out = await run_git("push", "origin", JOB_BRANCH, home=home, cwd=work)
+    assert rc != 0 and "none (the enrollment names no branch)" in out, out
+    assert _ref(forge, f"refs/heads/{JOB_BRANCH}") is None
