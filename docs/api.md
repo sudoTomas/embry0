@@ -649,7 +649,7 @@ A key is a plain variable name: letters, digits and underscores, not starting wi
 
 Some keys are refused with a 422, matched case-insensitively. The same check drops them again at sandbox start, from stored rows and from profile `env_defaults`. These keys are the infrastructure credentials and proxy URLs, plus every variable that would redirect a sandbox's traffic or load code into its processes: proxy routing, TLS verification, the dynamic loader, `PATH`/`HOME`/`SHELL`, shell and interpreter startup hooks, and the `GIT_`, `CLAUDE_`, `BUN_` and `GROK_` namespaces. `NODE_OPTIONS` and the JVM option variables (`JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `JAVA_OPTS`, `MAVEN_OPTS`, `GRADLE_OPTS`) are accepted, but only with memory flags. The authoritative list is `embry0/execution/auth_provider.py`.
 
-A 422 from the environment routes (`/environment`), `/credentials`, `/sandbox-profiles` and `/agents` (whose MCP servers can carry an `env`) never echoes a submitted value: each error keeps its `loc`, `type` and `msg` and leaves out `input` and `ctx`, and a key named in `loc` is cut at its first `=`.
+A 422 from the environment routes (`/environment`), `/credentials`, `/sandbox-profiles` and `/agents` (whose MCP servers can carry an `env`) never echoes a submitted value: each error keeps its `loc`, `type` and `msg` and leaves out `input` and `ctx`, and a key named in `loc` is cut at its first `=`. On every route, a field the body may not hold (`extra_forbidden`) is named in `loc` and its value is never echoed: a secret sent under a misspelled key does not come back.
 
 ## Container logs
 

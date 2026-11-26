@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -442,4 +443,43 @@ async def test_a_config_write_of_known_fields_is_still_taken(app, path, body) ->
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.put(path, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
-    assert resp.status_code != 422, f"{path} refused a field it knows: {resp.text}"
+    assert resp.status_code == 200, f"{path} did not take a field it knows: {resp.status_code} {resp.text}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "body"), _CONFIG_WRITES, ids=[p.rsplit("/config/", 1)[1] for p, _ in _CONFIG_WRITES])
+@pytest.mark.parametrize("misspelled", ["slack_webhook_ur", "telegram_bot_tokn"])
+async def test_the_value_under_an_unknown_field_never_comes_back(app, path, body, misspelled) -> None:
+    """A secret sent under a misspelled key would come back in the 422 with FastAPI's ``input``: the refusal names
+    the field and never repeats its value."""
+    secret = "value-under-a-misspelled-key-0123456789"
+    app.state.integration_repo = MagicMock(update=AsyncMock(return_value={}), get=AsyncMock(return_value={}))
+    app.state.provider_repo.update = AsyncMock(return_value={})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(path, json={**body, misspelled: secret}, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert resp.status_code == 422, resp.text
+    assert secret not in resp.text, f"{path} echoed the value sent under {misspelled}: {resp.text}"
+    assert ["body", misspelled] in [e.get("loc") for e in resp.json()["detail"]], resp.text
+
+
+@pytest.mark.asyncio
+async def test_no_route_echoes_the_value_under_an_unknown_field() -> None:
+    """App-wide: the handler drops ``input`` from every unknown-field error, whatever the route (a model with
+    extra="forbid" anywhere); another error keeps FastAPI's own answer, its input with it."""
+    from fastapi.exceptions import RequestValidationError
+    from starlette.requests import Request
+
+    from embry0.api.v1.credentials import validation_error_handler
+
+    request = Request({"type": "http", "method": "PUT", "path": "/api/v1/anything", "headers": [], "query_string": b""})
+    unknown = {
+        "type": "extra_forbidden",
+        "loc": ("body", "tokn"),
+        "msg": "Extra inputs are not permitted",
+        "input": "s3",
+    }
+    wrong = {"type": "int_type", "loc": ("body", "count"), "msg": "Input should be a valid integer", "input": "x"}
+    resp = await validation_error_handler(request, RequestValidationError([unknown, wrong]))
+    detail = json.loads(resp.body)["detail"]
+    assert [("input" in e) for e in detail] == [False, True], f"only the unknown field's value is left out: {detail}"

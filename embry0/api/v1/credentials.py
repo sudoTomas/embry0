@@ -185,23 +185,29 @@ def _not_json(value: Any) -> bool:
     return False
 
 
+def _echoes(err: Mapping[str, Any]) -> bool:
+    """Whether a 422 may carry an error's ``input``. Never for a field the body may not hold (``extra_forbidden``):
+    naming the field says what is wrong, and its value may be a secret sent under a misspelled key
+    (``slack_webhook_ur``). Never for a value no JSON answer can write (:func:`_not_json`)."""
+    return err.get("type") != "extra_forbidden" and not _not_json(err.get("input"))
+
+
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422 echoes the offending ``input``, which for a credential body is the secret.
 
     Credential, environment, sandbox profile and agent routes get the same error list
     without ``input``: an env var's ``value`` may be a secret, and a model-level error's
     input is the whole body, every value included. Every other route keeps FastAPI's
-    default. Registered app-wide in ``create_app`` (handlers cannot be per-router).
+    default, but for a field the body may not hold, whose value is never echoed on any
+    route (:func:`_echoes`). Registered app-wide in ``create_app`` (handlers cannot be
+    per-router).
     """
     if not any(marker in request.url.path for marker in _NO_ECHO_PATH_MARKERS):
-        if not any(_not_json(err.get("input")) for err in exc.errors()):
+        if all(_echoes(err) for err in exc.errors()):
             return await request_validation_exception_handler(request, exc)
         # A JSON body may hold NaN or Infinity, which no JSON answer can echo: FastAPI's own handler then
-        # failed with a 500. Such an input is left out, as a secret's is, and the 422 stands.
-        errors = [
-            {k: v for k, v in err.items() if k != "input"} if _not_json(err.get("input")) else err
-            for err in exc.errors()
-        ]
+        # failed with a 500. Such an input is left out, as an unknown field's is, and the 422 stands.
+        errors = [err if _echoes(err) else {k: v for k, v in err.items() if k != "input"} for err in exc.errors()]
         return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
     # A dict key in ``loc`` is cut at its first "=": in a variable's name, what follows it is a value.
     errors = [
