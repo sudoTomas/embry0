@@ -137,7 +137,9 @@ overrides; every key is in `OVERRIDABLE`
 ```
 
 The `skip_unchanged` comparator (#291) and signature dedupe (#290) apply as
-on any stack, so the same fault firing every hour is analysed once.
+on any stack, so the same fault firing every hour is analysed once, once
+skipping is on: the settings document's `watcher.skip_unchanged_mode`, `shadow`
+by default, or the stack's own (the deployment's to set).
 
 ## Signature masks
 

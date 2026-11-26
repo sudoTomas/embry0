@@ -11,7 +11,6 @@ exist only to pin that direction.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -48,8 +47,9 @@ def _row(sig: str, *, last_window_count: int, last_seen_at: datetime | None = No
 
 
 def _svc(mode: str, *, prior: dict[str, SignatureRow] | None = None, open_ids: set[str] | None = None, **cfg):
+    """A watcher whose settings document's watcher section skips unchanged windows in ``mode`` (#738)."""
     svc = _service(
-        config=_config(log_clustering_mode="on", watcher_skip_unchanged_mode=mode, watcher_repo="owner/repo", **cfg),
+        config=_config(log_clustering_mode="on", watcher_repo="owner/repo", **cfg),
         lines=_LINES,
         job_result={"job_id": "job-s1", "status": "completed", "result_summary": "NO_ISSUE"},
     )
@@ -59,6 +59,7 @@ def _svc(mode: str, *, prior: dict[str, SignatureRow] | None = None, open_ids: s
     )
     svc._cases = MagicMock(open_signature_ids=AsyncMock(return_value=open_ids or set()))
     svc._recorder = MagicMock()
+    svc._watcher_settings = AsyncMock(return_value=_section(skip_unchanged_mode=mode))
     return svc
 
 
@@ -161,22 +162,47 @@ async def test_shadow_computes_the_decision_but_still_analyses() -> None:
 
 @pytest.mark.asyncio
 async def test_off_never_skips() -> None:
+    from structlog.testing import capture_logs
+
     svc = _svc("off")
     svc._signatures.rows_for = AsyncMock(return_value=await _prior_matching(svc, count=28))
 
-    out = await svc.run_once()
+    with capture_logs() as logs:
+        out = await svc.run_once()
     assert out["action"] == "no_issue"
     svc._jobs.create.assert_awaited()
+    decided = [e for e in logs if e["event"] in {"watcher_skip_shadow", "watcher_skip_unchanged"}]
+    assert decided == [], f"off computes no skip at all: {decided}"
 
 
 @pytest.mark.asyncio
-async def test_an_unrecognised_mode_reads_as_off() -> None:
-    """A typo in the environment must not switch the watcher to not looking."""
-    svc = _svc("ON!!")
-    svc._signatures.rows_for = AsyncMock(return_value=await _prior_matching(svc, count=28))
+async def test_shadow_logs_the_skip_it_would_make_as_shadow() -> None:
+    from structlog.testing import capture_logs
 
-    out = await svc.run_once()
+    svc = _svc("shadow")
+    svc._signatures.rows_for = AsyncMock(return_value=await _prior_matching(svc, count=28))
+    with capture_logs() as logs:
+        out = await svc.run_once()
     assert out["action"] == "no_issue"
+    decided = [(e["event"], e.get("mode")) for e in logs if e["event"].startswith("watcher_skip_")]
+    assert decided == [("watcher_skip_shadow", "shadow")], f"the section's shadow, logged as shadow: {decided}"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_mode_stored_on_a_stack_reads_as_the_section_s() -> None:
+    """A mode is checked where it is written (the section, a stack's row), so a typo never reaches a tick; one a row
+    holds from before reads as the section's, with a warning, as every section key of a stack does (#738)."""
+    from structlog.testing import capture_logs
+
+    svc = _svc("shadow", prior={})
+    svc._signatures.rows_for = AsyncMock(return_value=await _prior_matching(svc, count=28))
+    with capture_logs() as logs:
+        svc._config = StackConfig(
+            svc._config, WatcherStack(repo="owner/repo", logql="{x=1}", settings={"skip_unchanged_mode": "ON!!"})
+        )
+    assert any(e["event"] == "watcher_stack_setting_invalid" for e in logs), logs
+    out = await svc.run_once()
+    assert out["action"] == "no_issue", f"the section's shadow analyses the window: {out}"
     svc._jobs.create.assert_awaited()
 
 
@@ -269,20 +295,38 @@ def test_config_exposes_the_thresholds() -> None:
     from embry0.config import Embry0Config
 
     config = Embry0Config(_env_file=None, database_url="postgresql://unused")
-    assert config.watcher_skip_unchanged_mode == "shadow", "#291 must ship in shadow, like every other new decider"
+    assert not hasattr(config, "watcher_skip_unchanged_mode"), "the mode is the watcher section's, not a variable"
+    assert _section().skip_unchanged_mode == "shadow", "#291 must ship in shadow, like every other new decider"
     assert config.watcher_spike_factor == 3.0
     assert config.watcher_spike_min_count == 10
     assert config.watcher_regression_silence_seconds == 21600
 
 
-def test_service_reads_the_mode_from_a_plain_namespace() -> None:
-    from embry0.services.watcher import WatcherService
+@pytest.mark.asyncio
+async def test_the_mode_is_the_section_s_now_read_every_tick() -> None:
+    """#738: whether an unchanged window is analysed is the settings document's watcher.skip_unchanged_mode, read
+    every tick, so turning skipping on or off needs no restart; WATCHER_SKIP_UNCHANGED_MODE is no longer read."""
+    svc = _svc("on", prior={})
+    svc._signatures.rows_for = AsyncMock(return_value=await _prior_matching(svc, count=30))
+    svc._watcher_settings = AsyncMock(
+        side_effect=[_section(skip_unchanged_mode="on"), _section(skip_unchanged_mode="shadow")]
+    )
+    first = await svc.run_once()
+    assert first["action"] == "no_change", f"the section's on skips an unchanged window: {first}"
+    second = await svc.run_once()
+    assert second["action"] == "no_issue", f"the section turned to shadow between two ticks: analysed again: {second}"
 
-    svc = WatcherService.__new__(WatcherService)
-    svc._config = SimpleNamespace(watcher_skip_unchanged_mode="on")
-    assert svc._skip_unchanged_mode() == "on"
-    svc._config = SimpleNamespace()
-    assert svc._skip_unchanged_mode() == "shadow"
+
+@pytest.mark.asyncio
+async def test_a_stack_s_own_mode_wins_over_the_section() -> None:
+    """A stack's own skip_unchanged_mode (the deployment's to set on it) is read over the section's."""
+    svc = _svc("on", prior={})
+    svc._signatures.rows_for = AsyncMock(return_value=await _prior_matching(svc, count=30))
+    svc._config = StackConfig(
+        svc._config, WatcherStack(repo="owner/repo", logql="{x=1}", settings={"skip_unchanged_mode": "off"})
+    )
+    out = await svc.run_once()
+    assert out["action"] == "no_issue", f"the stack's own off, over the section's on, analyses: {out}"
 
 
 # ---- signatures an analysis found clean a moment ago (spec 2026-10-25) -----
@@ -339,14 +383,16 @@ def _section(**values):
     section = CATALOG.get("watcher")
     if section is None:
         pytest.fail("the settings document has no watcher section: skip_known_hours is read from the environment")
+    if "skip_unchanged_mode" not in section.fields:
+        pytest.fail("the watcher section has no skip_unchanged_mode: whether a window is skipped is read from the env")
     return section.validate(values)
 
 
 @pytest.mark.asyncio
 async def test_an_unreadable_analysis_memory_analyses_and_zero_hours_turns_it_off() -> None:
     for section, clean in (
-        (_section(), AsyncMock(side_effect=RuntimeError("db gone"))),
-        (_section(skip_known_hours=0), None),
+        (_section(skip_unchanged_mode="on"), AsyncMock(side_effect=RuntimeError("db gone"))),
+        (_section(skip_unchanged_mode="on", skip_known_hours=0), None),
     ):
         svc = _svc("on")
         svc._watcher_settings = AsyncMock(return_value=section)
@@ -366,7 +412,10 @@ async def test_a_tick_reads_the_section_once_for_its_auto_accept_and_its_skip_ch
     """#742 review: the two readers of one tick read the same section, never one value each."""
     svc = _svc("on")
     svc._watcher_settings = AsyncMock(
-        side_effect=[_section(auto_accept=True, skip_known_hours=6), _section(skip_known_hours=0)]
+        side_effect=[
+            _section(skip_unchanged_mode="on", auto_accept=True, skip_known_hours=6),
+            _section(skip_unchanged_mode="on", skip_known_hours=0),
+        ]
     )
     svc._auto_acceptor = AsyncMock(return_value=[])
     sig = await _window_signature(svc)
@@ -382,7 +431,10 @@ async def test_a_tick_reads_the_section_once_for_its_auto_accept_and_its_skip_ch
 @pytest.mark.asyncio
 async def test_how_long_a_clean_signature_is_held_is_the_section_s_now_under_the_stack_s_own() -> None:
     """#738: the deployment's watcher section, read every tick; a stack that sets skip_known_hours keeps its own."""
-    reads = [_section(skip_known_hours=6), _section(skip_known_hours=0)]
+    reads = [
+        _section(skip_unchanged_mode="on", skip_known_hours=6),
+        _section(skip_unchanged_mode="on", skip_known_hours=0),
+    ]
     svc = _svc("on")
     svc._watcher_settings = AsyncMock(side_effect=reads)
     sig = await _window_signature(svc)
@@ -407,7 +459,7 @@ async def test_how_long_a_clean_signature_is_held_is_the_section_s_now_under_the
     own._config = StackConfig(
         own._config, WatcherStack(repo="owner/repo", logql="{x=1}", settings={"skip_known_hours": 12})
     )
-    own._watcher_settings = AsyncMock(return_value=_section(skip_known_hours=0))
+    own._watcher_settings = AsyncMock(return_value=_section(skip_unchanged_mode="on", skip_known_hours=0))
     sig = await _window_signature(own)
     own._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
     own._signatures.clean_since = AsyncMock(return_value={sig: 30})

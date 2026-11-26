@@ -1742,15 +1742,16 @@ containers its analysis may read (`settings.context_proxy_container_allowlist`),
 its tracker and tracker target, and the settings that bound what it spends
 from the shared budget (`interval_seconds`, `job_budget_usd`,
 `job_timeout_seconds`, `max_full_cap_analyses_per_day`, `max_log_lines`,
-`max_lookback_seconds`, `skip_known_hours`) or start fix jobs without a
-person (`auto_accept` and the other `auto_accept_*`) choose lines from every
+`max_lookback_seconds`, `skip_known_hours`, `skip_unchanged_mode`) or start
+fix jobs without a person (`auto_accept` and the other `auto_accept_*`)
+choose lines from every
 container the
 deployment ships, write into a team's tracker and draw on the shared caps:
 such a key keeps them as stored, changing only `enabled` and the
 repository's settings, what counts as a finding (`min_log_lines`,
 `max_open_proposals`, `max_deferred_findings`, `proposal_window_days`,
 `spike_factor`, `spike_min_count`, `regression_silence_seconds`,
-`log_clustering_mode`, `skip_unchanged_mode`, `signature_masks`), and
+`log_clustering_mode`, `signature_masks`), and
 creates no stack (`PUT /watcher/stacks/{owner}/{name}`,
 compared with the stored stack while its row is held), nor runs the
 organization's `watch` action (`POST /orgs/{owner}/actions`, a dry run

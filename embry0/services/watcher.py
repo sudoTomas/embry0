@@ -746,15 +746,6 @@ class WatcherService:
         mode = str(getattr(self._config, "log_clustering_mode", "shadow") or "shadow").strip().lower()
         return mode if mode in {"off", "shadow", "on"} else "off"
 
-    def _skip_unchanged_mode(self) -> str:
-        """``off`` / ``shadow`` / ``on`` for #291. Unrecognised reads as ``off``.
-
-        Same reasoning as :meth:`_clustering_mode`: a typo in the environment
-        must not silently switch the watcher to not looking.
-        """
-        mode = str(getattr(self._config, "watcher_skip_unchanged_mode", "shadow") or "shadow").strip().lower()
-        return mode if mode in {"off", "shadow", "on"} else "off"
-
     async def _unchanged_window(self, delta: WindowDelta | None, settings: WatcherSettings) -> tuple[str, str] | None:
         """The action and why this window need not be analysed, or ``None`` if it must be.
 
@@ -782,7 +773,8 @@ class WatcherService:
         decision can be compared against what the analysis actually found
         before anyone trusts it.
         """
-        if self._skip_unchanged_mode() == "off" or delta is None:
+        mode = settings.skip_unchanged_mode
+        if mode == "off" or delta is None:
             return None
 
         hours = settings.skip_known_hours
@@ -814,8 +806,8 @@ class WatcherService:
                 reason = f"all {len(notable)} notable signature(s) already have an open case"
 
         logger.info(
-            "watcher_skip_shadow" if self._skip_unchanged_mode() == "shadow" else "watcher_skip_unchanged",
-            mode=self._skip_unchanged_mode(),
+            "watcher_skip_shadow" if mode == "shadow" else "watcher_skip_unchanged",
+            mode=mode,
             action=action,
             reason=reason,
             **counts,
@@ -1983,7 +1975,8 @@ class WatcherService:
                 # SH-P3.3: nothing new, spiking or regressed -> do not pay a
                 # model to read the window again.
                 skip = await self._unchanged_window(delta, settings)
-                if skip is not None and self._skip_unchanged_mode() == "on":
+                # #291: the section's skip_unchanged_mode, or the stack's own (the deployment's to set).
+                if skip is not None and settings.skip_unchanged_mode == "on":
                     action, reason = skip
                     return await record(action, log_lines=len(lines), detail=reason)
 

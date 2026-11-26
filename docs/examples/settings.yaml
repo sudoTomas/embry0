@@ -1061,8 +1061,9 @@ ui:
   # home: guild
 
 # Whether the watcher accepts its drafts without a person and the bar they
-# must clear, and how long a log signature found clean is not analysed again.
-# A stack's own value of a key wins over the section.
+# must clear, whether it skips a window with nothing new, and how long a log
+# signature found clean is not analysed again. A stack's own value of a key
+# wins over the section.
 watcher:
   # Whether each tick accepts the stack's tracked drafts that clear the bar
   # below without a person: through the path POST /cases/{id}/accept takes, as
@@ -1086,6 +1087,14 @@ watcher:
 
   # The most drafts a stack accepts in any 24 hours; 0 accepts none.
   # auto_accept_max_per_day: 2
+
+  # Whether a window with nothing new, spiking or regressed is analysed
+  # (#291). off: every window with enough lines is. shadow: every window is,
+  # and one that would have been skipped is logged (watcher_skip_shadow), so
+  # the skips can be checked against what the analyses found. on: such a
+  # window is recorded as no_change or skipped_known, with no analysis to pay
+  # for. Write on and off in quotes: YAML reads them bare as true and false.
+  # skip_unchanged_mode: shadow
 
   # Read while a stack skips unchanged windows (its skip_unchanged_mode): how
   # long a log signature that an analysis found no issue in is held. A window

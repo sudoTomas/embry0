@@ -1,4 +1,4 @@
-"""The ``watcher`` section: whether the watcher starts fixes without a person, and what it need not analyse again.
+"""The ``watcher`` section: whether the watcher starts fixes without a person, and what it need not analyse.
 
 Each watched stack is a row (``watcher_stacks``, #378) whose settings hold
 only what differs from the deployment. For the keys of this section the
@@ -10,6 +10,7 @@ deployment's value is the section's (#738): an operator writes::
       auto_accept_min_severity: high    # low, medium, high or critical
       auto_accept_min_occurrences: 10   # how often its signature must have been seen
       auto_accept_max_per_day: 2        # most drafts a stack accepts in any 24 hours
+      skip_unchanged_mode: shadow       # off, shadow or on: whether a window with nothing new is analysed
       skip_known_hours: 24              # 0: a signature found clean is analysed again on its return
 
 A stack that sets one of these keys in its own row keeps its value; every
@@ -19,15 +20,16 @@ keys with this section's types and bounds (``services/watcher_stacks.py``),
 so the two cannot disagree on what a value may be.
 
 The section is the deployment's alone: an auto-accepted draft starts a job
-that spends from the shared budget, and how long a clean signature is held
-bounds what the watcher pays for. A stack's own value is how one stack
-differs.
+that spends from the shared budget, and whether an unchanged window is
+analysed, and how long a clean signature is held, bound what the watcher pays
+for. A stack's own value is how one stack differs, and only the deployment
+sets it (``services/watcher_stacks.DEPLOYMENT_SETTINGS``).
 
 Before this section the six keys were the variables ``WATCHER_AUTO_ACCEPT``,
 ``WATCHER_AUTO_ACCEPT_AFTER_HOURS``, ``WATCHER_AUTO_ACCEPT_MIN_SEVERITY``,
-``WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES``, ``WATCHER_AUTO_ACCEPT_MAX_PER_DAY``
-and ``WATCHER_SKIP_KNOWN_HOURS``, which are no longer read
-(:mod:`embry0.config_retired`).
+``WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES``, ``WATCHER_AUTO_ACCEPT_MAX_PER_DAY``,
+``WATCHER_SKIP_KNOWN_HOURS`` and ``WATCHER_SKIP_UNCHANGED_MODE``, which are no
+longer read (:mod:`embry0.config_retired`).
 """
 
 from __future__ import annotations
@@ -47,6 +49,8 @@ def _lower(value: Any) -> Any:
 Severity = Literal["low", "medium", "high", "critical"]
 #: Every severity, lowest first.
 SEVERITIES: Final[tuple[Severity, ...]] = get_args(Severity)
+#: Whether the watcher skips a window with nothing new, spiking or regressed (#291).
+SkipMode = Literal["off", "shadow", "on"]
 #: The longest a draft may wait before it is accepted, and a clean signature be held: a year, in hours.
 MAX_HOURS: Final = 8760
 
@@ -83,6 +87,16 @@ class WatcherSettings(SectionModel):
         le=1000,
         description="The most drafts a stack accepts in any 24 hours; 0 accepts none.",
     )
+    skip_unchanged_mode: Annotated[SkipMode, BeforeValidator(_lower)] = Field(
+        default="shadow",
+        description=(
+            "Whether a window with nothing new, spiking or regressed is analysed (#291). off: every window with "
+            "enough lines is. shadow: every window is, and one that would have been skipped is logged "
+            "(watcher_skip_shadow), so the skips can be checked against what the analyses found. on: such a window "
+            "is recorded as no_change or skipped_known, with no analysis to pay for. Write on and off in quotes: "
+            "YAML reads them bare as true and false."
+        ),
+    )
     skip_known_hours: int = Field(
         default=24,
         ge=0,
@@ -99,6 +113,7 @@ class WatcherSettings(SectionModel):
 WATCHER = Section(
     name="watcher",
     model=WatcherSettings,
-    summary="Whether the watcher accepts its drafts without a person and the bar they must clear, and how long a "
-    "log signature found clean is not analysed again. A stack's own value of a key wins over the section.",
+    summary="Whether the watcher accepts its drafts without a person and the bar they must clear, whether it skips "
+    "a window with nothing new, and how long a log signature found clean is not analysed again. A stack's own value "
+    "of a key wins over the section.",
 )

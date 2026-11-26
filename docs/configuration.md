@@ -154,12 +154,11 @@ for its repository keeps `logql`, `tracker`, `tracker_target` and these
 settings as stored: `deploy_logql`, `context_proxy_container_allowlist`,
 `interval_seconds`, `job_budget_usd`, `job_timeout_seconds`,
 `max_full_cap_analyses_per_day`, `max_log_lines`, `max_lookback_seconds`,
-`skip_known_hours` and every `auto_accept*` (403 naming the deployment
-otherwise). It changes `enabled` and the repository's settings:
-`min_log_lines`, `max_open_proposals`, `max_deferred_findings`,
+`skip_known_hours`, `skip_unchanged_mode` and every `auto_accept*` (403
+naming the deployment otherwise). It changes `enabled` and the repository's
+settings: `min_log_lines`, `max_open_proposals`, `max_deferred_findings`,
 `proposal_window_days`, `spike_factor`, `spike_min_count`,
-`regression_silence_seconds`, `log_clustering_mode`, `skip_unchanged_mode`
-and `signature_masks`.
+`regression_silence_seconds`, `log_clustering_mode` and `signature_masks`.
 
 A deployment upgrading from the env-var watcher seeds its stack from
 `WATCHER_REPO` / `WATCHER_LOGQL` / `WATCHER_LINEAR_*` at startup, **once, and
@@ -195,8 +194,7 @@ back-references); every tick reads them, so a change needs no restart. See
 | `WATCHER_STARTUP_DELAY_SECONDS` | `90` | The first tick after a start is scheduled from the last **recorded** tick (`watcher_runs.created_at`, any action, manual ticks included) and the last tick **attempt** (`watcher_tick_attempts`, written when a scheduled tick starts), not from process start. If a tick is overdue it runs this long after start — so a deploy does not compete with an analysis job and the startup LogQL probe has a verdict; otherwise it runs when `WATCHER_INTERVAL_SECONDS` (default `3600`) since the newer of the two has elapsed. A restart therefore never moves two ticks further apart than interval + this delay (for a process that lives longer than the delay), and a crash loop starts at most one analysis job per interval, because a tick killed mid-analysis still left its attempt mark. If the marks cannot be read, or the attempt cannot be written, the loop waits a full interval without ticking; three unwritable marks in a row turn `checks.watcher` `tick_unrecordable` and degrade readiness. |
 | `WATCHER_JOB_BUDGET_USD` | `2.0` | Per-job cap for one watcher analysis job. Always enforced as a hard stop (`ERR_BUDGET_OVERRUN`) regardless of `budget.overrun_mode`, and still bounded by the fleet per-job cap. Checked between agent turns, so worst case is the cap plus one full turn (#330). `0`, non-finite or invalid values fall back to the default — never "unlimited". |
 | `WATCHER_MAX_LOOKBACK_SECONDS` | `21600` | A tick's Loki window starts where the last **analysed** window ended (`no_issue` / `proposed` / `skipped_duplicate`), so analysis duration and skipped or errored ticks leave no hole; this bounds how far back that can reach (never below one `WATCHER_INTERVAL_SECONDS`). Time left out is recorded on the run row as `unanalysed_seconds`. Windows are contiguous in **time** only: the excerpt is still the newest `WATCHER_MAX_LOG_LINES` matches, so a widened window over the cap drops its oldest lines (`log_lines_truncated` on the row). Quiet ticks do not advance the window, so it grows each quiet tick until it holds `WATCHER_MIN_LOG_LINES`, then one analysis covers the stretch; past the look-back it is a sliding window of this length. A quiet tick still counts as a **verdict** for the dead-man gauge (`embry0_watcher_last_verdict_tick_timestamp_seconds`, so `Embry0WatcherNoVerdict3h`) without touching the analysed one: a stack that logs nothing is the loop finding nothing. A LogQL that matches nothing forever is `Embry0WatcherOnlyQuiet2d`'s to catch. |
-| `LOG_CLUSTERING_MODE` | `shadow` | Deterministic log-signature clustering (#289). `off` / `shadow` / `on`. `shadow` clusters, persists and logs but leaves the raw tail in the prompt so the agent's own grouping stays in effect and the two can be compared; `on` replaces the tail with the ranked cluster table. An unrecognised value reads as `off` — a typo must not silently change what the model is shown. The persisted history also feeds the signature dedupe (#290) and `WATCHER_SKIP_UNCHANGED_MODE`, so `off` disables both. |
-| `WATCHER_SKIP_UNCHANGED_MODE` | `shadow` | Skip the paid analysis when the window holds nothing new, spiking or regressed (#291). `off` / `shadow` / `on`. In `shadow` the decision is computed and logged as `watcher_skip_shadow` and the analysis runs anyway, so the ticks it *would* have skipped can be checked against what they actually found. In `on` such a tick records `no_change` and creates no job. A `no_change` tick counts as analysed — it advances the query window and refreshes the dead-man gauge, because it did judge its window; if it did not advance the window, every quiet tick would widen it and the growing counts would read as a spike. The hole that leaves (a broken comparator skipping everything in silence) is covered by `Embry0WatcherNeverAnalyses24h`. A window is also skipped when every notable signature already has an open healing case. Unreadable ledger, no clustering, or no signature history ⇒ analyse: the expensive direction is the safe one. |
+| `LOG_CLUSTERING_MODE` | `shadow` | Deterministic log-signature clustering (#289). `off` / `shadow` / `on`. `shadow` clusters, persists and logs but leaves the raw tail in the prompt so the agent's own grouping stays in effect and the two can be compared; `on` replaces the tail with the ranked cluster table. An unrecognised value reads as `off` — a typo must not silently change what the model is shown. The persisted history also feeds the signature dedupe (#290) and the watcher section's `skip_unchanged_mode`, so `off` disables both. |
 | `LOG_REDACTION_FIELDS` | — | Comma-separated payload field names whose **values** are personal data in the watched stack's logs, e.g. `phone,customer_name` (#294). Matched as whole key names, case-insensitively, in `key=value`, `key: value` and `"key": "value"` shapes. Everything sent to a model provider or filed in a tracker is already redacted by `embry0/safety/redaction.py` — the watcher's analysis task (briefing and excerpts), its draft tickets, context-proxy results (watcher and developer alike), the evidence and review prompts, and every line `GET /api/v1/logs/query` returns (the Logs page and the MCP `logs_query` tool): known token formats, auth headers, URL credentials, secret-named fields, e-mail addresses, any long opaque run, and the process's own secrets. This adds the operator's own fields; the orchestrator reads it at startup and the context proxy receives it at launch. Agent stderr diagnostics keep the secrets-only rules. Regex-based, so not a guarantee. |
 | `WATCHER_SPIKE_FACTOR` / `WATCHER_SPIKE_MIN_COUNT` | `3.0` / `10` | How much louder than its previous window a signature must be to count as spiking, and the absolute floor it must also clear. Both are needed: log volume is bursty, and without the floor a signature going from 1 line to 3 reads as a 3x emergency. Per-deployment today; #297 moves the watcher's config into the DB per repo and these go with it. |
 | `WATCHER_REGRESSION_SILENCE_SECONDS` | `21600` | How long a signature must be absent before its return counts as a regression rather than a gap. Six hours is six missed hourly ticks. |
@@ -285,6 +283,7 @@ Each of these set a feature's policy before the feature moved into a document st
 | `WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES` | the settings document's watcher.auto_accept_min_occurrences |
 | `WATCHER_AUTO_ACCEPT_MAX_PER_DAY` | the settings document's watcher.auto_accept_max_per_day |
 | `WATCHER_SKIP_KNOWN_HOURS` | the settings document's watcher.skip_known_hours |
+| `WATCHER_SKIP_UNCHANGED_MODE` | the settings document's watcher.skip_unchanged_mode |
 | `OPENAI_COMPATIBLE_PROVIDERS` | the provider catalogue's providers.<name>.enabled |
 | `OPENROUTER_CATALOG_REFRESH_HOURS` | the provider catalogue's openrouter.refresh_hours |
 | `LOCAL_LLM_SLOT_WAIT_SECONDS` | the settings document's local_models.slot_wait_seconds |
@@ -699,7 +698,7 @@ What the dashboard shows: the game layer, and the page it opens on.
 
 #### `watcher`
 
-Whether the watcher accepts its drafts without a person and the bar they must clear, and how long a log signature found clean is not analysed again. A stack's own value of a key wins over the section.
+Whether the watcher accepts its drafts without a person and the bar they must clear, whether it skips a window with nothing new, and how long a log signature found clean is not analysed again. A stack's own value of a key wins over the section.
 
 | Key | Type | Default | Allowed | Overridable by | Description |
 |---|---|---|---|---|---|
@@ -708,6 +707,7 @@ Whether the watcher accepts its drafts without a person and the bar they must cl
 | `auto_accept_min_severity` | text | `"high"` | one of `"low"`, `"medium"`, `"high"`, `"critical"` |  | The least severity a draft must have to be accepted: low, medium, high or critical. |
 | `auto_accept_min_occurrences` | whole number | `10` | ≥ 0, ≤ 1000000 |  | How many times a draft's log signature must have been seen for it to be accepted. |
 | `auto_accept_max_per_day` | whole number | `2` | ≥ 0, ≤ 1000 |  | The most drafts a stack accepts in any 24 hours; 0 accepts none. |
+| `skip_unchanged_mode` | text | `"shadow"` | one of `"off"`, `"shadow"`, `"on"` |  | Whether a window with nothing new, spiking or regressed is analysed (#291). off: every window with enough lines is. shadow: every window is, and one that would have been skipped is logged (watcher_skip_shadow), so the skips can be checked against what the analyses found. on: such a window is recorded as no_change or skipped_known, with no analysis to pay for. Write on and off in quotes: YAML reads them bare as true and false. |
 | `skip_known_hours` | whole number | `24` | ≥ 0, ≤ 8760 |  | Read while a stack skips unchanged windows (its skip_unchanged_mode): how long a log signature that an analysis found no issue in is held. A window whose notable signatures are all held so, or have an open case, is not analysed (skipped_known), unless one is louder than that analysis read by the stack's spike factor. 0 holds none. |
 
 <!-- settings-reference:end -->

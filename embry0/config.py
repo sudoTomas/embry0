@@ -230,17 +230,8 @@ class Embry0Config(BaseSettings):
     # Defaults to shadow, matching MERGE_SYNC_MODE / VERIFICATION_MODE: a new
     # detector observes before it decides anything.
     log_clustering_mode: str = "shadow"
-    # SH-P3.3 (#291): skip the paid analysis when the window holds nothing new.
-    #   off    : every tick with enough lines is analysed (pre-#291 behaviour)
-    #   shadow : the decision is computed and logged as watcher_skip_shadow and
-    #            the analysis runs anyway, so the ticks it WOULD have skipped
-    #            can be checked against what they actually found
-    #   on     : an unchanged window is recorded as `no_change`, with no job
-    # Defaults to shadow for the same reason as LOG_CLUSTERING_MODE, only more
-    # so: this switch decides NOT to look, and the cost of being wrong is a
-    # missed fault rather than a differently-grouped prompt.
-    watcher_skip_unchanged_mode: str = "shadow"
-    # The novelty gate's memory (skip_known_hours) and auto-accept of watcher
+    # Whether an unchanged window is analysed (skip_unchanged_mode, #291), the
+    # novelty gate's memory (skip_known_hours) and auto-accept of watcher
     # drafts are the settings document's watcher section (#738).
     # Thresholds for "is this signature interesting?", read by
     # embry0/services/signature_delta.py. Per-deployment today; #297 moves the

@@ -258,6 +258,8 @@ SETTING_CHANGES: dict[str, tuple[str, Any]] = {
     "auto_accept_max_per_day": ("deployment", 100),
     # #738: 0 holds no signature found clean, so every window is paid for again from the shared budget.
     "skip_known_hours": ("deployment", 0),
+    # #738: off analyses every window again, each paid for from the shared budget.
+    "skip_unchanged_mode": ("deployment", "off"),
     "min_log_lines": ("repository", 5),
     "max_open_proposals": ("repository", 3),
     "max_deferred_findings": ("repository", 4),
@@ -266,7 +268,6 @@ SETTING_CHANGES: dict[str, tuple[str, Any]] = {
     "spike_min_count": ("repository", 20),
     "regression_silence_seconds": ("repository", 3600),
     "log_clustering_mode": ("repository", "on"),
-    "skip_unchanged_mode": ("repository", "on"),
     "signature_masks": ("repository", [{"pattern": r"\brec_[a-z0-9]{7}\b", "replacement": "<record>"}]),
 }
 
