@@ -120,6 +120,24 @@ async def test_a_changed_tracker_builds_the_stack_s_filer_again() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_retired_watcher_ticks_nothing_by_hand_or_by_loop_whatever_its_row_says() -> None:
+    """#749 review: the fleet stopped this watcher while it ticked, and the row was enabled again before its loop was
+    cancelled. A tick by hand answers not_watched and writes no row; the loop's next iteration writes no tick-attempt
+    mark either, which the next watcher of the stack would schedule its first tick from, up to an interval later."""
+    from embry0.services.watcher import NOT_WATCHED
+
+    svc = _watcher([STACK, STACK])
+    svc.retire()
+    assert await svc.refresh() is False, "a retired watcher's stack reads as not watched, whatever its row says"
+    answered = await svc.run_once()
+    await svc._iterate()
+    assert answered["action"] == NOT_WATCHED and svc._runs.create.await_count == 0, answered
+    assert svc._runs.record_tick_attempt.await_count == 0, (
+        "a retired watcher marked a tick attempt for a stack the next watcher will tick"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_row_that_cannot_be_read_leaves_the_row_last_read() -> None:
     svc = _watcher([RuntimeError("database is down")])
     await svc._iterate()
