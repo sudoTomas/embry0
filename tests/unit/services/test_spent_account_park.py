@@ -107,15 +107,19 @@ def _claude_definitions(monkeypatch: pytest.MonkeyPatch) -> None:
 SPENT = {"anthropic": Pause("anthropic", "quota_exhausted", UNTIL)}
 
 
-async def _precheck(executor: IssueExecutor, state: dict[str, Any] | None = None, **account_wait: Any) -> Any:
-    """The pre-check of a job whose account_wait values are ``account_wait`` over the defaults."""
+async def _precheck(
+    executor: IssueExecutor, state: dict[str, Any] | None = None, *, waited: int = 0, **account_wait: Any
+) -> Any:
+    """The pre-check of a job whose account_wait values are ``account_wait`` over the defaults, and which has waited
+    ``waited`` seconds for accounts so far."""
+    from embry0.services.account_waits import WaitPolicy
     from embry0.settings.sections.account_wait import ACCOUNT_WAIT
 
     return await _executor_run._precheck_llm_accounts(
         executor,
         "job-1",
         {"repo": "acme/app", "job_id": "job-1", **(state or {})},
-        account_wait=ACCOUNT_WAIT.validate(account_wait),
+        wait_policy=WaitPolicy(ACCOUNT_WAIT.validate(account_wait), waited),
     )
 
 

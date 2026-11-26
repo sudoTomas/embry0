@@ -972,10 +972,18 @@ class JobsRepository:
         """Take a parked job back for its account wait to end: ``paused`` to
         ``running`` and the wait cleared, in one statement, so two takers
         cannot both go on with it. A restart after this finds it ``running``
-        and recovers it like any other (#307)."""
+        and recovers it like any other (#307).
+
+        The same statement adds the time since the job was parked (the wait's
+        ``since``) to ``account_waited_seconds`` (migration 160), which
+        ``account_wait.max_total_wait_seconds`` bounds. A wait parked before
+        that release has no ``since`` and adds nothing."""
         row = await self._db.fetchrow(
             """
-            UPDATE jobs SET status = 'running', account_wait = NULL
+            UPDATE jobs SET status = 'running', account_wait = NULL,
+                account_waited_seconds = account_waited_seconds + COALESCE(
+                    GREATEST(0, CEIL(EXTRACT(EPOCH FROM NOW() - (account_wait->>'since')::timestamptz)))::integer, 0
+                )
             WHERE job_id = $1 AND status = 'paused' AND account_wait IS NOT NULL
             RETURNING job_id
             """,

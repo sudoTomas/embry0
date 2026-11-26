@@ -33,6 +33,12 @@ account_wait:
   # while the account is still spent.
   # max_wait_seconds: 691200
 
+  # The longest a job may spend waiting for accounts, all its waits together,
+  # in seconds, over every wait, resume and relaunch. A wait is cut to what is
+  # left of it; once it is spent, the job fails with the account's own error
+  # code instead of waiting again.
+  # max_total_wait_seconds: 2592000
+
   # How long a job whose run found every slot of the local model taken waits
   # before it tries again, in seconds.
   # local_busy_retry_seconds: 300

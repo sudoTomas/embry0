@@ -35,10 +35,10 @@ from embry0.safety.error_codes import ErrorCode
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services._executor_outcomes import _fold_auto_answers_into_context
 from embry0.services.account_waits import CONFIG_KEY as ACCOUNT_WAIT_CONFIG_KEY
-from embry0.services.account_waits import LOCAL_BUSY, REENROLL_RETRY, AccountWait, JobParked
+from embry0.services.account_waits import LOCAL_BUSY, REENROLL_RETRY, AccountWait, JobParked, WaitPolicy
 from embry0.services.healing.recorder import record_case_event
 from embry0.services.run_with import RunWith, apply_run_with, models_with
-from embry0.settings.sections.account_wait import ACCOUNT_WAIT, AccountWaitSettings
+from embry0.settings.sections.account_wait import ACCOUNT_WAIT
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
@@ -302,7 +302,7 @@ class IssueExecutor:
         llm_credential_kinds: dict[str, str] | None = None,
         model_fallbacks: dict[str, dict[str, Any]] | None = None,
         account_waits: bool = False,
-        account_wait: AccountWaitSettings | None = None,
+        account_wait: WaitPolicy | None = None,
     ) -> dict[str, Any]:
         """Build the graph config dict for LangGraph execution.
 
@@ -310,8 +310,9 @@ class IssueExecutor:
         account (spec 2026-10-25), because the pipeline's graph resumes from
         its checkpoint. False for the pipelines that cannot (qa, onboard,
         pr-review): their runs leave the wait for a point of the pipeline's own.
-        ``account_wait``: the job's own ``account_wait`` values, whether it
-        may wait at all and how long (the defaults when not given).
+        ``account_wait``: whether the job may wait at all and how long, its own
+        ``account_wait`` values and what it has waited (the defaults and
+        nothing waited when not given).
         """
         # Read OAuth token so the resolver can validate credentials before
         # dispatching to the sandbox. The sandbox also injects it independently
@@ -416,7 +417,9 @@ class IssueExecutor:
                 # the job, and the account health that quarantines a spent
                 # account the moment a run finds it.
                 "account_waits": account_waits,
-                ACCOUNT_WAIT_CONFIG_KEY: account_wait if account_wait is not None else ACCOUNT_WAIT.defaults(),
+                ACCOUNT_WAIT_CONFIG_KEY: account_wait
+                if account_wait is not None
+                else WaitPolicy(ACCOUNT_WAIT.defaults()),
                 "credential_health": getattr(self, "_credential_health", None),
                 # Workspace-init strategies read allowlist/bounds off the app
                 # config (RAV-600).
@@ -1536,7 +1539,8 @@ class IssueExecutor:
             if account_wait is not None:
                 # Nothing ran; the checkpoint still holds the stopped node.
                 logger.warning("account_wait_reenroll_failed_parked_again", job_id=job_id, error=str(exc))
-                retry = replace(account_wait, until=datetime.now(UTC) + REENROLL_RETRY, watch=False)
+                now = datetime.now(UTC)
+                retry = replace(account_wait, until=now + REENROLL_RETRY, watch=False, since=now)
                 await self._jobs.update(job_id, status="paused", account_wait=retry.record())
                 return
             if after_restart:

@@ -279,7 +279,12 @@ async def test_without_a_store_or_with_one_that_fails_a_job_runs_on_the_defaults
     js = _job_settings()
     defaults = {
         # #173: whether a job waits for a spent account and how long; what the constants were.
-        "account_wait": {"enabled": True, "max_wait_seconds": 8 * 24 * 3600, "local_busy_retry_seconds": 300},
+        "account_wait": {
+            "enabled": True,
+            "max_wait_seconds": 8 * 24 * 3600,
+            "max_total_wait_seconds": 30 * 24 * 3600,
+            "local_busy_retry_seconds": 300,
+        },
         # #179: the caps a job's agents ask and a person sends it back under; what the constants were.
         "agent_questions": {"rounds_cap": 10, "brainstorming_floor": 15, "retry_rounds_cap": 5},
         # #179: the job keeps budget.continue_past_ceiling_max; the section is kept whole.

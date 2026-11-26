@@ -19,7 +19,7 @@ import pytest
 
 from embry0.agents.fallback import Pause
 from embry0.services.account_waits import LOCAL_BUSY, AccountWaitInterrupt
-from tests.fixtures.provider_catalogue import enable_providers
+from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 from tests.unit.orchestration.nodes.test_agent_node_spent_account import RESET, _Resolver, _run, _spent
 
 pytestmark = pytest.mark.asyncio
@@ -27,13 +27,16 @@ pytestmark = pytest.mark.asyncio
 QUARANTINED = {"anthropic": Pause("anthropic", "quota_exhausted", RESET)}
 
 
-def _account_wait(**values: Any) -> Any:
-    """The job's account_wait values: ``values`` over the section's defaults."""
+def _account_wait(*, waited: int = 0, **values: Any) -> Any:
+    """What the executor gives a run: the job's account_wait values (``values`` over the section's defaults) and the
+    seconds it has waited for accounts so far."""
     try:
         from embry0.settings.sections.account_wait import ACCOUNT_WAIT
     except ImportError:
         pytest.fail("the settings document has no account_wait section: whether a job waits is not a setting")
-    return ACCOUNT_WAIT.validate(values)
+    from embry0.services.account_waits import WaitPolicy
+
+    return WaitPolicy(ACCOUNT_WAIT.validate(values), waited)
 
 
 def _no_local_slot(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,7 +52,7 @@ def _no_local_slot(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _slots(_config: Any) -> tuple[_Slots, int]:
         return _Slots(), 1
 
-    enable_providers(monkeypatch, "custom")
+    enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
     monkeypatch.setattr(agent_mod, "_local_slots", _slots)
     monkeypatch.setattr(agent_mod, "_slot_wait_seconds", lambda _config: 0.0)
 

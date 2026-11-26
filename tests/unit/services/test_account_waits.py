@@ -13,6 +13,7 @@ from embry0.services.account_waits import (
     LOCAL_BUSY,
     AccountWait,
     AccountWaitLoop,
+    WaitPolicy,
     local_busy_wait,
     main_provider,
     provider_pause,
@@ -22,8 +23,8 @@ from embry0.settings.sections.account_wait import ACCOUNT_WAIT
 
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 CONFIG = SimpleNamespace(credential_rate_limit_quarantine_seconds=900, credential_quota_quarantine_seconds=3600)
-#: A job's account_wait values when no layer sets them: what every job had before the section.
-DEFAULTS = ACCOUNT_WAIT.defaults()
+#: A job's account_wait values when no layer sets them, and nothing waited: what every job had before the section.
+DEFAULTS = WaitPolicy(ACCOUNT_WAIT.defaults())
 
 
 def test_a_wait_round_trips_through_its_record() -> None:
@@ -50,35 +51,35 @@ def test_an_answer_that_is_not_json_is_not_kept() -> None:
 def test_a_pause_with_an_end_is_a_wait_until_then() -> None:
     until = NOW + timedelta(hours=12)
     wait = wait_for(
-        Pause("anthropic", "quota_exhausted", until), CONFIG, NOW, settings=DEFAULTS, model="m", agent="triage"
+        Pause("anthropic", "quota_exhausted", until), CONFIG, NOW, policy=DEFAULTS, model="m", agent="triage"
     )
     assert wait is not None and wait.until == until and wait.agent == "triage"
 
 
 def test_a_spent_or_rate_limited_pause_with_no_end_waits_its_quarantine_window() -> None:
-    rate = wait_for(Pause("xai", "rate_limited"), CONFIG, NOW, settings=DEFAULTS)
-    quota = wait_for(Pause("xai", "quota_exhausted"), CONFIG, NOW, settings=DEFAULTS)
+    rate = wait_for(Pause("xai", "rate_limited"), CONFIG, NOW, policy=DEFAULTS)
+    quota = wait_for(Pause("xai", "quota_exhausted"), CONFIG, NOW, policy=DEFAULTS)
     assert rate is not None and rate.until == NOW + timedelta(seconds=900)
     assert quota is not None and quota.until == NOW + timedelta(seconds=3600)
 
 
 @pytest.mark.parametrize("reason", ["missing", "not_enabled", "auth_rejected", "disabled:operator"])
 def test_a_pause_that_does_not_end_by_itself_is_no_wait(reason: str) -> None:
-    assert wait_for(Pause("anthropic", reason), CONFIG, NOW, settings=DEFAULTS) is None, "the job fails as before"
+    assert wait_for(Pause("anthropic", reason), CONFIG, NOW, policy=DEFAULTS) is None, "the job fails as before"
 
 
 def test_a_pause_already_over_is_no_wait_and_a_far_one_is_capped() -> None:
     assert (
-        wait_for(Pause("anthropic", "quota_exhausted", NOW - timedelta(seconds=1)), CONFIG, NOW, settings=DEFAULTS)
+        wait_for(Pause("anthropic", "quota_exhausted", NOW - timedelta(seconds=1)), CONFIG, NOW, policy=DEFAULTS)
         is None
     )
-    far = wait_for(Pause("anthropic", "quota_exhausted", NOW + timedelta(days=30)), CONFIG, NOW, settings=DEFAULTS)
+    far = wait_for(Pause("anthropic", "quota_exhausted", NOW + timedelta(days=30)), CONFIG, NOW, policy=DEFAULTS)
     assert far is not None and far.until == NOW + timedelta(days=8), "a reset further out is cut to eight days"
-    assert wait_for(None, CONFIG, NOW, settings=DEFAULTS) is None
+    assert wait_for(None, CONFIG, NOW, policy=DEFAULTS) is None
 
 
 def test_the_local_model_busy_waits_a_few_minutes() -> None:
-    wait = local_busy_wait("custom/qwen", "analysis", NOW, settings=DEFAULTS)
+    wait = local_busy_wait("custom/qwen", "analysis", NOW, policy=DEFAULTS)
     assert (wait.provider, wait.reason) == ("custom", LOCAL_BUSY)
     assert NOW < wait.until <= NOW + timedelta(minutes=10)
     assert "free slot" in wait.describe()

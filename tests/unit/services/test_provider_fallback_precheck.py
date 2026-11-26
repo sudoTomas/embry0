@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from embry0.agents.fallback import Pause
+from embry0.services.account_waits import WaitPolicy
 from embry0.services.credentials.fallback import job_account_failures, plan_model_fallbacks
 from embry0.services.credentials.resolver import CredentialMissingError, ResolvedCredential
 from embry0.services.issue_executor import IssueExecutor
@@ -181,7 +182,7 @@ def precheck(monkeypatch: pytest.MonkeyPatch):
 
     async def run(executor: IssueExecutor):
         return await _executor_run._precheck_llm_accounts(
-            executor, "job-1", {"repo": "acme/app", "job_id": "job-1"}, account_wait=ACCOUNT_WAIT.defaults()
+            executor, "job-1", {"repo": "acme/app", "job_id": "job-1"}, wait_policy=WaitPolicy(ACCOUNT_WAIT.defaults())
         )
 
     return run

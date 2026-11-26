@@ -45,7 +45,12 @@ from tests.unit.services.test_spent_account_park import (
 )
 
 GIZMOS, GADGETS = "acme/gizmos", "globex/gadgets"
-DEFAULTS = {"enabled": True, "max_wait_seconds": 8 * 24 * 3600, "local_busy_retry_seconds": 300}
+DEFAULTS = {
+    "enabled": True,
+    "max_wait_seconds": 8 * 24 * 3600,
+    "max_total_wait_seconds": 30 * 24 * 3600,
+    "local_busy_retry_seconds": 300,
+}
 
 
 def _section() -> Any:
@@ -74,11 +79,18 @@ def _stored(document: dict[str, Any], layer: str) -> Any:
 
 @pytest.mark.parametrize("layer", ["deployment", "organization:acme", f"repository:{WIDGETS}"])
 def test_every_layer_may_set_every_key(layer: str) -> None:
-    written = "account_wait:\n  enabled: false\n  max_wait_seconds: 3600\n  local_busy_retry_seconds: 120\n"
-    data = _stored(load_yaml(written), layer)
-    assert data == {"account_wait": {"enabled": False, "max_wait_seconds": 3600, "local_busy_retry_seconds": 120}}, (
-        f"{layer}: stored as written: {data}"
+    written = (
+        "account_wait:\n  enabled: false\n  max_wait_seconds: 3600\n  max_total_wait_seconds: 7200\n"
+        "  local_busy_retry_seconds: 120\n"
     )
+    data = _stored(load_yaml(written), layer)
+    values = {
+        "enabled": False,
+        "max_wait_seconds": 3600,
+        "max_total_wait_seconds": 7200,
+        "local_busy_retry_seconds": 120,
+    }
+    assert data == {"account_wait": values}, f"{layer}: stored as written: {data}"
 
 
 @pytest.mark.parametrize(
@@ -88,6 +100,8 @@ def test_every_layer_may_set_every_key(layer: str) -> None:
         ("max_wait_seconds", 30 * 24 * 3600 + 1),
         ("local_busy_retry_seconds", 59),
         ("local_busy_retry_seconds", 24 * 3600 + 1),
+        ("max_total_wait_seconds", 3599),
+        ("max_total_wait_seconds", 90 * 24 * 3600 + 1),
         ("max_wait_seconds", "8d"),
         ("enabled", "no"),
     ],
@@ -102,7 +116,7 @@ def test_a_time_out_of_bounds_or_a_value_of_the_wrong_kind_is_refused(key: str, 
 def test_nothing_written_is_what_every_job_had_before_the_section() -> None:
     assert _section().defaults().model_dump(mode="json") == DEFAULTS, (
         "the defaults are the old constants: a job waits, a wait's end is cut at eight days, and a forced local run "
-        "with no slot tries again after five minutes"
+        "with no slot tries again after five minutes; and all of a job's waits together are bounded at thirty days"
     )
 
 
@@ -115,15 +129,20 @@ async def test_each_job_reads_its_repository_s_layer_else_its_organization_s_els
     store = _Store(
         {"account_wait": {"max_wait_seconds": 7200}},
         **{
-            "organization:acme": {"account_wait": {"enabled": False}},
+            "organization:acme": {"account_wait": {"enabled": False, "max_total_wait_seconds": 86400}},
             f"repository:{WIDGETS}": {"account_wait": {"enabled": True, "local_busy_retry_seconds": 900}},
         },
     )
     seen = {repo: _kept(await _start(store, repo)) for repo in (WIDGETS, GIZMOS, GADGETS)}
     assert seen == {
-        WIDGETS: {"enabled": True, "max_wait_seconds": 7200, "local_busy_retry_seconds": 900},
-        GIZMOS: {"enabled": False, "max_wait_seconds": 7200, "local_busy_retry_seconds": 300},
-        GADGETS: {"enabled": True, "max_wait_seconds": 7200, "local_busy_retry_seconds": 300},
+        WIDGETS: {
+            **DEFAULTS,
+            "max_wait_seconds": 7200,
+            "max_total_wait_seconds": 86400,
+            "local_busy_retry_seconds": 900,
+        },
+        GIZMOS: {**DEFAULTS, "enabled": False, "max_wait_seconds": 7200, "max_total_wait_seconds": 86400},
+        GADGETS: {**DEFAULTS, "max_wait_seconds": 7200},
     }, f"each job's values must be its repository's layer, else its organization's, else the deployment's: {seen}"
 
 
@@ -159,7 +178,7 @@ async def test_a_job_going_on_after_a_pause_keeps_the_values_it_started_with(mon
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._database_url = "postgresql://unused"
     for how, going_on in (("an answer", Command(resume={"answer": "csv"})), ("a restart", None)):
-        kept = await _executor_run._job_account_wait(executor, _Workflow(), going_on, "job-1")
+        kept = (await _executor_run._job_wait_policy(executor, _Workflow(), going_on, "job-1")).settings
         assert kept.model_dump(mode="json") == {**DEFAULTS, "enabled": False, "max_wait_seconds": 3600}, (
             f"after {how} the job reads the values it started with, off its checkpoint, not the document's now: {kept}"
         )
@@ -178,7 +197,7 @@ async def test_a_checkpoint_that_cannot_be_read_gives_the_defaults(monkeypatch: 
     monkeypatch.setattr(_executor_run, "checkpointer_context", _down)
     executor = IssueExecutor.__new__(IssueExecutor)
     executor._database_url = "postgresql://unused"
-    kept = await _executor_run._job_account_wait(executor, object(), Command(resume=None), "job-1")
+    kept = (await _executor_run._job_wait_policy(executor, object(), Command(resume=None), "job-1")).settings
     assert kept.model_dump(mode="json") == DEFAULTS, "a job is never failed for want of its settings"
 
 
@@ -242,21 +261,24 @@ async def test_a_fresh_run_hands_its_job_s_values_to_every_run(monkeypatch: pyte
     await executor._execute_workflow_stream(_state_with(max_wait_seconds=7200), "iss-1", "job-1")
     configurable = executor._process_stream.await_args.args[2]["configurable"]
     carried = configurable.get("account_wait")
-    assert carried is not None and carried.model_dump(mode="json") == {**DEFAULTS, "max_wait_seconds": 7200}, (
+    assert carried is not None and carried.settings.model_dump(mode="json") == {**DEFAULTS, "max_wait_seconds": 7200}, (
         f"every run's graph config carries the job's own account_wait values: {carried}"
     )
 
 
 def test_the_graph_config_carries_the_values_it_is_given_and_the_defaults_without() -> None:
-    off = _section().validate({"enabled": False, "max_wait_seconds": 600})
-    from embry0.services.account_waits import job_account_wait
+    settings = _section().validate({"enabled": False, "max_wait_seconds": 600})
+    from embry0.services.account_waits import WaitPolicy, job_wait_policy
     from tests.unit.services.test_issue_executor_graph_config import _make_executor
 
+    off = WaitPolicy(settings, 900)
     executor = _make_executor()
     configurable = executor._build_graph_config("job-1", account_wait=off)["configurable"]
-    assert job_account_wait(configurable) is off, "a run reads the job's values off its graph config"
-    bare = job_account_wait(executor._build_graph_config("job-1")["configurable"])
-    assert bare.model_dump(mode="json") == DEFAULTS, "a config built without them reads the defaults"
+    assert job_wait_policy(configurable) is off, "a run reads the job's values off its graph config"
+    bare = job_wait_policy(executor._build_graph_config("job-1")["configurable"])
+    assert (bare.settings.model_dump(mode="json"), bare.waited_seconds) == (DEFAULTS, 0), (
+        "a config built without them reads the defaults and nothing waited"
+    )
 
 
 @pytest.mark.asyncio
@@ -376,7 +398,10 @@ async def test_a_job_that_may_not_wait_ends_failed_with_the_account_s_code(
     job_id = await jobs.create(repo=WIDGETS, task="t")
     executor = _runner_executor(jobs, _Store())
     spent = AccountWait("anthropic", "rate_limited", UNTIL, model="claude-sonnet-5")
-    executor._execute_workflow_stream = AsyncMock(side_effect=AccountSpent(spent))  # type: ignore[method-assign]
+    from embry0.services.account_waits import WaitPolicy
+
+    policy = WaitPolicy(_section().validate({"enabled": False}))
+    executor._execute_workflow_stream = AsyncMock(side_effect=AccountSpent(spent, policy))  # type: ignore[method-assign]
     await _start_runner(executor, runner, job_id)
     row = await jobs.get(job_id)
     assert row is not None and row["status"] == JobStatus.FAILED, f"{runner}: {row and row['status']}"

@@ -62,7 +62,9 @@ describes what embry0 does rather than listing changes.
 - **Spent account waits.** A job whose LLM account is spent or rate limited
   moves to a ready model of the fallback order, or waits for the reset. The
   settings document's `account_wait` section says whether a job waits or
-  fails at once, and for how long, per organization and repository
+  fails at once, how long one wait may last, and how long all of a job's
+  waits may take together (thirty days by default, then it fails with the
+  account's code), per organization and repository
   ([docs/providers.md](docs/providers.md#whether-a-job-waits)).
 - **MCP server** (`embry0-mcp`, and `embry0-mcp-http` for the hosted endpoint).
 - **Claude Code plugin** ([plugins/embry0](plugins/embry0/README.md)), with this

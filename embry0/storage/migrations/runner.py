@@ -5076,6 +5076,21 @@ deliverable under an "Assumptions" heading.$seed$
             'the server the lease holds a slot of: a custom credential id, env (the environment''s credential), or '''' (not told); env:LOCAL_LLM_UPSTREAM only on a lease taken before ADR 0032, which frees itself by its expiry';
         """,
     ),
+    (
+        160,
+        "jobs.account_waited_seconds: what a job has spent parked for accounts, all its waits together (#173)",
+        # The settings document's account_wait.max_total_wait_seconds bounds a
+        # job's waits for spent accounts together. A wait that ends in a relaunch
+        # leaves no checkpoint (a job parked before it started, qa, onboard and
+        # pr-review), so the sum is on the row: the account-wait loop adds each
+        # wait's time when it takes the job back. A constant default adds the
+        # column without rewriting the table; every job so far has waited 0.
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS account_waited_seconds INTEGER NOT NULL DEFAULT 0;
+        COMMENT ON COLUMN jobs.account_waited_seconds IS
+            'seconds the job has spent parked for LLM accounts (account_wait), over every wait, resume and relaunch; added when each wait ends; account_wait.max_total_wait_seconds bounds it';
+        """,
+    ),
 ]
 
 
