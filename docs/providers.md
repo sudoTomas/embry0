@@ -79,7 +79,7 @@ longer read.
 | `google` | `gemini-…` | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMINI_API_KEY` | `gemini-3.8-flash` 0.75 / 3.75, `gemini-4-argon` 2.00 / 10.00 | yes: Gemini's OpenAI-compatible endpoint takes `tools` |
 | `groq` | `groq/<model>` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `groq/openai/gpt-oss-120b` 0.15 / 0.60, `groq/openai/gpt-oss-20b` 0.075 / 0.30 | yes: Groq states every hosted model supports tool use |
 | `deepseek` | `deepseek-…` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `deepseek-flash` 0.30 / 1.20, `deepseek-v4-pro` 1.32 / 3.96 | yes |
-| `custom` | `custom/<model>` | the operator's: the credential's `metadata.base_url`, or `CUSTOM_LLM_BASE_URL` | `CUSTOM_LLM_API_KEY` | any model the server serves, recorded at $0 | what the server and model support (below) |
+| `custom` | `custom/<model>` | the operator's: the credential's `metadata.base_url`, or `CUSTOM_LLM_BASE_URL` | `CUSTOM_LLM_API_KEY` | any model the server serves that the catalogue lists, at its prices or `free: true` ([below](#the-custom-providers-models)) | what the server and model support (below) |
 
 The `openrouter/`, `groq/` and `custom/` prefixes only route: embry0 strips
 them, so the provider is asked for `openai/gpt-oss-120b`, or for the
