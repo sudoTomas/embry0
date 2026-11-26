@@ -23,6 +23,7 @@ from embry0.services.proposal_briefs import ProposalBriefWriter
 from embry0.services.scout import ScoutLoop
 from embry0.services.slop_meter.loop import SlopMeterLoop
 from tests.fixtures.leads import brief_reader
+from tests.fixtures.model_servers import caller_s_client
 from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 
 BRIEF = {
@@ -77,7 +78,7 @@ def _calls() -> Any:
         async def check(self, **kwargs: Any) -> Any:
             return SimpleNamespace(allowed=True)
 
-    return BackgroundCalls(resolver=Resolver(), spend=Spend(), gate=Gate())
+    return BackgroundCalls(server_client=caller_s_client, resolver=Resolver(), spend=Spend(), gate=Gate())
 
 
 def _client(sent: list[str], content: dict[str, Any]) -> httpx.AsyncClient:

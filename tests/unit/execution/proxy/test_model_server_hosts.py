@@ -120,34 +120,7 @@ def test_a_literal_address_is_pinned_without_a_lookup(monkeypatch: pytest.Monkey
     assert asked == [], f"an address was looked up: {asked}"
 
 
-@pytest.mark.parametrize(
-    ("url", "address", "connect_to", "host", "sni"),
-    [
-        (
-            "https://models.test:8443/v1/models",
-            "10.0.0.7",
-            "https://10.0.0.7:8443/v1/models",
-            "models.test:8443",
-            "models.test",
-        ),
-        ("http://models.test/v1/models", "10.0.0.7", "http://10.0.0.7/v1/models", "models.test", None),
-        (
-            "https://models.test/v1/models",
-            "2001:db8::7",
-            "https://[2001:db8::7]/v1/models",
-            "models.test",
-            "models.test",
-        ),
-        ("https://10.0.0.7/v1/models", "10.0.0.7", "https://10.0.0.7/v1/models", "10.0.0.7", None),
-    ],
-)
-def test_a_pinned_request_connects_to_the_address_and_keeps_the_name(
-    url: str, address: str, connect_to: str, host: str, sni: str | None
-) -> None:
-    got, headers, extensions = _module().pinned_request(url, address)
-    assert got == connect_to, got
-    assert headers == {"Host": host}, headers
-    assert extensions.get("sni_hostname") == sni, extensions
+# A pinned call's connection and its name: tests/unit/execution/proxy/test_pinned_client.py.
 
 
 async def test_the_proxy_refuses_an_enrollment_naming_this_machine(aiohttp_client: Any) -> None:

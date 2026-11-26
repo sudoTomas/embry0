@@ -20,6 +20,7 @@ from embry0.services.job_briefs import (
     parse_job_brief,
     user_prompt,
 )
+from tests.fixtures.model_servers import caller_s_client
 from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers, kept_local_model
 
 GOOD = {
@@ -159,7 +160,7 @@ def _calls() -> Any:
     """The metered call path (#164), imported here so this file still collects on a tree without it."""
     from embry0.services.background_models import BackgroundCalls
 
-    return BackgroundCalls(resolver=FakeResolver(), spend=NoSpend(), gate=OpenGate())
+    return BackgroundCalls(server_client=caller_s_client, resolver=FakeResolver(), spend=NoSpend(), gate=OpenGate())
 
 
 def _writer(

@@ -23,7 +23,7 @@ except ImportError:
     pytest.fail("a background call holds no slot: services.local_slots names no server and no CallSlots", pytrace=False)
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
-from tests.fixtures.model_servers import fake_dns
+from tests.fixtures.model_servers import caller_s_client, fake_dns
 from tests.fixtures.provider_catalogue import LOCAL_SERVER, enable_providers
 from tests.unit.services.test_background_calls import GOOD, T0, Gate, Spend
 
@@ -75,6 +75,7 @@ def _calls(leases: Leases, *, cap: Any = 1, gate: Gate | None = None, spend: Spe
         return int(cap)
 
     return BackgroundCalls(
+        server_client=caller_s_client,
         resolver=Resolver(),
         spend=spend or Spend(),
         gate=gate or Gate(),
@@ -246,21 +247,48 @@ async def test_no_background_call_goes_to_this_machine_or_link_local(
     assert endpoint is None, f"a background call would go to {base_url}, with the credential's key: {endpoint}"
 
 
-async def test_a_background_call_connects_to_the_checked_address_and_names_the_server_in_host() -> None:
-    """The server's name was resolved and checked once; the call goes to that address, never to the name again."""
-    seen: list[httpx.Request] = []
+async def test_a_background_call_connects_to_the_checked_address_and_names_the_server_in_host(
+    aiohttp_server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server's name was resolved and checked once; the call goes to that address, never to the name again,
+    on a pinning client of its own (pinned_client), never on the caller's."""
+    from aiohttp import web
 
-    def answer(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(GOOD)}}], "usage": {}})
+    from tests.fixtures.model_servers import allow_loopback_test_servers
 
-    calls = _calls(Leases(), cap=1)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-        endpoint = await calls.endpoint("slop_judge", LOCAL, "acme/widgets")
-        assert endpoint is not None and endpoint.address == "10.0.0.5", (
-            f"the endpoint names no checked address: {endpoint}"
-        )
+    allow_loopback_test_servers(monkeypatch)
+    hosts: list[str | None] = []
+
+    async def answer(request: web.Request) -> web.Response:
+        hosts.append(request.headers.get("Host"))
+        return web.json_response({"choices": [{"message": {"content": json.dumps(GOOD)}}], "usage": {}})
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", answer)
+    server = await aiohttp_server(app)
+    fake_dns(monkeypatch, {"models.test": ["127.0.0.1"]})
+    calls = BackgroundCalls(
+        resolver=Resolver(base_url=f"http://models.test:{server.port}/v1"),
+        spend=Spend(),
+        gate=Gate(),
+        local_slots=CallSlots(slots=LocalSlots(Leases()), cap=_one),
+    )
+    endpoint = await calls.endpoint("slop_judge", LOCAL, "acme/widgets")
+    assert endpoint is not None and endpoint.address == "127.0.0.1", (
+        f"the endpoint names no checked address: {endpoint}"
+    )
+    # The name answers another address now: the call keeps the one that was checked.
+    fake_dns(monkeypatch, {"models.test": ["10.0.0.99"]})
+    caller: list[httpx.Request] = []
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: caller.append(r) or httpx.Response(500))
+    ) as client:
         await calls.ask("slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j")
-    [request] = seen
-    assert (request.url.host, request.url.port) == ("10.0.0.5", 8000), f"the call went elsewhere: {request.url}"
-    assert request.headers["host"] == "models.test:8000", f"the server's own name, in Host: {request.headers}"
+    assert hosts == [f"models.test:{server.port}"], (
+        f"the call did not reach the checked address under its name: {hosts}"
+    )
+    assert caller == [], "the call to the operator's server went over the caller's client"
+
+
+async def _one() -> int:
+    return 1

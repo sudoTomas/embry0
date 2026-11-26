@@ -70,6 +70,7 @@ COPY embry0/execution/proxy/local_llm_proxy.py    /app/embry0/execution/proxy/lo
 COPY embry0/execution/proxy/metering.py         /app/embry0/execution/proxy/metering.py
 COPY embry0/execution/proxy/minio_proxy.py        /app/embry0/execution/proxy/minio_proxy.py
 COPY embry0/execution/proxy/model_request.py      /app/embry0/execution/proxy/model_request.py
+COPY embry0/execution/proxy/pinned_client.py      /app/embry0/execution/proxy/pinned_client.py
 COPY embry0/execution/proxy/presign_proxy.py      /app/embry0/execution/proxy/presign_proxy.py
 COPY embry0/execution/proxy/receive_pack.py       /app/embry0/execution/proxy/receive_pack.py
 COPY embry0/execution/proxy/server_address.py     /app/embry0/execution/proxy/server_address.py

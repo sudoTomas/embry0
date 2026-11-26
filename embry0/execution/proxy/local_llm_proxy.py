@@ -48,7 +48,8 @@ from embry0.execution.proxy.metering import (
     register_meter_routes,
 )
 from embry0.execution.proxy.model_request import openai_error, read_body
-from embry0.execution.proxy.server_address import pinned_request, refused_address, refused_server_host
+from embry0.execution.proxy.pinned_client import pinned, pinning_client
+from embry0.execution.proxy.server_address import refused_address, refused_server_host
 
 logger = structlog.get_logger(__name__)
 
@@ -176,7 +177,9 @@ def _forget(app: web.Application, sandbox_id: str) -> None:
 
 
 async def _on_startup(app: web.Application) -> None:
-    app[HTTP_CLIENT] = httpx.AsyncClient(timeout=_TIMEOUT)
+    # Every connection goes to the address the sandbox was enrolled with, and is pooled by the server's name, so
+    # each TLS handshake checks its own name (pinned_client).
+    app[HTTP_CLIENT] = pinning_client(timeout=_TIMEOUT)
 
 
 async def _on_cleanup(app: web.Application) -> None:
@@ -233,9 +236,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
             return web.json_response({"error": "meter_full"}, status=503)
 
     client: httpx.AsyncClient = request.app[HTTP_CLIENT]
-    # The address the orchestrator checked, never the name again; the name stays the Host and, for https, the TLS
-    # server name (server_address.pinned_request).
-    url, host_header, extensions = pinned_request(f"{upstream.root}/{path}", upstream.address)
+    # The URL keeps the server's name, for Host, TLS and the pool; the connection goes to the address the
+    # orchestrator checked, never to the name again (pinned_client).
+    url = f"{upstream.root}/{path}"
     logger.info(
         "local_llm_proxy_forward",
         sandbox_id=sandbox_id,
@@ -244,9 +247,8 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         bytes=len(body),
     )
     try:
-        return await _forward(
-            request, client, method, url, body, sandbox_id, metered, upstream, host_header, extensions
-        )
+        with pinned(url, upstream.address):
+            return await _forward(request, client, method, url, body, sandbox_id, metered, upstream)
     finally:
         if metered is not None:
             metered.close()
@@ -261,8 +263,6 @@ async def _forward(
     sandbox_id: str,
     metered: Metered | None,
     server: Upstream,
-    host_header: dict[str, str],
-    extensions: dict[str, Any],
 ) -> web.StreamResponse:
     """Send the call upstream and stream its answer back through the meter. A call whose answer never came back
     after it was sent is charged its ceiling; one that never connected costs nothing."""
@@ -270,9 +270,8 @@ async def _forward(
         async with client.stream(
             method,
             url,
-            headers={**_upstream_headers(request, server), **host_header},
+            headers=_upstream_headers(request, server),
             content=body or None,
-            extensions=extensions,
         ) as upstream:
             if metered is not None:
                 metered.answer(upstream.status_code, upstream.headers.get("content-type"))

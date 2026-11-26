@@ -18,7 +18,8 @@ import httpx
 import structlog
 
 from embry0.agents.providers import XAI, ModelProvider, provider_named
-from embry0.execution.proxy.server_address import RefusedServer, UnresolvedServer, pin_server, pinned_request
+from embry0.execution.proxy.pinned_client import pinned, pinning_client
+from embry0.execution.proxy.server_address import RefusedServer, UnresolvedServer, pin_server
 from embry0.execution.xai_credential import _XAI_403_HINT
 
 logger = structlog.get_logger(__name__)
@@ -52,16 +53,15 @@ class ProbeCheck:
 async def _http_check(
     source: str, url: str, headers: dict[str, str], hint_403: str = "", *, address: str = ""
 ) -> ProbeCheck:
-    """``GET url``; with ``address``, connected to that address with the URL's host kept for ``Host`` and TLS."""
-    extensions: dict[str, Any] = {}
-    if address:
-        url, host, extensions = pinned_request(url, address)
-        headers = {**headers, **host}
+    """``GET url``; with ``address``, connected to that address, the URL's host kept for ``Host`` and TLS
+    (``pinned_client``)."""
     try:
-        async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
-            if extensions:
-                resp = await client.get(url, headers=headers, extensions=extensions)
-            else:
+        if address:
+            async with pinning_client(timeout=PROBE_TIMEOUT_SECONDS) as client:
+                with pinned(url, address):
+                    resp = await client.get(url, headers=headers)
+        else:
+            async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
                 resp = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
         return ProbeCheck(source, STATUS_UNREACHABLE, f"request failed: {type(exc).__name__}")

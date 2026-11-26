@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from typing import Any
 
 import pytest
@@ -55,3 +56,9 @@ def allow_loopback_test_servers(monkeypatch: pytest.MonkeyPatch) -> None:
         return None if str(server_address._unmapped(address)) == "127.0.0.1" else real(address)
 
     monkeypatch.setattr(server_address, "_reason", reason)
+
+
+def caller_s_client(client: Any) -> Any:
+    """``BackgroundCalls(server_client=...)`` for a test whose caller's client answers the operator's server (a mock
+    transport): the call is made on that client, inside its pin, instead of a pinning client of its own."""
+    return nullcontext(client)
