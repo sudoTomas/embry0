@@ -35,7 +35,12 @@ the same checks, so no provider's key enters a sandbox. ``/p/custom/v1/...`` is
 the custom server's path too. A provider the sandbox's enrollment does not
 name is refused, and so is every provider but the one its current run was
 declared on (``POST /admin/runs``): a run's calls, and its tally, are its own
-provider's.
+provider's. A provider's path takes no call outside a run: before the
+sandbox's first run is declared, and after its run ends, ``/p/<provider>/v1``
+is refused, so every call there is some run's. (``/v1``, which older images
+call for the custom provider, still forwards outside a run, counted as the
+sandbox's calls under no run; ``METER_REQUIRE_RUN`` decides that for every
+path.)
 
 The orchestrator enrolls only the sandboxes of jobs that resolved a
 chat-completions provider, so any other sandbox has no bearer this proxy
@@ -407,6 +412,12 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     sandbox_id = check_bearer(request, PROXY_NAME)
     if sandbox_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
+    # A provider's path, only for a run: none of its calls is left to no job.
+    if path_per_provider and not request.app[METER].has_run(sandbox_id):
+        logger.warning("llm_proxy_call_outside_a_run", sandbox_id=sandbox_id, provider=provider)
+        return openai_error(
+            "run_not_declared", f"this sandbox has no agent run in progress: {provider} is refused outside one", 403
+        )
     # While a run is current, only its own provider's path: its tally then holds that provider's calls alone, which
     # the orchestrator prices at the run's rates.
     declared = request.app[METER].declared_provider(sandbox_id)

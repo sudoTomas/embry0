@@ -639,6 +639,10 @@ class Meter:
         )
         self._current[sandbox_id] = run_id
 
+    def has_run(self, sandbox_id: str) -> bool:
+        """Whether the sandbox has a run in progress: declared, and not ended."""
+        return sandbox_id in self._current
+
     def declared_provider(self, sandbox_id: str) -> str | None:
         """The provider the sandbox's current run was declared on; None when it has no run, or its run named none."""
         # The current run is never an ended one: ending a run, or the sandbox's next, takes it from ``_current``.

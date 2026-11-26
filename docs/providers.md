@@ -252,8 +252,12 @@ proxy's count (`embry0/agents/run_charge.py`):
 | the run's provider is carried by no metering proxy (Anthropic) | the sandbox's figure, as above (`sandbox`) |
 | the record has no rates | the sandbox's figure (`sandbox_unpriced`) |
 
-**A run is held to its provider.** The declaration names the run's provider (its
-record's), and the proxy echoes it. While the run is current, the llm-proxy
+**A run is held to its provider.** A provider's path at the llm-proxy takes no
+call outside a run: before a sandbox's first run is declared, and after its run
+ends, `/p/<provider>/v1` is refused (403, `run_not_declared`), so every call
+there is some run's (the custom provider's `/v1` still forwards outside a run,
+counted as the sandbox's calls under no run). The declaration names the run's
+provider (its record's), and the proxy echoes it. While the run is current, the llm-proxy
 refuses the sandbox's calls on any other provider's path, `/v1` included
 (403, `provider_not_declared`), so a run's tally there holds its own
 provider's calls, says which provider that is, and is priced at the run's

@@ -51,10 +51,15 @@ async def _enroll(client: TestClient, **fields: Any) -> Any:
     return await client.post("/admin/enroll", json=body, headers=_H)
 
 
-async def _proxy(aiohttp_client: Any, **fields: Any) -> TestClient:
+async def _proxy(aiohttp_client: Any, *, run: bool = True, **fields: Any) -> TestClient:
+    """The proxy with sbx-1 enrolled with ``fields``, and a run of it in progress unless ``run`` is False: a provider's
+    path takes no call outside one."""
     client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     enrolled = await _enroll(client, **fields)
     assert enrolled.status == 200, await enrolled.text()
+    if run:
+        declared = await client.post("/admin/runs", json={"sandbox_id": "sbx-1", "run_id": "run-0"}, headers=_H)
+        assert declared.status == 200, await declared.text()
     return client
 
 
@@ -172,6 +177,7 @@ async def test_an_enrollment_again_replaces_the_providers(aiohttp_client, upstre
     openai, groq, local = await upstreams("openai"), await upstreams("groq"), await upstreams("local")
     client = await _proxy(aiohttp_client, provider_servers={"openai": _server(openai, "k", "cred-o")})
     assert (await _enroll(client, provider_servers={"groq": _server(groq, "k", "cred-g")})).status == 200
+    assert (await _declare(client)).status == 200  # an enrollment again ends the sandbox's run
     gone = await client.post("/p/openai/v1/chat/completions", json={}, headers=_BEARER)
     assert gone.status == 403, "a provider the newer enrollment does not name was kept"
     assert (await client.post("/p/groq/v1/chat/completions", json={}, headers=_BEARER)).status == 200
@@ -220,6 +226,7 @@ async def test_a_request_over_the_size_limit_is_refused_on_a_provider_path(aioht
     servers = {"openai": _server(openai, "k", "cred-o")}
     # The sandbox's cap, at the ceiling this proxy started with (#174).
     assert (await _enroll(client, provider_servers=servers, limits={**LIMITS, "max_request_bytes": 1024})).status == 200
+    assert (await _declare(client)).status == 200
     answer = await client.post("/p/openai/v1/chat/completions", data=b"x" * 2048, headers=_BEARER)
     assert answer.status == 413 and openai.seen == []
 
@@ -384,7 +391,11 @@ async def test_while_a_run_is_current_only_its_provider_is_reached(aiohttp_clien
     ended = await client.delete("/admin/runs/run-1", json={}, headers=_H)
     assert ended.status == 200
     after = await client.post("/p/groq/v1/chat/completions", json=chat, headers=_BEARER)
-    assert after.status == 200, "once the run ended, the sandbox's other provider is refused still"
+    assert after.status == 403, f"after the run ended, a provider's path was answered {after.status}"
+    assert (await after.json())["error"]["code"] == "run_not_declared"
+    assert (await _declare(client, "run-2", provider="groq")).status == 200
+    groq_run = await client.post("/p/groq/v1/chat/completions", json=chat, headers=_BEARER)
+    assert groq_run.status == 200, "the sandbox's next run, on its other provider, was refused"
 
 
 async def test_a_run_declared_on_no_provider_holds_the_sandbox_to_none(aiohttp_client, upstreams):
@@ -525,3 +536,39 @@ async def test_the_meter_reads_the_answer_as_the_provider_sent_it(aiohttp_client
         80,
         0,
     ), f"the usage was not read from the answer whole: {tally}"
+
+
+async def test_a_provider_path_takes_no_call_outside_a_run(aiohttp_client, upstreams):
+    """Every call on a provider's path is some run's: before the sandbox's first run is declared, and after its run
+    ends, it is refused and reaches no server. The custom provider's /v1, which older images call, is not."""
+    openai, local = await upstreams("openai"), await upstreams("local")
+    client = await _proxy(
+        aiohttp_client,
+        run=False,
+        provider_servers={"openai": _server(openai, "key-openai", "cred-o")},
+        local_llm=_server(local, "key-local", "cred-l"),
+    )
+    chat = {"model": "gpt-x", "messages": []}
+
+    def refused(resp: Any, body: Any, when: str) -> None:
+        assert resp.status == 403, f"{when}, a provider's path was answered {resp.status}"
+        assert body["error"]["code"] == "run_not_declared", body
+
+    for path in ("/p/openai/v1/chat/completions", "/p/custom/v1/chat/completions"):
+        resp = await client.post(path, json=chat, headers=_BEARER)
+        refused(resp, await resp.json(), f"before the first run ({path})")
+    resp = await client.get("/p/openai/v1/models", headers=_BEARER)
+    refused(resp, await resp.json(), "before the first run (models)")
+    assert openai.seen == [], "a call outside a run reached the provider"
+    outside = await client.post("/v1/chat/completions", json=chat, headers=_BEARER)
+    assert outside.status == 200, f"the custom provider's /v1 outside a run was answered {outside.status}"
+
+    assert (await _declare(client, provider="openai")).status == 200
+    during = await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)
+    assert during.status == 200, f"a call during the run was answered {during.status}"
+
+    assert (await client.delete("/admin/runs/run-1", json={}, headers=_H)).status == 200
+    after = await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)
+    refused(after, await after.json(), "after the run ended")
+    assert len(openai.seen) == 1, "only the call during the run reached the provider"
+    assert (await client.post("/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
