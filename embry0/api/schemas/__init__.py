@@ -817,12 +817,13 @@ class ProviderConfigUpdate(BaseModel):
     # is allowed too (local models), priced at $0.
     fallback_models: list[str] | None = None
     # Moved to the settings document's local_models section (#174): kept only so
-    # a request that still sends it is refused with a 422 naming where it went.
-    local_max_runs: int | None = None
+    # a request that still sends it, with any value, null included, is refused
+    # with a 422 naming where it went (any type, so no other check answers first).
+    local_max_runs: Any = None
     # Moved to the settings document's background_models section (#164): kept
-    # only so a request that still sends it is refused with a 422 naming where
-    # it went, instead of being dropped.
-    watcher_local_model: str | None = None
+    # only so a request that still sends it, with any value, null included, is
+    # refused with a 422 naming where it went, instead of being dropped.
+    watcher_local_model: Any = None
 
 
 # --- QA Presign ---
