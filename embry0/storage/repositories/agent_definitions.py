@@ -452,6 +452,7 @@ _ALLOWED_UPDATE_FIELDS = {
     "triage_may_add_skills",
     "station",
     "quest_template",
+    "roles",
 }
 
 
@@ -462,6 +463,15 @@ async def coders_on(conn: Any, *, share: bool = False) -> frozenset[str]:
 
     rows = await conn.fetch("SELECT type, roles, runs_in_jobs FROM agent_definitions" + (" FOR SHARE" if share else ""))
     return coders_of(dict(row) for row in rows)
+
+
+#: The column a write of a row returns the roles it held just before under (#395); never part of the row itself.
+_ROLES_BEFORE = "roles_before_write"
+
+
+def _without_roles_before(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    before = row.pop(_ROLES_BEFORE, None)
+    return row, list(before or [])
 
 
 class AgentDefinitionsRepository:
@@ -505,7 +515,7 @@ class AgentDefinitionsRepository:
     ) -> dict[str, Any]:
         """Insert a new custom agent definition; ``runs_in_jobs`` is the seeder's to set (the API never passes it).
 
-        ``roles`` is the seeders' to set here (#395): the agents API writes no role through this method.
+        ``roles`` is checked (``row_behaviour.checked_roles``); who may hold one is the API's check (#395).
 
         ``triage_may_add_skills``, ``station`` and ``quest_template`` are
         checked (``checked_triage_may_add``, ``row_behaviour``): a malformed
@@ -554,6 +564,12 @@ class AgentDefinitionsRepository:
         Raises ValueError when the definition would list a tool outside the
         tool catalog, its stored tools included (embry0.services.tool_catalog).
         """
+        row, _before = await self.update_with_roles_before(agent_type, **fields)
+        return row
+
+    async def update_with_roles_before(self, agent_type: str, **fields: Any) -> tuple[dict[str, Any], list[str]]:
+        """:meth:`update`, and the roles the row held just before it, read in the same statement as the write and
+        under its lock (#395): a concurrent write cannot make a change of roles look like none."""
         unknown = set(fields) - _ALLOWED_UPDATE_FIELDS
         if unknown:
             raise ValueError(f"Unknown fields for update: {unknown}")
@@ -563,6 +579,8 @@ class AgentDefinitionsRepository:
             fields = {**fields, "station": checked_station(fields["station"])}
         if "quest_template" in fields:
             fields = {**fields, "quest_template": checked_quest_template(fields["quest_template"])}
+        if "roles" in fields:
+            fields = {**fields, "roles": checked_roles(fields["roles"])}
         if "tools" in fields or "mcp_servers" in fields:
             stored = {} if {"tools", "mcp_servers"} <= set(fields) else (await self.get(agent_type) or {})
             tools = fields["tools"] if "tools" in fields else stored.get("tools")
@@ -573,7 +591,7 @@ class AgentDefinitionsRepository:
             row = await self.get(agent_type)
             if row is None:
                 raise ValueError(f"Agent '{agent_type}' not found")
-            return row
+            return row, list(row.get("roles") or [])
 
         set_clauses = []
         params: list[Any] = []
@@ -582,15 +600,17 @@ class AgentDefinitionsRepository:
             params.append(value)
 
         params.append(agent_type)
+        n = len(params)
         sql = (
-            f"UPDATE agent_definitions SET {', '.join(set_clauses)}, updated_at = NOW() "
-            f"WHERE type = ${len(params)} RETURNING *"
+            f"WITH old AS MATERIALIZED (SELECT roles FROM agent_definitions WHERE type = ${n} FOR UPDATE) "
+            f"UPDATE agent_definitions SET {', '.join(set_clauses)}, updated_at = NOW() FROM old "
+            f"WHERE agent_definitions.type = ${n} RETURNING agent_definitions.*, old.roles AS {_ROLES_BEFORE}"
         )
         row = await self._db.fetchrow(sql, *params)
         if row is None:
             raise ValueError(f"Agent '{agent_type}' not found")
         logger.info("agent_definition_updated", agent_type=agent_type, fields=list(fields))
-        return dict(row)
+        return _without_roles_before(dict(row))
 
     async def delete(self, agent_type: str) -> None:
         """Delete a custom agent definition. Raises ValueError for built-in agents."""
@@ -605,12 +625,21 @@ class AgentDefinitionsRepository:
     async def reset(self, agent_type: str) -> dict[str, Any]:
         """Reset a built-in agent to its seed values. Raises ValueError for custom agents, including one the
         deployment made under a built-in's name before that built-in was seeded (the seeder never overwrites it)."""
+        row, _before = await self.reset_with_roles_before(agent_type)
+        return row
+
+    async def reset_with_roles_before(self, agent_type: str) -> tuple[dict[str, Any], list[str]]:
+        """:meth:`reset`, and the roles the row held just before it, read in the same statement as the write and
+        under its lock (#395)."""
         if agent_type not in BUILTIN_SEED:
             raise ValueError(f"'{agent_type}' is not a built-in agent")
         seed = BUILTIN_SEED[agent_type]
         check_agent_tools(agent_type, seed["tools"], mcp_servers=seed["mcp_servers"])
         row = await self._db.fetchrow(
-            """
+            f"""
+            WITH old AS MATERIALIZED (
+                SELECT roles FROM agent_definitions WHERE type = $13 AND is_builtin FOR UPDATE
+            )
             UPDATE agent_definitions
             SET description = $1,
                 model = $2,
@@ -630,9 +659,10 @@ class AgentDefinitionsRepository:
                 quest_template = $17,
                 roles = $18,
                 updated_at = NOW()
-            WHERE type = $13 AND is_builtin
-            RETURNING *
-            """,
+            FROM old
+            WHERE agent_definitions.type = $13 AND agent_definitions.is_builtin
+            RETURNING agent_definitions.*, old.roles AS {_ROLES_BEFORE}
+            """,  # noqa: S608 - _ROLES_BEFORE is a module constant
             seed["description"],
             seed["model"],
             seed["tools"],
@@ -657,4 +687,4 @@ class AgentDefinitionsRepository:
                 raise ValueError(f"'{agent_type}' is an agent of this deployment's own, not the built-in one")
             raise ValueError(f"Agent '{agent_type}' not found in database")
         logger.info("agent_definition_reset", agent_type=agent_type)
-        return dict(row)
+        return _without_roles_before(dict(row))

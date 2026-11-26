@@ -22,6 +22,7 @@ from embry0.workflows.row_behaviour import (
     checked_job_kind,
     checked_leader_agent,
     checked_quest_template,
+    checked_roles,
     checked_station,
     template_name_problem,
 )
@@ -540,11 +541,18 @@ class AgentCreateRequest(ServableFields):
     # none, "" one that names no template, else that template (#167).
     station: Any = "desk"
     quest_template: Any = None
+    # What a job lets it do beyond its tools (#395): ["coder"] runs it on the developer node.
+    roles: Any = Field(default_factory=list)
 
     @field_validator("triage_may_add_skills")
     @classmethod
     def _triage_may_add(cls, v: list[Any]) -> list[str]:
         return checked_triage_may_add(v)
+
+    @field_validator("roles")
+    @classmethod
+    def _roles(cls, v: Any) -> list[str]:
+        return checked_roles(v)
 
     @field_validator("station")
     @classmethod
@@ -606,11 +614,18 @@ class AgentUpdateRequest(ServableFields):
     # null takes the agent's task out of the guild (#167).
     station: Any = None
     quest_template: Any = None
+    # Not nullable (the route refuses an explicit null): [] holds none (#395).
+    roles: Any = None
 
     @field_validator("triage_may_add_skills")
     @classmethod
     def _triage_may_add(cls, v: list[Any] | None) -> list[str] | None:
         return None if v is None else checked_triage_may_add(v)
+
+    @field_validator("roles")
+    @classmethod
+    def _roles(cls, v: Any) -> list[str] | None:
+        return None if v is None else checked_roles(v)
 
     @field_validator("station")
     @classmethod

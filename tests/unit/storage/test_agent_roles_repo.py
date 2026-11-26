@@ -53,3 +53,16 @@ async def test_the_coders_are_read_from_the_rows_a_job_runs(db_with_migrations: 
     await repo.create(agent_type="voice", description="d", model="m", roles=["coder"], runs_in_jobs=False)
     async with db.transaction() as conn:
         assert await coders_on(conn, share=True) == {"developer", "scribe"}
+
+
+async def test_an_update_stores_only_known_roles_each_once_in_order(db_with_migrations: DatabasePool) -> None:
+    repo = AgentDefinitionsRepository(db_with_migrations)
+    await repo.create(agent_type="scribe", description="d", model="m")
+    updated, before = await repo.update_with_roles_before("scribe", roles=("docs", "coder", "docs"))
+    assert (updated["roles"], before) == (["coder", "docs"], [])
+    assert "roles_before_write" not in updated, "the roles before a write are no column of the row"
+    with pytest.raises(ValueError, match="roles must be a list of coder, docs"):
+        await repo.update("scribe", roles=["bard"])
+    assert (await repo.get("scribe"))["roles"] == ["coder", "docs"], "a refused write changed nothing"
+    row, before = await repo.reset_with_roles_before("slopmaster") if await repo.get("slopmaster") else ({}, [])
+    assert "roles_before_write" not in row

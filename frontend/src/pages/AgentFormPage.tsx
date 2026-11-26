@@ -74,6 +74,22 @@ interface FormState {
   station: StationId;
   /** The guild's task for it (`quest_template`): NO_TASK, TRIAGE_PICKS, or a template's name. */
   quest: string;
+  /** Whether it holds the coder role (`roles`, #395): a job runs its step on the developer node. */
+  coder: boolean;
+  /** Whether it holds the docs role (`roles`, #395): its step may put files on the job's branch. */
+  docs: boolean;
+}
+
+/** The roles (#395), and the steps of the graph that have nodes of their own and never hold the coder role. */
+const CODER = "coder";
+const DOCS = "docs";
+const NEVER_CODER_TYPES = ["triage", "output", "qa", "review", "reviewer"];
+/** The built-in coder of every route that names none: it always holds the role. */
+const DEFAULT_CODER = "developer";
+
+/** The roles the form holds, in the backend's order. */
+function rolesOf(form: { coder: boolean; docs: boolean }): string[] {
+  return [...(form.coder ? [CODER] : []), ...(form.docs ? [DOCS] : [])];
 }
 
 /** The quest select's two values that are no template: no task (null), and a task naming none (""). */
@@ -91,7 +107,7 @@ function questTemplateOf(quest: string): string | null {
 }
 
 /** The page's parts, top to bottom: the character it has become, then what it is configured to be. */
-const SECTIONS = ["character", "identity", "guild", "model", "tools", "packs", "mcp", "prompt"] as const;
+const SECTIONS = ["character", "identity", "guild", "role", "model", "tools", "packs", "mcp", "prompt"] as const;
 type SectionId = (typeof SECTIONS)[number];
 
 /** A new agent opens every part to fill in; a saved one opens on its character, its configuration closed to a line each. */
@@ -133,6 +149,8 @@ const EMPTY_FORM: FormState = {
   triageMayAddSkills: [],
   station: DEFAULT_STATION,
   quest: NO_TASK,
+  coder: false,
+  docs: false,
 };
 
 /** The CLI tools that run a shell command; an agent with none gets no MCP server that runs a command. */
@@ -250,6 +268,8 @@ export function AgentFormPage() {
       triageMayAddSkills: existing.triage_may_add_skills ?? [],
       station: stationOf(existing.station),
       quest: questOf(existing.quest_template),
+      coder: existing.roles ? existing.roles.includes(CODER) : existing.coding_agent === true,
+      docs: existing.roles ? existing.roles.includes(DOCS) : false,
     });
   }, [existing, offeredModels]);
 
@@ -299,6 +319,12 @@ export function AgentFormPage() {
 
   // The brief writer's voices (runs_in_jobs false) never run in a job, so they need no tools.
   const runsInNoJob = isEdit && existing !== undefined && existing.runs_in_jobs === false;
+  /** Whether this agent may hold a role (#395): it runs in jobs. */
+  const rolesEditable = !runsInNoJob;
+  /** Whether it may hold the coder role: not one of the graph's own steps. */
+  const coderEditable = !(isEdit && NEVER_CODER_TYPES.includes(typeParam ?? ""));
+  /** The developer always holds the coder role. */
+  const coderFixed = isEdit && typeParam === DEFAULT_CODER;
   const droppedServers = serversDroppedWithoutShell(form.tools, form.mcpServersText);
 
   const handleSave = () => {
@@ -364,6 +390,8 @@ export function AgentFormPage() {
         triage_may_add_skills: form.triageMayAddSkills,
         station: form.station,
         quest_template: questTemplateOf(form.quest),
+        // Left out where the role cannot be held, or on a backend that predates it, so the save changes nothing there.
+        ...(rolesEditable && existing?.roles !== undefined ? { roles: rolesOf(form) } : {}),
       };
       updateAgent.mutate(update, {
         onSuccess: onSaved("Agent updated"),
@@ -384,6 +412,7 @@ export function AgentFormPage() {
         triage_may_add_skills: form.triageMayAddSkills,
         station: form.station,
         quest_template: questTemplateOf(form.quest),
+        ...(rolesOf(form).length ? { roles: rolesOf(form) } : {}),
       };
       createAgent.mutate(create, {
         onSuccess: onSaved("Agent created"),
@@ -540,8 +569,8 @@ export function AgentFormPage() {
                 className="mt-1"
               >
                 <option value={NO_TASK}>None: it works only inside another job</option>
-                {/* A task naming no template runs the route triage picks, a coding agent's (#167). */}
-                {(existing?.coding_agent || form.quest === TRIAGE_PICKS) && (
+                {/* A task naming no template runs the route triage picks, a coder's (#167, #395). */}
+                {(form.coder || form.quest === TRIAGE_PICKS) && (
                   <option value={TRIAGE_PICKS}>Names no template: triage picks the route</option>
                 )}
                 {[...new Set([...(templates ?? []).map((t) => t.name), ...(questTemplateOf(form.quest) ? [form.quest] : [])])].map(
@@ -661,6 +690,54 @@ export function AgentFormPage() {
           </div>
         </div>
       </ConfigSection>
+
+      {rolesEditable && (
+        <ConfigSection
+          id="role"
+          title="Roles"
+          summary={rolesOf(form).length ? rolesOf(form).join(", ") : "No role"}
+          open={sections.role}
+          onToggle={(open) => setSections((prev) => ({ ...prev, role: open }))}
+        >
+          {coderEditable && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                aria-label="Coder"
+                checked={form.coder}
+                disabled={coderFixed}
+                onChange={(e) => setForm((prev) => ({ ...prev, coder: e.target.checked }))}
+              />
+              <span>
+                Coder
+                <span className="block text-xs text-white/30" data-testid="agent-coder-help">
+                  A template step with this agent runs on the developer node: it works on the job&apos;s branch, which
+                  embry0 delivers as a pull request, and the job is credited to it. A route has one coder at most.
+                  {coderFixed && " The developer always holds this role: it codes every route that names no coder."}
+                </span>
+              </span>
+            </label>
+          )}
+          <label className="mt-3 flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              aria-label="Docs"
+              checked={form.docs}
+              onChange={(e) => setForm((prev) => ({ ...prev, docs: e.target.checked }))}
+            />
+            <span>
+              Docs
+              <span className="block text-xs text-white/30" data-testid="agent-docs-help">
+                Its step may put files on the job&apos;s branch, as a spec, review notes or a checked patch. The
+                branch is open to push from the first step whose agent is a coder or holds this role, to the
+                job&apos;s end; a push can reach any file on it.
+              </span>
+            </span>
+          </label>
+        </ConfigSection>
+      )}
 
       <ConfigSection
         id="tools"

@@ -650,7 +650,7 @@ describe("AgentFormPage — the guild (#167)", () => {
   it("offers a coding agent a task that names no template, and only a coding agent", async () => {
     const user = userEvent.setup();
     mockUseAgent.mockReturnValue({
-      data: { ...EXISTING, station: "anvil", quest_template: null, coding_agent: true },
+      data: { ...EXISTING, station: "anvil", quest_template: null, coding_agent: true, roles: ["coder"] },
       isLoading: false,
     });
     renderEdit();
@@ -683,6 +683,106 @@ describe("AgentFormPage — the guild (#167)", () => {
     mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, quest_template: "gone-route" }, isLoading: false });
     renderEdit("grok-dev");
     expect(screen.getByLabelText("Task from the guild")).toHaveValue("gone-route");
+  });
+});
+
+describe("AgentFormPage — the coder and docs roles (#395)", () => {
+  it("gives an agent of the operator's own the role, and with it a task naming no template", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, roles: [] }, isLoading: false });
+    renderEdit("grok-dev");
+    const coder = screen.getByRole("checkbox", { name: "Coder" });
+    expect(coder).not.toBeChecked();
+    const options = () => [...screen.getByLabelText("Task from the guild").querySelectorAll("option")].map((o) => o.value);
+    expect(options()).not.toContain("__triage__");
+
+    await user.click(coder);
+    expect(options()).toContain("__triage__");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "grok-dev", roles: ["coder"] }),
+      expect.anything(),
+    );
+
+    await user.click(coder);
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(expect.objectContaining({ roles: [] }), expect.anything());
+  });
+
+  it("keeps the developer a coder", () => {
+    mockUseAgent.mockReturnValue({ data: { ...EXISTING, roles: ["coder"] }, isLoading: false });
+    renderEdit();
+    const coder = screen.getByRole("checkbox", { name: "Coder" });
+    expect(coder).toBeChecked();
+    expect(coder).toBeDisabled();
+    expect(screen.getByTestId("agent-coder-help")).toHaveTextContent("The developer always holds this role");
+  });
+
+  it("offers the graph's own steps docs, never coder", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({ data: { ...EXISTING, type: "review", roles: ["docs"] }, isLoading: false });
+    renderEdit("review");
+    expect(screen.queryByRole("checkbox", { name: "Coder" })).toBeNull();
+    const docs = screen.getByRole("checkbox", { name: "Docs" });
+    expect(docs).toBeChecked();
+    await user.click(docs);
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(expect.objectContaining({ roles: [] }), expect.anything());
+  });
+
+  it("sends both roles, in order, when both are held", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, roles: [] }, isLoading: false });
+    renderEdit("grok-dev");
+    await user.click(screen.getByRole("checkbox", { name: "Docs" }));
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(expect.objectContaining({ roles: ["docs"] }), expect.anything());
+    await user.click(screen.getByRole("checkbox", { name: "Coder" }));
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ roles: ["coder", "docs"] }),
+      expect.anything(),
+    );
+  });
+
+  it("offers no role to a brief writer's voice", () => {
+    mockUseAgent.mockReturnValue({
+      data: { ...EXISTING, type: "proposal-brief", runs_in_jobs: false, roles: [] },
+      isLoading: false,
+    });
+    renderEdit("proposal-brief");
+    expect(screen.queryByRole("checkbox", { name: "Docs" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Coder" })).toBeNull();
+  });
+
+  it("sends no roles to a backend that predates them", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({ data: { ...GROK_DEV_ROW, coding_agent: true }, isLoading: false });
+    renderEdit("grok-dev");
+    expect(screen.getByRole("checkbox", { name: "Coder" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockUpdateMutate.mock.lastCall?.[0]).not.toHaveProperty("roles");
+  });
+
+  it("creates an agent with the role only when it is checked", async () => {
+    const user = userEvent.setup();
+    mockUseAgent.mockReturnValue({ data: undefined, isLoading: false });
+    renderNew();
+    await user.type(screen.getByLabelText("Type (slug)"), "scribe");
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockCreateMutate.mock.lastCall?.[0]).not.toHaveProperty("roles");
+    await user.click(screen.getByRole("checkbox", { name: "Coder" }));
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockCreateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "scribe", roles: ["coder"] }),
+      expect.anything(),
+    );
+    await user.click(screen.getByRole("checkbox", { name: "Docs" }));
+    await user.click(screen.getByRole("button", { name: "Save Agent" }));
+    expect(mockCreateMutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ roles: ["coder", "docs"] }),
+      expect.anything(),
+    );
   });
 });
 

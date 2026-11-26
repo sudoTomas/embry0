@@ -134,6 +134,8 @@ NOT_READ: dict[tuple[str, str], str] = {
     ("apikey.created", "scope"): "the key's tier, not a settings scope",
     ("apikey.allowed_repos_changed", "before"): _KEYS,
     ("apikey.allowed_repos_changed", "after"): _KEYS,
+    ("agent.roles_changed", "before"): "an agent's roles (#395), no repository's: the deployment's row",
+    ("agent.roles_changed", "after"): "an agent's roles (#395), no repository's: the deployment's row",
     ("context_config_updated", "scope"): _NOT_A_LAYER,
     ("environment.secret_revealed", "scope"): _NOT_A_LAYER,
     ("credential.imported", "skipped"): "the environment's variables the import skipped: the deployment's row",
