@@ -755,7 +755,7 @@ class WatcherService:
         mode = str(getattr(self._config, "watcher_skip_unchanged_mode", "shadow") or "shadow").strip().lower()
         return mode if mode in {"off", "shadow", "on"} else "off"
 
-    async def _unchanged_window(self, delta: WindowDelta | None) -> tuple[str, str] | None:
+    async def _unchanged_window(self, delta: WindowDelta | None, settings: WatcherSettings) -> tuple[str, str] | None:
         """The action and why this window need not be analysed, or ``None`` if it must be.
 
         Three ways a window earns a skip:
@@ -785,7 +785,7 @@ class WatcherService:
         if self._skip_unchanged_mode() == "off" or delta is None:
             return None
 
-        hours = (await self._settings_now()).skip_known_hours
+        hours = settings.skip_known_hours
         counts = delta.counts()
         action = "no_change"
         if not delta.has_notable:
@@ -870,11 +870,13 @@ class WatcherService:
         own = getattr(self._config, "section_overrides", None) or {}
         return self._section.model_copy(update=own) if own else self._section
 
-    async def _auto_accept_drafts(self) -> None:
-        """Accept the stack's tracked drafts that clear its auto-accept bar (spec 2026-10-25). Never costs the tick."""
+    async def _auto_accept_drafts(self, settings: WatcherSettings) -> None:
+        """Accept the stack's tracked drafts that clear its auto-accept bar (spec 2026-10-25). Never costs the tick.
+
+        ``settings`` is the watcher section as this tick read it (:meth:`_settings_now`).
+        """
         if self._auto_acceptor is None:
             return
-        settings = await self._settings_now()
         if not settings.auto_accept:
             return
         from embry0.services.watcher_auto_accept import AutoAcceptBar
@@ -1868,6 +1870,9 @@ class WatcherService:
 
             try:
                 window_days = self._config.watcher_proposal_window_days
+                # #738: the watcher section, read once for the whole tick: its auto-accept and its skip check
+                # read the same values.
+                settings = await self._settings_now()
 
                 # RAV-1106/1134: sync draft state with Linear BEFORE the cap
                 # check, so a human cancelling a draft frees its slot on the
@@ -1875,7 +1880,7 @@ class WatcherService:
                 await self._reconcile_drafts(window_days)
                 # After the reconcile, so a draft a person cancelled since the
                 # last tick is closed before the bar is asked about it.
-                await self._auto_accept_drafts()
+                await self._auto_accept_drafts(settings)
 
                 await self._sync_deploys(window_end)
 
@@ -1977,7 +1982,7 @@ class WatcherService:
 
                 # SH-P3.3: nothing new, spiking or regressed -> do not pay a
                 # model to read the window again.
-                skip = await self._unchanged_window(delta)
+                skip = await self._unchanged_window(delta, settings)
                 if skip is not None and self._skip_unchanged_mode() == "on":
                     action, reason = skip
                     return await record(action, log_lines=len(lines), detail=reason)

@@ -149,7 +149,9 @@ describes what embry0 does rather than listing changes.
   `settings_env_retired` while one is still set. A stack's own value of one
   of these keys still wins, and is checked with the section's bounds now: one
   stored beyond them reads as the section's, with a
-  `watcher_stack_setting_invalid` warning.
+  `watcher_stack_setting_invalid` warning. An API key with a repository
+  allowlist no longer changes a stack's `skip_known_hours`: like every
+  `auto_accept*`, it is the deployment's.
 - **Upgrading from before the settings document.** The imports also carried
   state no variable names: a saved `budget_config` row's caps, the repositories
   the scout and the Slop-O-Meter read before their enrollment was explicit, and

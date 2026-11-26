@@ -362,6 +362,24 @@ async def test_an_unreadable_analysis_memory_analyses_and_zero_hours_turns_it_of
 
 
 @pytest.mark.asyncio
+async def test_a_tick_reads_the_section_once_for_its_auto_accept_and_its_skip_check() -> None:
+    """#742 review: the two readers of one tick read the same section, never one value each."""
+    svc = _svc("on")
+    svc._watcher_settings = AsyncMock(
+        side_effect=[_section(auto_accept=True, skip_known_hours=6), _section(skip_known_hours=0)]
+    )
+    svc._auto_acceptor = AsyncMock(return_value=[])
+    sig = await _window_signature(svc)
+    svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+    svc._signatures.clean_since = AsyncMock(return_value={sig: 30})
+
+    out = await svc.run_once()
+    assert svc._watcher_settings.await_count == 1, f"read {svc._watcher_settings.await_count} times in one tick"
+    assert svc._auto_acceptor.await_count == 1, "the tick's section turns auto-accept on"
+    assert out["action"] == "skipped_known", f"the skip check reads the same section, 6 hours: {out}"
+
+
+@pytest.mark.asyncio
 async def test_how_long_a_clean_signature_is_held_is_the_section_s_now_under_the_stack_s_own() -> None:
     """#738: the deployment's watcher section, read every tick; a stack that sets skip_known_hours keeps its own."""
     reads = [_section(skip_known_hours=6), _section(skip_known_hours=0)]

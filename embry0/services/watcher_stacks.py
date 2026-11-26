@@ -73,8 +73,10 @@ SETTING_KEYS: frozenset[str] = frozenset(OVERRIDABLE) | SECTION_SETTINGS | froze
 
 #: The settings that are the deployment's to choose, never the stack's repository's: an API key with a repository
 #: allowlist keeps them as stored (``PUT /watcher/stacks``). What the stack reads beyond its repository, what bounds
-#: the analyses it pays for from the shared budget (how often, how big, how dear, how long), and the fix jobs it
-#: starts without a person, which draw on the same caps.
+#: the analyses it pays for from the shared budget (how often, how big, how dear, how long, and how long a signature
+#: an analysis found clean is held before it is paid for again), and the fix jobs it starts without a person, which
+#: draw on the same caps. The keys of the settings document's ``watcher`` section are all here: the section is the
+#: deployment's alone.
 DEPLOYMENT_SETTINGS: frozenset[str] = frozenset(
     {
         "deploy_logql",
@@ -90,6 +92,7 @@ DEPLOYMENT_SETTINGS: frozenset[str] = frozenset(
         "auto_accept_min_severity",
         "auto_accept_min_occurrences",
         "auto_accept_max_per_day",
+        "skip_known_hours",
     }
 )
 
@@ -106,7 +109,6 @@ REPOSITORY_SETTINGS: frozenset[str] = frozenset(
         "regression_silence_seconds",
         "log_clustering_mode",
         "skip_unchanged_mode",
-        "skip_known_hours",
         "signature_masks",
     }
 )
