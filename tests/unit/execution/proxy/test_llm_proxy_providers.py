@@ -267,29 +267,20 @@ async def test_a_provider_call_connects_to_the_checked_address_and_names_the_ser
     assert [r["host"] for r in openai.seen] == [f"models.test:{openai.port}"], openai.seen
 
 
-async def test_an_https_provider_keeps_its_name_for_tls(aiohttp_client, monkeypatch):
-    import httpx
+async def test_an_https_provider_keeps_its_name_for_tls(aiohttp_client, aiohttp_server, tmp_path, monkeypatch):
+    """The call goes to the provider's URL, its name the Host and the TLS server name, over a connection to the
+    checked address, with the provider's key."""
+    from tests.fixtures.tls_servers import tls_server
 
-    sent: list[httpx.Request] = []
-
-    def answer(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        return httpx.Response(200, json={"choices": []})
-
-    real_client = httpx.AsyncClient
-    monkeypatch.setattr(
-        local_llm_proxy.httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(answer), **kw)
-    )
+    tls = await tls_server(aiohttp_server, tmp_path, monkeypatch, "api.provider.test")
     server = {
         "credential_id": "cred-o",
-        "upstream": "https://api.provider.test/v1",
+        "upstream": f"https://api.provider.test:{tls.port}/v1",
         "api_key": "k",
-        "address": "10.0.0.8",
+        "address": "127.0.0.1",
     }
     client = await _proxy(aiohttp_client, provider_servers={"openai": server})
-    assert (await client.post("/p/openai/v1/chat/completions", json={"messages": []}, headers=_BEARER)).status == 200
-    [request] = sent
-    assert (request.url.scheme, request.url.host, request.url.path) == ("https", "10.0.0.8", "/v1/chat/completions")
-    assert request.headers["host"] == "api.provider.test", request.headers
-    assert request.extensions.get("sni_hostname") == "api.provider.test", request.extensions
-    assert request.headers["authorization"] == "Bearer k"
+    answer = await client.post("/p/openai/v1/chat/completions", json={"messages": []}, headers=_BEARER)
+    assert answer.status == 200, await answer.text()
+    assert tls.seen == [{"host": f"api.provider.test:{tls.port}", "authorization": "Bearer k"}], tls.seen
+    assert tls.handshakes == ["api.provider.test"], f"the TLS server name must be the provider's: {tls.handshakes}"
