@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from embry0.services.watcher_stacks import StackConfig, WatcherStack
+from embry0.settings.sections import CATALOG
 from embry0.storage.repositories.log_signatures import SignatureRow
 from embry0.storage.repositories.watcher_runs import ANALYSED_ACTIONS, WATCHER_ACTIONS
 from tests.unit.services.test_watcher import _config, _service
@@ -332,22 +334,68 @@ async def test_a_clean_signature_that_grew_past_the_spike_factor_is_analysed() -
     svc._jobs.create.assert_awaited()
 
 
+def _section(**values):
+    """The settings document's watcher section holding ``values``, as a tick reads it (#738)."""
+    section = CATALOG.get("watcher")
+    if section is None:
+        pytest.fail("the settings document has no watcher section: skip_known_hours is read from the environment")
+    return section.validate(values)
+
+
 @pytest.mark.asyncio
 async def test_an_unreadable_analysis_memory_analyses_and_zero_hours_turns_it_off() -> None:
-    for svc_cfg, clean in (
-        ({}, AsyncMock(side_effect=RuntimeError("db gone"))),
-        ({"watcher_skip_known_hours": 0}, None),
+    for section, clean in (
+        (_section(), AsyncMock(side_effect=RuntimeError("db gone"))),
+        (_section(skip_known_hours=0), None),
     ):
-        svc = _svc("on", **svc_cfg)
+        svc = _svc("on")
+        svc._watcher_settings = AsyncMock(return_value=section)
         sig = await _window_signature(svc)
         svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
         svc._signatures.clean_since = clean or AsyncMock(return_value={sig: 30})
         svc._signatures.mark_analysed = AsyncMock()
 
         out = await svc.run_once()
-        assert out["action"] == "no_issue", svc_cfg
+        assert out["action"] == "no_issue", section
         if clean is None:
             svc._signatures.clean_since.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_how_long_a_clean_signature_is_held_is_the_section_s_now_under_the_stack_s_own() -> None:
+    """#738: the deployment's watcher section, read every tick; a stack that sets skip_known_hours keeps its own."""
+    reads = [_section(skip_known_hours=6), _section(skip_known_hours=0)]
+    svc = _svc("on")
+    svc._watcher_settings = AsyncMock(side_effect=reads)
+    sig = await _window_signature(svc)
+    svc._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+    svc._signatures.clean_since = AsyncMock(return_value={sig: 30})
+    svc._signatures.mark_analysed = AsyncMock()
+
+    first = await svc.run_once()
+    assert first["action"] == "skipped_known", first
+    since = svc._signatures.clean_since.await_args.kwargs["since"]
+    assert timedelta(hours=5) < datetime.now(UTC) - since < timedelta(hours=7), (
+        "the section's skip_known_hours as the tick read it"
+    )
+    detail = svc._runs.create.await_args.kwargs["detail"]
+    assert "in the last 6 h" in detail, f"the run row says the hours the tick read: {detail}"
+    svc._signatures.clean_since.reset_mock()
+    second = await svc.run_once()
+    assert second["action"] == "no_issue", "the section changed to 0 between two ticks: nothing is held, no restart"
+    svc._signatures.clean_since.assert_not_awaited()
+
+    own = _svc("on")
+    own._config = StackConfig(
+        own._config, WatcherStack(repo="owner/repo", logql="{x=1}", settings={"skip_known_hours": 12})
+    )
+    own._watcher_settings = AsyncMock(return_value=_section(skip_known_hours=0))
+    sig = await _window_signature(own)
+    own._signatures.rows_for = AsyncMock(return_value=_regressed(sig))
+    own._signatures.clean_since = AsyncMock(return_value={sig: 30})
+    assert (await own.run_once())["action"] == "skipped_known", "the stack's own 12 hours, over the section's 0"
+    since = own._signatures.clean_since.await_args.kwargs["since"]
+    assert timedelta(hours=11) < datetime.now(UTC) - since < timedelta(hours=13)
 
 
 @pytest.mark.asyncio

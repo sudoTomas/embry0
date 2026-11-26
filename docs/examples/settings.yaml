@@ -1034,3 +1034,37 @@ ui:
   # several organizations opens on the page those with the game on agree on,
   # else on the deployment's.
   # home: guild
+
+# Whether the watcher accepts its drafts without a person and the bar they
+# must clear, and how long a log signature found clean is not analysed again.
+# A stack's own value of a key wins over the section.
+watcher:
+  # Whether each tick accepts the stack's tracked drafts that clear the bar
+  # below without a person: through the path POST /cases/{id}/accept takes, as
+  # embry0:auto-accept, each with a case_auto_accepted audit row. A retry
+  # after a fix that did not heal, and a draft an owner declined or snoozed,
+  # always wait for a person. The actor is rate-limited and the spend caps
+  # apply to its jobs.
+  # auto_accept: false
+
+  # How long a draft waits after it is filed before it may be accepted, so a
+  # person can cancel it.
+  # auto_accept_after_hours: 24.0
+
+  # The least severity a draft must have to be accepted: low, medium, high or
+  # critical.
+  # auto_accept_min_severity: high
+
+  # How many times a draft's log signature must have been seen for it to be
+  # accepted.
+  # auto_accept_min_occurrences: 10
+
+  # The most drafts a stack accepts in any 24 hours; 0 accepts none.
+  # auto_accept_max_per_day: 2
+
+  # Read while a stack skips unchanged windows (its skip_unchanged_mode): how
+  # long a log signature that an analysis found no issue in is held. A window
+  # whose notable signatures are all held so, or have an open case, is not
+  # analysed (skipped_known), unless one is louder than that analysis read by
+  # the stack's spike factor. 0 holds none.
+  # skip_known_hours: 24

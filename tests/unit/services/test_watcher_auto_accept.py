@@ -9,6 +9,7 @@ import pytest
 
 from embry0.services.watcher_auto_accept import AutoAcceptBar, auto_accept, why_not
 from embry0.services.watcher_stacks import StackConfig, WatcherStack
+from embry0.settings.sections import CATALOG
 from tests.unit.services.test_watcher import _config, _service
 
 NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
@@ -82,20 +83,54 @@ async def test_the_oldest_drafts_go_first_up_to_the_day_s_cap_and_answered_ones_
     assert [d["case_id"] for d in one_left] == ["c-declined"], "one slot left today, the oldest draft takes it"
 
 
-def test_the_bar_is_read_from_the_stack_s_overrides():
-    stack = WatcherStack(
-        repo="o/r",
-        logql='{app="x"}',
-        settings={"auto_accept_min_severity": "Medium", "auto_accept_max_per_day": 5, "auto_accept_after_hours": 6},
-    )
-    bar = AutoAcceptBar.from_config(StackConfig(_config(), stack))
-    assert bar == AutoAcceptBar(after_hours=6.0, min_severity="medium", min_occurrences=10, max_per_day=5)
+def _section(**values):
+    """A reader of the settings document's watcher section holding ``values``, as production's reads it."""
+    section = CATALOG.get("watcher")
+    if section is None:
+        pytest.fail("the settings document has no watcher section: auto-accept is read from the environment")
+    model = section.validate(values)
+
+    async def read():
+        return model
+
+    return read
+
+
+def _stack(**settings):
+    return StackConfig(_config(), WatcherStack(repo="owner/repo", logql='{app="x"}', settings=settings))
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("setting", "asked"), [(True, True), ("true", True), (False, False), ("off", False)])
-async def test_the_tick_asks_only_a_stack_that_turned_it_on(setting, asked):
-    svc = _service(config=_config(watcher_auto_accept=setting, watcher_repo="owner/repo"), lines=[])
+async def test_the_bar_is_the_stack_s_own_values_over_the_section():
+    svc = _service(
+        config=_stack(auto_accept=True, auto_accept_min_severity="Medium", auto_accept_max_per_day=5),
+        lines=[],
+    )
+    svc._watcher_settings = _section(
+        auto_accept_after_hours=6, auto_accept_min_occurrences=3, auto_accept_max_per_day=9
+    )
+    svc._auto_acceptor = AsyncMock(return_value=[])
+
+    await svc.run_once()
+    _, bar = svc._auto_acceptor.await_args.args
+    assert bar == AutoAcceptBar(after_hours=6.0, min_severity="medium", min_occurrences=3, max_per_day=5), (
+        "each key the stack sets is its own; every other is the deployment's section"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("section", "stack", "asked"),
+    [
+        ({"auto_accept": True}, {}, True),
+        ({}, {}, False),
+        ({}, {"auto_accept": True}, True),
+        ({"auto_accept": True}, {"auto_accept": False}, False),
+    ],
+)
+async def test_the_tick_asks_only_a_stack_that_turned_it_on(section, stack, asked):
+    svc = _service(config=_stack(**stack), lines=[])
+    svc._watcher_settings = _section(**section)
     order: list[str] = []
     svc._reconcile_drafts = AsyncMock(side_effect=lambda *_: order.append("reconcile"))  # type: ignore[method-assign]
     svc._auto_acceptor = AsyncMock(side_effect=lambda *_: order.append("accept") or [])
@@ -112,7 +147,7 @@ async def test_the_tick_asks_only_a_stack_that_turned_it_on(setting, asked):
 
 @pytest.mark.asyncio
 async def test_a_failing_acceptor_never_costs_the_tick():
-    svc = _service(config=_config(watcher_auto_accept=True, watcher_repo="owner/repo"), lines=[])
+    svc = _service(config=_stack(auto_accept=True), lines=[])
     svc._auto_acceptor = AsyncMock(side_effect=RuntimeError("ledger down"))
 
     out = await svc.run_once()

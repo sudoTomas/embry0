@@ -143,7 +143,9 @@ How the [Slop-O-Meter](slop-meter.md) scores, how often it reads and how hard it
 What embry0 watches is a **row per stack** in `watcher_stacks`, not a set of
 env vars: `repo` (the scope key every watcher table already uses), its LogQL,
 which tracker its findings are filed into, and `settings` — **overrides
-only**, so an absent key inherits the `WATCHER_*` default below.
+only**, so an absent key inherits the deployment's default: the settings
+document's [`watcher` section](#watcher) for `auto_accept*` and
+`skip_known_hours` (#738), the `WATCHER_*` variable below for the rest.
 
 ```
 GET    /api/v1/watcher/stacks                 # every stack + the overridable keys
@@ -169,7 +171,15 @@ A deployment upgrading from the env-var watcher seeds its stack from
 `WATCHER_REPO` / `WATCHER_LOGQL` / `WATCHER_LINEAR_*` at startup, **once, and
 only while the table is empty** — after that the table is the source of truth
 and re-seeding would resurrect a stack someone deleted. The `WATCHER_*`
-settings below remain the defaults every stack inherits.
+settings below and the `watcher` section remain the defaults every stack
+inherits.
+
+Whether a stack's drafts are accepted without a person, the bar they must
+clear, and how long a log signature an analysis found clean is held are the
+settings document's `watcher` section, the deployment's alone. Each watcher
+reads it on every tick, so a change needs no restart; a stack that sets one
+of its keys keeps its own value, checked with the section's bounds. See
+[self-watching.md](self-watching.md#accepting-a-finding-without-a-person).
 
 An unknown key in `settings` is dropped on write and echoed back as
 `ignored_settings`, so a typo cannot become configuration nothing reads.
@@ -193,8 +203,6 @@ back-references); every tick reads them, so a change needs no restart. See
 | `WATCHER_MAX_LOOKBACK_SECONDS` | `21600` | A tick's Loki window starts where the last **analysed** window ended (`no_issue` / `proposed` / `skipped_duplicate`), so analysis duration and skipped or errored ticks leave no hole; this bounds how far back that can reach (never below one `WATCHER_INTERVAL_SECONDS`). Time left out is recorded on the run row as `unanalysed_seconds`. Windows are contiguous in **time** only: the excerpt is still the newest `WATCHER_MAX_LOG_LINES` matches, so a widened window over the cap drops its oldest lines (`log_lines_truncated` on the row). Quiet ticks do not advance the window, so it grows each quiet tick until it holds `WATCHER_MIN_LOG_LINES`, then one analysis covers the stretch; past the look-back it is a sliding window of this length. A quiet tick still counts as a **verdict** for the dead-man gauge (`embry0_watcher_last_verdict_tick_timestamp_seconds`, so `Embry0WatcherNoVerdict3h`) without touching the analysed one: a stack that logs nothing is the loop finding nothing. A LogQL that matches nothing forever is `Embry0WatcherOnlyQuiet2d`'s to catch. |
 | `LOG_CLUSTERING_MODE` | `shadow` | Deterministic log-signature clustering (#289). `off` / `shadow` / `on`. `shadow` clusters, persists and logs but leaves the raw tail in the prompt so the agent's own grouping stays in effect and the two can be compared; `on` replaces the tail with the ranked cluster table. An unrecognised value reads as `off` — a typo must not silently change what the model is shown. The persisted history also feeds the signature dedupe (#290) and `WATCHER_SKIP_UNCHANGED_MODE`, so `off` disables both. |
 | `WATCHER_SKIP_UNCHANGED_MODE` | `shadow` | Skip the paid analysis when the window holds nothing new, spiking or regressed (#291). `off` / `shadow` / `on`. In `shadow` the decision is computed and logged as `watcher_skip_shadow` and the analysis runs anyway, so the ticks it *would* have skipped can be checked against what they actually found. In `on` such a tick records `no_change` and creates no job. A `no_change` tick counts as analysed — it advances the query window and refreshes the dead-man gauge, because it did judge its window; if it did not advance the window, every quiet tick would widen it and the growing counts would read as a spike. The hole that leaves (a broken comparator skipping everything in silence) is covered by `Embry0WatcherNeverAnalyses24h`. A window is also skipped when every notable signature already has an open healing case. Unreadable ledger, no clustering, or no signature history ⇒ analyse: the expensive direction is the safe one. |
-| `WATCHER_SKIP_KNOWN_HOURS` | `24` | Read under `WATCHER_SKIP_UNCHANGED_MODE` (spec 2026-10-25): a notable signature an analysis found **no issue** in within these hours is held, unless its count in the window is more than `WATCHER_SPIKE_FACTOR` times what that analysis read. When every notable signature is held so (or has an open case), the tick records `skipped_known` and creates no job; it counts as analysed, like `no_change`. Each analysis records, per signature in its window, its verdict and count (`log_signatures.analysed_*`, migration 111). `0` turns this part off. Per stack: `skip_known_hours`. |
-| `WATCHER_AUTO_ACCEPT` | `false` | Accept a stack's tracked drafts without a person (spec 2026-10-25): each tick, after reconciling cancellations, a draft that has waited `WATCHER_AUTO_ACCEPT_AFTER_HOURS` (`24`), has severity at least `WATCHER_AUTO_ACCEPT_MIN_SEVERITY` (`high`; `low` < `medium` < `high` < `critical`) and a signature seen at least `WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES` (`10`) times is accepted through `POST /cases/{id}/accept`'s path as `embry0:auto-accept`, at most `WATCHER_AUTO_ACCEPT_MAX_PER_DAY` (`2`) in any 24 hours. Never a retry after a `not_healed` verdict, nor one an owner declined or snoozed as a proposal. Each acceptance writes a `case_auto_accepted` audit row. The actor is rate-limited and the spend caps apply. Per stack: `auto_accept`, `auto_accept_after_hours`, `auto_accept_min_severity`, `auto_accept_min_occurrences`, `auto_accept_max_per_day`. See [self-watching.md](self-watching.md#accepting-a-finding-without-a-person). |
 | `LOG_REDACTION_FIELDS` | — | Comma-separated payload field names whose **values** are personal data in the watched stack's logs, e.g. `phone,customer_name` (#294). Matched as whole key names, case-insensitively, in `key=value`, `key: value` and `"key": "value"` shapes. Everything sent to a model provider or filed in a tracker is already redacted by `embry0/safety/redaction.py` — the watcher's analysis task (briefing and excerpts), its draft tickets, context-proxy results (watcher and developer alike), the evidence and review prompts, and every line `GET /api/v1/logs/query` returns (the Logs page and the MCP `logs_query` tool): known token formats, auth headers, URL credentials, secret-named fields, e-mail addresses, any long opaque run, and the process's own secrets. This adds the operator's own fields; the orchestrator reads it at startup and the context proxy receives it at launch. Agent stderr diagnostics keep the secrets-only rules. Regex-based, so not a guarantee. |
 | `WATCHER_SPIKE_FACTOR` / `WATCHER_SPIKE_MIN_COUNT` | `3.0` / `10` | How much louder than its previous window a signature must be to count as spiking, and the absolute floor it must also clear. Both are needed: log volume is bursty, and without the floor a signature going from 1 line to 3 reads as a 3x emergency. Per-deployment today; #297 moves the watcher's config into the DB per repo and these go with it. |
 | `WATCHER_REGRESSION_SILENCE_SECONDS` | `21600` | How long a signature must be absent before its return counts as a regression rather than a gap. Six hours is six missed hourly ticks. |
@@ -277,6 +285,12 @@ Each of these set a feature's policy before the feature moved into a document st
 | `SLOP_METER_RATE_RESERVE` | the settings document's slop_meter.rate_reserve |
 | `SLOP_METER_REPOS` | background.slop_meter in the settings document (each repository, organization or the deployment) |
 | `SLOP_METER_EXCLUDE` | background.slop_meter in the settings document (each repository, organization or the deployment) |
+| `WATCHER_AUTO_ACCEPT` | the settings document's watcher.auto_accept |
+| `WATCHER_AUTO_ACCEPT_AFTER_HOURS` | the settings document's watcher.auto_accept_after_hours |
+| `WATCHER_AUTO_ACCEPT_MIN_SEVERITY` | the settings document's watcher.auto_accept_min_severity |
+| `WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES` | the settings document's watcher.auto_accept_min_occurrences |
+| `WATCHER_AUTO_ACCEPT_MAX_PER_DAY` | the settings document's watcher.auto_accept_max_per_day |
+| `WATCHER_SKIP_KNOWN_HOURS` | the settings document's watcher.skip_known_hours |
 | `OPENAI_COMPATIBLE_PROVIDERS` | the provider catalogue's providers.<name>.enabled |
 | `OPENROUTER_CATALOG_REFRESH_HOURS` | the provider catalogue's openrouter.refresh_hours |
 
@@ -667,6 +681,19 @@ What the dashboard shows: the game layer, and the page it opens on.
 |---|---|---|---|---|---|
 | `game` | true or false | `true` |  | organization | Show the game layer: the guild, the agents' levels, skills and outfits, the Achievements page, the chat box and the Game content tab. While false the dashboard opens on the Overview, and GET /world, its characters and quests, GET /progression and POST /progression/rebuild answer 404. Reviewing a job and the content pack's routes work either way. An organization's value is read by API keys whose repository allowlist covers its repositories: such a key sees the game when any organization it covers has it on. Every other caller, every SSO session among them, reads the deployment's. |
 | `home` | text | `"guild"` | one of `"guild"`, `"overview"` | organization | The page the dashboard opens on: guild or overview. While `game` is false it opens on the Overview, whatever this says. A key whose allowlist covers several organizations opens on the page those with the game on agree on, else on the deployment's. |
+
+#### `watcher`
+
+Whether the watcher accepts its drafts without a person and the bar they must clear, and how long a log signature found clean is not analysed again. A stack's own value of a key wins over the section.
+
+| Key | Type | Default | Allowed | Overridable by | Description |
+|---|---|---|---|---|---|
+| `auto_accept` | true or false | `false` |  |  | Whether each tick accepts the stack's tracked drafts that clear the bar below without a person: through the path POST /cases/{id}/accept takes, as embry0:auto-accept, each with a case_auto_accepted audit row. A retry after a fix that did not heal, and a draft an owner declined or snoozed, always wait for a person. The actor is rate-limited and the spend caps apply to its jobs. |
+| `auto_accept_after_hours` | number | `24.0` | ≥ 0, ≤ 8760 |  | How long a draft waits after it is filed before it may be accepted, so a person can cancel it. |
+| `auto_accept_min_severity` | text | `"high"` | one of `"low"`, `"medium"`, `"high"`, `"critical"` |  | The least severity a draft must have to be accepted: low, medium, high or critical. |
+| `auto_accept_min_occurrences` | whole number | `10` | ≥ 0, ≤ 1000000 |  | How many times a draft's log signature must have been seen for it to be accepted. |
+| `auto_accept_max_per_day` | whole number | `2` | ≥ 0, ≤ 1000 |  | The most drafts a stack accepts in any 24 hours; 0 accepts none. |
+| `skip_known_hours` | whole number | `24` | ≥ 0, ≤ 8760 |  | Read while a stack skips unchanged windows (its skip_unchanged_mode): how long a log signature that an analysis found no issue in is held. A window whose notable signatures are all held so, or have an open case, is not analysed (skipped_known), unless one is louder than that analysis read by the stack's spike factor. 0 holds none. |
 
 <!-- settings-reference:end -->
 

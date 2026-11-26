@@ -30,6 +30,7 @@ from embry0.settings.sections.scout import SCOUT
 from embry0.settings.sections.slop_meter import SLOP_METER
 from embry0.settings.sections.slop_policy import SLOP_POLICY
 from embry0.settings.sections.ui import UI
+from embry0.settings.sections.watcher import WATCHER
 
 CATALOG: Catalog = Catalog(
     [
@@ -48,5 +49,6 @@ CATALOG: Catalog = Catalog(
         SLOP_METER,
         SLOP_POLICY,
         UI,
+        WATCHER,
     ]
 )

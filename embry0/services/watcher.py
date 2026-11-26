@@ -90,6 +90,7 @@ from embry0.services.slop import (
 from embry0.services.watcher_budget import resolve_watcher_job_budget
 from embry0.services.watcher_recursion import drop_own_lines
 from embry0.settings.sections.slop_policy import DEFAULT_KINDS, SLOP_POLICY, SlopPolicySettings
+from embry0.settings.sections.watcher import WATCHER, WatcherSettings
 from embry0.storage.repositories.jobs import OrganizationRemoved
 from embry0.storage.repositories.watcher_runs import ANALYSED_ACTIONS, UNPARSEABLE_DETAIL_PREFIX
 from embry0.trackers.filing import DRAFT_TITLE_PREFIX
@@ -469,13 +470,6 @@ def _compiled_masks(stored: Any, *, stack: str) -> SignatureMasks:
         return ()
 
 
-def _truthy(value: Any) -> bool:
-    """A boolean setting as a stack row or the environment may hold it."""
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return value is True
-
-
 def _account_wait_detail(wait: Any) -> str:
     """A watcher row's words for an analysis held by a spent account. No time: the row's own times say when."""
     wait = wait if isinstance(wait, dict) else {}
@@ -542,10 +536,18 @@ class WatcherService:
         # the kinds its verdict may name and the heading of a slop finding's
         # ticket. None: the section's defaults, for good.
         slop_policy: Callable[[], Awaitable[SlopPolicySettings]] | None = None,
+        # #738: ``() -> section``, the settings document's watcher section as the deployment sets it now: whether
+        # drafts are auto-accepted and their bar, and how long a signature found clean is held. Read every tick,
+        # under the stack's own values of its keys (``config.section_overrides``), so a change applies to the next
+        # tick without a restart. None: the section's defaults, for good.
+        watcher_settings: Callable[[], Awaitable[WatcherSettings]] | None = None,
     ) -> None:
         self._config = config
         self._signature_masks = signature_masks
         self._slop_policy = slop_policy
+        self._watcher_settings = watcher_settings
+        # The watcher section as last read; until one read has worked, its defaults.
+        self._section: WatcherSettings = WATCHER.defaults()
         # The masks the last tick clustered with; until one has, the stack's
         # masks at startup.
         self._masks: SignatureMasks = _compiled_masks(
@@ -783,6 +785,7 @@ class WatcherService:
         if self._skip_unchanged_mode() == "off" or delta is None:
             return None
 
+        hours = (await self._settings_now()).skip_known_hours
         counts = delta.counts()
         action = "no_change"
         if not delta.has_notable:
@@ -799,12 +802,11 @@ class WatcherService:
                     logger.warning("watcher_open_signatures_unreadable", exc_info=True)
                     return None
             unheld = [c for c in notable if c.signature_id not in open_ids]
-            known = await self._recently_clean(unheld)
+            known = await self._recently_clean(unheld, hours=hours)
             if any(c.signature_id not in known for c in unheld):
                 return None
             if known:
                 action = "skipped_known"
-                hours = int(getattr(self._config, "watcher_skip_known_hours", 24) or 0)
                 reason = f"{len(known)} notable signature(s) found clean by an analysis in the last {hours} h"
                 if len(notable) > len(known):
                     reason += f", {len(notable) - len(known)} with an open case"
@@ -820,14 +822,13 @@ class WatcherService:
         )
         return action, reason
 
-    async def _recently_clean(self, changes: Sequence[SignatureChange]) -> set[str]:
+    async def _recently_clean(self, changes: Sequence[SignatureChange], *, hours: int) -> set[str]:
         """The signatures among ``changes`` an analysis found no issue in lately, at no more than spike volume since.
 
-        Lately is the stack's ``skip_known_hours`` (0: never). A memory that
+        Lately is the last ``hours``, the stack's ``skip_known_hours`` (0: never). A memory that
         cannot be read holds nothing, so the window is analysed: the
         expensive direction is the safe one.
         """
-        hours = int(getattr(self._config, "watcher_skip_known_hours", 24) or 0)
         if hours <= 0 or self._signatures is None or not changes:
             return set()
         try:
@@ -855,14 +856,31 @@ class WatcherService:
         except Exception:
             logger.warning("watcher_analysed_mark_failed", exc_info=True)
 
+    async def _settings_now(self) -> WatcherSettings:
+        """The settings document's watcher section now (#738), under the stack's own values of its keys.
+
+        A section that cannot be read is the one last read (its defaults until a read has worked), with a
+        warning: a database blip must not turn auto-accept on or off, nor change what is held, for a tick.
+        """
+        if self._watcher_settings is not None:
+            try:
+                self._section = await self._watcher_settings()
+            except Exception:  # noqa: BLE001 - the last section read still applies
+                logger.warning("watcher_settings_unread", stack=self._repo, exc_info=True)
+        own = getattr(self._config, "section_overrides", None) or {}
+        return self._section.model_copy(update=own) if own else self._section
+
     async def _auto_accept_drafts(self) -> None:
         """Accept the stack's tracked drafts that clear its auto-accept bar (spec 2026-10-25). Never costs the tick."""
-        if self._auto_acceptor is None or not _truthy(getattr(self._config, "watcher_auto_accept", False)):
+        if self._auto_acceptor is None:
+            return
+        settings = await self._settings_now()
+        if not settings.auto_accept:
             return
         from embry0.services.watcher_auto_accept import AutoAcceptBar
 
         try:
-            accepted = await self._auto_acceptor(self._repo, AutoAcceptBar.from_config(self._config))
+            accepted = await self._auto_acceptor(self._repo, AutoAcceptBar.from_settings(settings))
         except Exception:
             logger.warning("watcher_auto_accept_failed", stack=self._repo, exc_info=True)
             return

@@ -3,8 +3,9 @@
 Before a feature's policy moved into a document stored in the database (the
 settings document, the provider catalogue), its environment variables were
 read at the first start of the release that moved it, once, and copied in.
-That import is gone (0.1.0): none of these variables is read any more. For
-one release, startup (``settings_env_retired``) and ``embry0 config`` name
+That import is gone (0.1.0): none of these variables is read any more. The
+watcher's six (#738) moved with no import at all: a deployment writes the
+section after it upgrades. For one release, startup (``settings_env_retired``) and ``embry0 config`` name
 each one still set, so an operator can remove it; the config lints count
 them as known, not as a typo of a setting. Imports nothing, so the lints can
 read it.
@@ -61,6 +62,12 @@ MOVED_TO_DOCUMENTS: Final[Mapping[str, str]] = {
     "SLOP_METER_RATE_RESERVE": f"{_SETTINGS} slop_meter.rate_reserve",
     "SLOP_METER_REPOS": _ENROLLED.format(feature="slop_meter"),
     "SLOP_METER_EXCLUDE": _ENROLLED.format(feature="slop_meter"),
+    "WATCHER_AUTO_ACCEPT": f"{_SETTINGS} watcher.auto_accept",
+    "WATCHER_AUTO_ACCEPT_AFTER_HOURS": f"{_SETTINGS} watcher.auto_accept_after_hours",
+    "WATCHER_AUTO_ACCEPT_MIN_SEVERITY": f"{_SETTINGS} watcher.auto_accept_min_severity",
+    "WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES": f"{_SETTINGS} watcher.auto_accept_min_occurrences",
+    "WATCHER_AUTO_ACCEPT_MAX_PER_DAY": f"{_SETTINGS} watcher.auto_accept_max_per_day",
+    "WATCHER_SKIP_KNOWN_HOURS": f"{_SETTINGS} watcher.skip_known_hours",
     "OPENAI_COMPATIBLE_PROVIDERS": "the provider catalogue's providers.<name>.enabled",
     "OPENROUTER_CATALOG_REFRESH_HOURS": "the provider catalogue's openrouter.refresh_hours",
 }

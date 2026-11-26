@@ -1,9 +1,11 @@
 """Auto-accept of watcher drafts (spec 2026-10-25): a stack's bar for starting a fix with no person's yes.
 
 A watcher draft waits at stage ``tracked`` until a person accepts it. On a
-stack whose ``auto_accept`` setting is on, the watcher's tick accepts the
-drafts that clear the stack's bar, through the path ``POST /cases/{id}/accept``
-takes, recorded under :data:`~embry0.orchestration.dispatch_actors.AUTO_ACCEPT`:
+stack whose ``auto_accept`` setting is on (the settings document's
+``watcher`` section, under the stack's own value, #738), the watcher's tick
+accepts the drafts that clear the stack's bar, through the path
+``POST /cases/{id}/accept`` takes, recorded under
+:data:`~embry0.orchestration.dispatch_actors.AUTO_ACCEPT`:
 
 - it has waited ``auto_accept_after_hours`` since it was filed, so a person
   can cancel it first (the tick reconciles cancellations before it asks);
@@ -27,28 +29,29 @@ from typing import Any
 
 import structlog
 
+from embry0.settings.sections.watcher import SEVERITIES, WatcherSettings
+
 logger = structlog.get_logger(__name__)
 
 #: Severity order; a draft without one is below every bar.
-SEVERITY_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+SEVERITY_RANK: dict[str, int] = {severity: rank for rank, severity in enumerate(SEVERITIES)}
 
 
 @dataclass(frozen=True)
 class AutoAcceptBar:
-    after_hours: float = 24.0
-    min_severity: str = "high"
-    min_occurrences: int = 10
-    max_per_day: int = 2
+    after_hours: float
+    min_severity: str
+    min_occurrences: int
+    max_per_day: int
 
     @classmethod
-    def from_config(cls, config: Any) -> AutoAcceptBar:
-        """The bar a stack's config (its overrides over the deployment's) sets."""
-        default = cls()
+    def from_settings(cls, settings: WatcherSettings) -> AutoAcceptBar:
+        """The bar the watcher section sets for a stack (its own values over the deployment's)."""
         return cls(
-            after_hours=float(getattr(config, "watcher_auto_accept_after_hours", default.after_hours)),
-            min_severity=str(getattr(config, "watcher_auto_accept_min_severity", default.min_severity)).strip().lower(),
-            min_occurrences=int(getattr(config, "watcher_auto_accept_min_occurrences", default.min_occurrences)),
-            max_per_day=int(getattr(config, "watcher_auto_accept_max_per_day", default.max_per_day)),
+            after_hours=settings.auto_accept_after_hours,
+            min_severity=settings.auto_accept_min_severity,
+            min_occurrences=settings.auto_accept_min_occurrences,
+            max_per_day=settings.auto_accept_max_per_day,
         )
 
 
