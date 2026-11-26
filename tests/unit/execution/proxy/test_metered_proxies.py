@@ -1,4 +1,4 @@
-"""The xai- and local-llm-proxy meter every model call they forward, under the run the orchestrator declared for
+"""The xai- and llm-proxy meter every model call they forward, under the run the orchestrator declared for
 the sandbox, and forward no billed call the meter cannot read.
 
 The tests reach the meter through the admin API only (``/admin/runs``, ``/admin/meter``), as the orchestrator
@@ -18,7 +18,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
-from embry0.execution.proxy.local_llm_proxy import create_local_llm_proxy_app
+from embry0.execution.proxy.llm_proxy import create_llm_proxy_app
 from embry0.execution.proxy.xai_proxy import create_xai_proxy_app
 from tests.fixtures.model_servers import allow_loopback_test_servers
 from tests.fixtures.recording_upstream import is_test_request
@@ -297,7 +297,7 @@ async def test_an_enrollment_that_ends_ends_its_run_which_stays_readable(aiohttp
     assert tally["models"]["grok-4.7"]["output_tokens"] == 300
 
 
-# --------------------------------------------------------------------------- local-llm-proxy
+# --------------------------------------------------------------------------- llm-proxy
 
 
 @pytest.fixture
@@ -330,7 +330,7 @@ def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _local(aiohttp_client: Any, server: Any, **kw: Any) -> TestClient:
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, **kw))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN, **kw))
     server_of_sandbox = {
         "credential_id": "cred-a",
         "upstream": f"http://127.0.0.1:{server.port}/v1",

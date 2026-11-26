@@ -81,6 +81,19 @@ describes what embry0 does rather than listing changes.
 
 ### Upgrade notes
 
+- **The local-llm-proxy is the llm-proxy.** Its container, its log events
+  (`llm_proxy_*`, were `local_llm_proxy_*`) and the `proxy` label of its
+  `embry0_meter_*` series (`llm-proxy`) take the new name: a dashboard, log
+  query or silence written for the old name must use the new one. The shipped
+  alert rules match any proxy and need no change. Rebuild the proxy image
+  before the orchestrator starts: the orchestrator launches the proxy as
+  `PROXY_TYPE=llm`, which an older image refuses, while a rebuilt image still
+  accepts the old type. The llm-proxy also answers to `local-llm-proxy`, so a
+  paused sandbox created before the upgrade still reaches it, and tallies kept
+  under the old name are charged as before. An orchestrator rolled back past
+  the rename leaves `llm-proxy` running beside the `local-llm-proxy` it
+  starts, both answering to that name: remove it first
+  (`docker exec embry0-dind docker rm -f llm-proxy`).
 - **Reserved names.** The specialist agents reserve nine agent names
   (`kintsugi`, `gardener`, `interrogator`, `why`, `how`, `blast-radius`,
   `comment-sicko`, `design-auditor`, `context-auditor`) and nine pipeline
@@ -97,7 +110,7 @@ describes what embry0 does rather than listing changes.
   injected: the OpenAI-compatible providers' keys and base URL use that
   namespace in the sandbox. Rename such a variable before you upgrade.
 - **The custom provider has one route.** Every sandbox on the `custom`
-  provider reaches its own credential's server through the `local-llm-proxy`,
+  provider reaches its own credential's server through the `llm-proxy`,
   and no model server's host is an egress exception any more
   ([ADR 0032](docs/adr/0032-custom-provider-through-the-local-llm-proxy.md)).
   `LOCAL_LLM_UPSTREAM` and `LOCAL_LLM_API_KEY` route nothing: run

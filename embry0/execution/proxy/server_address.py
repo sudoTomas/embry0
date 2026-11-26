@@ -1,7 +1,7 @@
 """Where an operator's model server is, and whether embry0 may connect there (ADR 0032).
 
 A custom credential's address is the server every call on it reaches: the agent
-runs, through the local-llm-proxy, and the orchestrator's own calls (background
+runs, through the llm-proxy, and the orchestrator's own calls (background
 models, the startup check, a credential's check). None of them may reach this
 machine (loopback, or the unspecified address that reaches it) or the
 link-local range, where a cloud's metadata service answers; every other host is

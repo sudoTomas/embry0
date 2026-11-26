@@ -180,9 +180,17 @@ def test_a_run_its_proxies_do_not_carry_is_charged_its_sandbox_s_figure() -> Non
 
 
 def test_a_local_model_s_run_is_charged_its_proxy_s_count() -> None:
-    metering = _whole(_snapshot({"qwen": _usage(900, 30)}), proxy="local-llm-proxy")
+    metering = _whole(_snapshot({"qwen": _usage(900, 30)}), proxy="llm-proxy")
     charge = charge_run(metering, _record("custom", (0.5, 1.0)), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
     assert charge.source == "proxy"
+    assert charge.cost_usd == pytest.approx((900 * 0.5 + 30 * 1.0) / 1e6)
+
+
+def test_tallies_kept_under_the_llm_proxy_s_old_name_are_still_its_providers() -> None:
+    """A run interrupted before the rename is closed from the tallies kept then, which name local-llm-proxy."""
+    metering = _whole(_snapshot({"qwen": _usage(900, 30)}), proxy="local-llm-proxy")
+    charge = charge_run(metering, _record("custom", (0.5, 1.0)), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert charge.source == "proxy", f"tallies kept under the old name were not taken as the proxy's: {charge.source}"
     assert charge.cost_usd == pytest.approx((900 * 0.5 + 30 * 1.0) / 1e6)
 
 

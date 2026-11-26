@@ -283,7 +283,7 @@ RAW_SENDS = {
     ("embry0/execution/proxy/github_proxy.py", "_proxy_handler"): "forwards a sandbox's calls to GitHub",
     ("embry0/execution/proxy/auth_proxy.py", "_proxy_handler"): "forwards a sandbox's model calls",
     ("embry0/execution/proxy/xai_proxy.py", "_forward"): "forwards a sandbox's model calls to xAI",
-    ("embry0/execution/proxy/local_llm_proxy.py", "_forward"): "forwards a sandbox's calls to a local model server",
+    ("embry0/execution/proxy/llm_proxy.py", "_forward"): "forwards a sandbox's calls to a local model server",
     ("embry0/execution/xai_device_login.py", "start"): "xAI's device login",
     ("embry0/execution/xai_device_login.py", "poll"): "xAI's device login",
     ("embry0/execution/xai_credential.py", "_post_refresh"): "xAI's token refresh",

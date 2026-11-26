@@ -168,7 +168,7 @@ def test_a_background_call_to_a_local_model_takes_the_slots_agent_runs_take() ->
 
 def test_a_sandbox_is_enrolled_with_the_local_models_limits_of_the_settings_document() -> None:
     """#174: ``SandboxManager`` constructs without a reader and then enrolls every sandbox with the section's
-    defaults, so a request cap or a timeout an admin set would never reach the local-llm-proxy."""
+    defaults, so a request cap or a timeout an admin set would never reach the llm-proxy."""
     passed = _keywords(_construction("SandboxManager"))
     assert passed.get("local_models") == "section_reader(app.state.settings, LOCAL_MODELS)", (
         f"the sandbox manager must read the local_models section where it enrolls: {passed.get('local_models')}"

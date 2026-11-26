@@ -52,7 +52,7 @@ class _Proxies:
 
     def __init__(self, enrolled: dict[str, list[str]]) -> None:
         self.enrolled = enrolled  # sandbox -> metering proxies it is enrolled with
-        self.boot = {"xai-proxy": "b1", "local-llm-proxy": "l1"}
+        self.boot = {"xai-proxy": "b1", "llm-proxy": "l1"}
         self.tallies: dict[str, dict[str, dict[str, Any]]] = {p: {} for p in self.boot}
         self.fail: dict[tuple[str, str], Exception] = {}
         self.calls: list[tuple[str, str]] = []
@@ -118,28 +118,28 @@ async def test_a_run_is_declared_where_its_sandbox_is_enrolled_and_ended_there()
     assert [(t.proxy, t.boot_id, t.final) for t in metering.tallies] == [("xai-proxy", "b1", True)]
     assert metering.tallies[0].snapshot["models"] == _calls(2)
     assert repo.rows[("xai-proxy", "b1", "run-1")]["final"] is True, "the final tally was not kept"
-    assert ("local-llm-proxy", "declare") not in proxies.calls, "declared where the sandbox is not enrolled"
+    assert ("llm-proxy", "declare") not in proxies.calls, "declared where the sandbox is not enrolled"
 
 
 async def test_a_declare_that_fails_leaves_the_proxy_out_and_counts() -> None:
-    proxies = _Proxies({"sbx": ["xai-proxy", "local-llm-proxy"]})
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
     proxies.fail[("xai-proxy", "declare")] = RuntimeError("proxy away")
     meter, registry = _meter(proxies, _Repo())
     window = await meter.begin("sbx", "run-1")
-    assert window.targets == ("xai-proxy", "local-llm-proxy")
-    assert window.declared == {"local-llm-proxy": "l1"}
+    assert window.targets == ("xai-proxy", "llm-proxy")
+    assert window.declared == {"llm-proxy": "l1"}
     labels = {"proxy": "xai-proxy", "call": "declare"}
     assert sample(registry, "embry0_meter_admin_failures_total", labels) == 1
 
 
 async def test_an_end_that_fails_or_finds_no_run_leaves_the_proxy_unreached() -> None:
-    proxies = _Proxies({"sbx": ["xai-proxy", "local-llm-proxy"]})
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
     meter, registry = _meter(proxies, _Repo())
     window = await meter.begin("sbx", "run-1")
     proxies.fail[("xai-proxy", "end")] = RuntimeError("proxy away")
-    proxies.tallies["local-llm-proxy"].clear()  # recreated, and not given the run back
+    proxies.tallies["llm-proxy"].clear()  # recreated, and not given the run back
     metering = await meter.end(window)
-    assert sorted(metering.unreached) == ["local-llm-proxy", "xai-proxy"]
+    assert sorted(metering.unreached) == ["llm-proxy", "xai-proxy"]
     assert sample(registry, "embry0_meter_admin_failures_total", {"proxy": "xai-proxy", "call": "end"}) == 1
 
 
@@ -170,12 +170,12 @@ async def test_what_this_process_ended_counts_though_the_kept_rows_cannot_be_rea
 
 
 async def test_every_proxy_is_read_and_kept_and_a_failed_read_does_not_stop_the_others() -> None:
-    proxies = _Proxies({"sbx": ["xai-proxy", "local-llm-proxy"]})
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
     repo = _Repo()
     meter, registry = _meter(proxies, repo)
     meter.start()
     await meter.stop()  # seeds, then a last read
-    proxies.tallies["local-llm-proxy"]["unattributed"] = {
+    proxies.tallies["llm-proxy"]["unattributed"] = {
         "run_id": None,
         "sandbox_id": "sbx",
         "started": 7.0,
@@ -185,9 +185,9 @@ async def test_every_proxy_is_read_and_kept_and_a_failed_read_does_not_stop_the_
     }
     proxies.fail[("xai-proxy", "read")] = RuntimeError("proxy away")
     await meter.poll_once()
-    assert ("local-llm-proxy", "l1", "unattributed:sbx:7.0") in repo.rows
-    assert sample(registry, "embry0_meter_unattributed_requests", {"proxy": "local-llm-proxy"}) == 4
-    assert (sample(registry, "embry0_meter_last_read_timestamp_seconds", {"proxy": "local-llm-proxy"}) or 0) > 0
+    assert ("llm-proxy", "l1", "unattributed:sbx:7.0") in repo.rows
+    assert sample(registry, "embry0_meter_unattributed_requests", {"proxy": "llm-proxy"}) == 4
+    assert (sample(registry, "embry0_meter_last_read_timestamp_seconds", {"proxy": "llm-proxy"}) or 0) > 0
     assert sample(registry, "embry0_meter_admin_failures_total", {"proxy": "xai-proxy", "call": "read"}) == 1
 
 
@@ -195,7 +195,7 @@ async def test_the_meter_s_series_are_seeded_when_it_starts() -> None:
     meter, registry = _meter(_Proxies({}))
     meter.start()
     try:
-        for proxy in ("xai-proxy", "local-llm-proxy"):
+        for proxy in ("xai-proxy", "llm-proxy"):
             assert sample(registry, "embry0_meter_last_read_timestamp_seconds", {"proxy": proxy}) is not None
             assert sample(registry, "embry0_meter_unattributed_requests", {"proxy": proxy}) == 0
             assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": proxy}) == 0
@@ -276,7 +276,7 @@ async def test_the_replay_mode_is_a_gauge_seeded_0() -> None:
     proxies.abandoned = {"xai-proxy"}  # type: ignore[attr-defined]
     await meter.poll_once()
     assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "xai-proxy"}) == 1
-    assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "local-llm-proxy"}) == 0
+    assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "llm-proxy"}) == 0
     proxies.abandoned = set()  # type: ignore[attr-defined]
     await meter.poll_once()
     assert sample(registry, "embry0_meter_replay_abandoned", {"proxy": "xai-proxy"}) == 0
@@ -297,7 +297,7 @@ async def test_a_run_s_ends_are_numbered_when_it_ends_on_every_proxy() -> None:
     numbered after both ends: the second proxy's end is not numbered only when its turn comes."""
     from embry0.execution.admin_seq import next_admin_seq
 
-    proxies = _Proxies({"sbx-1": ["xai-proxy", "local-llm-proxy"]})
+    proxies = _Proxies({"sbx-1": ["xai-proxy", "llm-proxy"]})
     meter, _registry = _meter(proxies, _Repo())
     window = await meter.begin("sbx-1", "run-A", "job-1")
     real_end = proxies.end_run
@@ -311,7 +311,7 @@ async def test_a_run_s_ends_are_numbered_when_it_ends_on_every_proxy() -> None:
     proxies.end_run = _end_run  # type: ignore[method-assign]
     await meter.end(window)
     ends = getattr(proxies, "end_seqs", {})
-    assert set(ends) == {"xai-proxy", "local-llm-proxy"}, f"ends sent unnumbered: {ends}"
+    assert set(ends) == {"xai-proxy", "llm-proxy"}, f"ends sent unnumbered: {ends}"
     assert all(isinstance(n, int) and n < meanwhile[0] for n in ends.values()), (
         f"an end was numbered after the next run's declaration: {ends} vs {meanwhile}"
     )

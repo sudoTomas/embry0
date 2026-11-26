@@ -1,4 +1,4 @@
-"""SandboxManager and the local-llm-proxy: the custom provider without its key, its address or an egress hole.
+"""SandboxManager and the llm-proxy: the custom provider without its key, its address or an egress hole.
 
 Every sandbox on the custom provider reaches its credential's server through the proxy, enrolled with that server
 alone (ADR 0032); there is no route around it.
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from embry0.execution.auth_provider import env_override_refusal
-from embry0.execution.proxy import local_llm_proxy
+from embry0.execution.proxy import llm_proxy
 from embry0.execution.sandbox_manager import SandboxInitError, SandboxManager, SandboxReenrollError
 from embry0.safety.error_codes import ErrorCode
 from embry0.sandbox.local_llm_token import LOCAL_LLM_PROXY_FLAG, LOCAL_LLM_PROXY_TOKEN_REL
@@ -24,20 +24,20 @@ from tests.unit.execution.test_sandbox_manager import (  # noqa: F401
 from tests.unit.execution.test_sandbox_manager_llm import _env, _manager
 from tests.unit.execution.test_sandbox_manager_openai_compatible import _CUSTOM, _key
 
-_PROXY = "http://local-llm-proxy:9108"
+_PROXY = "http://llm-proxy:9108"
 
 
 #: The server a sandbox on ``_CUSTOM`` is enrolled with: the credential's id, its API root and its key.
 def _its_server() -> object:
     try:
-        return local_llm_proxy.Upstream(
+        return llm_proxy.Upstream(
             credential_id="cred-custom",
             root="http://10.0.0.5:11434/v1",
             api_key="ollama-placeholder",
             address="10.0.0.5",
         )
     except (AttributeError, TypeError):
-        return "the credential's server with its checked address (local_llm_proxy.Upstream, ADR 0032)"
+        return "the credential's server with its checked address (llm_proxy.Upstream, ADR 0032)"
 
 
 _ITS_SERVER = _its_server()
@@ -62,7 +62,7 @@ def test_without_the_proxy_the_sandbox_is_given_neither_key_nor_address() -> Non
 
 def _proxied_manager(resolved):
     mgr, resolver, pm = _manager(resolved)
-    pm.local_llm_proxy_url = _PROXY
+    pm.llm_proxy_url = _PROXY
     mgr._runtime.attach_policy = AsyncMock()  # type: ignore[method-assign]
     return mgr, resolver, pm
 
@@ -117,10 +117,10 @@ async def _refused(mgr) -> SandboxInitError | None:
 
 async def test_a_custom_job_does_not_start_without_the_proxy() -> None:
     mgr, _, pm = _manager({"custom": _CUSTOM})
-    pm.local_llm_proxy_url = ""
+    pm.llm_proxy_url = ""
     refused = await _refused(mgr)
-    assert refused is not None, "a custom job started with no local-llm-proxy to reach its server through"
-    assert "local-llm-proxy" in str(refused) and refused.error_code == ErrorCode.SANDBOX_INIT, refused
+    assert refused is not None, "a custom job started with no llm-proxy to reach its server through"
+    assert "llm-proxy" in str(refused) and refused.error_code == ErrorCode.SANDBOX_INIT, refused
     assert not mgr._docker.build_run_cmd.called, "a container was started for a job with no route to its server"
     pm.enroll_sandbox.assert_not_awaited()
 
@@ -215,7 +215,7 @@ async def test_a_failed_bearer_write_rolls_the_sandbox_back() -> None:
 def _reenrolling(resolved):
     docker, calls = reenroll._docker()
     pm = reenroll._proxy()
-    pm.local_llm_proxy_url = _PROXY
+    pm.llm_proxy_url = _PROXY
     mgr = reenroll._manager(docker, pm)
     if isinstance(resolved, Exception):
         mgr._credential_resolver.resolve_llm_for_job = AsyncMock(side_effect=resolved)
@@ -298,7 +298,7 @@ async def test_a_sandbox_with_the_retired_direct_route_is_closed_and_refused(env
     resume fails, telling the person to dispatch the job again."""
     docker, _calls = reenroll._docker(env_names=env_names, networks=networks)
     pm = reenroll._proxy()
-    pm.local_llm_proxy_url = _PROXY
+    pm.llm_proxy_url = _PROXY
     pm.internet_proxies = lambda: ["git-proxy"]
     mgr = reenroll._manager(docker, pm)
     mgr._runtime.attach_policy = AsyncMock()  # type: ignore[method-assign]
@@ -333,7 +333,7 @@ async def test_a_sandbox_from_the_proxied_route_is_resumed_and_its_policy_left_a
         env_names="PATH\nEMBRY0_LLM_CUSTOM_BASE_URL\nEMBRY0_LLM_CUSTOM_VIA_PROXY\n", networks="sandbox-internet\n"
     )
     pm = reenroll._proxy()
-    pm.local_llm_proxy_url = _PROXY
+    pm.llm_proxy_url = _PROXY
     mgr = reenroll._manager(docker, pm)
     mgr._runtime.attach_policy = AsyncMock()  # type: ignore[method-assign]
     mgr._credential_resolver.resolve_llm_for_job = AsyncMock(return_value={"custom": _CUSTOM})

@@ -6,11 +6,11 @@ from __future__ import annotations
 from tests.fixtures.tls_servers import tls_server
 
 # The TLS server listens on 127.0.0.1, which no real enrollment may name: let that one address through.
-from tests.unit.execution.proxy.test_local_llm_proxy import (
+from tests.unit.execution.proxy.test_llm_proxy import (
     _ADMIN,
     _SANDBOX_TOKEN,
     _fake_servers_on_loopback,  # noqa: F401, E402
-    create_local_llm_proxy_app,
+    create_llm_proxy_app,
 )
 
 _H = {"X-Admin-Token": _ADMIN}
@@ -22,7 +22,7 @@ async def test_a_provider_on_another_s_address_never_rides_its_verified_connecti
 ):
     # Before the proxy starts: its client trusts the test's CA, whose certificate holds models.test alone.
     tls = await tls_server(aiohttp_server, tmp_path, monkeypatch, "models.test")
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
 
     def server_for(name: str, key: str, credential_id: str) -> dict[str, str]:
         root = f"https://{name}:{tls.port}/v1"

@@ -52,7 +52,7 @@ from embry0.execution.proxy.git_scope import (
     normalize_push_branch,
     normalize_upstream,
 )
-from embry0.execution.proxy.local_llm_proxy import (
+from embry0.execution.proxy.llm_proxy import (
     CUSTOM_PROVIDER,
     LIMITS_FIELD,
     LOCAL_LLM_FIELD,
@@ -67,7 +67,7 @@ _BASE_IMAGE = "embry0-proxy:latest"
 
 #: The proxies that meter the model calls they forward (``proxy/metering.py``), each with its admin port and the
 #: provider whose calls it carries (the provider record's name).
-METERED_PROXIES: dict[str, tuple[int, str]] = {"xai-proxy": (9106, "xai"), "local-llm-proxy": (9108, "custom")}
+METERED_PROXIES: dict[str, tuple[int, str]] = {"xai-proxy": (9106, "xai"), "llm-proxy": (9108, "custom")}
 
 #: The order a recreated proxy is given back its state: an enrollment before the run declared for it.
 _REPLAY_ORDER = {"enroll": 0, "token": 1, "run": 2}
@@ -95,7 +95,8 @@ _INTERNET = "sandbox-internet"
 # proxies. A cleanup sweep may remove only names from this tuple that this
 # process failed to remove and that are not in the current launched set —
 # never an arbitrary ``*-proxy`` container, which would cut git/GitHub/MinIO
-# /xAI/context for every sandbox still running.
+# /xAI/context for every sandbox still running. ``local-llm-proxy`` is the
+# llm-proxy's name before the rename: listed so its container is removed too.
 _PROXY_CONTAINER_NAMES: tuple[str, ...] = (
     "git-proxy",
     "github-proxy",
@@ -105,8 +106,13 @@ _PROXY_CONTAINER_NAMES: tuple[str, ...] = (
     "minio-proxy",
     "presign-proxy",
     "context-proxy",
+    "llm-proxy",
     "local-llm-proxy",
 )
+
+#: Further names a proxy answers to on ``sandbox-restricted``. A sandbox created before the llm-proxy's rename
+#: holds ``http://local-llm-proxy:9108/v1`` in its env, which cannot change, and reaches the llm-proxy by it.
+_NETWORK_ALIASES: dict[str, tuple[str, ...]] = {"llm-proxy": ("local-llm-proxy",)}
 
 # Connection failures only. A name conflict or a permission error will not
 # recover by waiting, and a blanket retry inside DockerClient.run_cmd would
@@ -248,7 +254,7 @@ class ProxyManager:
         self.minio_proxy_url: str = ""
         self.presign_proxy_url: str = ""
         self.context_proxy_url: str = ""
-        self.local_llm_proxy_url: str = ""
+        self.llm_proxy_url: str = ""
 
     async def start(
         self,
@@ -279,7 +285,7 @@ class ProxyManager:
 
         ``has_*_credential`` come from the credential registry; None falls back to the token arguments.
 
-        The local-llm-proxy always runs: it forwards each sandbox on the custom
+        The llm-proxy always runs: it forwards each sandbox on the custom
         provider to the server its credential names (ADR 0032), which
         ``enroll_sandbox`` gives it with the sandbox's request cap and timeout
         (the settings document's ``local_models``), under the ceilings the
@@ -475,13 +481,13 @@ class ProxyManager:
         # sandbox-internet only for the route out of DinD; sandboxes reach it
         # on sandbox-restricted, and only the ones enrolled for it.
         local_env = {
-            "PROXY_TYPE": "local_llm",
+            "PROXY_TYPE": "llm",
             "LISTEN_PORT": "9108",
             "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
         }
-        await self._launch(name="local-llm-proxy", env=local_env, attach_internet=True)
-        self.local_llm_proxy_url = "http://local-llm-proxy:9108"
-        logger.info("local_llm_proxy_started")
+        await self._launch(name="llm-proxy", env=local_env, attach_internet=True)
+        self.llm_proxy_url = "http://llm-proxy:9108"
+        logger.info("llm_proxy_started")
 
         # Only leftovers we did not just launch. A name in ``_launched`` is the
         # live shared proxy; the sweep must not remove it.
@@ -497,6 +503,7 @@ class ProxyManager:
             image=self._image,
             network=_RESTRICTED,
             env=env,
+            network_aliases=_NETWORK_ALIASES.get(name, ()),
         )
         try:
             await self._docker.run_cmd(run_cmd)
@@ -600,8 +607,8 @@ class ProxyManager:
         provider reaches: its credential's id, API root and key, and the address
         the sandbox manager resolved and checked for it, which the proxy
         connects to (``server_address``; DinD resolves no name). The sandbox is
-        enrolled with the local-llm-proxy for that server alone (ADR 0032). A
-        local-llm-proxy that does not echo the server runs an image from before
+        enrolled with the llm-proxy for that server alone (ADR 0032). An
+        llm-proxy that does not echo the server runs an image from before
         per-sandbox servers: refused the same way as the git-proxy's grant.
 
         ``provider_servers`` is, per chat-completions provider other than
@@ -666,8 +673,8 @@ class ProxyManager:
             targets.append(("xai-proxy", 9106))
         local_server: dict[str, Any] | None = None
         if local_llm is not None:
-            if not self.local_llm_proxy_url:
-                raise RuntimeError("the local-llm-proxy is not running: a sandbox on the custom provider has no route")
+            if not self.llm_proxy_url:
+                raise RuntimeError("the llm-proxy is not running: a sandbox on the custom provider has no route")
             local_server = {
                 "credential_id": local_llm.credential_id,
                 "upstream": local_llm.root.rstrip("/"),
@@ -678,8 +685,8 @@ class ProxyManager:
         for provider, server in sorted((provider_servers or {}).items()):
             if provider == CUSTOM_PROVIDER:
                 raise ValueError("the custom provider's server is local_llm, not a provider server")
-            if not self.local_llm_proxy_url:
-                raise RuntimeError(f"the local-llm-proxy is not running: a sandbox on {provider} has no route")
+            if not self.llm_proxy_url:
+                raise RuntimeError(f"the llm-proxy is not running: a sandbox on {provider} has no route")
             provider_payload[provider] = {
                 "credential_id": server.credential_id,
                 "upstream": server.root.rstrip("/"),
@@ -691,7 +698,7 @@ class ProxyManager:
             if limits is None:
                 raise ValueError("a sandbox enrolled for a model server needs its limits there (local_models)")
             limits_body = limits.to_body()
-            targets.append(("local-llm-proxy", 9108))
+            targets.append(("llm-proxy", 9108))
         # context-proxy is deliberately ABSENT from this broadcast: log access is
         # per-job opt-in (watcher analysis jobs only). init_node calls
         # enroll_context() explicitly when the job carries the watcher flag —
@@ -713,11 +720,11 @@ class ProxyManager:
                 body.update(git_grant)
                 if job_id:
                     body[JOB_FIELD] = job_id
-            if name == "local-llm-proxy" and local_server is not None:
+            if name == "llm-proxy" and local_server is not None:
                 body[LOCAL_LLM_FIELD] = local_server
-            if name == "local-llm-proxy" and provider_payload:
+            if name == "llm-proxy" and provider_payload:
                 body[PROVIDER_SERVERS_FIELD] = provider_payload
-            if name == "local-llm-proxy" and limits_body is not None:
+            if name == "llm-proxy" and limits_body is not None:
                 body[LIMITS_FIELD] = limits_body
             response = await self._exec_admin_request(
                 container=name,
@@ -730,11 +737,11 @@ class ProxyManager:
                 await self._confirm_repo_scope(name, port, sandbox_id, scope, response)
             if name == "git-proxy":
                 await self._confirm_git_grant(port, sandbox_id, git_grant, response)
-            if name == "local-llm-proxy" and local_server is not None:
+            if name == "llm-proxy" and local_server is not None:
                 await self._confirm_local_server(port, sandbox_id, local_server, response)
-            if name == "local-llm-proxy" and provider_payload:
+            if name == "llm-proxy" and provider_payload:
                 await self._confirm_provider_servers(port, sandbox_id, provider_payload, response)
-            if name == "local-llm-proxy" and limits_body is not None:
+            if name == "llm-proxy" and limits_body is not None:
                 await self._confirm_limits(port, sandbox_id, limits_body, response)
 
         if xai_credential_id:
@@ -827,7 +834,7 @@ class ProxyManager:
     async def _confirm_local_server(
         self, port: int, sandbox_id: str, server: dict[str, Any], response: dict[str, Any]
     ) -> None:
-        """Refuse a local-llm-proxy that did not echo ``server``: its image predates per-sandbox servers (ADR 0032)."""
+        """Refuse an llm-proxy that did not echo ``server``: its image predates per-sandbox servers (ADR 0032)."""
         echoed = (response if isinstance(response, dict) else {}).get(LOCAL_LLM_FIELD)
         if (
             isinstance(echoed, dict)
@@ -837,58 +844,54 @@ class ProxyManager:
         ):
             return
         logger.error(
-            "local_llm_proxy_server_unconfirmed",
+            "llm_proxy_server_unconfirmed",
             sandbox_id=sandbox_id,
             credential_id=server["credential_id"],
             detail=(
-                "the local-llm-proxy did not confirm the sandbox's model server: its image predates per-sandbox "
+                "the llm-proxy did not confirm the sandbox's model server: its image predates per-sandbox "
                 "servers, so the sandbox is unenrolled there and refused; rebuild the proxy image"
             ),
         )
         await self._exec_admin_request(
-            container="local-llm-proxy",
+            container="llm-proxy",
             method="DELETE",
             path=f"/admin/enroll/{sandbox_id}",
             port=port,
             body=None,
             accept_404=True,
         )
-        raise RuntimeError(
-            "local-llm-proxy did not confirm the sandbox's server (proxy image older than the orchestrator?)"
-        )
+        raise RuntimeError("llm-proxy did not confirm the sandbox's server (proxy image older than the orchestrator?)")
 
     async def _confirm_limits(
         self, port: int, sandbox_id: str, limits: dict[str, Any], response: dict[str, Any]
     ) -> None:
-        """Refuse a local-llm-proxy that did not echo the sandbox's ``limits``: its image predates them, and would hold
+        """Refuse an llm-proxy that did not echo the sandbox's ``limits``: its image predates them, and would hold
         the sandbox to no cap or timeout of its own (#174)."""
         echoed = (response if isinstance(response, dict) else {}).get(LIMITS_FIELD)
         if isinstance(echoed, dict) and echoed == limits:
             return
         logger.error(
-            "local_llm_proxy_limits_unconfirmed",
+            "llm_proxy_limits_unconfirmed",
             sandbox_id=sandbox_id,
             detail=(
-                "the local-llm-proxy did not confirm the sandbox's limits: its image predates them, so the sandbox is "
+                "the llm-proxy did not confirm the sandbox's limits: its image predates them, so the sandbox is "
                 "unenrolled there and refused; rebuild the proxy image"
             ),
         )
         await self._exec_admin_request(
-            container="local-llm-proxy",
+            container="llm-proxy",
             method="DELETE",
             path=f"/admin/enroll/{sandbox_id}",
             port=port,
             body=None,
             accept_404=True,
         )
-        raise RuntimeError(
-            "local-llm-proxy did not confirm the sandbox's limits (proxy image older than the orchestrator?)"
-        )
+        raise RuntimeError("llm-proxy did not confirm the sandbox's limits (proxy image older than the orchestrator?)")
 
     async def _confirm_provider_servers(
         self, port: int, sandbox_id: str, servers: dict[str, dict[str, str]], response: dict[str, Any]
     ) -> None:
-        """Refuse a local-llm-proxy that did not echo every provider's server exactly: its image predates the paths per
+        """Refuse an llm-proxy that did not echo every provider's server exactly: its image predates the paths per
         provider, and could route the sandbox to a server it was not given."""
         echoed = (response if isinstance(response, dict) else {}).get(PROVIDER_SERVERS_FIELD)
         wanted = {
@@ -898,16 +901,16 @@ class ProxyManager:
         if isinstance(echoed, dict) and echoed == wanted:
             return
         logger.error(
-            "local_llm_proxy_provider_servers_unconfirmed",
+            "llm_proxy_provider_servers_unconfirmed",
             sandbox_id=sandbox_id,
             providers=sorted(servers),
             detail=(
-                "the local-llm-proxy did not confirm the sandbox's provider servers: its image predates the paths per "
+                "the llm-proxy did not confirm the sandbox's provider servers: its image predates the paths per "
                 "provider, so the sandbox is unenrolled there and refused; rebuild the proxy image"
             ),
         )
         await self._exec_admin_request(
-            container="local-llm-proxy",
+            container="llm-proxy",
             method="DELETE",
             path=f"/admin/enroll/{sandbox_id}",
             port=port,
@@ -915,7 +918,7 @@ class ProxyManager:
             accept_404=True,
         )
         raise RuntimeError(
-            "local-llm-proxy did not confirm the sandbox's provider servers (proxy image older than the orchestrator?)"
+            "llm-proxy did not confirm the sandbox's provider servers (proxy image older than the orchestrator?)"
         )
 
     async def set_git_push_branches(self, sandbox_id: str, branches: Sequence[str]) -> None:
@@ -1067,9 +1070,9 @@ class ProxyManager:
             # accept_404 tolerates the common never-enrolled case, and a
             # watcher-enrolled sandbox must be revoked with the rest.
             targets.append(("context-proxy", 9107))
-        if self.local_llm_proxy_url:
+        if self.llm_proxy_url:
             # Swept like the context-proxy: accept_404 covers a sandbox never enrolled there.
-            targets.append(("local-llm-proxy", 9108))
+            targets.append(("llm-proxy", 9108))
 
         for name, port in targets:
             for attempt in range(3):
@@ -1167,7 +1170,7 @@ class ProxyManager:
 
     def metered_proxies(self) -> list[str]:
         """The metering proxies this process launched."""
-        launched = {"xai-proxy": self.xai_proxy_url, "local-llm-proxy": self.local_llm_proxy_url}
+        launched = {"xai-proxy": self.xai_proxy_url, "llm-proxy": self.llm_proxy_url}
         return [name for name in METERED_PROXIES if launched.get(name)]
 
     def metered_proxies_for(self, sandbox_id: str) -> list[str]:
@@ -1582,7 +1585,7 @@ class ProxyManager:
         self.minio_proxy_url = ""
         self.presign_proxy_url = ""
         self.context_proxy_url = ""
-        self.local_llm_proxy_url = ""
+        self.llm_proxy_url = ""
         session = self._http
         self._http = None
         if session is not None:

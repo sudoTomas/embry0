@@ -40,7 +40,10 @@ class _Daemon:
     def client(self) -> MagicMock:
         docker = MagicMock()
         docker.build_run_proxy_cmd = MagicMock(
-            side_effect=lambda *, name, image, network, env: (["docker", "run", "--name", name], "/nonexistent.env")
+            side_effect=lambda *, name, image, network, env, network_aliases=(): (
+                ["docker", "run", "--name", name],
+                "/nonexistent.env",
+            )
         )
         docker.build_rm_cmd = MagicMock(side_effect=lambda name: ["docker", "rm", "-f", name])
         docker.build_network_cmd = MagicMock(side_effect=lambda op, net, name: ["docker", "network", op, net, name])
@@ -252,6 +255,21 @@ async def test_a_proxy_this_process_never_launched_is_not_created():
         await mgr.enroll_context("sandbox-b", "tok-b")
 
     assert "context-proxy" not in daemon.proxies
+
+
+async def test_a_recreated_llm_proxy_answers_to_its_old_name_again():
+    daemon = _Daemon()
+    docker = daemon.client()
+    mgr = ProxyManager(docker, proxy_admin_token="admin-secret")
+    mgr._http = MagicMock()  # start() was called
+    await mgr._launch(name="llm-proxy", env={"PROXY_TYPE": "llm", "LISTEN_PORT": "9108"}, attach_internet=True)
+    daemon.proxies["llm-proxy"].running = False
+
+    assert await mgr._revive("llm-proxy"), "the stopped llm-proxy was not recreated"
+
+    launches = [c.kwargs for c in docker.build_run_proxy_cmd.call_args_list if c.kwargs["name"] == "llm-proxy"]
+    assert len(launches) == 2, launches
+    assert launches[1].get("network_aliases") == ("local-llm-proxy",), f"the recreated llm-proxy: {launches[1]}"
 
 
 async def test_no_proxy_is_recreated_while_stopping():

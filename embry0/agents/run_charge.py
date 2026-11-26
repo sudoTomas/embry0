@@ -1,7 +1,7 @@
 """What an agent run is charged, from the metering proxies' tallies and the sandbox's own figure.
 
 A run whose provider's calls all pass a metering proxy (an xAI run through the xai-proxy, a local model's through
-the local-llm-proxy) is charged what that proxy counted, at the rates its provider record carried from the run's
+the llm-proxy) is charged what that proxy counted, at the rates its provider record carried from the run's
 start; the sandbox's figure is kept beside it, and compared. Any other run is charged what its sandbox reported, as
 before. Counting fails toward more, never less:
 
@@ -33,8 +33,9 @@ __all__ = [
     "charge_run",
 ]
 
-#: The provider each metering proxy carries the calls of (a provider record's ``name``).
-PROXY_PROVIDERS: dict[str, str] = {"xai-proxy": "xai", "local-llm-proxy": "custom"}
+#: The provider each metering proxy carries the calls of (a provider record's ``name``). ``local-llm-proxy`` is
+#: the llm-proxy's name before its rename, which tallies kept then (``run_meter``) still carry.
+PROXY_PROVIDERS: dict[str, str] = {"xai-proxy": "xai", "llm-proxy": "custom", "local-llm-proxy": "custom"}
 #: The two figures disagree when they differ by more than this share of the larger one, and by more than
 #: :data:`DISAGREEMENT_FLOOR_USD`.
 DISAGREEMENT_SHARE = 0.10

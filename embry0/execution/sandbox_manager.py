@@ -41,7 +41,7 @@ from embry0.services.credentials.resolver import (
 from embry0.skills.store import SkillMount, SkillStore
 
 if TYPE_CHECKING:
-    from embry0.execution.proxy.local_llm_proxy import Upstream
+    from embry0.execution.proxy.llm_proxy import Upstream
     from embry0.execution.proxy.manager import ProxyManager
 
 logger = structlog.get_logger(__name__)
@@ -426,7 +426,7 @@ class SandboxManager:
     ) -> str | None:
         """Apply the injection table. Returns the xAI oauth credential id, if any.
 
-        The custom provider is reached through the local-llm-proxy at
+        The custom provider is reached through the llm-proxy at
         ``local_proxy_url`` (ADR 0032): the sandbox gets the proxy as its base
         URL and the flag that it authenticates with its bearer file, and
         neither the credential's key nor its server's address, ever.
@@ -465,7 +465,7 @@ class SandboxManager:
         return xai_credential_id
 
     async def _local_server(self, resolved: dict[str, ResolvedCredential]) -> Upstream | None:
-        """The model server a sandbox on the custom provider is enrolled with at the local-llm-proxy: its
+        """The model server a sandbox on the custom provider is enrolled with at the llm-proxy: its
         credential's id, API root and key, and the address its host resolves to here, every one checked, which
         the proxy connects to (ADR 0032, ``server_address``). None when the job resolved no custom credential.
 
@@ -473,14 +473,14 @@ class SandboxManager:
         no API root, or its host is, or resolves to, this machine or link-local, or to nothing. No route around the
         proxy exists, so such a job does not start.
         """
-        from embry0.execution.proxy.local_llm_proxy import Upstream
+        from embry0.execution.proxy.llm_proxy import Upstream
 
         cred = resolved.get("custom")
         if cred is None:
             return None
-        if not self._local_llm_proxy_url():
+        if not self._llm_proxy_url():
             raise SandboxInitError(
-                "the custom provider is reached through the local-llm-proxy, which is not running",
+                "the custom provider is reached through the llm-proxy, which is not running",
                 error_code=ErrorCode.SANDBOX_INIT,
             )
         root = str(cred.metadata.get("base_url") or "").strip()
@@ -508,7 +508,7 @@ class SandboxManager:
         is enrolled for."""
         if local_server is None:
             return {}
-        from embry0.execution.proxy.local_llm_proxy import Limits
+        from embry0.execution.proxy.llm_proxy import Limits
 
         if self._local_models is not None:
             section = await self._local_models()
@@ -675,7 +675,7 @@ class SandboxManager:
         providers = tuple(llm_providers)
         llm_resolved: dict[str, ResolvedCredential] = {}
         xai_credential_id: str | None = None
-        local_proxy_url = self._local_llm_proxy_url()
+        local_proxy_url = self._llm_proxy_url()
         if self._credential_resolver is not None and providers:
             # A pinned account that cannot run fails before any container exists.
             try:
@@ -909,7 +909,7 @@ class SandboxManager:
                 git_push=git_push,
                 git_push_branches=git_push_branches,
                 job_id=job_id,
-                # Only a sandbox on the custom provider gets a bearer the local-llm-proxy accepts, for its own
+                # Only a sandbox on the custom provider gets a bearer the llm-proxy accepts, for its own
                 # credential's server alone (ADR 0032).
                 **(await self._server_kwargs(local_server)),
             )
@@ -961,7 +961,7 @@ class SandboxManager:
             try:
                 await self._runtime.attach_policy(
                     container_id,
-                    # No model server's host: the custom provider goes through the local-llm-proxy (ADR 0032).
+                    # No model server's host: the custom provider goes through the llm-proxy (ADR 0032).
                     allowed_destinations=list(egress_allowlist or []),
                     reachable_containers=list(internet_proxies()) if callable(internet_proxies) else [],
                 )
@@ -1054,7 +1054,7 @@ class SandboxManager:
         file existed gets it here. ``custom_credential_id`` is the custom
         credential the resume resolved for a job on the custom provider (``''``
         for the environment's), None for a job not on it: the sandbox is
-        enrolled with the local-llm-proxy for that credential's server again
+        enrolled with the llm-proxy for that credential's server again
         (ADR 0032).
 
         Raises SandboxInitError(SANDBOX_GONE) when the container is gone or
@@ -1176,13 +1176,13 @@ class SandboxManager:
             context=bool(context_scope),
         )
 
-    def _local_llm_proxy_url(self) -> str:
-        """The local-llm-proxy's URL while it runs, else ''."""
-        url = getattr(self._proxy_manager, "local_llm_proxy_url", "")
+    def _llm_proxy_url(self) -> str:
+        """The llm-proxy's URL while it runs, else ''."""
+        url = getattr(self._proxy_manager, "llm_proxy_url", "")
         return url if isinstance(url, str) else ""
 
     async def _write_local_llm_token(self, container: str, sandbox_token: str) -> None:
-        """Write the local-llm-proxy bearer where the chat-completions executor reads it."""
+        """Write the llm-proxy bearer where the chat-completions executor reads it."""
         from embry0.sandbox.local_llm_token import build_local_llm_token_write_cmd
 
         await self._docker.run_cmd(
@@ -1193,7 +1193,7 @@ class SandboxManager:
 
     async def _refuse_a_retired_route(self, container: str) -> None:
         """Refuse a resumed sandbox whose env still carries the custom provider's key, or a server's address
-        instead of the local-llm-proxy's: an older release put them there, and a container's env cannot change
+        instead of the llm-proxy's: an older release put them there, and a container's env cannot change
         (ADR 0032). The job is dispatched again rather than run with them. Only the variables' names are read.
 
         That release declared the server's host as an egress exception for exactly such a sandbox (the key went

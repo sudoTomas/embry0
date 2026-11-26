@@ -1,4 +1,4 @@
-"""The local-llm-proxy forwards an enrolled sandbox's model calls to the server it was enrolled with, and nothing else
+"""The llm-proxy forwards an enrolled sandbox's model calls to the server it was enrolled with, and nothing else
 (ADR 0032)."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
-from embry0.execution.proxy import local_llm_proxy
+from embry0.execution.proxy import llm_proxy
 from tests.fixtures.model_servers import allow_loopback_test_servers
 from tests.fixtures.recording_upstream import is_test_request
 
@@ -99,20 +99,20 @@ async def _enroll(client: TestClient, sandbox_id: str, token: str, server: Any, 
     )
 
 
-def create_local_llm_proxy_app(admin_token: str, **kwargs: Any) -> web.Application:
+def create_llm_proxy_app(admin_token: str, **kwargs: Any) -> web.Application:
     """The proxy app, built as ADR 0032 builds it: with the admin token and no server of its own."""
     try:
-        return local_llm_proxy.create_local_llm_proxy_app(admin_token, **kwargs)
+        return llm_proxy.create_llm_proxy_app(admin_token, **kwargs)
     except (TypeError, ValueError) as exc:
         if isinstance(exc, ValueError) and (not admin_token or kwargs.get("max_request_bytes") == 0):
             raise
-        pytest.fail(f"the local-llm-proxy must be built with no server of its own (ADR 0032): {exc}")
+        pytest.fail(f"the llm-proxy must be built with no server of its own (ADR 0032): {exc}")
 
 
 async def _proxy(
     aiohttp_client, upstream: Any, *, api_key: str = "", limits: dict[str, Any] | None = None, **kwargs: Any
 ) -> TestClient:
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, **kwargs))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN, **kwargs))
     enrolled = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream, api_key=api_key), **(limits or {}))
     assert enrolled.status == 200, await enrolled.text()
     return client
@@ -123,9 +123,9 @@ _AUTH = {"Authorization": f"Bearer {_SANDBOX_TOKEN}"}
 
 def test_the_admin_token_and_a_positive_cap_must_be_set():
     with pytest.raises(ValueError):
-        create_local_llm_proxy_app("")
+        create_llm_proxy_app("")
     with pytest.raises(ValueError):
-        create_local_llm_proxy_app(_ADMIN, max_request_bytes=0)
+        create_llm_proxy_app(_ADMIN, max_request_bytes=0)
 
 
 @pytest.mark.parametrize(
@@ -256,7 +256,7 @@ def test_the_admin_token_and_a_positive_cap_must_be_set():
 async def test_an_enrollment_without_a_valid_server_is_refused(aiohttp_client, server):
     """Every sandbox is enrolled with its server; one that names none, or one the proxy cannot safely reach, gets no
     bearer at all."""
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     body: dict[str, Any] = {"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN}
     if server is not None:
         body["local_llm"] = server
@@ -268,7 +268,7 @@ async def test_an_enrollment_without_a_valid_server_is_refused(aiohttp_client, s
 
 
 async def test_the_enrollment_answer_confirms_the_server_and_never_the_key(aiohttp_client, upstream):
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     enrolled = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream, api_key=_SERVER_KEY))
     answer = await enrolled.json()
     assert answer["local_llm"] == {
@@ -283,7 +283,7 @@ async def test_the_enrollment_answer_confirms_the_server_and_never_the_key(aioht
 async def test_each_sandbox_reaches_its_own_server_only(aiohttp_client, make_upstream):
     """Two jobs on two custom credentials: each sandbox's calls go to its credential's server, with its key."""
     one, two = await make_upstream("one"), await make_upstream("two")
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     other_token = "another-sandbox-bearer-at-least-32-chars"
     assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(one, api_key=_SERVER_KEY))).status == 200
     assert (await _enroll(client, "sbx-2", other_token, _server(two, credential_id="cred-b"))).status == 200
@@ -314,7 +314,7 @@ async def test_an_enrollment_again_moves_the_sandbox_to_its_new_server(aiohttp_c
 async def test_a_sandbox_whose_server_is_gone_is_answered_503(aiohttp_client, upstream):
     """An enrolled bearer always has its server; were the two ever apart, nothing would be forwarded anywhere."""
     client = await _proxy(aiohttp_client, upstream)
-    held = getattr(local_llm_proxy, "UPSTREAM_BY_SANDBOX", None)
+    held = getattr(llm_proxy, "UPSTREAM_BY_SANDBOX", None)
     assert held is not None, "the proxy keeps no server per sandbox (UPSTREAM_BY_SANDBOX)"
     client.server.app[held].clear()
     resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
@@ -325,7 +325,7 @@ async def test_a_sandbox_whose_server_is_gone_is_answered_503(aiohttp_client, up
 async def test_a_call_connects_to_the_checked_address_and_names_the_server_in_host(aiohttp_client, upstream):
     """The orchestrator resolved and checked the server's name; the proxy connects to that address, never to the
     name again (no second lookup to answer otherwise), and the server still reads its own name."""
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     server = _server(upstream, name="models.test")
     assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, server)).status == 200
     resp = await client.post("/v1/chat/completions", json={"messages": []}, headers=_AUTH)
@@ -341,7 +341,7 @@ async def test_an_https_server_keeps_its_name_for_tls(aiohttp_client, aiohttp_se
     from tests.fixtures.tls_servers import tls_server
 
     tls = await tls_server(aiohttp_server, tmp_path, monkeypatch, "models.test")
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     server = {
         "credential_id": "cred-a",
         "upstream": f"https://models.test:{tls.port}/v1",
@@ -419,11 +419,11 @@ async def test_a_revoked_sandbox_gets_nothing(aiohttp_client, upstream):
     assert revoked.status == 200
     assert (await client.post("/v1/chat/completions", json={}, headers=_AUTH)).status == 401
     assert upstream.seen == []
-    held = getattr(local_llm_proxy, "UPSTREAM_BY_SANDBOX", None)
+    held = getattr(llm_proxy, "UPSTREAM_BY_SANDBOX", None)
     assert held is not None and "sbx-1" not in client.server.app[held], (
         "a revoked sandbox's server, and its key, stayed in the proxy's memory"
     )
-    assert "sbx-1" not in client.server.app[local_llm_proxy.LIMITS_BY_SANDBOX], "a revoked sandbox's limits stayed"
+    assert "sbx-1" not in client.server.app[llm_proxy.LIMITS_BY_SANDBOX], "a revoked sandbox's limits stayed"
 
 
 async def test_a_request_over_the_size_limit_is_refused(aiohttp_client, upstream):
@@ -499,7 +499,7 @@ async def test_a_request_carrying_the_server_key_counts_on_any_path(upstream):
 
 
 async def test_an_unreachable_server_is_a_502(aiohttp_client):
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     dead = {
         "credential_id": "cred-a",
         "upstream": "http://127.0.0.1:9/v1",
@@ -520,7 +520,7 @@ _TOKEN_1, _TOKEN_2 = (f"sandbox-bearer-token-{n}-at-least-32-chars-long" for n i
 async def test_each_sandbox_has_the_request_cap_it_was_enrolled_with(aiohttp_client, upstream):
     """The cap is the settings document's local_models.max_request_bytes, sent with each enrollment: a change
     reaches the next sandbox while the proxy keeps running."""
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     for sandbox, token, cap in (("sbx-1", _TOKEN_1, 1024), ("sbx-2", _TOKEN_2, 4096)):
         enrolled = await _enroll(client, sandbox, token, _server(upstream), max_request_bytes=cap)
         assert enrolled.status == 200, await enrolled.text()
@@ -555,24 +555,24 @@ async def test_each_sandbox_has_the_request_cap_it_was_enrolled_with(aiohttp_cli
     ],
 )
 async def test_an_enrollment_without_its_limits_or_past_a_ceiling_is_refused(aiohttp_client, upstream, limits, named):
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, max_request_bytes=8192))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN, max_request_bytes=8192))
     resp = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream), **{"max_request_bytes": 4096, **limits})
     assert resp.status == 400, f"an enrollment with {limits} was taken: {await resp.text()}"
     assert f"limits.{named}" in await resp.text(), await resp.text()
-    assert "sbx-1" not in client.server.app[local_llm_proxy.UPSTREAM_BY_SANDBOX]
+    assert "sbx-1" not in client.server.app[llm_proxy.UPSTREAM_BY_SANDBOX]
 
 
 async def test_an_enrollment_at_the_ceilings_is_taken_and_echoed(aiohttp_client, upstream):
     """The ceilings themselves are allowed; the echo, which the orchestrator compares with what it sent, carries the
     limits the proxy holds."""
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, max_request_bytes=8192))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN, max_request_bytes=8192))
     resp = await _enroll(
         client, "sbx-1", _SANDBOX_TOKEN, _server(upstream), max_request_bytes=8192, timeout_seconds=3600
     )
     assert resp.status == 200, await resp.text()
     echoed = (await resp.json())["limits"]
     assert (echoed["max_request_bytes"], echoed["timeout_seconds"]) == (8192, 3600.0), echoed
-    held = client.server.app[local_llm_proxy.LIMITS_BY_SANDBOX]["sbx-1"]
+    held = client.server.app[llm_proxy.LIMITS_BY_SANDBOX]["sbx-1"]
     assert (held.max_request_bytes, held.timeout_seconds) == (8192, 3600.0), held
 
 
@@ -581,16 +581,16 @@ def test_the_proxy_starts_with_the_ceiling_the_settings_are_bounded_by():
     enrolled; the section's bounds and the proxy's are one pair of numbers."""
     from embry0.settings.sections import local_models
 
-    app = create_local_llm_proxy_app(_ADMIN)
-    assert app[local_llm_proxy.MAX_REQUEST_BYTES] == local_llm_proxy.MAX_REQUEST_BYTES_CEILING
-    assert local_models.MAX_REQUEST_BYTES_CEILING == local_llm_proxy.MAX_REQUEST_BYTES_CEILING
-    assert local_models.TIMEOUT_SECONDS_CEILING == local_llm_proxy.TIMEOUT_SECONDS_CEILING
+    app = create_llm_proxy_app(_ADMIN)
+    assert app[llm_proxy.MAX_REQUEST_BYTES] == llm_proxy.MAX_REQUEST_BYTES_CEILING
+    assert local_models.MAX_REQUEST_BYTES_CEILING == llm_proxy.MAX_REQUEST_BYTES_CEILING
+    assert local_models.TIMEOUT_SECONDS_CEILING == llm_proxy.TIMEOUT_SECONDS_CEILING
     fields = local_models.LocalModelsSettings.model_json_schema()["properties"]
-    assert fields["max_request_bytes"]["maximum"] == local_llm_proxy.MAX_REQUEST_BYTES_CEILING, fields
-    assert fields["request_timeout_seconds"]["maximum"] == local_llm_proxy.TIMEOUT_SECONDS_CEILING, fields
+    assert fields["max_request_bytes"]["maximum"] == llm_proxy.MAX_REQUEST_BYTES_CEILING, fields
+    assert fields["request_timeout_seconds"]["maximum"] == llm_proxy.TIMEOUT_SECONDS_CEILING, fields
     defaults = local_models.LocalModelsSettings()
-    assert defaults.max_request_bytes == local_llm_proxy.DEFAULT_MAX_REQUEST_BYTES
-    assert defaults.request_timeout_seconds == local_llm_proxy.DEFAULT_TIMEOUT_SECONDS
+    assert defaults.max_request_bytes == llm_proxy.DEFAULT_MAX_REQUEST_BYTES
+    assert defaults.request_timeout_seconds == llm_proxy.DEFAULT_TIMEOUT_SECONDS
 
 
 async def test_a_server_has_the_enrollment_s_timeout_to_answer(aiohttp_client, aiohttp_server):
@@ -604,7 +604,7 @@ async def test_a_server_has_the_enrollment_s_timeout_to_answer(aiohttp_client, a
     app = web.Application()
     app.router.add_post("/v1/chat/completions", slow)
     server = await aiohttp_server(app)
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     for sandbox, token, timeout in (("sbx-1", _TOKEN_1, 0.2), ("sbx-2", _TOKEN_2, 5)):
         enrolled = await _enroll(client, sandbox, token, _server(server), timeout_seconds=timeout)
         assert enrolled.status == 200, await enrolled.text()
@@ -619,26 +619,26 @@ async def test_a_server_has_the_enrollment_s_timeout_to_answer(aiohttp_client, a
 def test_a_container_s_cap_never_raises_the_proxy_s_ceiling(monkeypatch: pytest.MonkeyPatch):
     """MAX_REQUEST_BYTES lowers the ceiling the proxy starts with, never raises it past MAX_REQUEST_BYTES_CEILING (the
     bound of local_models.max_request_bytes): a proxy told otherwise does not start."""
-    ceiling = local_llm_proxy.MAX_REQUEST_BYTES_CEILING
-    assert local_llm_proxy.create_local_llm_proxy_app(_ADMIN, max_request_bytes=ceiling) is not None
+    ceiling = llm_proxy.MAX_REQUEST_BYTES_CEILING
+    assert llm_proxy.create_llm_proxy_app(_ADMIN, max_request_bytes=ceiling) is not None
     with pytest.raises(ValueError, match="MAX_REQUEST_BYTES"):
-        local_llm_proxy.create_local_llm_proxy_app(_ADMIN, max_request_bytes=ceiling + 1)
+        llm_proxy.create_llm_proxy_app(_ADMIN, max_request_bytes=ceiling + 1)
     from embry0.execution.proxy import server
 
-    monkeypatch.setenv("PROXY_TYPE", "local_llm")
+    monkeypatch.setenv("PROXY_TYPE", "llm")
     monkeypatch.setenv("PROXY_ADMIN_TOKEN", _ADMIN)
     monkeypatch.setenv("MAX_REQUEST_BYTES", str(ceiling + 1))
     with pytest.raises(ValueError, match="MAX_REQUEST_BYTES"):
         server.build_app_from_env()
     monkeypatch.setenv("MAX_REQUEST_BYTES", "4096")
-    assert server.build_app_from_env()[local_llm_proxy.MAX_REQUEST_BYTES] == 4096, "a lower ceiling was not taken"
+    assert server.build_app_from_env()[llm_proxy.MAX_REQUEST_BYTES] == 4096, "a lower ceiling was not taken"
 
 
 async def test_a_sandbox_with_no_limits_held_is_refused_and_reaches_no_server(aiohttp_client, upstream):
     """Its server and its limits come with one enrollment; a server held without limits is a bug, refused rather
     than forwarded under defaults the sandbox was never given."""
     client = await _proxy(aiohttp_client, upstream)
-    del client.server.app[local_llm_proxy.LIMITS_BY_SANDBOX]["sbx-1"]
+    del client.server.app[llm_proxy.LIMITS_BY_SANDBOX]["sbx-1"]
     resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
     assert resp.status == 503, f"a call with no limits held was answered {resp.status}"
     assert (await resp.json())["error"]["code"] == "no_limits"

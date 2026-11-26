@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from embry0.execution.proxy import local_llm_proxy
+from embry0.execution.proxy import llm_proxy
 from tests.fixtures.model_servers import fake_dns
 
 ADMIN = "test-admin-secret-not-real"
@@ -127,7 +127,7 @@ def test_a_literal_address_is_pinned_without_a_lookup(monkeypatch: pytest.Monkey
 
 
 async def test_the_proxy_refuses_an_enrollment_naming_this_machine(aiohttp_client: Any) -> None:
-    client = await aiohttp_client(local_llm_proxy.create_local_llm_proxy_app(ADMIN))
+    client = await aiohttp_client(llm_proxy.create_llm_proxy_app(ADMIN))
     refused = await client.post(
         "/admin/enroll",
         json={

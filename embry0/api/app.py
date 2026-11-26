@@ -1618,7 +1618,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # not taken from app.state: _init_app_state creates repos_repo later.
         # Without it no repo gets the daemon (closed, not open).
         docker_access_registry=ReposRepository(db, default_forge=config.default_forge),
-        # Local models: the request cap and timeout each sandbox is enrolled with at the local-llm-proxy.
+        # Local models: the request cap and timeout each sandbox is enrolled with at the llm-proxy.
         local_models=section_reader(app.state.settings, LOCAL_MODELS),
         runtime=runtime,
         # Spec 3.3: every sandbox gets the enabled skill sources, read-only.
@@ -1798,7 +1798,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         context_container_allowlist=config.context_proxy_container_allowlist,
         context_query_quota=config.context_proxy_query_quota,
         log_redaction_fields=config.log_redaction_fields,
-        # Local models (docs/providers.md): the local-llm-proxy always runs, each sandbox on the custom provider
+        # Local models (docs/providers.md): the llm-proxy always runs, each sandbox on the custom provider
         # enrolled with its credential's server (ADR 0032).
         model_proxy_max_request_bytes=config.model_proxy_max_request_bytes,
     )

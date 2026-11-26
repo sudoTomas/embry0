@@ -1,4 +1,4 @@
-"""ProxyManager always launches the local-llm-proxy, and enrolls each sandbox on the custom provider with its own
+"""ProxyManager always launches the llm-proxy, and enrolls each sandbox on the custom provider with its own
 credential's server (ADR 0032)."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from embry0.execution.proxy import local_llm_proxy
+from embry0.execution.proxy import llm_proxy
 from embry0.execution.proxy.manager import ProxyManager
 
 _ADMIN_TOKEN = "test-admin-token"
@@ -61,32 +61,54 @@ def _launch_env(docker_mock, name: str) -> dict | None:
 @pytest.mark.asyncio
 async def test_the_proxy_always_launches_on_the_restricted_network_with_no_server_of_its_own(docker_mock, pm):
     await pm.start(github_token="ghp_test")
-    env = _launch_env(docker_mock, "local-llm-proxy")
+    env = _launch_env(docker_mock, "llm-proxy")
     # No server's address or key, and no cap: each sandbox is enrolled with its own, under the proxy's ceiling.
     assert env == {
-        "PROXY_TYPE": "local_llm",
+        "PROXY_TYPE": "llm",
         "LISTEN_PORT": "9108",
         "PROXY_ADMIN_TOKEN": _ADMIN_TOKEN,
-    }, f"the local-llm-proxy's environment: {env}"
-    call = next(c for c in docker_mock.build_run_proxy_cmd.call_args_list if c.kwargs["name"] == "local-llm-proxy")
+    }, f"the llm-proxy's environment: {env}"
+    call = next(c for c in docker_mock.build_run_proxy_cmd.call_args_list if c.kwargs["name"] == "llm-proxy")
     assert call.kwargs["network"] == "sandbox-restricted"
-    assert pm.local_llm_proxy_url == "http://local-llm-proxy:9108"
-    assert "local-llm-proxy" in pm.launched_proxies()
+    assert pm.llm_proxy_url == "http://llm-proxy:9108"
+    assert "llm-proxy" in pm.launched_proxies()
 
     await pm.stop()
-    assert pm.local_llm_proxy_url == ""
+    assert pm.llm_proxy_url == ""
+
+
+@pytest.mark.asyncio
+async def test_the_llm_proxy_also_answers_to_its_name_before_the_rename(docker_mock, pm):
+    """A sandbox created before the rename holds http://local-llm-proxy:9108/v1 in its env, which cannot change."""
+    await pm.start(github_token="ghp_test")
+    aliases = {
+        c.kwargs["name"]: c.kwargs.get("network_aliases") for c in docker_mock.build_run_proxy_cmd.call_args_list
+    }
+    assert aliases["llm-proxy"] == ("local-llm-proxy",), f"the llm-proxy's other names: {aliases['llm-proxy']}"
+    assert all(names == () for proxy, names in aliases.items() if proxy != "llm-proxy"), (
+        f"another proxy was given another name: {aliases}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_removes_the_container_of_the_llm_proxy_s_old_name(docker_mock, pm):
+    """A release before the rename left a running local-llm-proxy: kept, it would answer to the alias as well."""
+    await pm.start(github_token="ghp_test")
+    removed = [c.args[0] for c in docker_mock.build_rm_cmd.call_args_list]
+    assert "local-llm-proxy" in removed, f"the old container is left running: {removed}"
+    assert "llm-proxy" in removed
 
 
 def _server() -> object:
-    upstream = getattr(local_llm_proxy, "Upstream", None)
-    assert upstream is not None, "a sandbox's server has no shape to be enrolled with (local_llm_proxy.Upstream)"
+    upstream = getattr(llm_proxy, "Upstream", None)
+    assert upstream is not None, "a sandbox's server has no shape to be enrolled with (llm_proxy.Upstream)"
     return upstream(credential_id="cred-a", root="http://model-box:8000/v1/", api_key="server-key", address="10.99.0.7")
 
 
 def _limits(max_request_bytes: int = 8 * 1024 * 1024, timeout_seconds: float = 900.0) -> Any:
     """The sandbox's limits at its servers (#174): the local_models section's defaults unless given."""
-    limits = getattr(local_llm_proxy, "Limits", None)
-    assert limits is not None, "a sandbox has no limits to be enrolled with (local_llm_proxy.Limits)"
+    limits = getattr(llm_proxy, "Limits", None)
+    assert limits is not None, "a sandbox has no limits to be enrolled with (llm_proxy.Limits)"
     return limits(max_request_bytes=max_request_bytes, timeout_seconds=timeout_seconds)
 
 
@@ -94,13 +116,13 @@ async def _enrolling_manager(monkeypatch, *, echo: bool | dict = True, limits_ec
     pm = ProxyManager(docker=AsyncMock(), proxy_admin_token="x" * 20)
     pm._http = object()
     pm.xai_proxy_url = "http://xai-proxy:9106"
-    pm.local_llm_proxy_url = "http://local-llm-proxy:9108"
+    pm.llm_proxy_url = "http://llm-proxy:9108"
     captured: list[dict] = []
 
     async def fake_exec(**kwargs):
         captured.append(kwargs)
         body = kwargs.get("body") or {}
-        if kwargs["container"] != "local-llm-proxy" or kwargs["method"] != "POST":
+        if kwargs["container"] != "llm-proxy" or kwargs["method"] != "POST":
             return {}
         answer: dict[str, Any] = {}
         if echo:
@@ -127,8 +149,8 @@ async def test_only_a_sandbox_on_the_custom_provider_is_enrolled_with_the_local_
 
     captured.clear()
     token = await pm.enroll_sandbox("sb-local", local_llm=_server(), limits=_limits())
-    assert [c["container"] for c in captured] == ["xai-proxy", "local-llm-proxy"]
-    local = next(c for c in captured if c["container"] == "local-llm-proxy")
+    assert [c["container"] for c in captured] == ["xai-proxy", "llm-proxy"]
+    local = next(c for c in captured if c["container"] == "llm-proxy")
     assert (local["port"], local["path"], local["body"]["sandbox_token"]) == (9108, "/admin/enroll", token)
     # The name stays in the root, for Host and TLS; the proxy connects to the checked address (DinD resolves none).
     assert local["body"]["local_llm"] == {
@@ -153,15 +175,15 @@ async def test_a_local_proxy_that_does_not_confirm_the_server_is_refused(monkeyp
     pm, captured = await _enrolling_manager(monkeypatch, echo=echo)
     with pytest.raises(RuntimeError, match="did not confirm"):
         await pm.enroll_sandbox("sb-local", local_llm=_server(), limits=_limits())
-    revoked = [c for c in captured if c["container"] == "local-llm-proxy" and c["method"] == "DELETE"]
+    revoked = [c for c in captured if c["container"] == "llm-proxy" and c["method"] == "DELETE"]
     assert len(revoked) == 1 and revoked[0]["path"] == "/admin/enroll/sb-local", f"not revoked: {captured}"
 
 
 @pytest.mark.asyncio
 async def test_a_sandbox_on_the_custom_provider_without_the_proxy_is_refused(monkeypatch):
     pm, captured = await _enrolling_manager(monkeypatch)
-    pm.local_llm_proxy_url = ""
-    with pytest.raises(RuntimeError, match="local-llm-proxy is not running"):
+    pm.llm_proxy_url = ""
+    with pytest.raises(RuntimeError, match="llm-proxy is not running"):
         await pm.enroll_sandbox("sb-local", local_llm=_server(), limits=_limits())
     assert captured == [], "a sandbox with no route to its server was enrolled anywhere"
 
@@ -170,7 +192,7 @@ async def test_a_sandbox_on_the_custom_provider_without_the_proxy_is_refused(mon
 async def test_unenroll_revokes_the_local_proxy_too(monkeypatch):
     pm, captured = await _enrolling_manager(monkeypatch)
     await pm.unenroll_sandbox("sb-local")
-    local = [c for c in captured if c["container"] == "local-llm-proxy"]
+    local = [c for c in captured if c["container"] == "llm-proxy"]
     assert len(local) == 1 and local[0]["method"] == "DELETE" and local[0]["accept_404"] is True
 
 
@@ -180,9 +202,9 @@ async def test_the_sandbox_s_limits_are_sent_with_its_server(monkeypatch):
     every server the sandbox is enrolled for."""
     pm, captured = await _enrolling_manager(monkeypatch)
     await pm.enroll_sandbox("sb-local", local_llm=_server(), limits=_limits(2048, 60.0))
-    local = next(c for c in captured if c["container"] == "local-llm-proxy")
+    local = next(c for c in captured if c["container"] == "llm-proxy")
     assert local["body"].get("limits") == {"max_request_bytes": 2048, "timeout_seconds": 60.0}, local["body"]
-    assert all("limits" not in c["body"] for c in captured if c["container"] != "local-llm-proxy")
+    assert all("limits" not in c["body"] for c in captured if c["container"] != "llm-proxy")
 
 
 @pytest.mark.asyncio
@@ -196,7 +218,7 @@ async def test_a_local_proxy_that_does_not_confirm_the_limits_is_refused(monkeyp
     pm, captured = await _enrolling_manager(monkeypatch, limits_echo=limits_echo)
     with pytest.raises(RuntimeError, match="did not confirm the sandbox's limits"):
         await pm.enroll_sandbox("sb-local", local_llm=_server(), limits=_limits(2048, 60.0))
-    revoked = [c for c in captured if c["container"] == "local-llm-proxy" and c["method"] == "DELETE"]
+    revoked = [c for c in captured if c["container"] == "llm-proxy" and c["method"] == "DELETE"]
     assert len(revoked) == 1 and revoked[0]["path"] == "/admin/enroll/sb-local", f"not revoked: {captured}"
 
 

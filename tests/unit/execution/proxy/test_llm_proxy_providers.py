@@ -10,23 +10,23 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
-from embry0.execution.proxy import local_llm_proxy
+from embry0.execution.proxy import llm_proxy
 
 # The fixtures, registered here under these names. The first is autouse: the fake servers' 127.0.0.1 is let through,
 # and every other refused host stays refused.
-from tests.unit.execution.proxy.test_local_llm_proxy import (
+from tests.unit.execution.proxy.test_llm_proxy import (
     _ADMIN,
     _SANDBOX_TOKEN,
     LIMITS,
     _fake_servers_on_loopback,  # noqa: F401, E402
-    create_local_llm_proxy_app,
+    create_llm_proxy_app,
 )
-from tests.unit.execution.proxy.test_local_llm_proxy import make_upstream as _make_upstream  # noqa: F401, E402
+from tests.unit.execution.proxy.test_llm_proxy import make_upstream as _make_upstream  # noqa: F401, E402
 
 
 @pytest.fixture
 def upstreams(_make_upstream: Any) -> Any:  # noqa: F811 — the imported fixture
-    """Fake model servers, each recording what reaches it and answering with its name (``test_local_llm_proxy``)."""
+    """Fake model servers, each recording what reaches it and answering with its name (``test_llm_proxy``)."""
     return _make_upstream
 
 
@@ -52,7 +52,7 @@ async def _enroll(client: TestClient, **fields: Any) -> Any:
 
 
 async def _proxy(aiohttp_client: Any, **fields: Any) -> TestClient:
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     enrolled = await _enroll(client, **fields)
     assert enrolled.status == 200, await enrolled.text()
     return client
@@ -109,7 +109,7 @@ async def test_custom_is_reached_on_its_provider_path_and_on_v1(aiohttp_client, 
 
 async def test_the_answer_confirms_each_provider_s_server_and_never_a_key(aiohttp_client, upstreams):
     openai = await upstreams("openai")
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     answer = await _enroll(client, provider_servers={"openai": _server(openai, "key-openai", "cred-o")})
     assert answer.status == 200
     body = await answer.json()
@@ -162,7 +162,7 @@ async def test_the_answer_confirms_each_provider_s_server_and_never_a_key(aiohtt
     ],
 )
 async def test_an_enrollment_without_valid_provider_servers_is_refused(aiohttp_client, fields):
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     answer = await _enroll(client, **fields)
     assert answer.status == 400, f"taken: {fields}"
     assert (await client.post("/p/openai/v1/chat/completions", json={}, headers=_BEARER)).status == 401
@@ -177,14 +177,14 @@ async def test_an_enrollment_again_replaces_the_providers(aiohttp_client, upstre
     assert (await client.post("/p/groq/v1/chat/completions", json={}, headers=_BEARER)).status == 200
     assert (await _enroll(client, local_llm=_server(local, "k", "cred-c"))).status == 200
     assert (await client.post("/p/groq/v1/chat/completions", json={}, headers=_BEARER)).status == 403
-    assert client.app[local_llm_proxy.SERVERS_BY_SANDBOX] == {}
+    assert client.app[llm_proxy.SERVERS_BY_SANDBOX] == {}
 
 
 async def test_ending_the_enrollment_forgets_the_providers(aiohttp_client, upstreams):
     openai = await upstreams("openai")
     client = await _proxy(aiohttp_client, provider_servers={"openai": _server(openai, "k", "cred-o")})
     assert (await client.delete("/admin/enroll/sbx-1", headers=_H)).status == 200
-    assert client.app[local_llm_proxy.SERVERS_BY_SANDBOX] == {}, "an ended enrollment kept its provider servers"
+    assert client.app[llm_proxy.SERVERS_BY_SANDBOX] == {}, "an ended enrollment kept its provider servers"
     assert (await client.post("/p/openai/v1/chat/completions", json={}, headers=_BEARER)).status == 401
 
 
@@ -216,7 +216,7 @@ async def test_a_provider_path_needs_the_sandbox_s_bearer(aiohttp_client, upstre
 
 async def test_a_request_over_the_size_limit_is_refused_on_a_provider_path(aiohttp_client, upstreams):
     openai = await upstreams("openai")
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, max_request_bytes=1024))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN, max_request_bytes=1024))
     servers = {"openai": _server(openai, "k", "cred-o")}
     # The sandbox's cap, at the ceiling this proxy started with (#174).
     assert (await _enroll(client, provider_servers=servers, limits={**LIMITS, "max_request_bytes": 1024})).status == 200
@@ -338,11 +338,11 @@ async def test_a_provider_s_server_has_the_sandbox_s_timeout_to_answer(aiohttp_c
 @pytest.mark.parametrize("limits", [None, "8MiB", {"max_request_bytes": 1024}], ids=["none", "not-an-object", "half"])
 async def test_an_enrollment_for_providers_alone_still_names_its_limits(aiohttp_client, upstreams, limits):
     openai = await upstreams("openai")
-    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     fields: dict[str, Any] = {"provider_servers": {"openai": _server(openai, "key-openai", "cred-o")}}
     body = {"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN, **fields}
     if limits is not None:
         body["limits"] = limits
     resp = await client.post("/admin/enroll", json=body, headers=_H)
     assert resp.status == 400 and "limits" in await resp.text(), f"enrolled with limits {limits!r}: {await resp.text()}"
-    assert "sbx-1" not in client.server.app[local_llm_proxy.SERVERS_BY_SANDBOX]
+    assert "sbx-1" not in client.server.app[llm_proxy.SERVERS_BY_SANDBOX]

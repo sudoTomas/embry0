@@ -1,4 +1,4 @@
-"""The chat-completions executor on the local-llm-proxy: the bearer file, and the model's context window."""
+"""The chat-completions executor on the llm-proxy: the bearer file, and the model's context window."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from embry0.safety.error_codes import ErrorCode, classify_agent_error
 from tests.fixtures.openai_compatible_server import FakeOpenAIServer, completion, tool_call
 from tests.unit.agents.test_executor_openai import _invocation
 
-_BEARER = "sandbox-bearer-for-the-local-llm-proxy-0123456789"
+_BEARER = "sandbox-bearer-for-the-llm-proxy-0123456789"
 
 
 @pytest.fixture
@@ -32,13 +32,13 @@ def server():
 
 @pytest.fixture
 def proxied(monkeypatch, server, tmp_path):
-    """The custom provider through the local-llm-proxy, as sandbox create sets it up."""
+    """The custom provider through the llm-proxy, as sandbox create sets it up."""
     monkeypatch.setenv("EMBRY0_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setattr(eo, "_RETRY_BASE_SECONDS", 0.0)
     monkeypatch.setenv("EMBRY0_LLM_CUSTOM_BASE_URL", server.url)
     monkeypatch.setenv("EMBRY0_LLM_CUSTOM_VIA_PROXY", "true")
     monkeypatch.delenv("EMBRY0_LLM_CUSTOM_API_KEY", raising=False)
-    token = tmp_path / "local_llm_proxy_token"
+    token = tmp_path / "llm_proxy_token"
     token.write_text(_BEARER + "\n")
     monkeypatch.setenv("EMBRY0_LLM_CUSTOM_PROXY_TOKEN_PATH", str(token))
     return server
@@ -59,7 +59,7 @@ def test_through_the_proxy_the_run_authenticates_with_its_bearer_file(proxied) -
 def test_through_the_proxy_without_a_bearer_nothing_is_sent(proxied, monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("EMBRY0_LLM_CUSTOM_PROXY_TOKEN_PATH", str(tmp_path / "missing"))
     out = _run(_invocation())
-    assert out.is_error and "local-llm-proxy" in (out.error_message or "")
+    assert out.is_error and "llm-proxy" in (out.error_message or "")
     assert proxied.requests == []
 
 

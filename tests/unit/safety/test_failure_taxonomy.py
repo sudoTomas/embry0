@@ -135,7 +135,7 @@ def _pipeline_exception_classes() -> list[type[BaseException]]:
 _METER_MODULES = {
     "embry0/execution/proxy/metering.py",
     "embry0/execution/proxy/xai_proxy.py",
-    "embry0/execution/proxy/local_llm_proxy.py",
+    "embry0/execution/proxy/llm_proxy.py",
 }
 
 
