@@ -16,10 +16,17 @@ import {
   withModel,
   withModelTakenOut,
   withoutModelEntry,
+  WHOLE_NUMBER_KEYS,
   type CatalogueOverlay,
 } from "../catalogueOverlay";
 
 describe("overlayYaml", () => {
+  it("writes as integers exactly the whole-number fields the fixture names, which the backend checks", () => {
+    const listed = (shared as { whole_number_keys?: string[] }).whole_number_keys;
+    expect(listed, "the shared fixture names no whole_number_keys").toBeDefined();
+    expect([...(WHOLE_NUMBER_KEYS ?? [])].sort()).toEqual([...(listed ?? [])].sort());
+  });
+
   for (const sample of shared.cases) {
     it(`writes ${sample.name} as the catalogue reads it`, () => {
       expect(overlayYaml(sample.overlay as CatalogueOverlay)).toBe(sample.yaml);

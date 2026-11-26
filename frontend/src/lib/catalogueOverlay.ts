@@ -196,8 +196,11 @@ export function plainDecimal(value: number): string {
   return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
-/** The overlay's fields the schema types as whole numbers, written as integers: a float there is refused. */
-const WHOLE_NUMBER_KEYS = new Set(["version", "context_window"]);
+/**
+ * The overlay's fields the schema types as whole numbers, written as integers: a float there is refused. The shared
+ * fixture's `whole_number_keys` pins this list, and the backend checks that list against the overlay's schema.
+ */
+export const WHOLE_NUMBER_KEYS: ReadonlySet<string> = new Set(["version", "context_window"]);
 /** A model's fields of extra request body: JSON, which YAML reads as written, so their numbers stay as they are. */
 const EXTRAS_KEYS = new Set(["request_extras", "background_request_extras"]);
 

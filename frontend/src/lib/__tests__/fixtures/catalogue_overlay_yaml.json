@@ -1,5 +1,9 @@
 {
-  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other. A case with \"valid\": false is no catalogue (its id routes to no provider): the backend reads it back but does not merge it.",
+  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other. A case with \"valid\": false is no catalogue (its id routes to no provider): the backend reads it back but does not merge it. \"whole_number_keys\" are the overlay's fields the catalogue types as whole numbers: the form writes them as integers (WHOLE_NUMBER_KEYS), every other number as a float, and the backend checks the list against the overlay's schema, so a new whole-number field cannot be written as a float.",
+  "whole_number_keys": [
+    "context_window",
+    "version"
+  ],
   "cases": [
     {
       "name": "nothing: the shipped catalogue",
