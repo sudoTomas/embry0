@@ -34,14 +34,18 @@ compatible features, patch for fixes.
 ## Changelog
 
 [CHANGELOG.md](../CHANGELOG.md) follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Pull requests do not edit it, because parallel PRs would all conflict on the
-same lines. The maintainer writes each release's entry from the pull requests
-merged since the last tag. Their titles are Conventional Commits, so the type
-sorts them into Added, Changed, Fixed and so on.
 
 A pull request that needs operator action on upgrade (a new required variable,
-an image rebuild beyond the usual deploy, a manual step) must say so in its
-description. The release entry repeats it under **Upgrade notes**.
+a variable no longer read, an image rebuild beyond the usual deploy, a manual
+step) adds its note under **Upgrade notes** of the release it will be part of:
+`[Unreleased]`, or `[0.1.0]` until that version is tagged. It says so in its
+description too. An operator who runs `main` reads the note before the release
+is written.
+
+Pull requests add nothing else to it, because parallel PRs would all conflict
+on the same lines. The maintainer writes the rest of each release's entry from
+the pull requests merged since the last tag. Their titles are Conventional
+Commits, so the type sorts them into Added, Changed, Fixed and so on.
 
 ## Releasing
 

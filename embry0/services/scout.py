@@ -86,28 +86,6 @@ _FILE_EXTENSIONS = frozenset(
 )
 
 
-def warn_retired_tick(config: Any) -> bool:
-    """Warn once, at startup, while ``SCOUT_TICK_SECONDS`` is set: it is no longer read.
-
-    In the shape of ``settings_env_ignored``: the variable, whether its value
-    is what runs now (``matches``), and what to do. The value itself is not
-    logged. Whether the variable is set, from the environment or ``.env``.
-    """
-    if "scout_tick_seconds" not in (getattr(config, "model_fields_set", None) or set()):
-        return False
-    try:
-        matches = float(str(getattr(config, "scout_tick_seconds", "")).strip()) == TICK_SECONDS
-    except ValueError:
-        matches = False
-    logger.warning(
-        "settings_env_retired",
-        variable="SCOUT_TICK_SECONDS",
-        matches=matches,
-        hint=f"no longer read: the scout ticks every {TICK_SECONDS:g} s, a constant; remove the variable",
-    )
-    return True
-
-
 # ---- what one unit is asked ----
 
 

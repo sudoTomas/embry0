@@ -64,3 +64,14 @@ MOVED_TO_DOCUMENTS: Final[Mapping[str, str]] = {
     "OPENAI_COMPATIBLE_PROVIDERS": "the provider catalogue's providers.<name>.enabled",
     "OPENROUTER_CATALOG_REFRESH_HOURS": "the provider catalogue's openrouter.refresh_hours",
 }
+
+#: Variables whose setting became a constant (#168, #665), removed before 0.1.0: nothing reads them and nothing
+#: imports them. While one is still set, startup and ``embry0 config`` name it as they name the variables above, so
+#: an operator hears the same of every variable embry0 no longer reads; neither config lint takes one for a typo.
+REMOVED_BEFORE_0_1_0: Final[tuple[str, ...]] = (
+    "SCOUT_TICK_SECONDS",
+    "PROPOSAL_BRIEFS_PER_TICK",
+    "PROPOSAL_BRIEF_INTERVAL_SECONDS",
+    "JOB_BRIEFS_PER_TICK",
+    "JOB_BRIEF_INTERVAL_SECONDS",
+)

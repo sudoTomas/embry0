@@ -2813,9 +2813,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # last. Each tick reads its model and the leads section from one settings
     # snapshot, and its prompt from the proposal-brief agent definition (#166).
     from embry0.api.v1.proposals import open_proposals
-    from embry0.services.proposal_briefs import ProposalBriefWriter, brief_settings, warn_retired_cadence
+    from embry0.services.proposal_briefs import ProposalBriefWriter, brief_settings
 
-    warn_retired_cadence(config)
     app.state.proposal_brief_writer = ProposalBriefWriter(
         proposals=lambda: open_proposals(app.state),
         settings=brief_settings(app.state.settings, app.state.agent_defs_repo),
@@ -2830,9 +2829,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # the same brief writer: each tick reads its model from one settings
     # snapshot and its prompt from the job-brief agent definition (#166).
     from embry0.services.job_briefs import JobBriefWriter, job_brief_settings
-    from embry0.services.job_briefs import warn_retired_cadence as warn_retired_job_cadence
 
-    warn_retired_job_cadence(config)
     app.state.job_brief_writer = JobBriefWriter(
         store=app.state.job_briefs_repo,
         settings=job_brief_settings(app.state.settings, app.state.agent_defs_repo),
@@ -2940,7 +2937,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # no model is not scouted.
     from embry0.audit.helpers import emit_audit as _scout_audit
     from embry0.orchestration import dispatch_actors as _scout_actors
-    from embry0.services.scout import ScoutLoop, tick_settings, warn_retired_tick
+    from embry0.services.scout import ScoutLoop, tick_settings
     from embry0.storage.repositories.scout import ScoutRunsRepository
 
     async def _scout_gate() -> Any:
@@ -2961,7 +2958,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             job_id, repo=unit.repo, title=text.splitlines()[0][:200], body=text, kind="scout"
         )
 
-    warn_retired_tick(config)
     app.state.scout = ScoutLoop(
         settings=tick_settings(app.state.settings),
         runs=ScoutRunsRepository(db),

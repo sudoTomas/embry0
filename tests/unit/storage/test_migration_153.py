@@ -31,7 +31,8 @@ GROUPS = [{"id": "ops", "label": 'Ops "core", nodes', "summary": None, "x": 1.0,
 
 
 def _old_graph(slug: str, nodes: list[dict[str, Any]] | None = None) -> str:
-    """A graph as the release before stored it: parse_map's output, with ``areas`` and no ``groups``."""
+    """A graph as the release before #180 stored it: parse_map's output with its ``groups`` named ``areas``, and
+    each part's ``group`` named ``area``, each where it stands."""
     doc = {
         "format": FORMAT,
         "kinds": [{"id": "script", "label": 'A "nodes": kind'}],
@@ -43,9 +44,8 @@ def _old_graph(slug: str, nodes: list[dict[str, Any]] | None = None) -> str:
         ],
         "edges": [],
     }
-    graph = dict(parse_map(doc, slug).graph)
-    graph.pop("groups")
-    graph["nodes"] = [{k: v for k, v in node.items() if k != "group"} for node in graph["nodes"]]
+    graph = {("areas" if key == "groups" else key): value for key, value in parse_map(doc, slug).graph.items()}
+    graph["nodes"] = [{("area" if key == "group" else key): value for key, value in n.items()} for n in graph["nodes"]]
     return json.dumps(graph, separators=(",", ":"))
 
 

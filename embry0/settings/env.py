@@ -1,12 +1,14 @@
 """The environment variables embry0 no longer reads, and which of them are still set.
 
-Two kinds, each said at startup (``settings_env_retired``) and by ``embry0
-config`` while it is set, for one release, so an operator can remove it:
+Three kinds, each said at startup (``settings_env_retired``) and by ``embry0
+config`` while it is set, so an operator can remove it:
 
 - a variable a one-time import read once, at the first start of the release
   that moved what it set into a document (:data:`embry0.config_retired.MOVED_TO_DOCUMENTS`).
   The config no longer has a field for it, so whether it is set is read from
   the process environment and ``.env``, as the config reads them;
+- a variable whose setting became a constant, removed before 0.1.0
+  (:data:`embry0.config_retired.REMOVED_BEFORE_0_1_0`), read the same way;
 - a variable whose setting became a constant (:func:`_retired`). The config
   keeps a field for it one release, so it is set when the config was given
   it.
@@ -22,7 +24,7 @@ from typing import Any
 import structlog
 
 from embry0.config import Embry0Config
-from embry0.config_retired import MOVED_TO_DOCUMENTS
+from embry0.config_retired import MOVED_TO_DOCUMENTS, REMOVED_BEFORE_0_1_0
 
 logger = structlog.get_logger(__name__)
 
@@ -56,17 +58,36 @@ def moved_variables_set(environ: Mapping[str, str] | None = None, env_file: str 
     return [name for name in MOVED_TO_DOCUMENTS if name in given]
 
 
+def removed_variables_set(environ: Mapping[str, str] | None = None, env_file: str | Path | None = ".env") -> list[str]:
+    """The variables of :data:`REMOVED_BEFORE_0_1_0` this process was given, in the registry's order."""
+    given = given_names(environ, env_file)
+    return [name for name in REMOVED_BEFORE_0_1_0 if name in given]
+
+
 def _moved_line(name: str) -> str:
     return f"{name} is no longer read: what it set is set in {MOVED_TO_DOCUMENTS[name]} now; remove it"
 
 
+def _removed_line(name: str) -> str:
+    return f"{name} is no longer read, removed before 0.1.0; remove it"
+
+
+def _named_lines(environ: Mapping[str, str] | None, env_file: str | Path | None) -> list[tuple[str, str]]:
+    """``(variable, line)`` for each moved or removed variable still set: the moved first, each kind in its
+    registry's order."""
+    return [
+        *((name, _moved_line(name)) for name in moved_variables_set(environ, env_file)),
+        *((name, _removed_line(name)) for name in removed_variables_set(environ, env_file)),
+    ]
+
+
 def warn_moved_variables(environ: Mapping[str, str] | None = None, env_file: str | Path | None = ".env") -> list[str]:
-    """Warn once, at startup, for each variable of :data:`MOVED_TO_DOCUMENTS` still set; never its value. The
-    variables warned about."""
-    names = moved_variables_set(environ, env_file)
-    for name in names:
-        logger.warning("settings_env_retired", variable=name, hint=_moved_line(name))
-    return names
+    """Warn once, at startup, for each variable of :data:`MOVED_TO_DOCUMENTS` or :data:`REMOVED_BEFORE_0_1_0`
+    still set; never its value. The variables warned about."""
+    named = _named_lines(environ, env_file)
+    for name, line in named:
+        logger.warning("settings_env_retired", variable=name, hint=line)
+    return [name for name, _ in named]
 
 
 #: What replaced LOCAL_LLM_UPSTREAM and LOCAL_LLM_API_KEY (ADR 0032), said while either is set.
@@ -80,14 +101,7 @@ def _retired() -> dict[str, str]:
     """Each ``Embry0Config`` attribute no longer read at all, with what runs instead. The config keeps each one
     release, so startup (``settings_env_retired``) and ``embry0 config`` can say so. Read from the constants that
     replaced them, so the line never says other than what runs."""
-    from embry0.services import job_briefs, proposal_briefs, scout
-
     return {
-        "scout_tick_seconds": f"the scout ticks every {scout.TICK_SECONDS:g} s, a constant",
-        "proposal_briefs_per_tick": f"{proposal_briefs.CADENCE}, constants",
-        "proposal_brief_interval_seconds": f"{proposal_briefs.CADENCE}, constants",
-        "job_briefs_per_tick": f"{job_briefs.CADENCE}, constants",
-        "job_brief_interval_seconds": f"{job_briefs.CADENCE}, constants",
         # ADR 0032: a custom credential is its server; nothing routes every custom run to one root any more.
         "local_llm_upstream": LOCAL_UPSTREAM_RETIRED,
         "local_llm_api_key": LOCAL_UPSTREAM_RETIRED,
@@ -104,4 +118,4 @@ def retired_lines(
         for attr, what in _retired().items()
         if is_set(config, attr)
     ]
-    return [*constants, *(_moved_line(name) for name in moved_variables_set(environ, env_file))]
+    return [*constants, *(line for _, line in _named_lines(environ, env_file))]

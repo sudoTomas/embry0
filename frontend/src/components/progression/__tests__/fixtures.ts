@@ -72,7 +72,7 @@ export function entry(overrides: Partial<AchievementEntry> = {}): AchievementEnt
 export function progression(overrides: Partial<Progression> = {}): Progression {
   return {
     ...PACK_VIEW,
-    account: { xp: 15_134_431, total_level: 192, characters: 2, quest_points: 2, cloak_trim: false, divine_trim: false },
+    account: { xp: 15_134_431, total_level: 192, characters: 2, quest_points: 2, cloak_trim: false },
     skills: SKILLS,
     characters: [
       character({ agent_type: "review", level: 1, xp: 0, total_level: 5, best_skill: "coding", tier: "bronze", gear: "bronze", capes: [], rares: [], skills: SKILLS.map((s) => skill(s.id)) }),

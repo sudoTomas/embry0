@@ -77,8 +77,9 @@ class ParsedMap:
     commit: str | None
     source: str
     generated_at: str | None
-    #: What the viewer draws: kinds, groups, nodes, edges (and the header fields again, for one fetch). ``areas``,
-    #: the groups' old name, is served beside them for one release (#180).
+    #: What the viewer draws: kinds, groups, nodes, edges (and the header fields again, for one fetch). A map stored
+    #: before this release may also hold ``areas`` and each part an ``area``, the old names (#180), which nothing
+    #: reads.
     graph: dict[str, Any]
     #: One record per part id, only for parts the map has.
     details: dict[str, Any]
@@ -163,8 +164,6 @@ def _node(raw: Any) -> dict[str, Any] | None:
         "id": raw["id"],
         "kind": _text(raw.get("kind"), 60) or "part",
         "group": group,
-        # The old name, for a viewer of the release before: served one release more, then dropped.
-        "area": group,
         "label": _text(raw.get("label"), 200) or raw["id"],
         "sub": _text(raw.get("sub"), 200),
         "path": _text(raw.get("path"), 400),
@@ -265,8 +264,6 @@ def parse_map(doc: Any, slug: str) -> ParsedMap:
         "generated_at": generated_at,
         "kinds": kinds,
         "groups": groups,
-        # The old name, for a viewer of the release before: served one release more, then dropped (#180).
-        "areas": groups,
         "nodes": nodes,
         "edges": edges,
     }

@@ -259,8 +259,6 @@ class Progression:
                 "characters": len(self.characters),
                 "quest_points": self.quest_points,
                 "cloak_trim": self.cloak_trim,
-                # The same, under its name before #176; kept for one release.
-                "divine_trim": self.cloak_trim,
             },
             "characters": [
                 self.characters[a].to_dict(quest_cloak=a == self.quest_cloak_owner) for a in sorted(self.characters)

@@ -17,7 +17,7 @@ One JSON document per map:
 | `repo` | `owner/name` of the repository the map describes, or `null` for an organization-wide map. |
 | `commit`, `generated_at`, `source` | The commit read, when (ISO 8601), and what produced it, as shown on the page. |
 | `kinds` | `[{"id", "label"}]`: the kinds of part, in the order a legend lists them. |
-| `groups` | `[{"id", "label", "summary", "x", "y", "r"}]`: the scanner's groups of parts, drawn as labelled rings. They are the scanner's own and may hold parts with no path, unlike a repository's [areas](areas.md), which embry0 keeps. `areas`, their name before, is read as the same list; a map that gives both is refused (`422`). A map is served with both names until the next release, which drops `areas`. |
+| `groups` | `[{"id", "label", "summary", "x", "y", "r"}]`: the scanner's groups of parts, drawn as labelled rings. They are the scanner's own and may hold parts with no path, unlike a repository's [areas](areas.md), which embry0 keeps. `areas`, their name before, is read as the same list; a map that gives both is refused (`422`). A map is served with `groups` alone. |
 | `nodes` | The parts, below. At most 20,000. |
 | `edges` | `[{"s", "t", "rel"}]`: a link from part `s` to part `t` (`rel` says how: `calls`, `reads`, `runs`, ...). At most 100,000; a link to a part the map does not have is dropped. |
 | `details` | `{"<part id>": {...}}`: one record per part, read when the part is opened (below). |
@@ -27,7 +27,7 @@ A part (`nodes[]`):
 | Field | What it holds |
 |---|---|
 | `id` | Unique in the map, at most 300 characters. Keep it stable across scans: marks and sends are kept by it. |
-| `kind`, `group`, `label`, `sub` | Its kind's id, its group's id, its name, and a short line under the name. `area`, the group's name before, is read the same way; a part that gives both is refused (`422`), and a map is served with both until the next release. |
+| `kind`, `group`, `label`, `sub` | Its kind's id, its group's id, its name, and a short line under the name. `area`, the group's name before, is read the same way; a part that gives both is refused (`422`), and a part is served with `group` alone. |
 | `path`, `line`, `url` | Its file in the repository, a line in it, and an `https://` link to it. |
 | `repo` | `owner/name` when the part lives in a repository other than the map's (an organization map names one per system). It must be one of the map owner's repositories. Otherwise a part with a `path` lives in the map's `repo`, and a part with neither (a database table, a host) lives in none. |
 | `x`, `y`, `r` | Its place and size on the plane, in any units; the page fits the whole map to the screen. A part without a place is put on a spiral. |

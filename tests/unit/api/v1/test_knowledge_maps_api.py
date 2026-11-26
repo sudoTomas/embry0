@@ -244,8 +244,8 @@ async def test_an_upload_is_stored_and_served_as_it_is_with_an_etag(app: FastAPI
 
 
 async def test_the_viewer_reads_groups_and_areas_and_both_names_is_a_422(app: FastAPI) -> None:
-    """#180: the viewer's payload serves the rings as groups, and as areas for one release; an upload that gives
-    both names is refused, since one would be dropped unseen."""
+    """#180: the viewer's payload serves the rings as groups (areas, their old name, was served one release more);
+    an upload that gives both names is refused, since one would be dropped unseen."""
     rings = [{"id": "ops", "label": "Ops"}]
     async with await _client(app) as client:
         put = await _upload(client, {**_doc([{"id": PROBE, "group": "ops"}]), "groups": rings})
@@ -253,8 +253,8 @@ async def test_the_viewer_reads_groups_and_areas_and_both_names_is_a_422(app: Fa
         both = await _upload(client, {**_doc(), "groups": rings, "areas": rings})
     assert put.status_code == 200, put.text
     assert [g["id"] for g in got.get("groups") or []] == ["ops"], f"the viewer is not served groups: {list(got)}"
-    assert [g["id"] for g in got["areas"]] == ["ops"], "areas is served for one release more"
-    assert [(n.get("group"), n["area"]) for n in got["nodes"]] == [("ops", "ops")], f"a part's group: {got['nodes']}"
+    assert "areas" not in got, "areas was served one release more, and no longer"
+    assert [(n.get("group"), "area" in n) for n in got["nodes"]] == [("ops", False)], f"a part's group: {got['nodes']}"
     assert both.status_code == 422 and "groups and areas are one list" in both.json()["detail"], both.text
 
 

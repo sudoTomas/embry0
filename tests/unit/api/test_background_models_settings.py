@@ -302,15 +302,9 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
         xai_proxy_enabled=False,
         auth_proxy_enabled=False,
         context_proxy_enabled=False,
-        # No longer read (#168): the proposal briefs keep their fixed cadence, and startup warns.
-        proposal_briefs_per_tick="4",
-        proposal_brief_interval_seconds="61",
-        # Nor are these (#665): the job briefs keep theirs too.
-        job_briefs_per_tick="5",
-        job_brief_interval_seconds="62",
     )
     app = create_app(config)
-    with capture_logs() as startup_logs:
+    with capture_logs():
         async with lifespan(app):
             state = app.state
 
@@ -384,9 +378,7 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
             for agent_type, (writer, per_tick, interval) in loops.items():
                 assert isinstance(writer, BriefWriter), f"the {agent_type} loop is the one brief writer"
                 assert (writer._per_tick, writer._interval) == (per_tick, interval), (  # noqa: SLF001
-                    f"the {agent_type} loop keeps its fixed per-tick count and cadence: the variables that set "
-                    "them (PROPOSAL_BRIEFS_PER_TICK, PROPOSAL_BRIEF_INTERVAL_SECONDS, JOB_BRIEFS_PER_TICK and "
-                    "JOB_BRIEF_INTERVAL_SECONDS) no longer change them"
+                    f"the {agent_type} loop keeps its fixed per-tick count and cadence (#168, #665)"
                 )
                 shipped = BUILTIN_SEED[agent_type]["system_prompt"]
                 assert (await writer._settings()).voice == shipped, f"the boot seeded {agent_type}"  # noqa: SLF001
@@ -394,14 +386,6 @@ async def test_the_lifespan_builds_every_feature_on_readers_of_the_section(
                 assert (await writer._settings()).voice == "Write every brief in plain German.", (  # noqa: SLF001
                     f"an edit of {agent_type} reaches its loop's next tick, with no restart"
                 )
-
-    retired = [e["variable"] for e in startup_logs if e["event"] == "settings_env_retired"]
-    assert retired == [
-        "PROPOSAL_BRIEFS_PER_TICK",
-        "PROPOSAL_BRIEF_INTERVAL_SECONDS",
-        "JOB_BRIEFS_PER_TICK",
-        "JOB_BRIEF_INTERVAL_SECONDS",
-    ], f"the boot says each brief cadence variable still set is no longer read: {retired}"
 
 
 async def test_the_spend_reads_of_stats_are_bounded_by_the_month_through_an_index(

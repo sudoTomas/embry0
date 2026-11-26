@@ -744,26 +744,6 @@ class Embry0Config(BaseSettings):
     # Slop-O-Meter's policy are the settings document's sections now
     # (embry0/settings/sections/); the variables that set them before are no
     # longer read (embry0/config_retired.py says where each moved).
-    # SCOUT_TICK_SECONDS is no longer read: the scout ticks every 300 seconds
-    # (embry0.services.scout.TICK_SECONDS). Kept one release only so startup
-    # can warn while it is still set (settings_env_retired), as text, so no
-    # value of it can stop a start.
-    scout_tick_seconds: Annotated[str, NOT_SECRET] = ""
-
-    # PROPOSAL_BRIEF_INTERVAL_SECONDS and PROPOSAL_BRIEFS_PER_TICK are no longer
-    # read: the proposal brief writer writes at most 3 briefs every 60 seconds
-    # (embry0.services.proposal_briefs.PER_TICK, INTERVAL_SECONDS; #168). Kept one
-    # release only so startup can warn while either is still set
-    # (settings_env_retired), as text, so no value of them can stop a start.
-    proposal_brief_interval_seconds: Annotated[str, NOT_SECRET] = ""
-    proposal_briefs_per_tick: Annotated[str, NOT_SECRET] = ""
-    # JOB_BRIEF_INTERVAL_SECONDS and JOB_BRIEFS_PER_TICK are no longer read: the
-    # job brief writer writes at most 3 briefs every 60 seconds
-    # (embry0.services.job_briefs.PER_TICK, INTERVAL_SECONDS; #665). Kept one
-    # release only so startup can warn while either is still set
-    # (settings_env_retired), as text, so no value of them can stop a start.
-    job_brief_interval_seconds: Annotated[str, NOT_SECRET] = ""
-    job_briefs_per_tick: Annotated[str, NOT_SECRET] = ""
     # The Slop-O-Meter (spec 2026-10-26, slop-o-meter) reads the repositories
     # enrolled in background.slop_meter of the settings document (#165), at the
     # pace of its `slop_meter` section (#169). The process's own limits, which stay variables: each repository's bare

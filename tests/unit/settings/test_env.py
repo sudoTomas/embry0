@@ -20,14 +20,25 @@ def test_a_variable_name_is_the_attribute_in_capitals() -> None:
     assert env_name("api_rate_limit_per_minute") == "API_RATE_LIMIT_PER_MINUTE"
 
 
-#: The variables no longer read at all (#168), with what each line says runs instead.
+#: The variables no longer read at all, with what each line says runs instead (ADR 0032).
 RETIRED = {
-    "SCOUT_TICK_SECONDS": "the scout ticks every 300 s, a constant",
-    "PROPOSAL_BRIEFS_PER_TICK": "the proposal brief writer writes at most 3 briefs every 60 s, constants",
-    "PROPOSAL_BRIEF_INTERVAL_SECONDS": "the proposal brief writer writes at most 3 briefs every 60 s, constants",
-    "JOB_BRIEFS_PER_TICK": "the job brief writer writes at most 3 briefs every 60 s, constants",
-    "JOB_BRIEF_INTERVAL_SECONDS": "the job brief writer writes at most 3 briefs every 60 s, constants",
+    "LOCAL_LLM_UPSTREAM": (
+        "each custom credential names its own server, reached through the local-llm-proxy (ADR 0032), and "
+        "`embry0 credentials import-env` copies the two variables into the environment's (custom/api-key)"
+    ),
+    "LOCAL_LLM_API_KEY": (
+        "each custom credential names its own server, reached through the local-llm-proxy (ADR 0032), and "
+        "`embry0 credentials import-env` copies the two variables into the environment's (custom/api-key)"
+    ),
 }
+#: Variables whose setting became a constant (#168, #665), removed before 0.1.0.
+REMOVED = (
+    "SCOUT_TICK_SECONDS",
+    "PROPOSAL_BRIEFS_PER_TICK",
+    "PROPOSAL_BRIEF_INTERVAL_SECONDS",
+    "JOB_BRIEFS_PER_TICK",
+    "JOB_BRIEF_INTERVAL_SECONDS",
+)
 
 
 @pytest.mark.parametrize("variable", sorted(RETIRED))
@@ -54,13 +65,36 @@ def test_no_retired_variable_set_says_nothing_of_them() -> None:
         assert retired_lines(Embry0Config(_env_file=None)) == []  # type: ignore[call-arg]
     with patch.dict(os.environ, dict.fromkeys(RETIRED, "1"), clear=True):
         said = retired_lines(Embry0Config(_env_file=None))  # type: ignore[call-arg]
-    assert [line.split(" ", 1)[0] for line in said] == [
-        "SCOUT_TICK_SECONDS",
-        "PROPOSAL_BRIEFS_PER_TICK",
-        "PROPOSAL_BRIEF_INTERVAL_SECONDS",
-        "JOB_BRIEFS_PER_TICK",
-        "JOB_BRIEF_INTERVAL_SECONDS",
-    ], f"each set variable once, nothing else: {said}"
+    assert [line.split(" ", 1)[0] for line in said] == ["LOCAL_LLM_UPSTREAM", "LOCAL_LLM_API_KEY"], (
+        f"each set variable once, nothing else: {said}"
+    )
+
+
+@pytest.mark.parametrize("variable", REMOVED)
+def test_a_variable_removed_before_0_1_0_is_named_like_every_other_no_longer_read(
+    variable: str, tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """#741 review: an operator who still sets one hears the same at startup and from ``embry0 config`` as of every
+    other variable embry0 no longer reads, and neither lint calls it a typo."""
+    from embry0.config import unknown_prefixed_env_keys
+    from embry0.config_lint import declared_env_names, find_unknown_env_vars
+    from embry0.settings.env import warn_moved_variables
+
+    line = f"{variable} is no longer read, removed before 0.1.0; remove it"
+    with capture_logs() as logs:
+        warned = warn_moved_variables({variable: _VALUE}, env_file=tmp_path / "absent.env")
+    hints = [e["hint"] for e in logs if e["event"] == "settings_env_retired"]
+    assert (warned, hints) == ([variable], [line]), f"startup names it once, as removed before 0.1.0: {logs}"
+    monkeypatch.setattr("embry0.settings.sections.CATALOG", TEST_CATALOG)
+    with patch.dict(os.environ, {variable: _VALUE}, clear=True), pytest.raises(SystemExit):
+        cmd_config(argparse.Namespace())
+    err = capsys.readouterr().err
+    assert line in err, f"embry0 config names it as removed before 0.1.0: {err}"
+    assert "is set but is not an embry0 setting" not in err, f"a removed variable is no typo of a setting: {err}"
+    environ = {variable: _VALUE}
+    assert find_unknown_env_vars(environ, declared_env_names(Embry0Config)) == [], "the near-miss lint names it"
+    assert unknown_prefixed_env_keys(environ) == [], "the prefix lint names it"
+    assert _VALUE not in err and _VALUE not in repr(logs), "its value is never shown"
 
 
 # ---- the variables a one-time import read (#168) -----------------------------------------------------------------

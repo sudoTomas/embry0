@@ -183,7 +183,6 @@ def test_levels_add_up_per_character_with_every_level_crossed_recorded() -> None
         "characters": 2,
         "quest_points": 0,
         "cloak_trim": False,
-        "divine_trim": False,
     }
     assert body["quests"] == [] and body["diaries"] == [], "set by the service"
     assert [s["id"] for s in body["skills"]] == list(SKILLS)

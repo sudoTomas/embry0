@@ -70,7 +70,6 @@ async def test_the_read_answers_the_account_its_characters_and_achievements() ->
         "characters": 1,
         "quest_points": 0,
         "cloak_trim": False,
-        "divine_trim": False,
     }
     assert len(body["skills"]) == 23 and body["skills"][0] == {
         "id": "coding",

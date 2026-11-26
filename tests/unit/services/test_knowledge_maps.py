@@ -319,13 +319,13 @@ def test_a_batch_is_one_task_for_one_pull_request_that_lists_every_part() -> Non
 @pytest.mark.parametrize("name", ["groups", "areas"])
 def test_the_scanner_s_rings_are_groups_and_areas_is_read_as_their_old_name(name: str) -> None:
     """#180: embry0.map/1 calls the rings groups; an upload that still says areas means the same list. The graph
-    serves them as groups, and as areas for one release, for a viewer of the release before."""
+    serves them as groups alone: areas was served beside them for one release."""
     doc = _doc()
     rings = doc.pop("areas")
     parsed = parse_map({**doc, name: rings}, "shop")
     expected = [{"id": "ops", "label": "Ops", "summary": None, "x": 1.0, "y": 2.0, "r": 3.0}]
     assert parsed.graph.get("groups") == expected, f"an upload's {name} must be served as groups: {parsed.graph}"
-    assert parsed.graph["areas"] == expected, "areas, the old name, is served for one release more"
+    assert "areas" not in parsed.graph, "areas, the old name, was served one release more, and no longer"
 
 
 def test_a_map_that_gives_both_names_is_refused() -> None:
@@ -342,12 +342,12 @@ def test_groups_that_are_not_a_list_are_refused() -> None:
 
 @pytest.mark.parametrize("name", ["group", "area"])
 def test_a_part_names_its_ring_as_group_and_area_is_read_as_its_old_name(name: str) -> None:
-    """#180: a part's ring is its group; a part that still says area means the same, and is served both ways for
-    one release."""
+    """#180: a part's ring is its group; a part that still says area means the same, and is served as its group
+    alone: area was served beside it for one release."""
     doc = _doc(nodes=[{"id": "a", name: "ops"}, {"id": "b"}])
     nodes = parse_map(doc, "shop").graph["nodes"]
-    assert [(n.get("group"), n["area"]) for n in nodes] == [("ops", "ops"), (None, None)], (
-        f"a part's {name} must be served as its group, and as area: {nodes}"
+    assert [(n.get("group"), "area" in n) for n in nodes] == [("ops", False), (None, False)], (
+        f"a part's {name} must be served as its group, and no longer as area: {nodes}"
     )
 
 
