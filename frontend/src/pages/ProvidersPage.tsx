@@ -22,6 +22,7 @@ import { toastApiError } from "@/api/errorToast";
 import { ProviderKeyDialog } from "@/components/providers/ProviderKeyDialog";
 import { ProviderSpend } from "@/components/providers/ProviderSpend";
 import { BackgroundModelsCard } from "@/components/providers/BackgroundModelsCard";
+import { CatalogueEditor } from "@/components/providers/CatalogueEditor";
 import { useBackgroundModelIds } from "@/hooks/useBackgroundModels";
 import { isLlmProvider } from "@/lib/llmProviders";
 
@@ -773,6 +774,8 @@ export function ProvidersPage() {
           pending={updateProvider.isPending}
         />
       ))}
+
+      <CatalogueEditor isAdmin={isAdmin} />
     </div>
   );
 }
