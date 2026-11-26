@@ -99,6 +99,9 @@ from embry0.trackers.filing import DRAFT_TITLE_PREFIX
 logger = structlog.get_logger(__name__)
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "partial", "expired", "skipped"}
+#: What :meth:`WatcherService.run_once` answers for a stack the fleet stopped (#746): no tick ran and no row was
+#: written. Not a ``watcher_runs`` action.
+NOT_WATCHED = "not_watched"
 _POLL_SECONDS = 20
 # #335: consecutive failures to record a tick attempt before the watcher calls
 # itself unhealthy. No mark, no tick (a tick that cannot be recorded would be
@@ -554,6 +557,9 @@ class WatcherService:
         self._config = config
         self._stack_reader = stack_reader
         self._filer_for = filer_for
+        # #746: stopped by the fleet. No tick starts from then on, one started by hand included; a tick under way
+        # finishes.
+        self._retired = False
         self._signature_masks = signature_masks
         self._slop_policy = slop_policy
         self._watcher_settings = watcher_settings
@@ -601,6 +607,12 @@ class WatcherService:
         """The config this stack's ticks read now: its row's overrides over the process config."""
         return self._config
 
+    def retire(self) -> None:
+        """Stopped by the fleet (#746): no tick starts from now on, and a tick under way finishes. A tick started by
+        hand that checked the stack before it stopped answers :data:`NOT_WATCHED` and writes nothing, so a stack
+        nobody watches never gets its series back."""
+        self._retired = True
+
     @property
     def ticking(self) -> bool:
         """Whether a tick is running now; a watcher stopped meanwhile finishes it first."""
@@ -614,6 +626,8 @@ class WatcherService:
         loop asks Loki about them again before it ticks on them. A row that cannot be read leaves the row last read
         in force: a database blip neither stops a stack nor changes what it reads.
         """
+        if self._retired:
+            return False
         if self._stack_reader is None:
             return True
         try:
@@ -1857,6 +1871,10 @@ class WatcherService:
         tick only.
         """
         async with self._running_tick:
+            if self._retired:
+                # #746: checked under the lock, so a tick started by hand after its stack was checked, and the
+                # fleet stopped it meanwhile, neither pays for an analysis nor writes a row or a series.
+                return {"action": NOT_WATCHED, "detail": f"{self._repo} is no longer watched"}
             self._run_with = run_with
             window_end = datetime.now(UTC)
             window_start, unanalysed_seconds = await self._window_start(window_end)

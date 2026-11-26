@@ -2423,9 +2423,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         metrics=loop_metrics,
         on_change=_first_watcher,
     )
-    for stack in await watched_stacks(app.state.watcher_stacks_repo):
-        # Seeds each stack's tick timestamps from watcher_runs (#285): a restart must not read as "never ticked".
-        await fleet.add(stack)
+    # The startup's look: each enabled stack's watcher, its tick timestamps seeded from watcher_runs (#285), so a
+    # restart does not read as "never ticked". One stack whose row holds a value too deep to read (#527) is left
+    # out and logged critical by name; any other failure to read the table leaves none watched, logged critical.
+    await fleet.sync()
     app.state.watcher_fleet = fleet
     app.state.watcher_services = fleet.services
     _first_watcher()
@@ -3191,31 +3192,6 @@ def _start_recovered_jobs(executor: Any, jobs: list[dict[str, Any]]) -> None:
             resumed=[j["job_id"] for j in jobs if j["action"] == "resume"],
             relaunched=[j["job_id"] for j in jobs if j["action"] != "resume"],
         )
-
-
-async def watched_stacks(stacks_repo: Any) -> list[Any]:
-    """The enabled watched stacks a start watches.
-
-    One stack whose stored row holds a value too deep to read (#527) is left out, and logged critical by name;
-    the others are watched. Any other failure to read them leaves none watched, logged critical, as before.
-    """
-    from embry0.storage.database import StoredValueTooDeep
-
-    try:
-        try:
-            return list(await stacks_repo.list_all(enabled_only=True))
-        except StoredValueTooDeep:
-            watched, unreadable = await stacks_repo.list_readable(enabled_only=True)
-            for repo in unreadable:
-                logger.critical(
-                    "watcher_stack_unreadable",
-                    repo=repo,
-                    reason="its stored row holds a value too deep to read; it is not watched until stored again",
-                )
-            return list(watched)
-    except Exception:
-        logger.critical("watcher_stacks_unreadable", exc_info=True)
-        return []
 
 
 def create_app(

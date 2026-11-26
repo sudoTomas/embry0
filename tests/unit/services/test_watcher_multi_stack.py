@@ -185,7 +185,7 @@ def test_a_watcher_is_built_and_started_for_every_enabled_stack() -> None:
     """#746: the fleet builds and starts them, at startup and as the table changes
     (its behaviour: tests/unit/services/test_watcher_fleet.py)."""
     source = pathlib.Path(app_module.__file__).read_text()
-    assert "list_all(enabled_only=True)" in source, "app.py must read the enabled stacks"
+    assert "read_enabled_stacks(app.state.watcher_stacks_repo)" in source, "app.py must read the enabled stacks"
     assert "app.state.watcher_services = fleet.services" in source, "the API and health read the fleet's registry"
 
     fleets = [

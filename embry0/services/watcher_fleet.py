@@ -103,6 +103,9 @@ class WatcherFleet:
         self._loops: dict[str, asyncio.Task[Any]] = {}
         #: Stopped while a tick ran: the watcher and its loop, cancelled once the tick is done.
         self._draining: dict[str, tuple[Any, asyncio.Task[Any] | None]] = {}
+        #: The stacks not running whose row could not be read at the last look, each said once while it stays so.
+        self._unreadable: set[str] = set()
+        self._looked = False
 
     async def add(self, stack: Any) -> None:
         """Build ``stack``'s watcher, seed its metrics and, with ``run_loops``, start its loop."""
@@ -128,6 +131,7 @@ class WatcherFleet:
         task = self._loops.pop(repo, None)
         if service is None:
             return
+        service.retire()
         if service.ticking:
             self._draining[repo] = (service, task)
             logger.info("watcher_stack_draining", stack=repo)
@@ -150,15 +154,30 @@ class WatcherFleet:
     async def sync(self) -> tuple[list[str], list[str]]:
         """Start the enabled stacks not running and stop the running ones no longer enabled; ``(started, stopped)``.
 
-        A stack whose row cannot be read is neither started nor stopped: what
-        runs keeps running. A table that cannot be read at all changes nothing.
+        The first call is the startup's. A stack whose row cannot be read is
+        neither started nor stopped: what runs keeps running, and one not
+        running is logged critical, once while it stays so, as at startup. A
+        table that cannot be read at all changes nothing: critical at startup,
+        when no stack is watched then, and a warning after.
         """
         self._drain()
+        first, self._looked = not self._looked, True
         try:
             stacks, unreadable = await self._read_stacks()
         except Exception:  # noqa: BLE001 - nothing is stopped on a read that failed
-            logger.warning("watcher_fleet_unread", exc_info=True)
+            if first:
+                logger.critical("watcher_stacks_unreadable", exc_info=True)
+            else:
+                logger.warning("watcher_fleet_unread", exc_info=True)
             return [], []
+        idle = {repo for repo in unreadable if repo not in self.services}
+        for repo in sorted(idle - self._unreadable):
+            logger.critical(
+                "watcher_stack_unreadable",
+                repo=repo,
+                reason="its stored row holds a value too deep to read; it is not watched until stored again",
+            )
+        self._unreadable = idle
         enabled = {stack.repo: stack for stack in stacks}
         kept = set(unreadable)
         stopped = [repo for repo in list(self.services) if repo not in enabled and repo not in kept]

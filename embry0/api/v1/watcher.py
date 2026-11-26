@@ -72,6 +72,8 @@ async def trigger_watcher_run(
     deleted since its watcher last read its row answers as one nobody watches,
     and a changed row applies to the tick (#746).
     """
+    from embry0.services.watcher import NOT_WATCHED
+
     chosen = body.run_with if body else None
     services = getattr(request.app.state, "watcher_services", None) or {}
     if not services:
@@ -99,8 +101,14 @@ async def trigger_watcher_run(
         if not await _still_watched(watched[stack]):
             raise HTTPException(status_code=404, detail=f"{stack} is not a watched stack")
         run_with = await checked_run_with(request, chosen, stack)
-        return cast("dict[str, Any]", await watched[stack].run_once(run_with))
-    watched = {name: service for name, service in watched.items() if await _still_watched(service)}
+        ticked = cast("dict[str, Any]", await watched[stack].run_once(run_with))
+        if ticked.get("action") == NOT_WATCHED:
+            # Stopped by the fleet after the check above; its watcher ran nothing (#746).
+            raise HTTPException(status_code=404, detail=f"{stack} is not a watched stack")
+        return ticked
+    # Each stack's row is read at once, not one stack's lock after another's (#746).
+    still = await asyncio.gather(*(_still_watched(service) for service in watched.values()))
+    watched = {name: service for (name, service), kept in zip(watched.items(), still, strict=True) if kept}
     if not watched:
         raise HTTPException(status_code=503, detail="watcher not initialized")
     if len(watched) > 1:

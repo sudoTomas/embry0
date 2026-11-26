@@ -180,8 +180,11 @@ target applies to its next tick, and a changed `interval_seconds` sets the
 wait after that tick. Every minute the orchestrator also looks at the table:
 a stack added or enabled since starts ticking, and the watcher of one
 disabled or deleted stops, after the tick it is running, if any. The
-stopped stack's metrics go with it. A row that cannot be read keeps what was
-last read, so a database blip neither stops nor starts a stack.
+stopped stack's metrics go with it, and a tick started by hand that checked
+the stack before it stopped runs nothing. A row that cannot be read keeps
+what was last read, so a database blip neither stops nor starts a stack; a
+stack not running whose row cannot be read is logged critical
+(`watcher_stack_unreadable`), once while it stays so.
 
 An unknown key in `settings` is dropped on write and echoed back as
 `ignored_settings`, so a typo cannot become configuration nothing reads.

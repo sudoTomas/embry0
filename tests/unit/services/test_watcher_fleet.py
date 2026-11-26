@@ -96,6 +96,20 @@ async def test_a_changed_logql_is_asked_of_loki_before_the_stack_ticks_on_it() -
 
 
 @pytest.mark.asyncio
+async def test_a_changed_deploy_logql_alone_is_asked_of_loki_again() -> None:
+    asked: list[str] = []
+
+    def loki(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params["query"])
+        return httpx.Response(200, json={"data": {"result": []}})
+
+    svc = _watcher([dataclasses.replace(STACK, settings={**STACK.settings, "deploy_logql": '{job="deploys"}'})])
+    svc._http = _loki(loki)
+    await svc._iterate()
+    assert '{job="deploys"}' in asked, f"a new deploy-marker selector must be checked with Loki too: {asked}"
+
+
+@pytest.mark.asyncio
 async def test_a_changed_tracker_builds_the_stack_s_filer_again() -> None:
     svc = _watcher([dataclasses.replace(STACK, tracker="gitlab"), dataclasses.replace(STACK, tracker="gitlab")])
     built: list[str] = []
@@ -125,6 +139,10 @@ class _Watcher:
         self.ticking = False
         self.looping = asyncio.Event()
         self.cancelled = False
+        self.retired = False
+
+    def retire(self) -> None:
+        self.retired = True
 
     async def start(self) -> None:
         self.looping.set()
@@ -192,6 +210,38 @@ async def test_a_stack_stopped_in_the_middle_of_a_tick_finishes_it_first() -> No
     await fleet.sync()
     await asyncio.sleep(0)
     assert watcher.cancelled, "once the tick is done, the loop stops"
+
+
+@pytest.mark.asyncio
+async def test_a_stack_re_enabled_while_its_watcher_finishes_a_tick_gets_no_second_watcher() -> None:
+    table = [STACK]
+    fleet = _fleet(table)
+    await fleet.sync()
+    first = fleet.services["acme/web"]
+    await asyncio.wait_for(first.looping.wait(), 1)
+    first.ticking = True
+    table[0] = dataclasses.replace(STACK, enabled=False)
+    await fleet.sync()
+    table[0] = STACK
+    started, _ = await fleet.sync()
+    assert started == [] and "acme/web" not in fleet.services, "a second watcher would run beside the one finishing"
+    first.ticking = False
+    started, _ = await fleet.sync()
+    await asyncio.sleep(0)
+    assert first.cancelled and started == ["acme/web"] and fleet.services["acme/web"] is not first
+    fleet.stop("acme/web")
+
+
+@pytest.mark.asyncio
+async def test_a_stack_whose_row_cannot_be_read_and_is_not_running_is_said_once() -> None:
+    import structlog
+
+    fleet = _fleet([], unreadable=["acme/deep"])
+    with structlog.testing.capture_logs() as logs:
+        await fleet.sync()
+        await fleet.sync()
+    said = [(e["log_level"], e.get("repo")) for e in logs if e["event"] == "watcher_stack_unreadable"]
+    assert said == [("critical", "acme/deep")], f"named once, as at startup, while it stays unreadable: {said}"
 
 
 @pytest.mark.asyncio
@@ -281,6 +331,136 @@ async def test_a_stack_stopped_while_the_metrics_are_read_gets_no_series_back() 
         for repo in stacks | {"acme/api": 0}
     }
     assert read == {"acme/web": 1.0, "acme/api": None}, f"the running stack counted, the stopped one left out: {read}"
+
+
+# ---- ticks started by hand --------------------------------------------------------------------------------------
+
+
+A = WatcherStack(repo="acme/api", logql='{app="api"}', tracker="github")
+B = WatcherStack(repo="acme/web", logql='{app="web"}', tracker="github")
+SERIES = ("embry0_watcher_last_tick_timestamp_seconds", "embry0_watcher_last_verdict_tick_timestamp_seconds")
+
+
+def _real_fleet(table: dict[str, WatcherStack], metrics: LoopMetrics, on_read: Any = None) -> Any:
+    """Real watchers of ``table``'s stacks in a real fleet; ``on_read(repo)`` runs as a watcher reads its row."""
+
+    def build(stack: WatcherStack) -> Any:
+        svc = _service(config=StackConfig(_config(), stack), lines=[])
+        svc._metrics = metrics
+        svc._query_checks = {"WATCHER_LOGQL": LogQLCheck(LogQLStatus.OK)}
+        svc._auto_acceptor = AsyncMock(return_value=[])
+
+        async def read_row(repo: str = stack.repo) -> WatcherStack:
+            if on_read is not None:
+                await on_read(repo)
+            return table[repo]
+
+        svc._stack_reader = read_row
+        return svc
+
+    async def read_stacks() -> tuple[list[WatcherStack], list[str]]:
+        return [s for s in table.values() if s.enabled], []
+
+    return _fleet_module().WatcherFleet(
+        build=build,
+        read_stacks=read_stacks,
+        runs_repo=MagicMock(last_tick_times=AsyncMock(return_value={})),
+        run_loops=False,
+        background_tasks=set(),
+        metrics=metrics,
+    )
+
+
+def _request(fleet: Any) -> Any:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(watcher_services=fleet.services, watcher_service=None))
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unnamed_tick_runs_no_stack_the_fleet_stopped_while_it_checked_the_others(monkeypatch) -> None:
+    """#749 review: the dashboard's Run tick now checks each stack's row, then ticks them; a stack the fleet stopped
+    in between must not pay for an analysis, nor get the series back that its stop removed."""
+    from embry0.api.v1 import watcher as watcher_api
+
+    registry = CollectorRegistry()
+    metrics = LoopMetrics(registry)
+    table = {"acme/api": A, "acme/web": B}
+    armed = {"on": False}
+
+    async def on_read(repo: str) -> None:
+        if repo == "acme/web" and armed["on"]:
+            armed["on"] = False  # acme/api is disabled, and the fleet's minute lands, while acme/web's row is read
+            table["acme/api"] = dataclasses.replace(A, enabled=False)
+            await fleet.sync()
+
+    fleet = _real_fleet(table, metrics, on_read)
+    await fleet.sync()
+    api = fleet.services["acme/api"]
+    monkeypatch.setattr(watcher_api, "key_covers", lambda request, name: True)
+    armed["on"] = True
+    await watcher_api.trigger_watcher_run(_request(fleet))
+    back = [name for name in SERIES if registry.get_sample_value(name, {"stack": "acme/api"}) is not None]
+    assert api._runs.create.await_count == 0, "a stack stopped after its check still ticked"
+    assert back == [], f"and got its series back, which nothing removes again: {back}"
+
+
+@pytest.mark.asyncio
+async def test_a_named_tick_of_a_stack_stopped_after_its_check_answers_as_not_watched(monkeypatch) -> None:
+    """The named path awaits the run_with check between the row check and the tick: the fleet can stop the stack
+    there too."""
+    from fastapi import HTTPException
+
+    from embry0.api.v1 import watcher as watcher_api
+
+    registry = CollectorRegistry()
+    metrics = LoopMetrics(registry)
+    fleet = _real_fleet({"acme/api": A}, metrics)
+    await fleet.sync()
+    api = fleet.services["acme/api"]
+
+    async def stopped_meanwhile(request: Any, chosen: Any, stack: str) -> None:
+        fleet.stop(stack)
+
+    monkeypatch.setattr(watcher_api, "key_covers", lambda request, name: True)
+    monkeypatch.setattr(watcher_api, "checked_run_with", stopped_meanwhile)
+    try:
+        answered = await watcher_api.trigger_watcher_run(_request(fleet), stack="acme/api")
+    except HTTPException as refused:
+        assert refused.status_code == 404, refused.detail
+    else:
+        pytest.fail(f"a stack the fleet stopped after its check was ticked by hand: {answered}")
+    assert api._runs.create.await_count == 0, "a stack stopped after its check still ticked"
+    assert all(registry.get_sample_value(name, {"stack": "acme/api"}) is None for name in SERIES)
+
+
+@pytest.mark.asyncio
+async def test_an_unnamed_tick_reads_every_stack_s_row_at_once(monkeypatch) -> None:
+    """Each check waits for its stack's tick under way; one after another, a busy stack would hold up the rest."""
+    from embry0.api.v1 import watcher as watcher_api
+
+    both = asyncio.Event()
+    reading: set[str] = set()
+    overlapped: list[str] = []
+
+    async def on_read(repo: str) -> None:
+        reading.add(repo)
+        if len(reading) == 2:
+            both.set()
+        try:
+            await asyncio.wait_for(both.wait(), 0.5)
+        except TimeoutError:
+            return
+        overlapped.append(repo)
+
+    fleet = _real_fleet({"acme/api": A, "acme/web": B}, LoopMetrics(CollectorRegistry()), on_read)
+    await fleet.sync()
+    monkeypatch.setattr(watcher_api, "key_covers", lambda request, name: True)
+    result = await watcher_api.trigger_watcher_run(_request(fleet))
+    assert sorted(overlapped) == ["acme/api", "acme/web"], (
+        f"the unnamed tick read one stack's row after another, not every row at once: {overlapped}"
+    )
+    assert [entry["stack"] for entry in result["stacks"]] == ["acme/api", "acme/web"], result
 
 
 # ---- production ------------------------------------------------------------------------------------------------
