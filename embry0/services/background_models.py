@@ -41,6 +41,7 @@ which are metered and capped as every job is.
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 import uuid
@@ -53,7 +54,7 @@ import httpx
 import structlog
 
 from embry0.orchestration.budget_gate import DispatchDecision
-from embry0.services.local_slots import CallSlots, server_for
+from embry0.services.local_slots import CallSlots, server_of
 from embry0.settings.sections.background_models import (
     BACKGROUND_MODELS,
     FEATURES,
@@ -129,6 +130,9 @@ class Endpoint:
     local: bool
     #: The server a local call holds a slot of (``services.local_slots``); '' for a hosted model.
     server: str = ""
+    #: The address a local call connects to, its server's host resolved and checked (``server_address``); '' for a
+    #: hosted model, whose host is the provider's own.
+    address: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,16 +164,13 @@ class LocalServerBusy(BackgroundCallRefused):
         self.args = (f"{feature} on {model}: every slot of its server is taken",)
 
 
-async def resolve_endpoint(
-    model: str, resolver: Any, repo: str = "", *, feature: str = "", proxy_upstream: str = ""
-) -> Endpoint | None:
+async def resolve_endpoint(model: str, resolver: Any, repo: str = "", *, feature: str = "") -> Endpoint | None:
     """The chat-completions endpoint ``model`` runs on for ``repo``, or None when it cannot be called from here.
 
     The key is the one a job of ``repo`` would get: the repository's binding,
     then its owner's, then the global pool, then the environment. A local
-    model's server is its credential's, or, while the local-llm-proxy's
-    upstream is set (``proxy_upstream``), that upstream's, as every agent run's
-    is (``local_slots.server_for``).
+    model's server is its credential's, as every agent run's is
+    (``local_slots.server_of``).
     """
     from embry0.agents.providers import provider_for_model, upstream_model
 
@@ -185,13 +186,25 @@ async def resolve_endpoint(
     if not root or not cred.secret:
         return None
     local = provider.name == "custom"
+    address = ""
+    if local:
+        from embry0.execution.proxy.server_address import RefusedServer, UnresolvedServer, pin_server
+
+        try:
+            # ADR 0032: the operator's server is reached at an address its host resolved to and was checked for (never
+            # this machine or link-local, whatever the credential's spelling), and only there. A lookup, off the loop.
+            address = (await asyncio.to_thread(pin_server, root)).address
+        except (RefusedServer, UnresolvedServer) as exc:
+            logger.warning("background_model_refused_server", feature=feature, model=model, reason=str(exc))
+            return None
     return Endpoint(
         model=model,
         root=root,
         key=cred.secret,
         upstream_model=upstream_model(provider, model),
         local=local,
-        server=server_for(getattr(cred, "id", None), proxy_upstream=proxy_upstream) if local else "",
+        server=server_of(getattr(cred, "id", None)) if local else "",
+        address=address,
     )
 
 
@@ -263,12 +276,20 @@ async def ask_json(
         # and no thinking for a short task.
         body["response_format"] = {"type": "json_schema", "json_schema": {"name": name, "schema": dict(schema)}}
         body["chat_template_kwargs"] = {"enable_thinking": False}
-    resp = await client.post(
-        f"{endpoint.root}/chat/completions",
-        json=body,
-        headers={"Authorization": f"Bearer {endpoint.key}"},
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
+    url = f"{endpoint.root}/chat/completions"
+    headers = {"Authorization": f"Bearer {endpoint.key}"}
+    extensions: dict[str, Any] = {}
+    if endpoint.address:
+        from embry0.execution.proxy.server_address import pinned_request
+
+        url, host, extensions = pinned_request(url, endpoint.address)
+        headers.update(host)
+    if extensions:
+        resp = await client.post(
+            url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS, extensions=extensions
+        )
+    else:
+        resp = await client.post(url, json=body, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
     resp.raise_for_status()
     try:
         data = resp.json()
@@ -359,8 +380,7 @@ class BackgroundCalls:
                 hint="a model with no price is never called: name a priced one in background_models",
             )
             return None
-        proxy_upstream = self._local_slots.proxy_upstream if self._local_slots is not None else ""
-        return await resolve_endpoint(model, self._resolver, repo or "", feature=feature, proxy_upstream=proxy_upstream)
+        return await resolve_endpoint(model, self._resolver, repo or "", feature=feature)
 
     async def ask(
         self,

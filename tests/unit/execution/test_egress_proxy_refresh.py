@@ -33,6 +33,8 @@ def _daemon(tmp_path, addresses: dict[str, str]):
     async def run_cmd(cmd, timeout=30, **_kw):
         if cmd and cmd[0] == "inspect-running":
             return "true"
+        if cmd and cmd[0] == "inspect-env-names":
+            return "PATH\nHOME\n"
         if "--entrypoint" in cmd:
             return await run_helper(cmd, timeout)
         if cmd[-3:-1] == ["image", "inspect"] or "exec" in cmd:
@@ -55,6 +57,7 @@ def _daemon(tmp_path, addresses: dict[str, str]):
     docker.inspect_network = AsyncMock(side_effect=inspect_network)
     docker.build_exec_cmd = lambda container, cmd, **_kw: ["exec", container, *cmd]
     docker.build_inspect_running_cmd = lambda container: ["inspect-running", container]
+    docker.build_inspect_env_names_cmd = lambda container: ["inspect-env-names", container]
     return docker, table
 
 

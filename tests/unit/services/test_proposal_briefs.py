@@ -148,7 +148,7 @@ async def test_a_local_model_is_asked_for_json_without_thinking(custom_enabled: 
     assert await _writer(briefs, [_proposal()], [], sent=sent).tick() == ["case:hc-1"]
     assert briefs.rows["case:hc-1"]["size"] == "small"
     [call] = [{"url": str(r.url), "auth": r.headers["authorization"], "body": json.loads(r.content)} for r in sent]
-    assert call["url"] == "http://models.test/v1/chat/completions" and call["auth"] == "Bearer k"
+    assert call["url"] == "http://10.0.0.5/v1/chat/completions" and call["auth"] == "Bearer k"
     assert call["body"]["model"] == "local-27b"
     assert call["body"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert call["body"]["response_format"]["type"] == "json_schema"
@@ -193,7 +193,7 @@ class FakeAgents:
 
 class FakeResolver:
     async def resolve_llm(self, repo: str, provider: str) -> Any:
-        return SimpleNamespace(secret="k", metadata={"base_url": "http://models.test/v1"})
+        return SimpleNamespace(secret="k", metadata={"base_url": "http://10.0.0.5/v1"})
 
 
 class NoSpend:

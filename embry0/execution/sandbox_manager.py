@@ -41,6 +41,7 @@ from embry0.services.credentials.resolver import (
 from embry0.skills.store import SkillMount, SkillStore
 
 if TYPE_CHECKING:
+    from embry0.execution.proxy.local_llm_proxy import Upstream
     from embry0.execution.proxy.manager import ProxyManager
 
 logger = structlog.get_logger(__name__)
@@ -424,10 +425,10 @@ class SandboxManager:
     ) -> str | None:
         """Apply the injection table. Returns the xAI oauth credential id, if any.
 
-        With ``local_proxy_url`` the custom provider is reached through the
-        local-llm-proxy: the sandbox gets the proxy as its base URL and the
-        flag that it authenticates with its bearer file, and neither the
-        account's key nor its server's address.
+        The custom provider is reached through the local-llm-proxy at
+        ``local_proxy_url`` (ADR 0032): the sandbox gets the proxy as its base
+        URL and the flag that it authenticates with its bearer file, and
+        neither the credential's key nor its server's address, ever.
         """
         xai_credential_id: str | None = None
         for provider, cred in resolved.items():
@@ -448,13 +449,14 @@ class SandboxManager:
                 from embry0.agents.providers import provider_named
 
                 catalog = provider_named(provider)
-                if provider == "custom" and local_proxy_url and catalog is not None:
-                    from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG
+                if provider == "custom":
+                    if local_proxy_url and catalog is not None:
+                        from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG
 
-                    env[catalog.sandbox_base_url_env] = f"{local_proxy_url.rstrip('/')}/v1"
-                    env[LOCAL_LLM_PROXY_FLAG] = "true"
-                    if context_tokens > 0:
-                        env[LOCAL_LLM_CONTEXT_ENV] = str(context_tokens)
+                        env[catalog.sandbox_base_url_env] = f"{local_proxy_url.rstrip('/')}/v1"
+                        env[LOCAL_LLM_PROXY_FLAG] = "true"
+                        if context_tokens > 0:
+                            env[LOCAL_LLM_CONTEXT_ENV] = str(context_tokens)
                     continue
                 if catalog is not None and catalog.sandbox_key_env and cred.kind == "llm_api_key":
                     env[catalog.sandbox_key_env] = cred.secret
@@ -463,24 +465,42 @@ class SandboxManager:
                         env[catalog.sandbox_base_url_env] = base_url
         return xai_credential_id
 
-    @staticmethod
-    def _llm_egress_destinations(resolved: dict[str, ResolvedCredential], *, via_proxy: bool = False) -> list[str]:
-        """The hosts of the operator-given LLM endpoints a job resolved (the custom provider).
+    async def _local_server(self, resolved: dict[str, ResolvedCredential]) -> Upstream | None:
+        """The model server a sandbox on the custom provider is enrolled with at the local-llm-proxy: its
+        credential's id, API root and key, and the address its host resolves to here, every one checked, which
+        the proxy connects to (ADR 0032, ``server_address``). None when the job resolved no custom credential.
 
-        Such a server usually sits on the operator's own network, which the egress drop
-        blocks. Declaring its host lets this job's agent reach it; nothing else is opened.
-        ``via_proxy``: the local-llm-proxy reaches it instead, and no host is declared.
+        Raises :class:`SandboxInitError` when it cannot be reached: the proxy is not running, the credential names
+        no API root, or its host is, or resolves to, this machine or link-local, or to nothing. No route around the
+        proxy exists, so such a job does not start.
         """
-        from embry0.services.credentials.providers import base_url_host
+        from embry0.execution.proxy.local_llm_proxy import Upstream
 
-        hosts: list[str] = []
-        for provider, cred in resolved.items():
-            if via_proxy and provider == "custom":
-                continue
-            host = base_url_host(str(cred.metadata.get("base_url") or ""))
-            if host and host not in hosts:
-                hosts.append(host)
-        return hosts
+        cred = resolved.get("custom")
+        if cred is None:
+            return None
+        if not self._local_llm_proxy_url():
+            raise SandboxInitError(
+                "the custom provider is reached through the local-llm-proxy, which is not running",
+                error_code=ErrorCode.SANDBOX_INIT,
+            )
+        root = str(cred.metadata.get("base_url") or "").strip()
+        if not root:
+            raise SandboxInitError(
+                f"the custom credential '{cred.label}' names no server: its metadata has no base_url",
+                error_code=ErrorCode.CREDENTIAL_UNAVAILABLE,
+            )
+        from embry0.execution.proxy.server_address import RefusedServer, UnresolvedServer, pin_server
+
+        try:
+            # A lookup, off the event loop.
+            pinned = await asyncio.to_thread(pin_server, root)
+        except (RefusedServer, UnresolvedServer) as exc:
+            raise SandboxInitError(
+                f"the custom credential '{cred.label}' names a server embry0 does not reach: {exc}",
+                error_code=ErrorCode.CREDENTIAL_UNAVAILABLE,
+            ) from exc
+        return Upstream(credential_id=cred.id or "", root=root, api_key=cred.secret, address=pinned.address)
 
     async def _install_ca_bundle(self, container_id: str) -> None:
         """Merge the private CA into the container's trust store (spec 1A §3.2).
@@ -658,6 +678,9 @@ class SandboxManager:
                 local_proxy_url=local_proxy_url,
                 context_tokens=self._local_llm_context_tokens,
             )
+        # The server a sandbox on the custom provider reaches, worked out before any container exists: a job whose
+        # server cannot be reached fails here.
+        local_server = await self._local_server(llm_resolved)
 
         # Spec 1A §3.2: point every in-sandbox TLS client at the merged CA
         # bundle _install_ca_bundle writes just after the container starts.
@@ -853,7 +876,6 @@ class SandboxManager:
 
         # The git-proxy forwards to the forge this sandbox would clone from,
         # and sends the credential only to its enrolled host (#166, #521).
-        local_llm = bool(local_proxy_url) and "custom" in llm_resolved
         try:
             sandbox_token = await self._proxy_manager.enroll_sandbox(
                 container_id,
@@ -869,13 +891,14 @@ class SandboxManager:
                 git_push=git_push,
                 git_push_branches=git_push_branches,
                 job_id=job_id,
-                # Only a sandbox that reaches the operator's model server gets a bearer the proxy accepts.
-                **({"local_llm": True} if local_llm else {}),
+                # Only a sandbox on the custom provider gets a bearer the local-llm-proxy accepts, for its own
+                # credential's server alone (ADR 0032).
+                **({"local_llm": local_server} if local_server is not None else {}),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.
             self._remember_bearer(container_id, sandbox_token)
-            if local_llm:
+            if local_server is not None:
                 await self._write_local_llm_token(container_id, sandbox_token)
         except (RuntimeError, TimeoutError) as exc:
             logger.error("sandbox_enroll_failed_rolling_back", container=name, error=str(exc))
@@ -920,10 +943,8 @@ class SandboxManager:
             try:
                 await self._runtime.attach_policy(
                     container_id,
-                    allowed_destinations=[
-                        *(egress_allowlist or []),
-                        *self._llm_egress_destinations(llm_resolved, via_proxy=bool(local_proxy_url)),
-                    ],
+                    # No model server's host: the custom provider goes through the local-llm-proxy (ADR 0032).
+                    allowed_destinations=list(egress_allowlist or []),
                     reachable_containers=list(internet_proxies()) if callable(internet_proxies) else [],
                 )
                 self._egress_enforced.add(container_id)
@@ -995,6 +1016,7 @@ class SandboxManager:
         git_push: bool = False,
         git_push_branches: Sequence[str] = (),
         prefs_repo: Any | None = None,
+        custom_credential_id: str | None = None,
     ) -> None:
         """Give a paused job's existing sandbox its proxy access back, under a fresh bearer (#476).
 
@@ -1011,7 +1033,11 @@ class SandboxManager:
         written in; nothing stores it. embry0's own root-owned git config is
         written again whole, with the identity resolved again (``prefs_repo``
         and the bound credential, as at init): a sandbox created before that
-        file existed gets it here.
+        file existed gets it here. ``custom_credential_id`` is the custom
+        credential the resume resolved for a job on the custom provider (``''``
+        for the environment's), None for a job not on it: the sandbox is
+        enrolled with the local-llm-proxy for that credential's server again
+        (ADR 0032).
 
         Raises SandboxInitError(SANDBOX_GONE) when the container is gone or
         stopped (#475), and SandboxReenrollError when it exists but could not
@@ -1054,8 +1080,12 @@ class SandboxManager:
                 error_code=ErrorCode.SANDBOX_INIT,
             ) from exc
 
+        # ADR 0032: a sandbox from before may reach the custom provider's server directly, with its key in the env and
+        # an egress exception for the server's host. It is not resumed so.
+        await self._refuse_a_retired_route(container)
+
         proxy = self._proxy_manager
-        local_llm = bool(self._local_llm_proxy_url()) and await self._reached_local_llm(container)
+        local_server = await self._reenroll_local_server(container, repo, job_id, custom_credential_id)
         try:
             sandbox_token = await proxy.enroll_sandbox(
                 container,
@@ -1069,12 +1099,12 @@ class SandboxManager:
                 git_push=git_push,
                 git_push_branches=git_push_branches,
                 job_id=job_id,
-                **({"local_llm": True} if local_llm else {}),
+                **({"local_llm": local_server} if local_server is not None else {}),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.
             self._remember_bearer(container, sandbox_token)
-            if local_llm:
+            if local_server is not None:
                 await self._write_local_llm_token(container, sandbox_token)
             if getattr(proxy, "xai_proxy_url", ""):
                 await self._docker.run_cmd(
@@ -1143,24 +1173,94 @@ class SandboxManager:
             stdin_data=sandbox_token.encode(),
         )
 
-    async def _reached_local_llm(self, container: str) -> bool:
-        """Whether ``container`` was created to reach the local model through the proxy.
+    async def _refuse_a_retired_route(self, container: str) -> None:
+        """Refuse a resumed sandbox whose env still carries the custom provider's key, or a server's address
+        instead of the local-llm-proxy's: an older release put them there, and a container's env cannot change
+        (ADR 0032). The job is dispatched again rather than run with them. Only the variables' names are read.
 
-        This process's record when it created the container; else (a sandbox
-        from before a restart) the flag in the container's own env.
-        """
-        held = self._llm_credentials.get(container)
-        if held is not None:
-            return "custom" in held
+        That release declared the server's host as an egress exception for exactly such a sandbox (the key went
+        into the env whenever the proxy did not stand between), so before refusing, its egress policy is attached
+        again with no exception at all: until the failed resume frees the sandbox, it reaches no private address.
+        Every other resumed sandbox keeps the policy it has, its own declared targets with it."""
+        from embry0.agents.providers import provider_named
         from embry0.sandbox.local_llm_token import LOCAL_LLM_PROXY_FLAG
 
+        custom = provider_named("custom")
+        key_env = custom.sandbox_key_env if custom is not None else "EMBRY0_LLM_CUSTOM_API_KEY"
+        url_env = custom.sandbox_base_url_env if custom is not None else "EMBRY0_LLM_CUSTOM_BASE_URL"
         try:
-            answer = await self._docker.run_cmd(
-                self._docker.build_inspect_has_env_cmd(container, f"{LOCAL_LLM_PROXY_FLAG}=true"), timeout=10
+            names = set(
+                str(await self._docker.run_cmd(self._docker.build_inspect_env_names_cmd(container), timeout=10)).split()
             )
-        except (RuntimeError, TimeoutError):
-            return False
-        return "yes" in str(answer)
+        except (RuntimeError, TimeoutError) as exc:
+            raise SandboxReenrollError(
+                f"sandbox {container} could not be re-enrolled: its env could not be read: {exc}",
+                error_code=ErrorCode.SANDBOX_INIT,
+            ) from exc
+        if key_env in names or (url_env in names and LOCAL_LLM_PROXY_FLAG not in names):
+            await self._close_egress(container)
+            raise SandboxInitError(
+                f"sandbox {container} was created with the custom provider's key or server address in its env, "
+                "which ADR 0032 retired; it is not resumed with them: dispatch the job again",
+                error_code=ErrorCode.SANDBOX_ROUTE_RETIRED,
+            )
+
+    async def _close_egress(self, container: str) -> None:
+        """Attach ``container``'s egress policy again with no declared exception, when it is on
+        ``sandbox-internet``: public egress and the proxies only. Raises :class:`SandboxReenrollError` when the rules
+        cannot be written."""
+        try:
+            networks = await self._docker.run_cmd(self._docker.build_inspect_networks_cmd(container), timeout=10)
+            if "sandbox-internet" not in str(networks).split():
+                return
+            internet_proxies = getattr(self._proxy_manager, "internet_proxies", None)
+            await self._runtime.attach_policy(
+                container,
+                allowed_destinations=[],
+                reachable_containers=list(internet_proxies()) if callable(internet_proxies) else [],
+            )
+        except Exception as exc:  # noqa: BLE001 — the job stays paused, its sandbox still refused at the next try
+            raise SandboxReenrollError(
+                f"sandbox {container} could not be refused cleanly: its egress rules could not be closed: {exc}",
+                error_code=ErrorCode.SANDBOX_INIT,
+            ) from exc
+        self._egress_enforced.add(container)
+        logger.warning("sandbox_retired_route_egress_closed", container=container)
+
+    async def _reenroll_local_server(
+        self, container: str, repo: str | None, job_id: str, credential_id: str | None
+    ) -> Upstream | None:
+        """The server a resumed sandbox on the custom provider is enrolled with again; None for a job not on it.
+
+        The custom credential is resolved for the job again, as the resume's own check just resolved it, so the
+        sandbox reaches the server that credential names now. Without a resolver, the credential this process
+        created the sandbox with. Raises :class:`SandboxReenrollError` when it cannot be resolved or reached: the
+        job stays paused.
+        """
+        if credential_id is None:
+            return None
+        resolved: dict[str, ResolvedCredential] = {}
+        try:
+            if self._credential_resolver is not None:
+                resolved = dict(
+                    await self._credential_resolver.resolve_llm_for_job(repo or "", ("custom",), job_id=job_id)
+                )
+            else:
+                held = self._llm_credentials.get(container, {}).get("custom")
+                resolved = {"custom": held} if held is not None else {}
+            if "custom" not in resolved:
+                raise SandboxInitError("no custom credential resolves for the job", error_code=ErrorCode.SANDBOX_INIT)
+            got = resolved["custom"].id or ""
+            if got != credential_id:
+                logger.warning(
+                    "sandbox_reenroll_custom_credential_changed", container=container, was=credential_id, now=got
+                )
+            return await self._local_server(resolved)
+        except (CredentialUnavailableError, CredentialMissingError, SandboxInitError) as exc:
+            raise SandboxReenrollError(
+                f"sandbox {container} could not be re-enrolled with its model server: {exc}",
+                error_code=ErrorCode.SANDBOX_INIT,
+            ) from exc
 
     @staticmethod
     def _resolve_dind_gateway_ip() -> str:

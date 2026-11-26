@@ -18,6 +18,7 @@ from embry0.services.provider_readiness import (
     ensure_model_provider_ready,
     readiness_by_provider,
 )
+from tests.fixtures.model_servers import allow_loopback_test_servers
 from tests.fixtures.openai_compatible_server import FakeOpenAIServer
 from tests.fixtures.provider_catalogue import enable_providers
 
@@ -25,6 +26,12 @@ _KEYS = ("OPENAI_API_KEY", "CUSTOM_LLM_API_KEY", "CUSTOM_LLM_BASE_URL", "CLAUDE_
 _PROBE_KEY = "sk-probe"
 _BAD_KEY = "sk-bad"
 _REGISTRY_KEY = "sk-registry"
+
+
+@pytest.fixture(autouse=True)
+def _servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake custom servers here listen on 127.0.0.1, which no real one may be (ADR 0032)."""
+    allow_loopback_test_servers(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

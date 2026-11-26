@@ -758,6 +758,11 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > the bearer. A container that is gone or stopped fails the resume with
 > `ERR_SANDBOX_GONE` (#475). One that exists but cannot be enrolled (a proxy
 > restarting) leaves the job as it was, paused with its sandbox, to resume again.
+> One whose env still carries the custom provider's key or a server's address
+> (an older release reached the server directly, ADR 0032) has its egress
+> closed to every private address and fails the resume with
+> `ERR_SANDBOX_ROUTE_RETIRED`: dispatch the job again. Only the env's variable
+> names are read.
 >
 > **Model calls are metered at the proxy.** The xai- and local-llm-proxy read
 > each answer's usage as it streams through (`execution/proxy/metering.py`):
@@ -1443,6 +1448,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 156 | metering at the proxies: `run_meter`, each run's tally as a metering proxy process counted it (cumulative, the latest read or the final one at the run's end, per proxy and `boot_id`; a sandbox's calls under no run under `unattributed:<sandbox>:<started>`), and on `traces` how its charge was reached (`metering`) and what its sandbox reported (`sandbox_cost_usd`) |
 | 157 | local models: each slot lease names the server it holds a slot of, a custom credential's id (`env` for the environment's, `env:LOCAL_LLM_UPSTREAM` for every agent run through the local-llm-proxy), and each server's leases are counted under a lock of their own, so each server has its own cap; a lease from before has `''` and frees itself by its expiry (#174, [providers](providers.md#local-models)) | `local_model_leases.server` |
 | 158 | credentials: the LLM providers leave `credentials_provider_check`, which keeps the other kinds' four providers (`github`, `gitlab`, `ssh`, `tailscale`) and, for an `llm_*` credential, the provider catalogue's rule for a name and none of those four; the API checks an LLM credential's provider against the catalogue in force (#173, [credentials](credentials.md)) | `credentials_provider_check` |
+| 159 | local models: `local_model_leases.server`'s comment says a lease's server is its custom credential's (`env` for the environment's) since every sandbox reaches its own credential's server through the local-llm-proxy; `env:LOCAL_LLM_UPSTREAM` is left only on a lease taken before, which frees itself by its expiry (#174, [ADR 0032](adr/0032-custom-provider-through-the-local-llm-proxy.md)) | `local_model_leases.server` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 
@@ -1503,6 +1509,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_VERIFY_NEW_TEST_FAILURES` | The orchestrator-run test gate found a test (or a whole test target) that passes on the base commit and fails on the job's head, also when re-run. Failures that are red on base too, or pass on a re-run, never produce it. See `docs/verification.md`. |
 | `ERR_TRIAGE_QA_ACTION_INVALID` | After a QA failure, triage's `qa_failure_action` failed schema validation twice (original answer + the one repair retry). |
 | `ERR_SANDBOX_IMAGE_STALE` | The sandbox image was built before what this release runs agents with, which the error names: the runner's execute-only interpreter, its result mark (`--result-nonce`), or its config on stdin (`--config-stdin`). No agent ran. Rebuild the image named in the error (prebaked QA / profile images are not rebuilt by the standard deploy recipe). |
+| `ERR_SANDBOX_ROUTE_RETIRED` | A paused job's sandbox was created with the custom provider's key or a model server's address in its env, the direct route [ADR 0032](adr/0032-custom-provider-through-the-local-llm-proxy.md) retired. A container's env cannot change, so it is not resumed: its egress is closed to every private address and the resume fails. Dispatch the job again. |
 | `ERR_SANDBOX_RESULT_REFUSED` | The run's result was not taken: its runner's output held more than one final result, or one without the per-run mark the orchestrator handed the runner on stdin. The run is failed rather than either result trusted (spec 2026-11-23, an agent run's own result). |
 | `ERR_SANDBOX_EXEC_STALLED` | `docker exec` never read the agent config from stdin; the exec was killed before any agent work. |
 | `ERR_DISPATCH_FAILED` | **API responses only, never `jobs.error_code`.** `POST /issues` (with `auto_triage`) or `POST /issues/{id}/triage` asked for a job and `execute()` raised before a job row existed. Returned as `dispatch_error_code` beside a fixed safe `dispatch_error`; the exception is only logged (#284). |

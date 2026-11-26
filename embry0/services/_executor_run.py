@@ -1306,6 +1306,8 @@ async def _reenroll_paused_sandbox(
         git_push_branches=git_push_branches,
         # embry0's own git config is rewritten with the identity resolved as at init.
         prefs_repo=getattr(self, "_repo_prefs", None),
+        # A job on the custom provider reaches its credential's server through the local-llm-proxy again (ADR 0032).
+        **({"custom_credential_id": llm_ids["custom"]} if "custom" in llm_ids else {}),
     )
 
 

@@ -18,15 +18,22 @@ from embry0.services.background_models import BackgroundCallRefused, BackgroundC
 from embry0.services.local_slots import LocalSlots
 
 try:
-    from embry0.services.local_slots import ENV_SERVER, PROXY_SERVER, CallSlots
+    from embry0.services.local_slots import ENV_SERVER, CallSlots
 except ImportError:
     pytest.fail("a background call holds no slot: services.local_slots names no server and no CallSlots", pytrace=False)
 from embry0.services.proposals import Proposal
 from tests.fixtures.leads import brief_reader
+from tests.fixtures.model_servers import fake_dns
 from tests.fixtures.provider_catalogue import enable_providers
 from tests.unit.services.test_background_calls import GOOD, T0, Gate, Spend
 
 LOCAL = "custom/qwen"
+
+
+@pytest.fixture(autouse=True)
+def _servers_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The custom servers these calls reach: one machine by two names."""
+    fake_dns(monkeypatch, {"models.test": ["10.0.0.5"], "models.lan": ["10.0.0.5"]})
 
 
 @pytest.fixture(autouse=True)
@@ -61,9 +68,7 @@ class Leases:
         self.released.append(lease_id)
 
 
-def _calls(
-    leases: Leases, *, cap: Any = 1, gate: Gate | None = None, spend: Spend | None = None, proxy_upstream: str = ""
-) -> BackgroundCalls:
+def _calls(leases: Leases, *, cap: Any = 1, gate: Gate | None = None, spend: Spend | None = None) -> BackgroundCalls:
     async def read_cap() -> int:
         if isinstance(cap, Exception):
             raise cap
@@ -73,7 +78,7 @@ def _calls(
         resolver=Resolver(),
         spend=spend or Spend(),
         gate=gate or Gate(),
-        local_slots=CallSlots(slots=LocalSlots(leases), cap=read_cap, proxy_upstream=proxy_upstream),
+        local_slots=CallSlots(slots=LocalSlots(leases), cap=read_cap),
     )
 
 
@@ -197,36 +202,65 @@ async def test_a_brief_writer_stops_its_tick_on_a_busy_server_and_writes_once_a_
 
 
 @pytest.mark.parametrize(
-    ("credential_id", "base_url", "proxy_upstream", "server"),
+    ("credential_id", "base_url", "server"),
     [
-        ("cred-local", "http://models.test:8000/v1", "", "cred-local"),
-        (None, "http://models.test:8000/v1", "", ENV_SERVER),
-        ("cred-local", "http://models.test:8000/v1", "http://models.test:8000/v1", PROXY_SERVER),
-        # The same machine by another name: an address, a .lan name, a trailing dot.
-        ("cred-local", "http://models.test:8000/v1", "http://10.0.0.5:8000/v1", PROXY_SERVER),
-        ("cred-local", "http://models.lan:8000/v1", "http://models.test.:8000/v1", PROXY_SERVER),
-        (None, "http://models.test:8000/v1", "http://models.test:8000/v1", PROXY_SERVER),
+        ("cred-local", "http://models.test:8000/v1", "cred-local"),
+        (None, "http://models.test:8000/v1", ENV_SERVER),
+        # The same machine by another name is the same credential's server: the credential, not the name, tells.
+        ("cred-local", "http://10.0.0.5:8000/v1", "cred-local"),
     ],
 )
-async def test_a_local_endpoint_names_the_server_it_reaches(
-    credential_id: str | None, base_url: str, proxy_upstream: str, server: str
+async def test_a_local_endpoint_names_the_server_its_credential_is(
+    credential_id: str | None, base_url: str, server: str
 ) -> None:
-    endpoint = await resolve_endpoint(
-        LOCAL, Resolver(credential_id, base_url), "acme/widgets", proxy_upstream=proxy_upstream
-    )
+    """ADR 0032: a call on the custom provider holds a slot of its credential's server, as an agent run does, and
+    reaches that credential's own address."""
+    endpoint = await resolve_endpoint(LOCAL, Resolver(credential_id, base_url), "acme/widgets")
     assert endpoint is not None and endpoint.server == server, (
-        "while the local-llm-proxy's upstream is set, every call on the custom provider shares its slots, whatever "
-        f"name its credential gives the machine; else the credential's own: {endpoint}"
+        f"a call on the custom provider must hold a slot of its credential's server: {endpoint}"
     )
+    assert endpoint.root == base_url.rstrip("/"), f"a background call reaches its credential's own address: {endpoint}"
 
 
-async def test_while_the_upstream_is_set_a_background_call_holds_its_slot_whatever_its_credential_names() -> None:
-    """The slots' upstream reaches the endpoint the call is made to: a credential naming another machine, or the
-    same one by another name, still takes one of the agent runs' slots there (#697 review)."""
-    leases, sent = Leases(), []
-    calls = _calls(leases, proxy_upstream="http://10.0.0.5:8000/v1")
-    async with _answering(sent, leases) as client:
-        await _ask(calls, client)
-    assert [t["server"] for t in leases.taken] == [PROXY_SERVER], (
-        f"a background call took a slot of its own credential while LOCAL_LLM_UPSTREAM is set: {leases.taken}"
-    )
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://169.254.169.254/v1",
+        "http://127.0.0.1:8000/v1",
+        "http://2130706433:8000/v1",
+        "http://0x7f000001/v1",
+        "http://127.1:8000/v1",
+        "http://169.254.43518/v1",
+        "http://localtest.me:8000/v1",
+        "http://metadata.google.internal/v1",
+        "http://nowhere.test/v1",
+    ],
+)
+async def test_no_background_call_goes_to_this_machine_or_link_local(
+    base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A custom credential written before the check (ADR 0032) may still name one, in any spelling or by a name that
+    resolves there, or a name that resolves to nothing: no call is made, so its key goes nowhere."""
+    fake_dns(monkeypatch, {"localtest.me": ["127.0.0.1"], "metadata.google.internal": ["169.254.169.254"]})
+    endpoint = await resolve_endpoint(LOCAL, Resolver("cred-local", base_url), "acme/widgets")
+    assert endpoint is None, f"a background call would go to {base_url}, with the credential's key: {endpoint}"
+
+
+async def test_a_background_call_connects_to_the_checked_address_and_names_the_server_in_host() -> None:
+    """The server's name was resolved and checked once; the call goes to that address, never to the name again."""
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(GOOD)}}], "usage": {}})
+
+    calls = _calls(Leases(), cap=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+        endpoint = await calls.endpoint("slop_judge", LOCAL, "acme/widgets")
+        assert endpoint is not None and endpoint.address == "10.0.0.5", (
+            f"the endpoint names no checked address: {endpoint}"
+        )
+        await calls.ask("slop_judge", endpoint, client, repo="acme/widgets", system="s", user="u", schema={}, name="j")
+    [request] = seen
+    assert (request.url.host, request.url.port) == ("10.0.0.5", 8000), f"the call went elsewhere: {request.url}"
+    assert request.headers["host"] == "models.test:8000", f"the server's own name, in Host: {request.headers}"

@@ -11,7 +11,7 @@ from tests.unit.execution.test_sandbox_manager import (  # noqa: F401
     _stub_egress_unless_overridden,
     _stub_isolation_unless_overridden,
 )
-from tests.unit.execution.test_sandbox_manager_llm import _env, _manager
+from tests.unit.execution.test_sandbox_manager_llm import _manager
 
 
 def _key(provider: str, secret: str, metadata: dict[str, str] | None = None) -> ResolvedCredential:
@@ -51,11 +51,9 @@ def test_a_key_is_injected_under_its_reserved_name_only(provider: str, env_key: 
     assert env_override_refusal(env_key, "x") is not None, f"{env_key} must be reserved from repository override"
 
 
-def test_a_custom_key_brings_its_base_url() -> None:
-    env: dict[str, str] = {}
-    SandboxManager._inject_llm_env(env, {"custom": _CUSTOM})
-    assert env["EMBRY0_LLM_CUSTOM_API_KEY"] == "ollama-placeholder"
-    assert env["EMBRY0_LLM_CUSTOM_BASE_URL"] == "http://10.0.0.5:11434/v1"
+def test_the_custom_base_url_stays_reserved() -> None:
+    """The custom provider's base URL is the local-llm-proxy's (ADR 0032, tests/unit/execution/
+    test_sandbox_manager_local_llm.py); a repository may not point an agent's conversation elsewhere."""
     assert env_override_refusal("EMBRY0_LLM_CUSTOM_BASE_URL", "http://attacker/v1") is not None, (
         "a repository must not be able to point an agent's conversation at another server"
     )
@@ -64,23 +62,6 @@ def test_a_custom_key_brings_its_base_url() -> None:
 def test_a_repositorys_own_provider_variables_stay_settable() -> None:
     for key in ("OPENAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY"):
         assert env_override_refusal(key, "x") is None, f"{key} belongs to the repository's own app"
-
-
-def test_only_a_custom_endpoint_is_declared_for_egress() -> None:
-    resolved = {"openai": _key("openai", "s"), "custom": _CUSTOM}
-    assert SandboxManager._llm_egress_destinations(resolved) == ["10.0.0.5"]
-    assert SandboxManager._llm_egress_destinations({"openai": _key("openai", "s")}) == []
-
-
-async def test_create_lets_the_sandbox_reach_the_custom_endpoint() -> None:
-    mgr, _, _ = _manager({"custom": _CUSTOM})
-    mgr._runtime.attach_policy = AsyncMock()  # type: ignore[method-assign]
-    await mgr.create(
-        "job-1", repo="acme/widgets", llm_providers=["custom"], profile={"extra_networks": ["sandbox-internet"]}
-    )
-    assert _env(mgr)["EMBRY0_LLM_CUSTOM_BASE_URL"] == "http://10.0.0.5:11434/v1"
-    allowed = mgr._runtime.attach_policy.await_args.kwargs["allowed_destinations"]
-    assert "10.0.0.5" in allowed, f"the egress drop would block the operator's model server: {allowed}"
 
 
 async def test_create_declares_nothing_more_for_a_hosted_provider() -> None:

@@ -531,15 +531,17 @@ class DockerClient:
         """Build `docker inspect` printing whether a container is running (``true``/``false``)."""
         return [*self._build_base_cmd(), "inspect", "--format", "{{.State.Running}}", container]
 
-    def build_inspect_has_env_cmd(self, container: str, entry: str) -> list[str]:
-        """Build `docker inspect` printing ``yes`` when the container's env holds ``entry`` (``KEY=value``).
+    def build_inspect_env_names_cmd(self, container: str) -> list[str]:
+        """Build `docker inspect` printing the name of each variable in a container's env, one a line.
 
-        Only that answer leaves the daemon: the rest of the env, credentials
-        among it, is never printed.
+        Only the names leave the daemon: no value, credentials among them, is ever printed.
         """
-        if '"' in entry or "{" in entry or "}" in entry:
-            raise ValueError("env entry must not contain quotes or braces")
-        fmt = f'{{{{range .Config.Env}}}}{{{{if eq . "{entry}"}}}}yes{{{{end}}}}{{{{end}}}}'
+        fmt = '{{range .Config.Env}}{{println (index (split . "=") 0)}}{{end}}'
+        return [*self._build_base_cmd(), "inspect", "--format", fmt, container]
+
+    def build_inspect_networks_cmd(self, container: str) -> list[str]:
+        """Build `docker inspect` printing the name of each network a container is on, one a line."""
+        fmt = "{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}"
         return [*self._build_base_cmd(), "inspect", "--format", fmt, container]
 
     def build_inspect_id_cmd(self, container: str) -> list[str]:

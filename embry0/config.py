@@ -624,14 +624,17 @@ class Embry0Config(BaseSettings):
     # embry0. Requires ENVIRONMENT_SECRET_KEY. Defaults False (opt-in) — leaving it
     # off keeps grok on the EMB-36 CLI/console-key path.
     # Local models (docs/providers.md): the operator's own OpenAI-compatible
-    # model server, the custom provider's. Set, the orchestrator launches the
-    # local-llm-proxy, which forwards a sandbox's model calls to this one API
-    # root (http://host:port/v1) and nowhere else, so no sandbox needs an
-    # egress exception for the server's machine. The key is the one the server
-    # checks, held by the proxy only; empty sends none. Requests over the size
-    # cap are refused. The context window, when set, overrides what the
-    # server's /models reports. A run that must use the server waits at most
-    # the slot wait for one of its slots (provider_config.local_max_runs).
+    # model servers, the custom provider's. A custom credential is its server,
+    # address and key, and every sandbox reaches it through the local-llm-proxy
+    # (ADR 0032), which refuses a request over the size cap. The context window,
+    # when set, overrides what the server's /models reports. A run that must use
+    # the server waits at most the slot wait for one of its slots
+    # (provider_config.local_max_runs).
+    #
+    # LOCAL_LLM_UPSTREAM and LOCAL_LLM_API_KEY route nothing any more: `embry0
+    # credentials import-env` copies them into the environment's custom
+    # credential (custom/api-key). Kept one release only so the import reads
+    # them and startup warns while either is set (settings_env_retired).
     local_llm_upstream: Annotated[str, NOT_SECRET] = ""
     local_llm_api_key: SecretSetting = ""
     local_llm_max_request_bytes: Annotated[int, NOT_SECRET] = 8 * 1024 * 1024

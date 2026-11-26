@@ -12,9 +12,9 @@ Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
              require_run=METER_REQUIRE_RUN)  # access token pushed at runtime
 - minio   -> minio_proxy.create_minio_proxy_app(UPSTREAM_URL)
 - presign -> presign_proxy.create_presign_proxy_app(UPSTREAM_URL)
-- local_llm -> local_llm_proxy.create_local_llm_proxy_app(UPSTREAM_URL, PROXY_ADMIN_TOKEN,
-             upstream_api_key=UPSTREAM_API_KEY, max_request_bytes=MAX_REQUEST_BYTES,
-             require_run=METER_REQUIRE_RUN)
+- local_llm -> local_llm_proxy.create_local_llm_proxy_app(PROXY_ADMIN_TOKEN,
+             max_request_bytes=MAX_REQUEST_BYTES,
+             require_run=METER_REQUIRE_RUN)  # each sandbox's server comes with its enrollment
   (METER_REQUIRE_RUN=true: a model call from a sandbox with no declared run is refused; see metering)
 - context -> context_proxy.create_context_proxy_app(UPSTREAM_URL, ORCHESTRATOR_API_KEY,
              PROXY_ADMIN_TOKEN, CONTAINER_ALLOWLIST, QUERY_QUOTA)  # RAV-1140
@@ -168,11 +168,9 @@ def build_app_from_env() -> web.Application:
             require_run=_flag("METER_REQUIRE_RUN"),
         )
     if proxy_type == "local_llm":
-        # The operator's own model server: one upstream, its key held here.
+        # The operator's model servers: each sandbox is enrolled with its own (ADR 0032), so none is configured here.
         return create_local_llm_proxy_app(
-            _require_env("UPSTREAM_URL"),
             admin_token,
-            upstream_api_key=os.environ.get("UPSTREAM_API_KEY", ""),
             max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or DEFAULT_MAX_REQUEST_BYTES),
             require_run=_flag("METER_REQUIRE_RUN"),
         )

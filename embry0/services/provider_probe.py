@@ -9,6 +9,7 @@ echo credentials — only status words and provider-side error text.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -17,6 +18,7 @@ import httpx
 import structlog
 
 from embry0.agents.providers import XAI, ModelProvider, provider_named
+from embry0.execution.proxy.server_address import RefusedServer, UnresolvedServer, pin_server, pinned_request
 from embry0.execution.xai_credential import _XAI_403_HINT
 
 logger = structlog.get_logger(__name__)
@@ -34,6 +36,8 @@ STATUS_ENTITLEMENT_REFUSED = "entitlement_refused"
 STATUS_UNREACHABLE = "unreachable"
 STATUS_NOT_CONFIGURED = "not_configured"
 STATUS_ERROR = "error"
+#: An operator's server embry0 does not connect to: this machine or link-local (ADR 0032).
+STATUS_REFUSED = "refused"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,10 +49,20 @@ class ProbeCheck:
     message: str
 
 
-async def _http_check(source: str, url: str, headers: dict[str, str], hint_403: str = "") -> ProbeCheck:
+async def _http_check(
+    source: str, url: str, headers: dict[str, str], hint_403: str = "", *, address: str = ""
+) -> ProbeCheck:
+    """``GET url``; with ``address``, connected to that address with the URL's host kept for ``Host`` and TLS."""
+    extensions: dict[str, Any] = {}
+    if address:
+        url, host, extensions = pinned_request(url, address)
+        headers = {**headers, **host}
     try:
         async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
-            resp = await client.get(url, headers=headers)
+            if extensions:
+                resp = await client.get(url, headers=headers, extensions=extensions)
+            else:
+                resp = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
         return ProbeCheck(source, STATUS_UNREACHABLE, f"request failed: {type(exc).__name__}")
     if resp.status_code == 200:
@@ -74,8 +88,18 @@ async def probe_openai_compatible(source: str, provider: ModelProvider, secret: 
     url = probe_url(provider, base_url)
     if not url:
         return ProbeCheck(source, STATUS_NOT_CONFIGURED, f"no base URL is configured for {provider.name}")
+    address = ""
+    if base_url:
+        # An operator's own server (ADR 0032): its every address is checked, and the probe connects to one of them,
+        # never to the name again.
+        try:
+            address = (await asyncio.to_thread(pin_server, url)).address
+        except RefusedServer as exc:
+            return ProbeCheck(source, STATUS_REFUSED, f"embry0 does not connect to this server: {exc}")
+        except UnresolvedServer as exc:
+            return ProbeCheck(source, STATUS_UNREACHABLE, str(exc))
     hint = _XAI_403_HINT if provider.name == "xai" else ""
-    return await _http_check(source, url, {"Authorization": f"Bearer {secret}"}, hint_403=hint)
+    return await _http_check(source, url, {"Authorization": f"Bearer {secret}"}, hint_403=hint, address=address)
 
 
 async def probe_llm_secret(provider: str, kind: str, secret: str, *, base_url: str = "") -> ProbeCheck:

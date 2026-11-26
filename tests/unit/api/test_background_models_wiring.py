@@ -153,11 +153,10 @@ def test_the_retired_chain_and_variables_are_read_nowhere_in_the_app() -> None:
 def test_a_background_call_to_a_local_model_takes_the_slots_agent_runs_take() -> None:
     """#174: ``BackgroundCalls`` constructs without slots, and a local call then holds none, so the server
     gets background calls on top of every run its cap allows. Production gives it the leases agent runs take,
-    the cap they read and the local-llm-proxy's upstream."""
+    the cap they read; a call's server is its credential's (ADR 0032)."""
     passed = _keywords(_construction("BackgroundCalls"))
     assert passed.get("local_slots") == (
-        "CallSlots(slots=LocalSlots(LocalModelLeasesRepository(db)), cap=local_model_cap, "
-        "proxy_upstream=config.local_llm_upstream)"
+        "CallSlots(slots=LocalSlots(LocalModelLeasesRepository(db)), cap=local_model_cap)"
     ), f"a local call must hold one of its server's slots; got {passed.get('local_slots')}"
     [cap] = [
         node for node in ast.walk(_tree()) if isinstance(node, ast.AsyncFunctionDef) and node.name == "local_model_cap"

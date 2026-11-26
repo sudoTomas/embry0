@@ -166,3 +166,23 @@ def test_overall_status_ok_wins():
     assert probe.overall_status(checks) == probe.STATUS_OK
     assert probe.overall_status([checks[0]]) == probe.STATUS_UNAUTHORIZED
     assert probe.overall_status([]) == probe.STATUS_NOT_CONFIGURED
+
+
+@pytest.mark.parametrize("host", ["2130706433", "0x7f000001", "127.1", "169.254.43518", "localtest.me"])
+async def test_a_custom_server_on_this_machine_or_link_local_is_refused_unprobed(
+    host: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential's check (the API's, and the startup check) probes its server with its key: never this machine
+    or link-local, whatever the spelling or the name (ADR 0032)."""
+    from tests.fixtures.model_servers import fake_dns
+
+    fake_dns(monkeypatch, {"localtest.me": ["127.0.0.1"]})
+
+    class Refuse:
+        def __init__(self, *_a: object, **_k: object) -> None:
+            raise AssertionError(f"the probe opened a client to {host}")
+
+    monkeypatch.setattr(probe.httpx, "AsyncClient", Refuse)
+    check = await probe.probe_llm_secret("custom", "llm_api_key", "the-key", base_url=f"http://{host}:8000/v1")
+    assert check.status == getattr(probe, "STATUS_REFUSED", "refused"), f"{host} was probed: {check}"
+    assert "the-key" not in check.message

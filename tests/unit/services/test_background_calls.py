@@ -48,7 +48,7 @@ class Resolver:
 
     async def resolve_llm(self, repo: str, provider: str) -> Any:
         self.asked.append((repo, provider))
-        return SimpleNamespace(secret="k", metadata={"base_url": "http://models.test/v1"})
+        return SimpleNamespace(secret="k", metadata={"base_url": "http://10.0.0.5/v1"})
 
 
 class Spend:

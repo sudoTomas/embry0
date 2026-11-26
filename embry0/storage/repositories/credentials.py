@@ -250,6 +250,15 @@ class CredentialsRepository:
         )
         return dict(row) if row else None
 
+    async def set_address(self, credential_id: str, *, host: str, metadata: dict[str, Any]) -> None:
+        """Point a credential at another server: its host, and its metadata (a custom credential's ``base_url``)."""
+        await self._db.execute(
+            "UPDATE credentials SET host = $2, metadata = $3::jsonb, updated_at = NOW() WHERE id = $1",
+            credential_id,
+            host,
+            dict(metadata),
+        )
+
     async def rotate(
         self, credential_id: str, *, secret_ciphertext: str, masked_preview: str, conn: Any = None
     ) -> dict[str, Any] | None:
