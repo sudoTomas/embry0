@@ -36,6 +36,7 @@ vi.mock("@/components/environments/PullRequestReviewCard", () => ({
 
 import { EnvironmentsPage } from "../EnvironmentsPage";
 import type { EnvVar } from "@/lib/types/environment";
+import { settle } from "@/test/settle";
 
 const REPOS = [
   {
@@ -85,7 +86,7 @@ describe("EnvironmentsPage — RAV-1294 discoverability", () => {
     let answer: (repos: unknown) => void = () => {};
     mockFetchRepos.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     renderPage();
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     expect(screen.queryByRole("heading", { name: "App config" })).not.toBeInTheDocument();
     answer(REPOS);
     expect(await screen.findByTestId("repo-env-summary")).toBeInTheDocument();

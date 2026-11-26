@@ -18,6 +18,7 @@ vi.mock("@/api/cases", () => ({
 }));
 
 import { IssuesPage } from "../IssuesPage";
+import { settle } from "@/test/settle";
 
 const NOW = new Date().toISOString();
 
@@ -97,7 +98,7 @@ describe("IssuesPage", () => {
     let answer: (proposals: unknown) => void = () => {};
     mockFetchProposals.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     renderPage();
-    await new Promise((r) => setTimeout(r, 20));
+    await settle(20);
     // Painted before the drafts answered, the list was in view when they
     // landed above it and pushed it down by their height.
     expect(screen.queryByText("An accepted piece of work")).not.toBeInTheDocument();

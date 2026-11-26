@@ -9,6 +9,7 @@ const mockFetchProgression = vi.fn();
 vi.mock("@/api/progression", () => ({ fetchProgression: () => mockFetchProgression() }));
 
 import { useProgression } from "../useProgression";
+import { settle } from "@/test/settle";
 
 const ON: UiSettings = { game: true, home: "guild" };
 const OFF: UiSettings = { game: false, home: "guild" };
@@ -39,7 +40,7 @@ describe("useProgression and the game layer (#177)", () => {
 
   it("reads nothing while the game is off, so no page shows a level or an outfit", async () => {
     const { result } = harness(OFF);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await settle(20);
     expect(mockFetchProgression, "no /progression read with the game off").not.toHaveBeenCalled();
     expect(result.current.data).toBeUndefined();
   });

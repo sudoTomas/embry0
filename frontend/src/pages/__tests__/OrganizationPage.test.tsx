@@ -48,6 +48,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { OrganizationPage } from "../OrganizationPage";
 import { need, needs, org, repo, run } from "@/components/orgs/__tests__/fixtures";
 import { ownerStandards } from "@/components/standards/__tests__/fixtures";
+import { settle } from "@/test/settle";
 
 function renderPage(path = "/orgs/acme", client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
@@ -183,7 +184,7 @@ describe("OrganizationPage — the first paint", () => {
     renderPage();
 
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith("acme"));
-    await act(() => new Promise((r) => setTimeout(r, 20)));
+    await settle(20);
     expect(screen.queryByTestId("org-page")).toBeNull();
 
     await act(async () => release());

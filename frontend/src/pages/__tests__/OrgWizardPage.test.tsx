@@ -36,6 +36,8 @@ vi.mock("@/api/credentials", () => ({
 import { useAuthStore } from "@/stores/authStore";
 import { OrgWizardPage } from "../OrgWizardPage";
 import { ACCESS, need, needs, org, repo, run } from "@/components/orgs/__tests__/fixtures";
+import { settle } from "@/test/settle";
+import { RUN_POLL_MS } from "@/hooks/useOrgs";
 
 function renderWizard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -234,10 +236,10 @@ describe("OrgWizardPage", () => {
     expect(api.discover).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("wizard-next-2")).toBeEnabled();
 
-    // A finished run stops the polling.
+    // A finished run stops the polling: no read in more than a poll's interval.
     const settled = api.runs.mock.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    expect(api.runs.mock.calls.length).toBe(settled);
+    await settle(RUN_POLL_MS + 500);
+    expect(api.runs.mock.calls.length, "a finished run is not read again").toBe(settled);
   }, 15_000);
 
   it("shows the needs EmptyState when the server has no needs endpoint", async () => {
