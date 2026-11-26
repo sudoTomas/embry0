@@ -178,16 +178,18 @@ describes what embry0 does rather than listing changes.
 - **The watcher's policy is the settings document's `watcher` section.**
   `WATCHER_AUTO_ACCEPT`, `WATCHER_AUTO_ACCEPT_AFTER_HOURS`,
   `WATCHER_AUTO_ACCEPT_MIN_SEVERITY`, `WATCHER_AUTO_ACCEPT_MIN_OCCURRENCES`,
-  `WATCHER_AUTO_ACCEPT_MAX_PER_DAY` and `WATCHER_SKIP_KNOWN_HOURS` are no
-  longer read, and no start imports them (#738). A deployment that set one
-  reads the section's default (auto-accept off, a clean signature held 24
-  hours) until it writes its value in the section; startup logs
+  `WATCHER_AUTO_ACCEPT_MAX_PER_DAY`, `WATCHER_SKIP_KNOWN_HOURS` and
+  `WATCHER_SKIP_UNCHANGED_MODE` are no longer read, and no start imports them
+  (#738). A deployment that set one reads the section's default (auto-accept
+  off, a clean signature held 24 hours, unchanged windows skipped in `shadow`
+  only) until it writes its value in the section; startup logs
   `settings_env_retired` while one is still set. A stack's own value of one
   of these keys still wins, and is checked with the section's bounds now: one
   stored beyond them reads as the section's, with a
   `watcher_stack_setting_invalid` warning. An API key with a repository
-  allowlist no longer changes a stack's `skip_known_hours`: like every
-  `auto_accept*`, it is the deployment's.
+  allowlist no longer changes a stack's `skip_known_hours` or
+  `skip_unchanged_mode`: like every `auto_accept*`, they are the deployment's,
+  since skipping bounds what the watcher pays for from the shared budget.
 - **Upgrading from before the settings document.** The imports also carried
   state no variable names: a saved `budget_config` row's caps, the repositories
   the scout and the Slop-O-Meter read before their enrollment was explicit, and

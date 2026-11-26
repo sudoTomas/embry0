@@ -53,7 +53,6 @@ OVERRIDABLE: dict[str, str] = {
     "deploy_logql": "watcher_deploy_logql",
     "context_proxy_container_allowlist": "context_proxy_container_allowlist",
     "log_clustering_mode": "log_clustering_mode",
-    "skip_unchanged_mode": "watcher_skip_unchanged_mode",
 }
 
 #: Settings a stack may override over the settings document's ``watcher`` section (#738): what it auto-accepts
@@ -93,6 +92,7 @@ DEPLOYMENT_SETTINGS: frozenset[str] = frozenset(
         "auto_accept_min_occurrences",
         "auto_accept_max_per_day",
         "skip_known_hours",
+        "skip_unchanged_mode",
     }
 )
 
@@ -108,7 +108,6 @@ REPOSITORY_SETTINGS: frozenset[str] = frozenset(
         "spike_min_count",
         "regression_silence_seconds",
         "log_clustering_mode",
-        "skip_unchanged_mode",
         "signature_masks",
     }
 )
@@ -198,7 +197,6 @@ _SETTING_TYPES: dict[str, Any] = {
     "deploy_logql": _Text,
     "context_proxy_container_allowlist": _Text,
     "log_clustering_mode": _Mode,
-    "skip_unchanged_mode": _Mode,
     **{key: _section_type(key) for key in WATCHER.fields},
     "signature_masks": Annotated[list[SignatureMask], Field(max_length=MAX_SIGNATURE_MASKS)],
 }
