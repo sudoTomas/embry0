@@ -90,9 +90,14 @@ describes what embry0 does rather than listing changes.
   `PROXY_TYPE=llm`, which an older image refuses, while a rebuilt image still
   accepts the old type. The llm-proxy also answers to `local-llm-proxy`, so a
   paused sandbox created before the upgrade still reaches it, and tallies kept
-  under the old name are charged as before. An orchestrator rolled back past
-  the rename leaves `llm-proxy` running beside the `local-llm-proxy` it
-  starts, both answering to that name: remove it first
+  under the old name are charged as before. A container still named
+  `local-llm-proxy` is removed before the llm-proxy starts. While one cannot
+  be removed, the llm-proxy is not started (both would answer to the name):
+  startup logs `llm_proxy_held`, a custom job is refused saying so, and the
+  llm-proxy starts within a minute of its removal
+  (`docker exec embry0-dind docker rm -f local-llm-proxy`). An orchestrator
+  rolled back past the rename leaves `llm-proxy` running beside the
+  `local-llm-proxy` it starts, both answering to that name: remove it first
   (`docker exec embry0-dind docker rm -f llm-proxy`).
 - **Reserved names.** The specialist agents reserve nine agent names
   (`kintsugi`, `gardener`, `interrogator`, `why`, `how`, `blast-radius`,

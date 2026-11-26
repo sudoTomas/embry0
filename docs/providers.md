@@ -958,7 +958,11 @@ its credential names.
 **The llm-proxy.** The orchestrator always starts `llm-proxy` on
 `sandbox-restricted`, configured with no server. It answers to
 `local-llm-proxy` too, its name before the rename, which a sandbox created
-before then holds in its env. It enrolls each sandbox whose
+before then holds in its env, and so it is started only once no container
+holds that name: a `local-llm-proxy` left by an earlier release is removed
+first. While one cannot be removed, the llm-proxy is not started (the log
+says `llm_proxy_held`, and a custom job is refused saying why); it starts
+within a minute of that container's removal. It enrolls each sandbox whose
 job resolved the custom provider with that credential's id, API root and key,
 and forwards that sandbox to that server and nowhere else:
 

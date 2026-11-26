@@ -95,8 +95,7 @@ _INTERNET = "sandbox-internet"
 # proxies. A cleanup sweep may remove only names from this tuple that this
 # process failed to remove and that are not in the current launched set —
 # never an arbitrary ``*-proxy`` container, which would cut git/GitHub/MinIO
-# /xAI/context for every sandbox still running. ``local-llm-proxy`` is the
-# llm-proxy's name before the rename: listed so its container is removed too.
+# /xAI/context for every sandbox still running.
 _PROXY_CONTAINER_NAMES: tuple[str, ...] = (
     "git-proxy",
     "github-proxy",
@@ -107,12 +106,18 @@ _PROXY_CONTAINER_NAMES: tuple[str, ...] = (
     "presign-proxy",
     "context-proxy",
     "llm-proxy",
-    "local-llm-proxy",
 )
 
 #: Further names a proxy answers to on ``sandbox-restricted``. A sandbox created before the llm-proxy's rename
-#: holds ``http://local-llm-proxy:9108/v1`` in its env, which cannot change, and reaches the llm-proxy by it.
+#: holds ``http://local-llm-proxy:9108/v1`` in its env, which cannot change, and reaches the llm-proxy by it. Each
+#: was a proxy's own name in an earlier release, whose container may still run: :meth:`ProxyManager._launch`
+#: removes it first, and launches nothing while it cannot, since both would answer to the name.
 _NETWORK_ALIASES: dict[str, tuple[str, ...]] = {"llm-proxy": ("local-llm-proxy",)}
+
+
+class ProxyNameHeld(RuntimeError):
+    """A container that could not be removed holds a name a proxy is to answer to: the proxy is not launched."""
+
 
 # Connection failures only. A name conflict or a permission error will not
 # recover by waiting, and a blanket retry inside DockerClient.run_cmd would
@@ -212,6 +217,12 @@ class ProxyManager:
         # while they are absent from ``_launched``.
         self._pending_removal: set[str] = set()
         self._sweep_task: asyncio.Task[None] | None = None
+        # Retries launching the llm-proxy while a container holding its old name stands (``_NETWORK_ALIASES``).
+        self._held_task: asyncio.Task[None] | None = None
+        self._llm_proxy_env: dict[str, str] = {}
+        #: Why the llm-proxy is not running although start() ran: a container holding its old name could not be
+        #: removed. '' otherwise.
+        self.llm_proxy_held: str = ""
         self._stopping = False
         # The launched proxies that are also on sandbox-internet. A sandbox on
         # that network resolves these names to their address THERE, so its
@@ -300,6 +311,7 @@ class ProxyManager:
         # no longer shutting down; a sweep from the previous life must not run.
         self._stopping = False
         await self._cancel_sweep()
+        await self._cancel_held()
 
         # ``docker rm -f`` of a missing name exits 0, so a swallowed error here
         # is never "it didn't exist". A daemon blip is retried; anything else
@@ -480,14 +492,13 @@ class ProxyManager:
         # with its own server, so the proxy is configured with none. It sits on
         # sandbox-internet only for the route out of DinD; sandboxes reach it
         # on sandbox-restricted, and only the ones enrolled for it.
-        local_env = {
+        self._llm_proxy_env = {
             "PROXY_TYPE": "llm",
             "LISTEN_PORT": "9108",
             "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
         }
-        await self._launch(name="llm-proxy", env=local_env, attach_internet=True)
-        self.llm_proxy_url = "http://llm-proxy:9108"
-        logger.info("llm_proxy_started")
+        if not await self._start_llm_proxy():
+            self._held_task = asyncio.create_task(self._retry_held_llm_proxy(), name="llm-proxy-held")
 
         # Only leftovers we did not just launch. A name in ``_launched`` is the
         # live shared proxy; the sweep must not remove it.
@@ -495,15 +506,78 @@ class ProxyManager:
         self._ensure_sweep()
         logger.info("proxy_manager_started", launched=list(self._launched))
 
+    async def _start_llm_proxy(self) -> bool:
+        """Launch the llm-proxy; False, with the reason in ``llm_proxy_held``, while a container holding its old name
+        stands."""
+        try:
+            await self._launch(name="llm-proxy", env=self._llm_proxy_env, attach_internet=True)
+        except ProxyNameHeld as exc:
+            self.llm_proxy_held = str(exc)
+            logger.error("llm_proxy_held", error=str(exc))
+            return False
+        self.llm_proxy_held = ""
+        self.llm_proxy_url = "http://llm-proxy:9108"
+        logger.info("llm_proxy_started")
+        return True
+
+    async def _retry_held_llm_proxy(self) -> None:
+        """Launch the held llm-proxy once the container holding its old name is gone: at the sweep's delays, then
+        every last one of them, until it launches or this process stops. The rules that let sandboxes reach a proxy
+        are written again for it, as after a recreation."""
+        attempt = 0
+        while not self._stopping:
+            await asyncio.sleep(_SWEEP_DELAYS_S[min(attempt, len(_SWEEP_DELAYS_S) - 1)])
+            attempt += 1
+            if self._stopping:
+                return
+            if not await self._start_llm_proxy():
+                continue
+            if self._on_recreated is not None:
+                try:
+                    await self._on_recreated()
+                except Exception as exc:  # noqa: BLE001 — the proxy runs; the rules are retried by every create
+                    logger.error("proxy_recreated_rules_refresh_failed", proxy="llm-proxy", error=str(exc))
+            return
+
+    def _held_reason(self) -> str:
+        """``llm_proxy_held`` as the end of a refusal's message, or ''."""
+        return f" ({self.llm_proxy_held})" if self.llm_proxy_held else ""
+
+    async def _cancel_held(self) -> None:
+        task, self._held_task = self._held_task, None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _clear_names(self, proxy: str, names: tuple[str, ...]) -> None:
+        """Remove the containers holding ``names`` before ``proxy`` is launched to answer to them.
+
+        Raises ProxyNameHeld when one could not be removed, for any reason: it would answer to the name as well.
+        """
+        held = await self._remove_proxies(list(names), phase="name_clear", every_failure=True)
+        if held:
+            raise ProxyNameHeld(
+                f"{proxy} is not started: a container named {', '.join(held)}, its name before a rename, could not be "
+                f"removed and would answer to that name as well. Remove it on the sandbox daemon "
+                f"(docker rm -f {' '.join(held)}); {proxy} is started once it is gone"
+            )
+
     async def _launch(self, *, name: str, env: dict[str, str], attach_internet: bool) -> None:
         import os
 
+        aliases = _NETWORK_ALIASES.get(name, ())
+        if aliases:
+            await self._clear_names(name, aliases)
         run_cmd, env_file_path = self._docker.build_run_proxy_cmd(
             name=name,
             image=self._image,
             network=_RESTRICTED,
             env=env,
-            network_aliases=_NETWORK_ALIASES.get(name, ()),
+            network_aliases=aliases,
         )
         try:
             await self._docker.run_cmd(run_cmd)
@@ -674,7 +748,9 @@ class ProxyManager:
         local_server: dict[str, Any] | None = None
         if local_llm is not None:
             if not self.llm_proxy_url:
-                raise RuntimeError("the llm-proxy is not running: a sandbox on the custom provider has no route")
+                raise RuntimeError(
+                    "the llm-proxy is not running: a sandbox on the custom provider has no route" + self._held_reason()
+                )
             local_server = {
                 "credential_id": local_llm.credential_id,
                 "upstream": local_llm.root.rstrip("/"),
@@ -686,7 +762,9 @@ class ProxyManager:
             if provider == CUSTOM_PROVIDER:
                 raise ValueError("the custom provider's server is local_llm, not a provider server")
             if not self.llm_proxy_url:
-                raise RuntimeError(f"the llm-proxy is not running: a sandbox on {provider} has no route")
+                raise RuntimeError(
+                    f"the llm-proxy is not running: a sandbox on {provider} has no route{self._held_reason()}"
+                )
             provider_payload[provider] = {
                 "credential_id": server.credential_id,
                 "upstream": server.root.rstrip("/"),
@@ -1568,6 +1646,7 @@ class ProxyManager:
         """
         self._stopping = True
         await self._cancel_sweep()
+        await self._cancel_held()
         for task in list(self._remainder_tasks):
             task.cancel()  # the proxies go: what a given-up replay did not send is moot
         failed = await self._remove_proxies(list(self._launched), phase="stop")
@@ -1586,6 +1665,7 @@ class ProxyManager:
         self.presign_proxy_url = ""
         self.context_proxy_url = ""
         self.llm_proxy_url = ""
+        self.llm_proxy_held = ""
         session = self._http
         self._http = None
         if session is not None:
@@ -1598,11 +1678,12 @@ class ProxyManager:
                 logger.warning("proxy_http_session_close_failed", exc_info=True)
         logger.info("proxy_manager_stopped")
 
-    async def _remove_proxies(self, names: list[str], *, phase: str) -> list[str]:
+    async def _remove_proxies(self, names: list[str], *, phase: str, every_failure: bool = False) -> list[str]:
         """Force-remove ``names``. Retry only when the daemon is unreachable.
 
-        Returns the names that could not be removed. Never raises (except
-        cancellation, which must still abort shutdown).
+        Returns the names that could not be removed because the daemon was
+        unreachable, or for any reason with ``every_failure``. Never raises
+        (except cancellation, which must still abort shutdown).
         """
         pending = list(dict.fromkeys(names))
         failed: list[str] = []
@@ -1648,7 +1729,7 @@ class ProxyManager:
                         attempt=attempt,
                         error=str(exc),
                     )
-                    if _daemon_unreachable(exc):
+                    if every_failure or _daemon_unreachable(exc):
                         failed.append(name)
             pending = still_unreachable
         return failed

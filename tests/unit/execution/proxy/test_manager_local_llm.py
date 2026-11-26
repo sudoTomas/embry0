@@ -3,6 +3,7 @@ credential's server (ADR 0032)."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -90,13 +91,79 @@ async def test_the_llm_proxy_also_answers_to_its_name_before_the_rename(docker_m
     )
 
 
+def _commands(docker_mock) -> list[tuple[str, str]]:
+    """Each docker command run, in order, as (verb, the container it names)."""
+    return [(c.args[0][1], c.args[0][-1]) for c in docker_mock.run_cmd.call_args_list if len(c.args[0]) > 2]
+
+
+def _refusing_the_old_name(docker_mock, error: str, *, times: int | None = None) -> dict[str, int]:
+    """The daemon refuses to remove ``local-llm-proxy`` with ``error``: ``times`` times, else every time."""
+    tried = {"rm": 0}
+
+    async def run_cmd(cmd, *args, **kwargs):
+        if cmd[1:3] == ["rm", "-f"] and cmd[-1] == "local-llm-proxy":
+            tried["rm"] += 1
+            if times is None or tried["rm"] <= times:
+                raise RuntimeError(f"Docker command failed: {error}")
+        return b"ok"
+
+    docker_mock.run_cmd = AsyncMock(side_effect=run_cmd)
+    return tried
+
+
+_IN_PROGRESS = "Error response from daemon: removal of container local-llm-proxy is already in progress"
+
+
 @pytest.mark.asyncio
-async def test_start_removes_the_container_of_the_llm_proxy_s_old_name(docker_mock, pm):
+async def test_the_container_of_the_old_name_goes_before_the_llm_proxy_is_launched(docker_mock, pm):
     """A release before the rename left a running local-llm-proxy: kept, it would answer to the alias as well."""
     await pm.start(github_token="ghp_test")
-    removed = [c.args[0] for c in docker_mock.build_rm_cmd.call_args_list]
-    assert "local-llm-proxy" in removed, f"the old container is left running: {removed}"
-    assert "llm-proxy" in removed
+    commands = _commands(docker_mock)
+    launched = commands.index(("run", "llm-proxy"))
+    assert ("rm", "local-llm-proxy") in commands[:launched], f"the old container was not removed first: {commands}"
+
+
+@pytest.mark.asyncio
+async def test_the_llm_proxy_is_not_started_while_its_old_name_cannot_be_removed(docker_mock, pm):
+    _refusing_the_old_name(docker_mock, _IN_PROGRESS)
+    await pm.start(github_token="ghp_test")
+
+    started = [c.kwargs["name"] for c in docker_mock.build_run_proxy_cmd.call_args_list]
+    assert "llm-proxy" not in started, "the llm-proxy was started beside a container answering to its old name"
+    assert "minio-proxy" in started, "the other proxies were not started"
+    assert pm.llm_proxy_url == ""
+    assert "local-llm-proxy" in pm.llm_proxy_held and "docker rm -f local-llm-proxy" in pm.llm_proxy_held, (
+        f"the reason does not say what to do: {pm.llm_proxy_held!r}"
+    )
+    with pytest.raises(RuntimeError, match="docker rm -f local-llm-proxy"):
+        await pm.enroll_sandbox("sb-local", local_llm=_server(), limits=_limits())
+    held = pm._held_task
+    assert held is not None and not held.done(), "nothing retries the old container"
+    await pm.stop()
+    assert held.cancelled(), "the retry outlived the manager"
+
+
+@pytest.mark.asyncio
+async def test_the_held_llm_proxy_starts_once_its_old_name_is_gone(docker_mock, pm, monkeypatch):
+    monkeypatch.setattr("embry0.execution.proxy.manager._SWEEP_DELAYS_S", (0.0,))
+    tried = _refusing_the_old_name(docker_mock, _IN_PROGRESS, times=2)
+    rules = AsyncMock()
+    pm.on_proxy_recreated(rules)
+    await pm.start(github_token="ghp_test")
+    assert pm.llm_proxy_url == ""
+
+    await asyncio.wait_for(pm._held_task, timeout=5)
+
+    assert tried["rm"] == 3, f"the old container was tried {tried['rm']} times"
+    commands = _commands(docker_mock)
+    assert commands.count(("run", "llm-proxy")) == 1, commands
+    assert commands.index(("rm", "local-llm-proxy"), commands.index(("run", "minio-proxy"))) < commands.index(
+        ("run", "llm-proxy")
+    )
+    assert (pm.llm_proxy_url, pm.llm_proxy_held) == ("http://llm-proxy:9108", "")
+    call = next(c for c in docker_mock.build_run_proxy_cmd.call_args_list if c.kwargs["name"] == "llm-proxy")
+    assert call.kwargs["network_aliases"] == ("local-llm-proxy",)
+    rules.assert_awaited_once()  # the rules that let sandboxes reach a proxy name its addresses
 
 
 def _server() -> object:

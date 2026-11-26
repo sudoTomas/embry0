@@ -36,6 +36,7 @@ class _Daemon:
         self.proxies: dict[str, _Proxy] = {}
         self.generations = 0
         self.unreachable = False
+        self.log: list[tuple[str, str]] = []
 
     def client(self) -> MagicMock:
         docker = MagicMock()
@@ -60,6 +61,7 @@ class _Daemon:
                 "Docker command failed: Cannot connect to the Docker daemon. Is the docker daemon running?"
             )
         verb = cmd[1]
+        self.log.append((verb, cmd[-1] if verb in ("rm", "run") else ""))
         if verb == "run":
             self.generations += 1
             self.proxies[cmd[3]] = _Proxy(self.generations)
@@ -270,6 +272,8 @@ async def test_a_recreated_llm_proxy_answers_to_its_old_name_again():
     launches = [c.kwargs for c in docker.build_run_proxy_cmd.call_args_list if c.kwargs["name"] == "llm-proxy"]
     assert len(launches) == 2, launches
     assert launches[1].get("network_aliases") == ("local-llm-proxy",), f"the recreated llm-proxy: {launches[1]}"
+    rerun = len(daemon.log) - 1 - daemon.log[::-1].index(("run", "llm-proxy"))
+    assert daemon.log[rerun - 1] == ("rm", "local-llm-proxy"), f"not removed before the recreation: {daemon.log}"
 
 
 async def test_no_proxy_is_recreated_while_stopping():

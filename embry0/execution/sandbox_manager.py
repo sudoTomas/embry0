@@ -479,8 +479,10 @@ class SandboxManager:
         if cred is None:
             return None
         if not self._llm_proxy_url():
+            held = getattr(self._proxy_manager, "llm_proxy_held", "")
             raise SandboxInitError(
-                "the custom provider is reached through the llm-proxy, which is not running",
+                "the custom provider is reached through the llm-proxy, which is not running"
+                + (f" ({held})" if isinstance(held, str) and held else ""),
                 error_code=ErrorCode.SANDBOX_INIT,
             )
         root = str(cred.metadata.get("base_url") or "").strip()

@@ -125,6 +125,16 @@ async def test_a_custom_job_does_not_start_without_the_proxy() -> None:
     pm.enroll_sandbox.assert_not_awaited()
 
 
+async def test_a_custom_job_refused_while_the_proxy_is_held_says_why() -> None:
+    mgr, _, pm = _manager({"custom": _CUSTOM})
+    pm.llm_proxy_url = ""
+    pm.llm_proxy_held = (
+        "llm-proxy is not started: ... (docker rm -f local-llm-proxy); llm-proxy is started once it is gone"
+    )
+    refused = await _refused(mgr)
+    assert refused is not None and "docker rm -f local-llm-proxy" in str(refused), f"the refusal: {refused}"
+
+
 async def test_a_custom_credential_naming_no_server_does_not_start() -> None:
     nowhere = _key("custom", "k", {})
     mgr, _, pm = _proxied_manager({"custom": nowhere})

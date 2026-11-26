@@ -80,6 +80,7 @@ _NEVER_ESCAPES = {
     "RegistryAuthError",
     "UnknownSkillError",
     "ObjectGone",
+    "ProxyNameHeld",
 }
 
 #: The modules that run a removal with ``gone_ok=True``, each catching ObjectGone as "nothing to remove".
@@ -101,6 +102,19 @@ def test_only_removals_that_take_a_gone_object_as_done_run_with_gone_ok():
         f"a new caller runs a removal with gone_ok; catch ObjectGone there: {callers}"
     )
     assert all("ObjectGone" in (_REPO_ROOT / caller).read_text() for caller in callers)
+
+
+def test_a_held_proxy_name_stays_in_the_proxy_manager():
+    """ProxyNameHeld is exempt only while the proxy manager alone names it: its start-up holds the llm-proxy back on
+    it, and a recreation takes it as a failed recreation, so no job sees it."""
+    names = sorted(
+        str(path.relative_to(_REPO_ROOT))
+        for path in (_REPO_ROOT / "embry0").rglob("*.py")
+        if "ProxyNameHeld" in path.read_text()
+    )
+    assert names == ["embry0/execution/proxy/manager.py"], (
+        f"ProxyNameHeld now leaves the manager; give it a code: {names}"
+    )
 
 
 # The only callers of the functions that raise ImagePinError / RegistryAuthError.
