@@ -17,7 +17,11 @@ git-proxy scopes an enrolment to one repository:
   bearer is checked and stripped, and the server's key (when it checks one) is
   added here, so neither the key nor the server's address enters a sandbox; an
   answer that names a key the proxy holds (an error message quoting the key it
-  was sent) has it replaced on its way back (``_Scrubber``);
+  was sent) has it replaced on its way back (``_Scrubber``, each key as written,
+  not an escaped or encoded form of it, and none shorter than 8 characters). A
+  server is asked for answers uncompressed, and one that comes compressed in a
+  way the proxy does not decode (only gzip and deflate are) is refused, never
+  relayed: its bytes could not be scrubbed;
 - a request body over the sandbox's cap (``local_models.max_request_bytes``,
   sent with its enrollment under the ceiling ``MAX_REQUEST_BYTES``) is refused
   with 413, in the OpenAI error shape (``model_request``), and a server has the
@@ -95,6 +99,9 @@ _FORWARDED_REQUEST_HEADERS = ("content-type", "accept")
 _FORWARDED_RESPONSE_HEADERS = ("content-type",)
 #: The shortest key scrubbed from an answer: a shorter one (a placeholder) would replace ordinary words.
 _MIN_SCRUBBED_KEY = 8
+#: The answer encodings the proxy reads (httpx decodes them, so the scrub sees the text). A server is asked for
+#: ``identity``; an answer in any other encoding is refused, since its bytes cannot be scrubbed.
+_READABLE_ENCODINGS = frozenset({"identity", "gzip", "deflate"})
 # path under /v1 -> the one method allowed on it
 _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
@@ -378,9 +385,17 @@ def _enrolled_keys(app: web.Application) -> list[str]:
 
 def _upstream_headers(request: web.Request, server: Upstream) -> dict[str, str]:
     headers = {name: request.headers[name] for name in _FORWARDED_REQUEST_HEADERS if name in request.headers}
+    # Uncompressed: what comes back is scrubbed as it is read.
+    headers["Accept-Encoding"] = "identity"
     if server.api_key:
         headers["Authorization"] = f"Bearer {server.api_key}"
     return headers
+
+
+def _unreadable_encoding(header: str) -> str | None:
+    """The answer's ``Content-Encoding`` when it names an encoding the proxy does not decode, else None."""
+    named = [part.strip().lower() for part in header.split(",") if part.strip()]
+    return header.strip() if any(part not in _READABLE_ENCODINGS for part in named) else None
 
 
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
@@ -523,6 +538,19 @@ async def _forward(
             content=body or None,
             timeout=httpx.Timeout(limits.timeout_seconds, connect=_CONNECT_SECONDS),
         ) as upstream:
+            unreadable = _unreadable_encoding(upstream.headers.get("content-encoding", ""))
+            if unreadable is not None:
+                # Its bytes cannot be scrubbed, so they never go back. A completion was answered all the same: it is
+                # charged its ceiling, as one whose usage cannot be read.
+                if metered is not None:
+                    if 200 <= upstream.status_code < 300:
+                        metered.lost()
+                    else:
+                        metered.answer(upstream.status_code, upstream.headers.get("content-type"))
+                logger.warning("llm_proxy_answer_encoding_refused", sandbox_id=sandbox_id, encoding=unreadable[:80])
+                return openai_error(
+                    "unreadable_answer", "the model server answered in an encoding the proxy does not read", 502
+                )
             if metered is not None:
                 metered.answer(upstream.status_code, upstream.headers.get("content-type"))
             response = web.StreamResponse(status=upstream.status_code)

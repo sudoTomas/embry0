@@ -572,3 +572,57 @@ async def test_a_provider_path_takes_no_call_outside_a_run(aiohttp_client, upstr
     refused(after, await after.json(), "after the run ended")
     assert len(openai.seen) == 1, "only the call during the run reached the provider"
     assert (await client.post("/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+
+
+@pytest.mark.parametrize("encoding", ["br", "x-made-up", "gzip, br"], ids=["br", "made-up", "gzip-then-br"])
+@pytest.mark.parametrize("status", [200, 401])
+async def test_an_answer_the_proxy_cannot_decode_is_refused_not_relayed(
+    aiohttp_client, aiohttp_server, encoding, status
+):
+    """Bytes in an encoding the proxy does not decode cannot be scrubbed: they never go back to the sandbox."""
+    asked: list[str] = []
+
+    async def answer(request: web.Request) -> web.Response:
+        asked.append(request.headers.get("Accept-Encoding", ""))
+        quoted = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        body = f'{{"error": {{"message": "Incorrect API key provided: {quoted}"}}}}'.encode()
+        return web.Response(
+            body=body, status=status, headers={"Content-Type": "application/json", "Content-Encoding": encoding}
+        )
+
+    upstream = await _echoing(aiohttp_server, answer)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    body = await resp.read()
+    assert _KEY.encode() not in body, f"an answer in {encoding!r} reached the sandbox: {body!r}"
+    assert resp.status == 502 and b"unreadable_answer" in body, f"an answer in {encoding!r}: {resp.status} {body!r}"
+    assert asked == ["identity"], f"the server was not asked for an uncompressed answer: {asked}"
+    meter = await (await client.get("/admin/meter", headers=_H)).json()
+    tally = next(t for t in meter["tallies"] if t.get("run_id") == "run-0")
+    if status == 200:
+        # The completion was answered, its usage unread: charged its ceiling, never nothing.
+        from embry0.execution.proxy.metering import DEFAULT_OUTPUT_CEILING
+
+        counted = next(iter(tally["models"].values()), {})
+        assert (counted.get("requests"), counted.get("output_tokens")) == (1, DEFAULT_OUTPUT_CEILING), (
+            f"not charged its ceiling: {tally}"
+        )
+    else:
+        assert (tally["models"], tally["errors"]) == ({}, 1), f"an error answer was charged: {tally}"
+
+
+async def test_a_gzip_answer_is_read_and_scrubbed(aiohttp_client, aiohttp_server):
+    import gzip
+
+    async def answer(request: web.Request) -> web.Response:
+        quoted = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        body = gzip.compress(f'{{"error": {{"message": "Incorrect API key provided: {quoted}"}}}}'.encode())
+        return web.Response(
+            body=body, status=401, headers={"Content-Type": "application/json", "Content-Encoding": "gzip"}
+        )
+
+    upstream = await _echoing(aiohttp_server, answer)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    assert resp.status == 401
+    assert await resp.json() == {"error": {"message": "Incorrect API key provided: ***REDACTED***"}}

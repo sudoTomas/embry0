@@ -1001,7 +1001,13 @@ chat-completions provider's the same way, at `/p/<provider>/v1`, ADR 0033):
   there, and the server's key is added by the proxy, so neither the key nor
   the server's address is in the sandbox. An answer that names a key the proxy
   holds (an error message may quote the key it was sent) has it replaced with
-  `***REDACTED***` on its way back, however the stream splits it. A host name in the root is sent as
+  `***REDACTED***` on its way back, however the stream splits it. Each key is
+  matched as written, not in an escaped or encoded form (a JSON `\u` escape,
+  base64), and a key shorter than 8 characters (a placeholder) is not
+  scrubbed. A server is asked for uncompressed answers (`Accept-Encoding:
+  identity`); one that answers in an encoding the proxy does not decode
+  (anything but gzip or deflate) is refused with 502, `unreadable_answer`, and
+  none of it goes back. A host name in the root is sent as
   the address it resolves to on the orchestrator, since DinD resolves none;
   an https root keeps its name, for the certificate;
 - a request over `local_models.max_request_bytes` (8 MiB) is refused with
