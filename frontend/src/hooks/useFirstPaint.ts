@@ -5,6 +5,11 @@ import { useEffect, useState } from "react";
  * fails, must not hold a page for the client's whole 30 s timeout. */
 export const FIRST_PAINT_WAIT_MS = 1500;
 
+/** The wait a first paint gives its answers: FIRST_PAINT_WAIT_MS. A test of a page's first paint puts it out of
+ * reach (`holdFirstPaint`, src/test/firstPaint.ts): the event loop such a test stalls must not reach the fallback,
+ * or the page paints for the fallback's sake and the test fails with nothing wrong. */
+export const firstPaintWait = { ms: FIRST_PAINT_WAIT_MS };
+
 /** What a react-query result says about the answers it has had. */
 export interface QueryAnswers {
   dataUpdatedAt: number;
@@ -33,7 +38,7 @@ export function useFirstPaint(answered: boolean): boolean {
   if (answered && !painted) setPainted(true);
   useEffect(() => {
     if (painted) return;
-    const timer = setTimeout(() => setPainted(true), FIRST_PAINT_WAIT_MS);
+    const timer = setTimeout(() => setPainted(true), firstPaintWait.ms);
     return () => clearTimeout(timer);
   }, [painted]);
   return painted || answered;

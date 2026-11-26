@@ -55,6 +55,7 @@ describe("a refused write", () => {
     answerDelete(409, "Agent helper is used by 2 pipeline templates");
     await deleteHelper();
     await waitFor(() => expect(toastError).toHaveBeenCalled());
+    await settle(20);
     expect(toastError.mock.calls.map((c) => c[0])).toEqual([
       "Failed to delete: Agent helper is used by 2 pipeline templates",
     ]);

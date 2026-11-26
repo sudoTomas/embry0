@@ -74,6 +74,7 @@ vi.mock("@/api/qaConfig", () => ({ fetchQaConfig: () => Promise.resolve(null) })
 
 import { RepoDetailPage } from "../RepoDetailPage";
 import { settle } from "@/test/settle";
+import { holdFirstPaint } from "@/test/firstPaint";
 
 const GOLD = /(^|\s)(bg-primary|bg-primary-dim|text-primary)(\s|$)/;
 
@@ -311,6 +312,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
   });
 
   it("paints a page opened on a section once that section's body has its answers", async () => {
+    holdFirstPaint();
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
     const bindings = held();
     const accounts = held();
@@ -435,6 +437,7 @@ describe("RepoDetailPage (RAV-1253)", () => {
   });
 
   it("paints the page once the setup status is known, so nothing moves under the reader", async () => {
+    holdFirstPaint();
     mockFetchRepoDetail.mockResolvedValue(DETAIL);
     let answer: (value: unknown) => void = () => {};
     mockFetchReadiness.mockReturnValue(new Promise((resolve) => (answer = resolve)));

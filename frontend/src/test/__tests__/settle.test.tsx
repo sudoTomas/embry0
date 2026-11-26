@@ -18,6 +18,20 @@ function Late({ answer }: { answer: Promise<void> }) {
   return shown ? <p>late</p> : null;
 }
 
+/** Shows "late" after `answer` resolves and then `hops` timers, each `stepMs` long, one after the other. */
+function LateChain({ answer, hops, stepMs }: { answer: Promise<void>; hops: number; stepMs: number }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const hop = (left: number) => {
+      timer = setTimeout(() => (left > 1 ? hop(left - 1) : setShown(true)), stepMs);
+    };
+    void answer.then(() => hop(hops));
+    return () => clearTimeout(timer);
+  }, [answer, hops, stepMs]);
+  return shown ? <p>late</p> : null;
+}
+
 function answered(): { answer: Promise<void>; release: () => void } {
   let release: () => void = () => {};
   const answer = new Promise<void>((resolve) => (release = resolve));
@@ -31,6 +45,17 @@ describe("settle", () => {
     release();
     await settle(20, 300);
     expect(screen.queryByText("late"), "the late render had its turn before the check").toBeInTheDocument();
+  });
+
+  it.each([
+    ["a chain of six timers of 0 ms", 6, 0],
+    ["one step of 16 ms", 1, 16],
+  ])("gives what came after a stall its own wait: %s", async (_name, hops, stepMs) => {
+    const { answer, release } = answered();
+    render(<LateChain answer={answer} hops={hops} stepMs={stepMs} />);
+    release();
+    await settle(20, 300);
+    expect(screen.queryByText("late"), "a stall that overran the wait is followed by the wait again").toBeInTheDocument();
   });
 
   it("is needed: a plain wait reads before it, and an absence check then passes whatever the code did", async () => {

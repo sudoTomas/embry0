@@ -49,6 +49,7 @@ import { OrganizationPage } from "../OrganizationPage";
 import { need, needs, org, repo, run } from "@/components/orgs/__tests__/fixtures";
 import { ownerStandards } from "@/components/standards/__tests__/fixtures";
 import { settle } from "@/test/settle";
+import { holdFirstPaint } from "@/test/firstPaint";
 
 function renderPage(path = "/orgs/acme", client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
@@ -177,6 +178,7 @@ describe("OrganizationPage — the first paint", () => {
   };
 
   it.each(Object.keys(sources))("holds the sections until %s is in, then paints them together", async (name) => {
+    holdFirstPaint();
     const fetcher = sources[name as keyof typeof sources]();
     const answer = fetcher.getMockImplementation() as () => Promise<unknown>;
     let release: () => void = () => {};
