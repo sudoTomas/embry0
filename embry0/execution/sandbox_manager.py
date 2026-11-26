@@ -26,7 +26,7 @@ from embry0.cache.volume_ownership import (
     volume_labels,
 )
 from embry0.execution.auth_provider import env_name_refusal, env_override_refusal, shown_env_key
-from embry0.execution.docker_client import PKILL_NOTHING_MATCHED, DockerClient
+from embry0.execution.docker_client import PKILL_NOTHING_MATCHED, DockerClient, ObjectGone
 from embry0.execution.image_registry import qualify_image
 from embry0.execution.profile_isolation import profile_isolation_problems
 from embry0.execution.runtime import AgentRuntime, DockerRuntime
@@ -830,10 +830,7 @@ class SandboxManager:
                 )
             except (RuntimeError, TimeoutError) as exc:
                 logger.error("sandbox_maven_cache_chown_failed", container=name, error=str(exc))
-                try:
-                    await self._docker.run_cmd(self._docker.build_rm_cmd(name))
-                except RuntimeError:
-                    logger.warning("sandbox_rollback_rm_failed", container=name)
+                await self._rollback_rm(name)
                 raise SandboxInitError(
                     f"Maven cache is not writable: {exc}",
                     error_code=ErrorCode.SANDBOX_INIT,
@@ -848,10 +845,7 @@ class SandboxManager:
                 await self._install_ca_bundle(container_id)
             except (RuntimeError, TimeoutError) as exc:
                 logger.error("sandbox_ca_install_failed_rolling_back", container=name, error=str(exc))
-                try:
-                    await self._docker.run_cmd(self._docker.build_rm_cmd(name))
-                except RuntimeError:
-                    logger.warning("sandbox_rollback_rm_failed", container=name)
+                await self._rollback_rm(name)
                 raise SandboxInitError(
                     f"Sandbox CA bundle install failed: {exc}",
                     error_code=ErrorCode.SANDBOX_INIT,
@@ -888,10 +882,7 @@ class SandboxManager:
             # Clean any partial enrollment from earlier proxies before rm.
             # unenroll_sandbox is best-effort and never raises.
             await self._proxy_manager.unenroll_sandbox(container_id)
-            try:
-                await self._docker.run_cmd(self._docker.build_rm_cmd(name))
-            except RuntimeError:
-                logger.warning("sandbox_rollback_rm_failed", container=name)
+            await self._rollback_rm(name)
             raise SandboxInitError(
                 f"Sandbox enrollment failed: {exc}",
                 error_code=ErrorCode.SANDBOX_INIT,
@@ -913,10 +904,7 @@ class SandboxManager:
                 )
                 await self._proxy_manager.unenroll_sandbox(container_id)
                 self._release_bearers(container_id)
-                try:
-                    await self._docker.run_cmd(self._docker.build_rm_cmd(name))
-                except RuntimeError:
-                    logger.warning("sandbox_rollback_rm_failed", container=name)
+                await self._rollback_rm(name)
                 raise SandboxInitError(
                     f"Sandbox extra-network attach failed ({net}): {exc}",
                     error_code=ErrorCode.SANDBOX_INIT,
@@ -947,10 +935,7 @@ class SandboxManager:
                 )
                 await self._proxy_manager.unenroll_sandbox(container_id)
                 self._release_bearers(container_id)
-                try:
-                    await self._docker.run_cmd(self._docker.build_rm_cmd(name))
-                except RuntimeError:
-                    logger.warning("sandbox_rollback_rm_failed", container=name)
+                await self._rollback_rm(name)
                 raise SandboxInitError(
                     f"Sandbox egress enforcement failed: {exc}",
                     error_code=ErrorCode.SANDBOX_INIT,
@@ -1334,6 +1319,16 @@ class SandboxManager:
         """Stop scrubbing the container's bearers: unenrolled, they open nothing."""
         unregister_known_secrets(self._bearers.pop(container, ()))
 
+    async def _rollback_rm(self, name: str) -> None:
+        """Remove a sandbox whose creation failed. One already gone is nothing to do (#720); any other failure is
+        logged and left to the reaper."""
+        try:
+            await self._docker.run_cmd(self._docker.build_rm_cmd(name), gone_ok=True)
+        except ObjectGone:
+            return
+        except RuntimeError:
+            logger.warning("sandbox_rollback_rm_failed", container=name)
+
     async def _full_container_id(self, container: str) -> str:
         """The full ID of ``container``, which may be given as a name or a short ID.
 
@@ -1392,15 +1387,20 @@ class SandboxManager:
         # run_cmd raises TimeoutError for a hung command, and TimeoutError is
         # not a RuntimeError: caught here too, so a stop that hangs still
         # reaches the forced rm and destroy never raises for docker.
+        # A container already gone (removed by hand, a reaper that came first) is nothing to stop or remove (#720).
         try:
             stop_cmd = self._docker.build_stop_cmd(container, timeout=timeout)
-            await self._docker.run_cmd(stop_cmd)
+            await self._docker.run_cmd(stop_cmd, gone_ok=True)
+        except ObjectGone:
+            pass
         except (RuntimeError, TimeoutError):
             logger.warning("sandbox_stop_failed", container=container)
 
         try:
             rm_cmd = self._docker.build_rm_cmd(container)
-            await self._docker.run_cmd(rm_cmd)
+            await self._docker.run_cmd(rm_cmd, gone_ok=True)
+        except ObjectGone:
+            pass
         except (RuntimeError, TimeoutError):
             logger.warning("sandbox_rm_failed", container=container)
 
@@ -1435,7 +1435,10 @@ class SandboxManager:
         logger.info("sandbox_network_connected", container=container, network=network)
 
     async def disconnect_network(self, container: str, network: str) -> None:
-        """Disconnect sandbox from a network."""
+        """Disconnect sandbox from a network. The container or the network already gone is nothing to do (#720)."""
         cmd = self._docker.build_network_cmd("disconnect", network, container)
-        await self._docker.run_cmd(cmd)
+        try:
+            await self._docker.run_cmd(cmd, gone_ok=True)
+        except ObjectGone:
+            return
         logger.info("sandbox_network_disconnected", container=container, network=network)

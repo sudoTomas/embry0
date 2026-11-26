@@ -1089,7 +1089,7 @@ async def test_a_failed_ca_install_destroys_the_sandbox():
     mgr = _ca_manager()
     calls: list[list[str]] = []
 
-    async def _run(cmd, timeout=60):
+    async def _run(cmd, timeout=60, **_kwargs):
         calls.append(cmd)
         if "embry0-trust-ca" in " ".join(cmd):
             raise RuntimeError("no such file: embry0-trust-ca")

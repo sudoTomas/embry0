@@ -66,6 +66,9 @@ _PIPELINE_PACKAGES = (
 # agent and template save routes call (they turn it into an HTTP 422). A job
 # resolves skills with effective_skills and never checks the catalog; the
 # check below keeps it so.
+# ObjectGone (#720) is raised by run_cmd only for a command passed
+# gone_ok=True, a removal whose objects are already gone, and each such
+# caller takes it as done; the check below keeps the callers to those.
 _NEVER_ESCAPES = {
     "_TerminalRefreshFailure",
     "EnrollRejected",
@@ -76,7 +79,29 @@ _NEVER_ESCAPES = {
     "ImagePinError",
     "RegistryAuthError",
     "UnknownSkillError",
+    "ObjectGone",
 }
+
+#: The modules that run a removal with ``gone_ok=True``, each catching ObjectGone as "nothing to remove".
+_GONE_OK_CALLERS = {
+    "embry0/execution/proxy/manager.py",
+    "embry0/execution/runtime/docker.py",
+    "embry0/execution/sandbox_manager.py",
+}
+
+
+def test_only_removals_that_take_a_gone_object_as_done_run_with_gone_ok():
+    """ObjectGone is exempt only while the callers that ask for it are the ones that catch it."""
+    callers = sorted(
+        str(path.relative_to(_REPO_ROOT))
+        for path in (_REPO_ROOT / "embry0").rglob("*.py")
+        if "gone_ok=True" in path.read_text()
+    )
+    assert set(callers) == _GONE_OK_CALLERS, (
+        f"a new caller runs a removal with gone_ok; catch ObjectGone there: {callers}"
+    )
+    assert all("ObjectGone" in (_REPO_ROOT / caller).read_text() for caller in callers)
+
 
 # The only callers of the functions that raise ImagePinError / RegistryAuthError.
 _STARTUP_ONLY_RAISERS = {

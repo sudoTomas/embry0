@@ -50,7 +50,7 @@ async def test_stop_retries_only_while_the_daemon_is_unreachable(no_sleep):
     pm._launched = ["git-proxy", "github-proxy"]
     calls: list[str] = []
 
-    async def run_cmd(cmd, timeout=60, log_context=None):
+    async def run_cmd(cmd, timeout=60, log_context=None, gone_ok=False):
         calls.append(cmd[-1])
         # git-proxy recovers on the third attempt; github-proxy is a real rm error.
         if cmd[-1] == "git-proxy" and calls.count("git-proxy") < 3:
@@ -88,7 +88,7 @@ async def test_stop_records_a_connect_failure_with_container_and_phase(no_sleep)
     pm._launched = ["minio-proxy"]
     seen: list[dict] = []
 
-    async def run_cmd(cmd, timeout=60, log_context=None):
+    async def run_cmd(cmd, timeout=60, log_context=None, gone_ok=False):
         seen.append(dict(log_context or {}))
         raise RuntimeError(_UNREACHABLE)
 
@@ -121,7 +121,7 @@ async def test_stop_does_not_retry_a_timeout(no_sleep):
     pm, docker = _manager()
     pm._launched = ["xai-proxy"]
 
-    async def run_cmd(cmd, timeout=60, log_context=None):
+    async def run_cmd(cmd, timeout=60, log_context=None, gone_ok=False):
         raise TimeoutError("docker command timed out after 8s")
 
     docker.run_cmd = run_cmd
@@ -145,7 +145,7 @@ async def test_start_preclean_retries_a_daemon_blip_then_launches(no_sleep, monk
     monkeypatch.setattr("embry0.execution.proxy.manager.socket.gethostbyname", lambda host: "10.0.0.8")
     attempts = {"git-proxy": 0}
 
-    async def run_cmd(cmd, timeout=60, log_context=None):
+    async def run_cmd(cmd, timeout=60, log_context=None, gone_ok=False):
         if cmd[1:3] == ["rm", "-f"] and cmd[-1] == "git-proxy":
             attempts["git-proxy"] += 1
             if attempts["git-proxy"] == 1:
@@ -170,7 +170,7 @@ async def test_sweep_removes_only_known_unlaunched_leftovers(no_sleep):
     pm._pending_removal = {"git-proxy", "github-proxy", "sandbox-job", "not-a-proxy"}
     removed: list[str] = []
 
-    async def run_cmd(cmd, timeout=60, log_context=None):
+    async def run_cmd(cmd, timeout=60, log_context=None, gone_ok=False):
         removed.append(cmd[-1])
         assert log_context["phase"] == "delayed_sweep"
         assert log_context["container"] == cmd[-1]
@@ -211,7 +211,7 @@ async def test_failed_preclean_of_an_unlaunched_name_is_swept_later(no_sleep, mo
     state = {"daemon_up": False}
     removed: list[str] = []
 
-    async def run_cmd(cmd, timeout=60, log_context=None):
+    async def run_cmd(cmd, timeout=60, log_context=None, gone_ok=False):
         if cmd[1:3] == ["rm", "-f"]:
             if not state["daemon_up"]:
                 raise RuntimeError(_UNREACHABLE)

@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import signal
 from collections.abc import Collection
 from typing import Any, cast
@@ -18,6 +19,26 @@ logger = structlog.get_logger(__name__)
 
 #: pkill's exit when no process matched: nothing to stop. It prints nothing (``run_cmd``'s ``quiet_exits``).
 PKILL_NOTHING_MATCHED = 1
+
+#: One line of the daemon's (or the CLI's) answer that the object a command names does not exist: a container, a
+#: volume or a network, as Docker words it across versions (#720).
+_NOT_THERE = re.compile(
+    r"(?:error response from daemon: |error: )?"
+    r"(?:no such (?:container|volume|network|object): \S+|network \S+ not found|get \S+: no such volume)",
+    re.IGNORECASE,
+)
+#: The status line some docker front ends add after the daemon's answer.
+_EXIT_STATUS = re.compile(r"exit status \d+", re.IGNORECASE)
+
+
+def already_gone(stderr: str) -> bool:
+    """Whether a failed command's stderr says only that the objects it names are not there: every line is the
+    daemon's "no such ..." / "network ... not found" answer, but for an ``exit status`` line. Anything else (the
+    daemon unreachable, a network in use, a volume still mounted) is a failure."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    answers = [line for line in lines if not _EXIT_STATUS.fullmatch(line)]
+    return bool(answers) and all(_NOT_THERE.fullmatch(line) for line in answers)
+
 
 # Every container embry0 starts on the sandbox daemon carries these, so the
 # daemon's objects can be told apart by label, not by name alone (#268).
@@ -105,6 +126,12 @@ def _elide(token: str) -> str:
 
 class ExecStdinTimeoutError(RuntimeError):
     """stream_exec's command never read its stdin payload (a wedged exec)."""
+
+
+class ObjectGone(RuntimeError):
+    """A removal (``rm``, ``network rm``, ``volume rm``, ``stop``, ``network disconnect``) whose objects are already
+    gone, by the daemon's own answer (:func:`already_gone`): nothing to do (#720). A RuntimeError, so a caller that
+    catches those still does; one that removes catches this first and takes the removal as done."""
 
 
 class OutputTooLargeError(RuntimeError):
@@ -598,6 +625,7 @@ class DockerClient:
         log_context: dict[str, Any] | None = None,
         expected_failure: bool = False,
         quiet_exits: Collection[int] = (),
+        gone_ok: bool = False,
         stdin_data: bytes | None = None,
         max_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
         keep_tail: bool = False,
@@ -639,6 +667,11 @@ class DockerClient:
         and still raises. ``pkill`` exits 1, silently, when no process
         matched. Docker's own failures carry a message (``No such container``,
         the daemon unreachable), so they stay errors whatever their code.
+
+        ``gone_ok`` is for a command that removes or detaches objects: when the
+        daemon answers only that they are not there (:func:`already_gone`),
+        there was nothing to do. It is logged at debug and raised as
+        :class:`ObjectGone`; every other failure stays an error (#720).
 
         ``stdin_data`` is written to the command's stdin (a ``docker exec -i``):
         the way to hand a sandbox a secret without putting it on a command line.
@@ -689,10 +722,13 @@ class DockerClient:
             failure: dict[str, Any] = dict(context)
             failure.update(cmd=scrubbed, stderr=err[:2000], returncode=proc.returncode)
             nothing_to_do = proc.returncode in quiet_exits and not stdout.strip() and not stderr.strip()
-            if expected_failure or nothing_to_do:
+            gone = gone_ok and already_gone(stderr.decode(errors="replace"))
+            if expected_failure or nothing_to_do or gone:
                 logger.debug("docker_cmd_failed", **failure)
             else:
                 logger.error("docker_cmd_failed", **failure)
+            if gone:
+                raise ObjectGone(f"Docker command failed: {err}")
             raise RuntimeError(f"Docker command failed: {err}")
 
         return stdout.decode(errors="replace").strip()

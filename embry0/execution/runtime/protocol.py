@@ -208,7 +208,7 @@ class AgentRuntime(Protocol):
         ...
 
     async def remove_containers(self, containers: Sequence[str], *, timeout: int = 15) -> None:
-        """Force-remove the containers, running or not."""
+        """Force-remove the containers, running or not. One already gone is nothing to do, not a failure."""
         ...
 
     async def container_mounts(self, container: str, *, timeout: int = 10) -> list[tuple[str, str]]:
@@ -249,7 +249,8 @@ class AgentRuntime(Protocol):
         ...
 
     async def remove_volumes(self, volumes: Sequence[str], *, force: bool = False, timeout: int = 15) -> None:
-        """Remove volumes. Without ``force`` the daemon refuses one a container still mounts."""
+        """Remove volumes. Without ``force`` the daemon refuses one a container still mounts. One already gone is
+        nothing to do, not a failure."""
         ...
 
     # --- networks ---------------------------------------------------------
@@ -267,7 +268,7 @@ class AgentRuntime(Protocol):
         ...
 
     async def remove_network(self, network: str, *, timeout: int = 10) -> None:
-        """Remove a network. Fails while a container is attached to it."""
+        """Remove a network. Fails while a container is attached to it; one already gone is nothing to do."""
         ...
 
     # --- images -----------------------------------------------------------

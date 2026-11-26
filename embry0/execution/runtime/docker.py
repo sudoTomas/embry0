@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from collections.abc import Mapping, Sequence
 
 import structlog
 
-from embry0.execution.docker_client import DAEMON_LISTING_MAX_BYTES, LOG_TAIL_BYTES, DockerClient, collect_output
+from embry0.execution.docker_client import (
+    DAEMON_LISTING_MAX_BYTES,
+    LOG_TAIL_BYTES,
+    DockerClient,
+    ObjectGone,
+    collect_output,
+)
 from embry0.execution.runtime import egress as _egress
 from embry0.execution.runtime import isolation as _isolation
 from embry0.execution.runtime.protocol import ContainerSummary, DiskUsage, ImageSummary, VolumeSummary
@@ -147,7 +154,7 @@ class DockerRuntime:
         # given to another sandbox).
         enforcer = _egress.EgressEnforcer(self._client)
         try:
-            source_ip = await enforcer.container_ip(container, _INTERNET_NETWORK)
+            source_ip = await enforcer.container_ip(container, _INTERNET_NETWORK, gone_ok=True)
         except Exception:  # noqa: BLE001 — already-removed / never-networked containers
             return
         if source_ip:
@@ -203,7 +210,8 @@ class DockerRuntime:
         return name, image_id
 
     async def remove_containers(self, containers: Sequence[str], *, timeout: int = 15) -> None:
-        await self._client.run_cmd(self._cmd("rm", "-f", *containers), timeout=timeout)
+        with contextlib.suppress(ObjectGone):  # already gone: nothing to remove (#720)
+            await self._client.run_cmd(self._cmd("rm", "-f", *containers), timeout=timeout, gone_ok=True)
 
     async def container_mounts(self, container: str, *, timeout: int = 10) -> list[tuple[str, str]]:
         output = await self._client.run_cmd(
@@ -292,9 +300,10 @@ class DockerRuntime:
         await self._client.run_cmd(self._cmd("volume", "create", *label_args, volume), timeout=timeout)
 
     async def remove_volumes(self, volumes: Sequence[str], *, force: bool = False, timeout: int = 15) -> None:
-        await self._client.run_cmd(
-            self._cmd("volume", "rm", *(["--force"] if force else []), *volumes), timeout=timeout
-        )
+        with contextlib.suppress(ObjectGone):  # already gone: nothing to remove (#720)
+            await self._client.run_cmd(
+                self._cmd("volume", "rm", *(["--force"] if force else []), *volumes), timeout=timeout, gone_ok=True
+            )
 
     # --- networks ---------------------------------------------------------
 
@@ -316,7 +325,8 @@ class DockerRuntime:
         return (output or "").split()
 
     async def remove_network(self, network: str, *, timeout: int = 10) -> None:
-        await self._client.run_cmd(self._cmd("network", "rm", network), timeout=timeout)
+        with contextlib.suppress(ObjectGone):  # already gone: nothing to remove (#720)
+            await self._client.run_cmd(self._cmd("network", "rm", network), timeout=timeout, gone_ok=True)
 
     # --- images -----------------------------------------------------------
 

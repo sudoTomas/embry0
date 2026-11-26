@@ -318,7 +318,7 @@ async def test_image_digests_of_a_local_only_image() -> None:
 def _enforcer(monkeypatch: pytest.MonkeyPatch, addresses: dict[str, object]) -> MagicMock:
     from embry0.execution.runtime import egress
 
-    async def container_ip(container: str, network: str) -> str | None:
+    async def container_ip(container: str, network: str, *, gone_ok: bool = False) -> str | None:
         assert network == "sandbox-internet"
         found = addresses.get(container)
         if isinstance(found, Exception):
@@ -365,6 +365,7 @@ async def test_detach_policy_clears_by_address_and_ignores_a_gone_container(monk
     fake.clear.assert_awaited_once_with("172.20.0.9")
     await runtime.detach_policy("gone")
     assert fake.clear.await_count == 1
+    assert fake.container_ip.await_args.kwargs.get("gone_ok") is True, "a teardown expects the container may be gone"
 
 
 @pytest.mark.asyncio
