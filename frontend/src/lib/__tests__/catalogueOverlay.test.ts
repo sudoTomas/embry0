@@ -16,16 +16,26 @@ import {
   withModel,
   withModelTakenOut,
   withoutModelEntry,
+  DATE_KEYS,
+  EXTRAS_KEYS,
   WHOLE_NUMBER_KEYS,
   type CatalogueOverlay,
 } from "../catalogueOverlay";
 
 describe("overlayYaml", () => {
-  it("writes as integers exactly the whole-number fields the fixture names, which the backend checks", () => {
-    const listed = (shared as { whole_number_keys?: string[] }).whole_number_keys;
-    expect(listed, "the shared fixture names no whole_number_keys").toBeDefined();
-    expect([...(WHOLE_NUMBER_KEYS ?? [])].sort()).toEqual([...(listed ?? [])].sort());
-  });
+  // Each list is the fixture's, which the backend checks against the overlay's schema: the writer decides by name.
+  const byName: [string, ReadonlySet<string> | undefined][] = [
+    ["whole_number_keys", WHOLE_NUMBER_KEYS],
+    ["date_keys", DATE_KEYS],
+    ["json_keys", EXTRAS_KEYS],
+  ];
+  for (const [key, written] of byName) {
+    it(`writes by name exactly the fields the fixture's ${key} names, which the backend checks`, () => {
+      const listed = (shared as Record<string, unknown>)[key] as string[] | undefined;
+      expect(listed, `the shared fixture names no ${key}`).toBeDefined();
+      expect([...(written ?? [])].sort()).toEqual([...(listed ?? [])].sort());
+    });
+  }
 
   for (const sample of shared.cases) {
     it(`writes ${sample.name} as the catalogue reads it`, () => {
