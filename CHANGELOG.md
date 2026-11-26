@@ -59,6 +59,11 @@ describes what embry0 does rather than listing changes.
   with a dry run, history and undo; a change may not take out a model that
   something names ([docs/providers.md](docs/providers.md#changing-the-catalogue),
   [ADR 0031](docs/adr/0031-provider-catalogue.md)).
+- **Spent account waits.** A job whose LLM account is spent or rate limited
+  moves to a ready model of the fallback order, or waits for the reset. The
+  settings document's `account_wait` section says whether a job waits or
+  fails at once, and for how long, per organization and repository
+  ([docs/providers.md](docs/providers.md#whether-a-job-waits)).
 - **MCP server** (`embry0-mcp`, and `embry0-mcp-http` for the hosted endpoint).
 - **Claude Code plugin** ([plugins/embry0](plugins/embry0/README.md)), with this
   repository as its marketplace: it stands up a deployment, connects to its MCP

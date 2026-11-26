@@ -787,14 +787,21 @@ the work no other provider can.
 A spent or rate-limited account never fails a job. The job moves to a ready
 model of the fallback order, or it waits for the account's reset
 ([the design](superpowers/specs/2026-10-25-spent-account-waits-design.md)).
+Whether it waits, and how long, is the settings document's `account_wait`
+section ([below](#whether-a-job-waits)).
 
 **What counts.** A pause with a known end:
 
 - a registry account quarantined until a time;
 - a run of the job that ended with `ERR_PROVIDER_QUOTA_EXHAUSTED` or
-  `ERR_PROVIDER_RATE_LIMITED`: until the reset the provider named, capped at
-  eight days, else the quarantine window for the code;
-- the local model with every slot taken (`local_busy`): five minutes.
+  `ERR_PROVIDER_RATE_LIMITED`: until the reset the provider named, else the
+  quarantine window for the code;
+- the local model with every slot taken (`local_busy`): five minutes
+  (`account_wait.local_busy_retry_seconds`).
+
+A wait's end is cut at eight days (`account_wait.max_wait_seconds`) from
+when the job is parked: the job then asks again, and waits again while the
+account is still spent.
 
 No key at all, a disabled key, a refused token and a provider this
 deployment does not enable still fail the job, because waiting would not end
@@ -860,7 +867,45 @@ code as its own `error_code`, not `ERR_QA_INCONCLUSIVE`.
 question about the analysis job it would start. If the job would wait, the
 tick records `skipped_account_paused`, starts no job and leaves the window
 for the next tick. An analysis parked mid-run is cancelled, and the tick
-records the same action.
+records the same action. It asks whatever the repository's `account_wait`
+says: a job that would fail at once is not started either.
+
+### Whether a job waits
+
+The settings document's `account_wait` section
+([the reference](configuration.md#account_wait)):
+
+```yaml
+account_wait:
+  enabled: true               # false: with nowhere to move, the job fails at once
+  max_wait_seconds: 691200    # the furthest a wait's end may be: eight days
+  local_busy_retry_seconds: 300
+```
+
+A document that sets none of it keeps what every job did before the
+section. `enabled: false` is for a team that would rather see the failure
+than wait for it. A spent
+account still moves the job to a ready model of the fallback order. With
+none, the job fails at once with the account's own code, as jobs did
+before waits:
+
+- `ERR_PROVIDER_QUOTA_EXHAUSTED` for a spent usage window or an xAI
+  spending limit;
+- `ERR_PROVIDER_RATE_LIMITED` for a rate limit;
+- `ERR_LOCAL_MODEL_BUSY` for the local model's slots.
+
+Found by the account pre-check, it fails before any sandbox exists; found
+by an agent run, the run is not started (or its failure stands) and the job
+fails as a run the account refused does. Nothing is parked and no
+`account_wait` is written, in every pipeline. The run that finds an account
+spent still quarantines it at once, so the next job's pre-check sees it.
+
+An organization's layer and a repository's may set every key. A job reads
+the section for its repository when it starts and keeps those values through
+every pause, answer and restart, so a change reaches the next job that
+starts: a job already waiting goes on waiting. A job that starts again from
+its beginning (a `relaunch`: one parked before it started, or a qa, onboard
+or pr-review job) reads the section again.
 
 ## Local models
 

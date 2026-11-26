@@ -34,9 +34,11 @@ from embry0.orchestration.run_slots import RunSlot, RunSlots
 from embry0.safety.error_codes import ErrorCode
 from embry0.services._cost import resolve_job_total_cost
 from embry0.services._executor_outcomes import _fold_auto_answers_into_context
+from embry0.services.account_waits import CONFIG_KEY as ACCOUNT_WAIT_CONFIG_KEY
 from embry0.services.account_waits import LOCAL_BUSY, REENROLL_RETRY, AccountWait, JobParked
 from embry0.services.healing.recorder import record_case_event
 from embry0.services.run_with import RunWith, apply_run_with, models_with
+from embry0.settings.sections.account_wait import ACCOUNT_WAIT, AccountWaitSettings
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.issues import IssuesRepository
 from embry0.storage.repositories.jobs import JobsRepository, StatusTransitionConflict
@@ -300,13 +302,16 @@ class IssueExecutor:
         llm_credential_kinds: dict[str, str] | None = None,
         model_fallbacks: dict[str, dict[str, Any]] | None = None,
         account_waits: bool = False,
+        account_wait: AccountWaitSettings | None = None,
     ) -> dict[str, Any]:
         """Build the graph config dict for LangGraph execution.
 
         ``account_waits``: an agent run may park the job to wait for a spent
         account (spec 2026-10-25), because the pipeline's graph resumes from
         its checkpoint. False for the pipelines that cannot (qa, onboard,
-        pr-review): their runs fail as before when nothing is ready.
+        pr-review): their runs leave the wait for a point of the pipeline's own.
+        ``account_wait``: the job's own ``account_wait`` values, whether it
+        may wait at all and how long (the defaults when not given).
         """
         # Read OAuth token so the resolver can validate credentials before
         # dispatching to the sandbox. The sandbox also injects it independently
@@ -411,6 +416,7 @@ class IssueExecutor:
                 # the job, and the account health that quarantines a spent
                 # account the moment a run finds it.
                 "account_waits": account_waits,
+                ACCOUNT_WAIT_CONFIG_KEY: account_wait if account_wait is not None else ACCOUNT_WAIT.defaults(),
                 "credential_health": getattr(self, "_credential_health", None),
                 # Workspace-init strategies read allowlist/bounds off the app
                 # config (RAV-600).

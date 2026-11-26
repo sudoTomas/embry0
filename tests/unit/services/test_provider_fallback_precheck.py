@@ -18,6 +18,7 @@ from embry0.agents.fallback import Pause
 from embry0.services.credentials.fallback import job_account_failures, plan_model_fallbacks
 from embry0.services.credentials.resolver import CredentialMissingError, ResolvedCredential
 from embry0.services.issue_executor import IssueExecutor
+from embry0.settings.sections.account_wait import ACCOUNT_WAIT
 from tests.fixtures.provider_catalogue import enable_providers
 
 UNTIL = datetime(2026, 10, 26, tzinfo=UTC)
@@ -179,7 +180,9 @@ def precheck(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(_executor_run, "_agent_definitions_for_precheck", claude_only)
 
     async def run(executor: IssueExecutor):
-        return await _executor_run._precheck_llm_accounts(executor, "job-1", {"repo": "acme/app", "job_id": "job-1"})
+        return await _executor_run._precheck_llm_accounts(
+            executor, "job-1", {"repo": "acme/app", "job_id": "job-1"}, account_wait=ACCOUNT_WAIT.defaults()
+        )
 
     return run
 
