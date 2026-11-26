@@ -71,6 +71,8 @@ Worth the ~16 minutes serially, or ~5 with `-n 4` (below), when a change touches
 
 The database fixtures drop the schema and empty every table between tests, so two concurrent runs against one database destroy each other and it looks like a broken branch. Use a private database name, not just a private port.
 
+A run's temporary files are its own too: started without `--basetemp`, it makes `<tmp>/embry0-pytest-*` rather than use pytest's shared `pytest-of-<user>`, and removes it when the run passes. In every run, an explicit `--basetemp` included, a passing test's `tmp_path` goes with the test (pytest's `tmp_path_retention_policy = "failed"`, set by the conftest since the configuration file may not set it). A failed run keeps its failing tests' files and names the directory in its summary (`this run's temporary files are kept in …`): remove it when done. A run starting removes this user's earlier ones beyond the newest three, and any a day old, unless their run is still going: it holds a `flock` on its directory's `lock` file while it runs, which a run in another PID namespace (a container sharing `<tmp>`) holds too. On a filesystem without file locks a run goes on without one, says so once, and keeps earlier runs' directories there (`tests/conftest.py`, #728).
+
 ### Merge hazards, each from a real incident
 
 1. git printed "Successfully rebased" over a commit containing conflict markers.

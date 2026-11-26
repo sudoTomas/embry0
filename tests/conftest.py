@@ -1,10 +1,17 @@
 """Shared test fixtures."""
 
 import asyncio
+import errno
+import fcntl
 import gc
 import os
+import shutil
 import socket
+import sys
+import tempfile
+import time
 from collections.abc import AsyncIterator, Generator, Iterator
+from typing import Any
 
 import asyncpg
 import pytest
@@ -39,6 +46,24 @@ _WORKER_DATABASE = pytest.StashKey[str]()
 #: ``pyproject.toml``, whose pytest table is pinned to keys that cannot hide a warning
 #: (tests/unit/test_ci_workflow.py); a ``filterwarnings`` mark on a test still outranks it.
 RESOURCE_WARNINGS = "always::ResourceWarning"
+
+#: The directory this run made for itself when its command line gave no ``--basetemp``: ``<own>/t`` is its basetemp,
+#: ``<own>/lock`` a file the run holds an exclusive ``flock`` on for as long as it runs.
+_OWN_BASETEMP = pytest.StashKey[str]()
+#: The descriptor that holds the run's lock, closed (the lock released) in ``pytest_unconfigure``.
+_RUN_LOCK = pytest.StashKey[int]()
+#: What ``flock`` answers on a filesystem that has no file locks.
+_NO_FILE_LOCKS = frozenset({errno.ENOLCK, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOSYS})
+#: Set once the run's summary has named the directory it keeps.
+_NAMED = pytest.StashKey[bool]()
+#: The run's session, so its final exit status can be read after every ``pytest_sessionfinish`` has set it.
+_SESSION = pytest.StashKey[pytest.Session]()
+#: The exit statuses with nothing to look at: the run's own temporary directory goes.
+_NOTHING_TO_KEEP = (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED)
+#: A run's own directories, and how many earlier ones of this user's a run keeps, younger than a day, when it starts.
+_RUN_PREFIX, _RUNS_KEPT, _RUN_KEPT_FOR = "embry0-pytest-", 3, 24 * 3600
+#: Whether a test's call passed, as pytest's own ``tmp_path_retention_policy = "failed"`` reads it.
+_CALL_PASSED = pytest.StashKey[bool]()
 
 #: The warning filters pytest applies to every test, as the session started: its ``filterwarnings`` and
 #: the command line's ``-W``. A test that adds to either would silence warnings for every test after it.
@@ -105,6 +130,141 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     config = session.config
     config.addinivalue_line("filterwarnings", RESOURCE_WARNINGS)
     config.stash[_FILTERS] = _filters_now(config)
+    config.stash[_SESSION] = session
+
+
+@pytest.hookimpl(specname="pytest_configure")
+def pytest_configure_gives_the_run_its_own_temporary_directory(config: pytest.Config) -> None:
+    """A run started without ``--basetemp`` keeps its temporary files in a directory of its own (#728).
+
+    pytest's default parent, ``<tmp>/pytest-of-<user>/``, is one per OS user and shared by every run of that user
+    on the host: it was removed under a run still going, whose tests then failed by the hundred. The directory is
+    made under the system's temporary directory (``PYTEST_DEBUG_TEMPROOT`` first, as pytest reads it), and set as
+    ``--basetemp`` before pytest's temporary-files plugin reads it and before pytest-xdist hands each worker a
+    ``popen-gwN`` directory under it: a conftest's ``pytest_configure`` runs before those of the plugins registered
+    before it, pytest's own and pytest-xdist's. It touches nothing else; the warning filters (#708) and the
+    unit suite's network guard (#702) are set up as before. An explicit ``--basetemp`` is used as given, and so is the
+    one a worker is given. See ``pytest_unconfigure`` for when it goes.
+    """
+    if getattr(config.option, "basetemp", None):
+        return  # Given, a worker's included: pytest-xdist gives each worker its own under the run's.
+    root = os.environ.get("PYTEST_DEBUG_TEMPROOT") or tempfile.gettempdir()
+    _remove_earlier_runs(root)
+    own = tempfile.mkdtemp(prefix=_RUN_PREFIX, dir=root)
+    lock = os.open(os.path.join(own, "lock"), os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # held until pytest_unconfigure, or until the process ends, however it ends
+    except OSError as exc:
+        if exc.errno not in _NO_FILE_LOCKS:
+            raise
+        # A filesystem with no file locks: the run goes on without one. Its lock file stays, and the pruner, which
+        # cannot try a lock here either, keeps every directory that has one, this run's included.
+        os.close(lock)
+        print(f"no file locks on {root}: earlier runs' directories here are kept, not pruned", file=sys.stderr)
+    else:
+        config.stash[_RUN_LOCK] = lock
+    # pytest empties a basetemp it is given before using it: a directory under the run's, so the lock file stays.
+    config.option.basetemp = os.path.join(own, "t")
+    config.stash[_OWN_BASETEMP] = own
+
+
+def _remove_earlier_runs(root: str) -> None:
+    """Remove this user's earlier run directories under ``root`` beyond the newest :data:`_RUNS_KEPT`, and any older
+    than a day, unless its run is still going (it holds its lock): a failed run keeps its directory, and one killed
+    outright never removes it, so without this they pile up in the system's temporary directory."""
+    now = time.time()
+    runs: list[tuple[float, str]] = []
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        if not name.startswith(_RUN_PREFIX):
+            continue
+        try:
+            st = os.stat(path, follow_symlinks=False)
+        except OSError:
+            continue
+        if os.path.isdir(path) and not os.path.islink(path) and st.st_uid == os.getuid():
+            runs.append((st.st_mtime, path))
+    runs.sort(reverse=True)
+    for index, (mtime, path) in enumerate(runs):
+        if (index < _RUNS_KEPT and now - mtime < _RUN_KEPT_FOR) or _still_running(path):
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _still_running(run: str) -> bool:
+    """Whether ``run``'s run still holds the lock it takes on its directory, tried without waiting.
+
+    A lock rather than a process id: a run in another PID namespace sharing this directory (a container's) has a pid
+    that means nothing here, while a ``flock`` belongs to the file, the same seen from either side. One that cannot be
+    tried is left as running. A directory with no lock file is no run's now (its run would have made the file an
+    instant after the directory, and as the newest directory it is kept for that instant anyway).
+    """
+    try:
+        probe = os.open(os.path.join(run, "lock"), os.O_RDONLY | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return True
+    finally:
+        os.close(probe)  # releases the lock this probe took, when it took it
+    return False
+
+
+@pytest.hookimpl(specname="pytest_runtest_makereport", wrapper=True)
+def pytest_runtest_makereport_notes_whether_the_call_passed(item: pytest.Item, call: pytest.CallInfo[None]) -> Any:
+    report = yield
+    if report.when == "call":
+        item.stash[_CALL_PASSED] = bool(report.passed)
+    return report
+
+
+@pytest.hookimpl(specname="pytest_runtest_teardown", wrapper=True)
+def pytest_runtest_teardown_removes_a_passing_test_s_files(item: pytest.Item, nextitem: pytest.Item | None) -> Any:
+    """A test whose call passed leaves no files once torn down: only failures' stay for a look. This is pytest's
+    ``tmp_path_retention_policy = "failed"``, which the configuration file may not set (#696), for every run and
+    every worker, as that setting would be; a test whose call never ran (its setup failed or skipped it) leaves none
+    either, as there."""
+    result = yield
+    tmp_path = getattr(item, "funcargs", {}).get("tmp_path")
+    if tmp_path is not None and item.stash.get(_CALL_PASSED, True):
+        shutil.rmtree(tmp_path, ignore_errors=True)
+    return result
+
+
+def _holds_a_file(path: str) -> bool:
+    return any(files for _root, _dirs, files in os.walk(path))
+
+
+def _keeps_its_temporary_directory(config: pytest.Config) -> str | None:
+    """The run's own temporary directory when the run failed and the directory holds something, which it keeps for a
+    look; else None. Read from the session's exit status as every ``pytest_sessionfinish`` left it:
+    ``--fail-on-warnings`` (above) and the network guard (tests/unit/conftest.py) fail a run whose tests passed there,
+    and such a run keeps its files too."""
+    own = config.stash.get(_OWN_BASETEMP, None)
+    session = config.stash.get(_SESSION, None)
+    if own is None or session is None or session.exitstatus in _NOTHING_TO_KEEP:
+        return None
+    # Nothing in it (no test of the run left a temporary file): nothing to look at either.
+    return own if _holds_a_file(os.path.join(own, "t")) else None
+
+
+def pytest_terminal_summary(terminalreporter: Any, exitstatus: int, config: pytest.Config) -> None:
+    """A failed run names the temporary directory it keeps, so it can be found, and removed when done with."""
+    kept = _keeps_its_temporary_directory(config)
+    if kept is not None:
+        terminalreporter.write_sep("-", "temporary files")
+        terminalreporter.write_line(_kept_in(kept))
+        config.stash[_NAMED] = True
+
+
+def _kept_in(kept: str) -> str:
+    return f"this run's temporary files are kept in {kept}: remove it when done with them"
 
 
 def _filters_now(config: pytest.Config) -> tuple[list[str], list[str] | None]:
@@ -185,7 +345,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Drop the database a pytest-xdist worker created for itself; the run that started the workers
-    then drops any a worker left behind, such as one killed outright."""
+    then drops any a worker left behind, such as one killed outright. The run's own temporary directory
+    (``pytest_configure_gives_the_run_its_own_temporary_directory``) goes too, workers' included, unless the run
+    failed: then it stays, named in the summary."""
     own = config.stash.get(_WORKER_DATABASE, None)
     if own is not None:
         asyncio.run(drop_database(own))
@@ -195,6 +357,20 @@ def pytest_unconfigure(config: pytest.Config) -> None:
             asyncio.run(drop_worker_databases(url))
         except (OSError, asyncpg.PostgresError):
             pass  # Unreachable: there is nothing to drop it from.
+    basetemp = config.stash.get(_OWN_BASETEMP, None)
+    kept = _keeps_its_temporary_directory(config) if basetemp is not None else None
+    if basetemp is not None and kept is None:
+        shutil.rmtree(basetemp, ignore_errors=True)
+    elif kept is not None and not config.stash.get(_NAMED, False):
+        # A run that ended without a summary (stopped by pytest.exit) still says where its files are.
+        reporter = config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is not None:
+            reporter.write_line(_kept_in(kept))
+        else:
+            print(_kept_in(kept), file=sys.stderr)
+    lock = config.stash.get(_RUN_LOCK, None)
+    if lock is not None:
+        os.close(lock)  # the run is over: a later run may remove a directory it kept
 
 
 def pytest_collection_modifyitems(config, items):
