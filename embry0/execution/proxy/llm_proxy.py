@@ -15,7 +15,9 @@ git-proxy scopes an enrolment to one repository:
   is 404 and never reaches a server;
 - only from an enrolled sandbox, and only to its own server: the per-sandbox
   bearer is checked and stripped, and the server's key (when it checks one) is
-  added here, so neither the key nor the server's address enters a sandbox;
+  added here, so neither the key nor the server's address enters a sandbox; an
+  answer that names a key the proxy holds (an error message quoting the key it
+  was sent) has it replaced on its way back (``_Scrubber``);
 - a request body over the sandbox's cap (``local_models.max_request_bytes``,
   sent with its enrollment under the ceiling ``MAX_REQUEST_BYTES``) is refused
   with 413, in the OpenAI error shape (``model_request``), and a server has the
@@ -66,6 +68,7 @@ from embry0.execution.proxy.metering import (
 from embry0.execution.proxy.model_request import openai_error, read_body
 from embry0.execution.proxy.pinned_client import pinned, pinning_client
 from embry0.execution.proxy.server_address import refused_address, refused_server_host
+from embry0.safety.redaction import REDACTED
 
 logger = structlog.get_logger(__name__)
 
@@ -85,6 +88,8 @@ _TIMEOUT = httpx.Timeout(DEFAULT_TIMEOUT_SECONDS, connect=_CONNECT_SECONDS)
 # Authorization above all, stays behind.
 _FORWARDED_REQUEST_HEADERS = ("content-type", "accept")
 _FORWARDED_RESPONSE_HEADERS = ("content-type",)
+#: The shortest key scrubbed from an answer: a shorter one (a placeholder) would replace ordinary words.
+_MIN_SCRUBBED_KEY = 8
 # path under /v1 -> the one method allowed on it
 _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
@@ -321,6 +326,51 @@ async def _health_handler(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "proxy": "llm"})
 
 
+class _Scrubber:
+    """Replaces every key the proxy holds in an answer on its way back, across the chunks it streams in. Bytes where a
+    key could still begin (the last ``len(longest key) - 1``) wait for the next chunk, so a key split between chunks is
+    found whole, and a key that is the start of a longer one is never taken out of the longer one."""
+
+    def __init__(self, keys: list[str]) -> None:
+        found = sorted({key.encode() for key in keys if len(key) >= _MIN_SCRUBBED_KEY}, key=len, reverse=True)
+        # Longest first: where two keys match at one place, the longer is the one replaced.
+        self._pattern = re.compile(b"|".join(re.escape(key) for key in found)) if found else None
+        self._hold = max((len(key) for key in found), default=1) - 1
+        self._pending = b""
+
+    def feed(self, chunk: bytes) -> bytes:
+        """What may go back now of everything fed so far."""
+        if self._pattern is None:
+            return chunk
+        data = self._pending + chunk
+        # A match from here on may be a shorter key standing for the start of a longer one not yet whole.
+        settled = len(data) - self._hold
+        out: list[bytes] = []
+        sent = 0
+        for match in self._pattern.finditer(data):
+            if match.start() >= settled:
+                break
+            out += (data[sent : match.start()], REDACTED.encode())
+            sent = match.end()
+        cut = max(sent, settled)
+        out.append(data[sent:cut])
+        self._pending = data[cut:]
+        return b"".join(out)
+
+    def finish(self) -> bytes:
+        """The rest, at the end of the answer."""
+        rest, self._pending = self._pending, b""
+        return self._pattern.sub(REDACTED.encode(), rest) if self._pattern is not None else rest
+
+
+def _enrolled_keys(app: web.Application) -> list[str]:
+    """Every key the proxy holds, whichever sandbox's enrollment it came with: a server two credentials share could
+    name the other's. One per credential, so few."""
+    keys = {server.api_key for server in app[UPSTREAM_BY_SANDBOX].values() if server.api_key}
+    keys.update(server.api_key for servers in app[SERVERS_BY_SANDBOX].values() for server in servers.values())
+    return sorted(key for key in keys if key)
+
+
 def _upstream_headers(request: web.Request, server: Upstream) -> dict[str, str]:
     headers = {name: request.headers[name] for name in _FORWARDED_REQUEST_HEADERS if name in request.headers}
     if server.api_key:
@@ -421,7 +471,18 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     )
     try:
         with pinned(url, upstream.address):
-            return await _forward(request, client, method, url, body, sandbox_id, metered, upstream, limits)
+            return await _forward(
+                request,
+                client,
+                method,
+                url,
+                body,
+                sandbox_id,
+                metered,
+                upstream,
+                limits,
+                _Scrubber(_enrolled_keys(request.app)),
+            )
     finally:
         if metered is not None:
             metered.close()
@@ -437,9 +498,12 @@ async def _forward(
     metered: Metered | None,
     server: Upstream,
     limits: Limits,
+    scrubber: _Scrubber,
 ) -> web.StreamResponse:
-    """Send the call upstream and stream its answer back through the meter. A call whose answer never came back
-    after it was sent is charged its ceiling; one that never connected costs nothing."""
+    """Send the call upstream and stream its answer back through the meter, with every key the proxy holds scrubbed
+    from it, an error answer and a streamed one alike (:class:`_Scrubber` finds a key however the chunks split it). A
+    call whose answer never came back after it was sent is charged its ceiling; one that never connected costs
+    nothing."""
     try:
         async with client.stream(
             method,
@@ -458,10 +522,15 @@ async def _forward(
             try:
                 async for chunk in upstream.aiter_bytes():
                     if metered is not None:
-                        metered.feed(chunk)
-                    await response.write(chunk)
+                        metered.feed(chunk)  # what the provider sent: its usage is read from it as it was
+                    out = scrubber.feed(chunk)
+                    if out:
+                        await response.write(out)
             except httpx.TransportError as exc:
                 logger.warning("llm_proxy_stream_truncated", sandbox_id=sandbox_id, error=str(exc))
+            rest = scrubber.finish()
+            if rest:
+                await response.write(rest)
             await response.write_eof()
             return response
     except httpx.ConnectError:

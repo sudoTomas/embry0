@@ -246,7 +246,7 @@ proxy's count (`embry0/agents/run_charge.py`):
 | The proxy's tally of the run | Charged |
 |---|---|
 | whole: declared, its end read, one proxy process all along | the proxy's count (`source: proxy`) |
-| not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
+| not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there (its calls then counted under the sandbox's calls under no run: what those grew by during the run is the proxy's count, all of them when where they stood at its start could not be read) | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
 | complete, but declared on a proxy image that does not order requests (see below) | the larger of the two (`proxy_unordered` or `sandbox_unordered`) |
 | at the llm-proxy, a tally that names another provider than the run's, or none (a proxy image from before) | the larger of the two (`proxy_gap` or `sandbox_gap`) |
 | the run's provider is carried by no metering proxy (Anthropic) | the sandbox's figure, as above (`sandbox`) |
@@ -995,7 +995,9 @@ chat-completions provider's the same way, at `/p/<provider>/v1`, ADR 0033):
   404 and never reaches a server;
 - only for a sandbox enrolled with it. Its bearer is checked and dropped
   there, and the server's key is added by the proxy, so neither the key nor
-  the server's address is in the sandbox. A host name in the root is sent as
+  the server's address is in the sandbox. An answer that names a key the proxy
+  holds (an error message may quote the key it was sent) has it replaced with
+  `***REDACTED***` on its way back, however the stream splits it. A host name in the root is sent as
   the address it resolves to on the orchestrator, since DinD resolves none;
   an https root keeps its name, for the certificate;
 - a request over `local_models.max_request_bytes` (8 MiB) is refused with

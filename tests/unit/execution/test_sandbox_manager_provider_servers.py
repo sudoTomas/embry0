@@ -96,6 +96,11 @@ async def test_a_hosted_provider_s_key_goes_to_the_proxy_and_never_into_the_sand
 async def test_custom_and_hosted_providers_are_enrolled_together(dns) -> None:
     mgr, _, pm = _proxied_manager({"custom": _CUSTOM, "groq": _key("groq", "groq-secret-key-value")})
     await mgr.create("job-1", repo="acme/widgets", llm_providers=["custom", "groq"])
+    env = _env(mgr)
+    assert not [name for name in env if name.startswith("EMBRY0_LLM_") and name.endswith("_API_KEY")], sorted(env)
+    assert not {"groq-secret-key-value", _CUSTOM.secret} & set(env.values()), (
+        f"a key reached the sandbox's env beside the custom provider: {sorted(env)}"
+    )
     kwargs = pm.enroll_sandbox.await_args.kwargs
     assert set(kwargs.get("provider_servers") or {}) == {"groq"}, kwargs
     assert kwargs.get("local_llm") is not None, "the custom server went missing beside a hosted one"

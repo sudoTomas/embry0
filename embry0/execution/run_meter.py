@@ -13,8 +13,9 @@ larger of what was counted and what its sandbox reported.
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Protocol
@@ -25,7 +26,7 @@ from embry0.agents.run_charge import BootTally, Charge, RunMetering
 from embry0.agents.run_close import metering_from_kept
 from embry0.execution.admin_seq import next_admin_seq
 from embry0.metrics.loop import NULL_METRICS, LoopMetrics
-from embry0.storage.repositories.run_meter import RunMeterRepository
+from embry0.storage.repositories.run_meter import RunMeterRepository, tally_key
 
 logger = structlog.get_logger(__name__)
 
@@ -61,6 +62,10 @@ class RunWindow:
     declared: dict[str, str] = field(default_factory=dict)
     #: The number each proxy's end carries, taken when the run ended (:meth:`RunMeter.number_end`).
     end_seqs: dict[str, int] = field(default_factory=dict)
+    #: Per proxy the run could not be declared on: the sandbox's tallies of calls under no run there when the run
+    #: began, by (boot id, tally key), or None when they could not be read either. What they grew by is the proxy's
+    #: count of the run (:meth:`RunMeter.end`).
+    undeclared_from: dict[str, dict[tuple[str, str], Mapping[str, Any]] | None] = field(default_factory=dict)
 
 
 def _unattributed_requests(tallies: list[Any]) -> int:
@@ -73,6 +78,36 @@ def _unattributed_requests(tallies: list[Any]) -> int:
             requests = entry.get("requests") if isinstance(entry, dict) else None
             total += requests if isinstance(requests, int) and not isinstance(requests, bool) else 0
     return total
+
+
+def _counted(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def _grown(window: RunWindow, now: Mapping[str, Any], before: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What a sandbox's tally of calls under no run grew by from ``before`` to ``now``, as a tally of the run: each
+    model's counts by how much they rose, its errors the same, and every call in flight now at its ceiling."""
+    earlier = before.get("models") if isinstance(before, Mapping) else None
+    earlier = earlier if isinstance(earlier, Mapping) else {}
+    models: dict[str, dict[str, int]] = {}
+    raw = now.get("models")
+    for model, entry in raw.items() if isinstance(raw, Mapping) else ():
+        if not isinstance(entry, Mapping):
+            continue
+        prior = earlier.get(model)
+        prior = prior if isinstance(prior, Mapping) else {}
+        # A tally's counts only rise (the proxy keeps each one's largest), so the difference is what the run added.
+        models[str(model)] = {name: _counted(entry.get(name)) - _counted(prior.get(name)) for name in entry}
+    errors = _counted(now.get("errors")) - (_counted(before.get("errors")) if isinstance(before, Mapping) else 0)
+    return {
+        "run_id": window.run_id,
+        "sandbox_id": window.sandbox_id,
+        "attributed": False,
+        "provider": None,
+        "models": models,
+        "errors": errors,
+        "open": list(now.get("open") or []),
+    }
 
 
 class RunMeter:
@@ -112,7 +147,26 @@ class RunMeter:
             except Exception as exc:  # noqa: BLE001 — the run goes ahead; its charge allows for the gap
                 self._metrics.meter_admin_failed(proxy, "declare")
                 logger.warning("run_meter_declare_failed", proxy=proxy, run_id=run_id, error=str(exc))
+                # Its calls there count under the sandbox's calls under no run: what those are now is where the
+                # run's own begin.
+                window.undeclared_from[proxy] = await self._unattributed(proxy, sandbox_id)
         return window
+
+    async def _unattributed(self, proxy: str, sandbox_id: str) -> dict[tuple[str, str], Mapping[str, Any]] | None:
+        """The sandbox's tallies of calls under no run at ``proxy``, by (boot id, tally key); None when the proxy's
+        tallies cannot be read."""
+        try:
+            meter = await self._proxies.read_meter(proxy)
+        except Exception as exc:  # noqa: BLE001 — the run is charged what the rest says
+            logger.warning("run_meter_unattributed_read_failed", proxy=proxy, sandbox_id=sandbox_id, error=str(exc))
+            return None
+        boot = str(meter.get("boot_id") or "")
+        # A copy: what a later read answers must not change where these stood.
+        return {
+            (boot, tally_key(t)): copy.deepcopy(dict(t))
+            for t in meter.get("tallies") or ()
+            if isinstance(t, Mapping) and not t.get("run_id") and t.get("sandbox_id") == sandbox_id
+        }
 
     async def kept(self, window: RunWindow) -> RunMetering | None:
         """The proxies' account of the run from the tallies kept of it so far (``run_meter``), its end unread: what a
@@ -168,11 +222,24 @@ class RunMeter:
             except Exception as exc:  # noqa: BLE001 — what this process holds still counts
                 logger.warning("run_meter_read_kept_failed", run_id=window.run_id, error=str(exc))
         kept.update(finals)
+        grown: list[BootTally] = []
+        for proxy in window.targets:
+            if proxy in window.declared:
+                continue
+            # Never declared there: its calls counted under the sandbox's calls under no run, so what those grew by
+            # during the run is that proxy's count of it (all of them, when where they stood at its start is not
+            # known). Never whole, so the run is charged the larger of that and its sandbox's figure.
+            now = await self._unattributed(proxy, window.sandbox_id)
+            started = window.undeclared_from.get(proxy) or {}
+            for (boot, counted_as), tally in sorted((now or {}).items()):
+                grown.append(
+                    BootTally(proxy, boot, _grown(window, tally, started.get((boot, counted_as))), final=False)
+                )
         return RunMetering(
             run_id=window.run_id,
             targets=window.targets,
             declared=dict(window.declared),
-            tallies=tuple(kept.values()),
+            tallies=(*kept.values(), *grown),
             unreached=tuple(unreached),
             unordered=tuple(unordered),
         )

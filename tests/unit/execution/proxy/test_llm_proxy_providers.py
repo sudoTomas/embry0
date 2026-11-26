@@ -417,3 +417,111 @@ async def test_a_run_declared_again_on_another_provider_is_refused(aiohttp_clien
     assert (await _declare(client, provider="openai")).status == 200, "the same declaration again was refused"
     again = await _declare(client, provider="groq")
     assert again.status == 409, f"the run moved to another provider: {again.status}"
+
+
+# --- what goes back to the sandbox names no key ----------------------------------------------------------------------
+
+_KEY = "sk-proj-key-the-sandbox-never-holds-0123456789"
+
+
+async def _echoing(aiohttp_server: Any, answer: Any) -> Any:
+    """A provider's server answering every chat completion with ``answer(request)``."""
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", answer)
+    return await aiohttp_server(app)
+
+
+async def test_an_error_answer_quoting_the_key_reaches_the_sandbox_without_it(aiohttp_client, aiohttp_server):
+    async def refuse(request: web.Request) -> web.Response:
+        quoted = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        message = f"Incorrect API key provided: {quoted}. You can find your API key at the provider's site."
+        return web.json_response({"error": {"message": message, "code": "invalid_api_key"}}, status=401)
+
+    upstream = await _echoing(aiohttp_server, refuse)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    body = await resp.read()
+    assert resp.status == 401
+    assert _KEY.encode() not in body, f"the provider's key reached the sandbox: {body!r}"
+    assert b"Incorrect API key provided: ***REDACTED***" in body, f"the rest of the answer was lost: {body!r}"
+
+
+@pytest.mark.parametrize("split", [1, 9, len(_KEY) - 1], ids=["first-byte", "middle", "last-byte"])
+async def test_a_key_split_across_streamed_chunks_is_still_scrubbed(aiohttp_client, aiohttp_server, split):
+    async def stream(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        key = request.headers.get("Authorization", "").removeprefix("Bearer ").encode()
+        for part in (b'data: {"said": "' + key[:split], key[split:] + b'"}\n\n', b"data: [DONE]\n\n"):
+            await response.write(part)  # one chunk each: the write waits for it to go
+        await response.write_eof()
+        return response
+
+    upstream = await _echoing(aiohttp_server, stream)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    chat = {"model": "gpt-x", "messages": [], "stream": True}
+    resp = await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)
+    body = await resp.read()
+    assert _KEY.encode() not in body, f"a key split across the stream's chunks reached the sandbox: {body!r}"
+    assert body == b'data: {"said": "***REDACTED***"}\n\ndata: [DONE]\n\n', body
+
+
+async def test_another_sandbox_s_key_is_scrubbed_too(aiohttp_client, aiohttp_server):
+    """A server two credentials share could answer one sandbox with the other's key."""
+    other = "sk-another-credential-s-key-9876543210"
+
+    async def leak(request: web.Request) -> web.Response:
+        return web.json_response({"choices": [{"message": {"content": f"the last key I saw: {other}"}}]})
+
+    upstream = await _echoing(aiohttp_server, leak)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    second = {
+        "sandbox_id": "sbx-2",
+        "sandbox_token": "another-sandbox-bearer-token-0123456789-abcdef",
+        "limits": LIMITS,
+        "provider_servers": {"openai": _server(upstream, other, "cred-other")},
+    }
+    assert (await client.post("/admin/enroll", json=second, headers=_H)).status == 200
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    body = await resp.read()
+    assert other.encode() not in body, f"another sandbox's key reached this one: {body!r}"
+
+
+def test_the_scrubber_finds_a_key_split_at_any_byte_of_any_chunking() -> None:
+    """The chunks an answer arrives in are the network's: a key may be split at any byte, over several chunks."""
+    scrubber_type = getattr(llm_proxy, "_Scrubber", None)
+    assert scrubber_type is not None, "nothing scrubs a key from what goes back to the sandbox"
+    text = b'data: {"said": "' + _KEY.encode() + b'", "and again": "' + _KEY.encode() + b'", "a short": 1}\n\n'
+    expected = text.replace(_KEY.encode(), b"***REDACTED***")
+    for size in (1, 2, 7, len(_KEY) - 1, len(_KEY), len(_KEY) + 1, len(text)):
+        # A key that is the start of another (two credentials' keys) is replaced inside the longer one too.
+        scrubber = scrubber_type([_KEY[:20], _KEY, "short"])
+        out = b"".join(scrubber.feed(text[i : i + size]) for i in range(0, len(text), size)) + scrubber.finish()
+        assert out == expected, f"chunks of {size} bytes went back as {out!r}"
+
+
+async def test_the_meter_reads_the_answer_as_the_provider_sent_it(aiohttp_client, aiohttp_server):
+    """The scrub holds the last bytes of each chunk back, and replaces a key: the usage is read from the provider's
+    own bytes, whole, all the same."""
+    recorded = (ANSWERS / "openai-chat.json").read_bytes()
+
+    async def answer(request: web.Request) -> web.Response:
+        return web.Response(body=recorded, content_type="application/json")
+
+    upstream = await _echoing(aiohttp_server, answer)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    assert (await _declare(client, provider="openai")).status == 200
+    call = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    assert call.status == 200 and await call.read() == recorded, "the answer did not go back as it came"
+    meter = await (await client.get("/admin/meter", headers=_H)).json()
+    tally = next(t for t in meter["tallies"] if t.get("run_id") == "run-1")
+    counted = next(iter(tally["models"].values()))
+    assert (
+        counted["input_tokens"] + counted.get("cache_read_tokens", 0),
+        counted["output_tokens"],
+        counted["estimated"],
+    ) == (
+        1200,
+        80,
+        0,
+    ), f"the usage was not read from the answer whole: {tally}"
