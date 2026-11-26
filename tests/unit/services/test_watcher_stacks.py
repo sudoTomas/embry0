@@ -20,6 +20,7 @@ from embry0.services.watcher_stacks import (
     seed_stacks,
     stack_from_env,
 )
+from embry0.settings.sections import CATALOG
 
 GLOBALS = SimpleNamespace(
     watcher_repo="acme/backend",
@@ -147,9 +148,67 @@ def test_signature_masks_are_the_stacks_own_with_no_global_to_inherit() -> None:
 def test_every_key_a_stack_may_hold_is_typed() -> None:
     from embry0.services import watcher_stacks
 
-    keys = set(watcher_stacks.OVERRIDABLE) | set(getattr(watcher_stacks, "STACK_ONLY", {}))
+    keys = (
+        set(watcher_stacks.OVERRIDABLE)
+        | set(getattr(watcher_stacks, "SECTION_SETTINGS", ()))
+        | set(getattr(watcher_stacks, "STACK_ONLY", {}))
+    )
     assert "signature_masks" in keys, "signature_masks is not a setting a stack may hold"
     assert keys == set(watcher_stacks._SETTING_TYPES), "a key a stack may hold has no type, or a type has no key"
+
+
+def test_a_stack_may_override_every_key_of_the_watcher_section_and_none_falls_back_to_the_process() -> None:
+    """#738: the six keys the variables held are the section's; a stack still sets each for itself."""
+    from embry0.services import watcher_stacks
+
+    section = CATALOG.get("watcher")
+    assert section is not None, "the settings document has no watcher section"
+    assert set(getattr(watcher_stacks, "SECTION_SETTINGS", ())) == set(section.fields), (
+        "a stack may set each key of the watcher section for itself, over the section"
+    )
+    assert not set(section.fields) & set(watcher_stacks.OVERRIDABLE), (
+        "no key of the section falls back to the process config, which no longer holds it"
+    )
+    assert set(section.fields) <= watcher_stacks.SETTING_KEYS
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"auto_accept_max_per_day": 1001},
+        {"auto_accept_min_occurrences": 1_000_001},
+        {"auto_accept_after_hours": 8761},
+        {"skip_known_hours": 8761},
+    ],
+)
+def test_a_stack_s_value_of_a_section_key_meets_the_section_s_bounds(settings: dict) -> None:
+    """One home for what a value may be: a stack cannot hold what the deployment's section refuses."""
+    from embry0.services.watcher_stacks import check_settings
+
+    key = next(iter(settings))
+    try:
+        check_settings(settings)
+    except ValueError as exc:
+        refused = str(exc)
+    else:
+        pytest.fail(f"a stack may hold {settings}, which the deployment's watcher section refuses")
+    assert f"settings.{key}" in refused, f"the refusal names the key: {refused}"
+    assert str(settings[key]) not in refused, f"the refusal never repeats the value: {refused}"
+
+
+def test_a_stack_s_values_of_the_section_s_keys_are_its_section_overrides() -> None:
+    """The watcher reads them over the section; every other override still answers as an attribute."""
+    stack = WatcherStack(
+        repo="o/r",
+        logql='{app="x"}',
+        settings={"auto_accept": True, "skip_known_hours": 0, "interval_seconds": 60, "auto_accept_max_per_day": -1},
+    )
+    view = StackConfig(SimpleNamespace(watcher_interval_seconds=3600), stack)
+    assert getattr(view, "section_overrides", None) == {"auto_accept": True, "skip_known_hours": 0}, (
+        "the stack's own values of the section's keys, each checked: a stored value that no longer checks is left out"
+    )
+    assert view.watcher_interval_seconds == 60
+    assert not hasattr(view, "watcher_auto_accept"), "the process config holds no auto-accept setting any more"
 
 
 def test_a_mask_without_a_replacement_leaves_the_built_in_id_placeholder() -> None:

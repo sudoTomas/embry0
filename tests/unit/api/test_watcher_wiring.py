@@ -43,6 +43,8 @@ REQUIRED_IN_PRODUCTION = (
     "signature_masks",
     # #169 — without this a stack's slop_policy never reaches its analyses or tickets.
     "slop_policy",
+    # #738 — without this the settings document's watcher section never reaches a tick: auto-accept stays off.
+    "watcher_settings",
 )
 
 
@@ -183,6 +185,7 @@ async def test_the_auto_acceptor_accepts_through_the_case_route_as_its_own_actor
     from embry0.api.v1 import cases as cases_api
     from embry0.orchestration.dispatch_actors import AUTO_ACCEPT
     from embry0.services.watcher_auto_accept import AutoAcceptBar
+    from embry0.settings.sections.watcher import WATCHER
 
     now = datetime.now(UTC)
     draft = {
@@ -217,7 +220,7 @@ async def test_the_auto_acceptor_accepts_through_the_case_route_as_its_own_actor
         )
     )
 
-    done = await app_module._watcher_auto_acceptor(app)("owner/repo", AutoAcceptBar())
+    done = await app_module._watcher_auto_acceptor(app)("owner/repo", AutoAcceptBar.from_settings(WATCHER.defaults()))
     assert done == [{"case_id": "hc-1", "job_id": "job-9"}]
     assert accepted == [("hc-1", AUTO_ACCEPT)]
     assert audits == [("case_auto_accepted", AUTO_ACCEPT)]

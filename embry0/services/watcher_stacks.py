@@ -1,4 +1,4 @@
-"""What embry0 watches: one stack per row, resolved against the env defaults.
+"""What embry0 watches: one stack per row, resolved against the deployment's defaults.
 
 Until #378 the watcher read 24 flat ``WATCHER_*`` settings, so "what do we
 watch" was one value per process and changing it meant a redeploy — which
@@ -9,9 +9,12 @@ global defaults.
 ``settings`` holds **overrides only**. :class:`StackConfig` reads a key from
 the row when present and from the process config otherwise, under the same
 attribute names the watcher already uses, so a deployment that never writes a
-row behaves exactly as before. A few settings are the stack's alone
-(:data:`STACK_ONLY`): there is no deployment-wide value, so an absent key
-reads as an empty default.
+row behaves exactly as before. The keys of the settings document's
+``watcher`` section (:data:`SECTION_SETTINGS`, #738) fall back to that
+section instead, which the watcher reads on every tick: a stack's own values
+of them are :attr:`StackConfig.section_overrides`. A few settings are the
+stack's alone (:data:`STACK_ONLY`): there is no deployment-wide value, so an
+absent key reads as an empty default.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter,
 
 from embry0.services.linear_regex import UnsupportedPattern, compile_linear
 from embry0.services.log_signatures import normalize_line
+from embry0.settings.sections.watcher import WATCHER, WatcherSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -50,13 +54,12 @@ OVERRIDABLE: dict[str, str] = {
     "context_proxy_container_allowlist": "context_proxy_container_allowlist",
     "log_clustering_mode": "log_clustering_mode",
     "skip_unchanged_mode": "watcher_skip_unchanged_mode",
-    "skip_known_hours": "watcher_skip_known_hours",
-    "auto_accept": "watcher_auto_accept",
-    "auto_accept_after_hours": "watcher_auto_accept_after_hours",
-    "auto_accept_min_severity": "watcher_auto_accept_min_severity",
-    "auto_accept_min_occurrences": "watcher_auto_accept_min_occurrences",
-    "auto_accept_max_per_day": "watcher_auto_accept_max_per_day",
 }
+
+#: Settings a stack may override over the settings document's ``watcher`` section (#738): what it auto-accepts
+#: and how long it holds a signature found clean. The watcher reads the section on every tick and a stack's own
+#: values over it (:attr:`StackConfig.section_overrides`); the process config holds none of them.
+SECTION_SETTINGS: frozenset[str] = frozenset(WATCHER.fields)
 
 #: Settings only a stack has, mapped to the attribute the watcher reads them
 #: under. No deployment-wide value exists to fall back to, so an absent key
@@ -66,12 +69,14 @@ STACK_ONLY: dict[str, str] = {"signature_masks": "watcher_signature_masks"}
 _STACK_ONLY_DEFAULTS: dict[str, Any] = {"watcher_signature_masks": ()}
 
 #: Every key a stack's ``settings`` may hold; anything else is dropped on write.
-SETTING_KEYS: frozenset[str] = frozenset(OVERRIDABLE) | frozenset(STACK_ONLY)
+SETTING_KEYS: frozenset[str] = frozenset(OVERRIDABLE) | SECTION_SETTINGS | frozenset(STACK_ONLY)
 
 #: The settings that are the deployment's to choose, never the stack's repository's: an API key with a repository
 #: allowlist keeps them as stored (``PUT /watcher/stacks``). What the stack reads beyond its repository, what bounds
-#: the analyses it pays for from the shared budget (how often, how big, how dear, how long), and the fix jobs it
-#: starts without a person, which draw on the same caps.
+#: the analyses it pays for from the shared budget (how often, how big, how dear, how long, and how long a signature
+#: an analysis found clean is held before it is paid for again), and the fix jobs it starts without a person, which
+#: draw on the same caps. The keys of the settings document's ``watcher`` section are all here: the section is the
+#: deployment's alone.
 DEPLOYMENT_SETTINGS: frozenset[str] = frozenset(
     {
         "deploy_logql",
@@ -87,6 +92,7 @@ DEPLOYMENT_SETTINGS: frozenset[str] = frozenset(
         "auto_accept_min_severity",
         "auto_accept_min_occurrences",
         "auto_accept_max_per_day",
+        "skip_known_hours",
     }
 )
 
@@ -103,7 +109,6 @@ REPOSITORY_SETTINGS: frozenset[str] = frozenset(
         "regression_silence_seconds",
         "log_clustering_mode",
         "skip_unchanged_mode",
-        "skip_known_hours",
         "signature_masks",
     }
 )
@@ -162,10 +167,16 @@ class SignatureMask(BaseModel):
 
 
 _Mode = Annotated[Literal["off", "shadow", "on"], BeforeValidator(_lower)]
-_Severity = Annotated[Literal["low", "medium", "high", "critical"], BeforeValidator(_lower)]
 _Count = Annotated[int, Field(ge=0)]
 _Positive = Annotated[int, Field(ge=1)]
 _Text = Annotated[str, Field(max_length=4000)]
+
+
+def _section_type(key: str) -> Any:
+    """The type and bounds of the ``watcher`` section's ``key``: a stack's value meets what the section's does."""
+    info = WatcherSettings.model_fields[key]
+    return Annotated[info.annotation, *info.metadata] if info.metadata else info.annotation
+
 
 #: The type and bounds of each key, checked on every write and again when a
 #: stack is read for a tick. Strict: ``"5"`` is not a number and ``"true"`` is
@@ -188,12 +199,7 @@ _SETTING_TYPES: dict[str, Any] = {
     "context_proxy_container_allowlist": _Text,
     "log_clustering_mode": _Mode,
     "skip_unchanged_mode": _Mode,
-    "skip_known_hours": _Count,
-    "auto_accept": bool,
-    "auto_accept_after_hours": Annotated[float, Field(ge=0)],
-    "auto_accept_min_severity": _Severity,
-    "auto_accept_min_occurrences": _Count,
-    "auto_accept_max_per_day": _Count,
+    **{key: _section_type(key) for key in WATCHER.fields},
     "signature_masks": Annotated[list[SignatureMask], Field(max_length=MAX_SIGNATURE_MASKS)],
 }
 _ADAPTERS: dict[str, TypeAdapter[Any]] = {key: TypeAdapter(kind) for key, kind in _SETTING_TYPES.items()}
@@ -433,14 +439,22 @@ class StackConfig:
         self._base = base
         self._stack = stack
         names = {**OVERRIDABLE, **STACK_ONLY}
+        usable = usable_settings(stack)
         self._overrides: dict[str, Any] = dict(_STACK_ONLY_DEFAULTS)
-        self._overrides.update({names[key]: value for key, value in usable_settings(stack).items()})
+        self._overrides.update({names[key]: value for key, value in usable.items() if key in names})
         self._overrides["watcher_repo"] = stack.repo
         self._overrides["watcher_logql"] = stack.logql
+        self._section_overrides = {key: value for key, value in usable.items() if key in SECTION_SETTINGS}
 
     @property
     def stack(self) -> WatcherStack:
         return self._stack
+
+    @property
+    def section_overrides(self) -> dict[str, Any]:
+        """The stack's own values of the ``watcher`` section's keys (:data:`SECTION_SETTINGS`), each checked: the
+        watcher reads them over the section."""
+        return dict(self._section_overrides)
 
     @property
     def base(self) -> Any:

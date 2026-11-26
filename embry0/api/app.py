@@ -719,6 +719,22 @@ def _watcher_slop_policy(app: FastAPI, repo: str) -> Any:
     return read
 
 
+def _watcher_settings(app: FastAPI) -> Any:
+    """``() -> section``: the settings document's ``watcher`` section as the deployment sets it now (#738).
+
+    Read on every tick, so a change applies to the next one without a
+    restart: whether a stack's drafts are auto-accepted and the bar they must
+    clear, and how long a signature found clean is held. A stack's own values
+    of its keys win over it (``StackConfig.section_overrides``).
+    """
+    from embry0.settings.sections.watcher import WATCHER
+
+    async def read() -> Any:
+        return (await app.state.settings.snapshot()).get(WATCHER)
+
+    return read
+
+
 def _watcher_auto_acceptor(app: FastAPI) -> Any:
     """``(repo, bar) -> accepted``: accepts a stack's tracked drafts that clear its bar (spec 2026-10-25).
 
@@ -2325,6 +2341,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             local_first_model=_watcher_local_first_model(app, stack.repo),
             signature_masks=_watcher_signature_masks(app, stack.repo),
             slop_policy=_watcher_slop_policy(app, stack.repo),
+            watcher_settings=_watcher_settings(app),
             cases_repo=app.state.healing_cases_repo,
             case_recorder=app.state.case_recorder,
             # #278: a deploy marker is reported on a case only after the forge

@@ -121,7 +121,7 @@ def test_no_moved_variable_is_a_setting_any_more() -> None:
 
     still = sorted(set(_moved()) & declared_env_names(Embry0Config))
     assert still == [], f"still read as settings: {still}"
-    assert len(_moved()) == 43 and all(where.strip() for where in _moved().values())
+    assert len(_moved()) == 49 and all(where.strip() for where in _moved().values())
 
 
 @pytest.mark.parametrize("name", ["LEADS_ENABLED", "SCOUT_REPOS", "OPENAI_COMPATIBLE_PROVIDERS", "ASK_USER_ROUNDS_CAP"])

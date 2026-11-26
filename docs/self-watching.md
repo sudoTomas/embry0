@@ -321,7 +321,10 @@ the ledger could not know.
 
 A stack whose `auto_accept` setting is on accepts its own drafts once they
 clear its bar, so a finding does not wait days for someone to say yes (spec
-2026-10-25). Each tick, after it reconciles drafts a person cancelled, it
+2026-10-25). The deployment sets these keys in the settings document's
+`watcher` section ([the settings reference](configuration.md#watcher)), and a
+stack may set any of them for itself in its own settings, which win over the
+section. Each tick reads the section, so a change needs no restart. Each tick, after it reconciles drafts a person cancelled, it
 takes the stack's tracked drafts oldest first and accepts each that has
 waited `auto_accept_after_hours` (24), is at least `auto_accept_min_severity`
 (`high`) and whose signature was seen at least `auto_accept_min_occurrences`
@@ -329,7 +332,16 @@ waited `auto_accept_after_hours` (24), is at least `auto_accept_min_severity`
 stack's repository in the last 24 hours; each stack's cap is its own. A retry after a `not_healed` verdict, and a draft an owner declined or
 snoozed as a proposal, are left for a person. The acceptance is the one below,
 recorded as `embry0:auto-accept` with a `case_auto_accepted` audit row; the
-actor is rate-limited and the spend caps apply. Off by default, per stack:
+actor is rate-limited and the spend caps apply. Off by default. For every
+stack:
+
+```yaml
+watcher:
+  auto_accept: true
+  auto_accept_min_severity: medium
+```
+
+For one stack:
 
 ```
 PUT /api/v1/watcher/stacks/{owner}/{name}
