@@ -165,6 +165,18 @@ async def test_the_people_a_decision_can_go_to_sign_in_or_are_people(app: Any) -
 
 
 @pytest.mark.asyncio
+async def test_a_user_whose_person_is_disabled_is_sent_nothing(app: Any) -> None:
+    """#740 review: Bo signs in, but an admin disabled Bo's person, who is asked nothing and decides nothing (#704)."""
+    app.state.people_repo.rows.append(person("Bo", email="bo@example.com", user_id="u2", disabled=True))
+    people = (await call(app, "GET", "/api/v1/handoffs/people")).json()["people"]
+    assert "bo@example.com" not in [p["email"] for p in people], (
+        f"a user whose person is disabled must not be offered as a recipient: {people}"
+    )
+    sent = await call(app, "POST", "/api/v1/decisions/offer:crack:1/send-to", json={"to": "bo@example.com"})
+    assert sent.status_code == 422, f"a hand-off to a user whose person is disabled must be refused: {sent.text}"
+
+
+@pytest.mark.asyncio
 async def test_a_decision_can_go_to_a_person_who_never_signed_in(app: Any) -> None:
     for to in ("cy@example.com", "dee@example.com"):
         resp = await call(app, "POST", "/api/v1/decisions/offer:crack:1/send-to", json={"to": to})

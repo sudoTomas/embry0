@@ -50,8 +50,9 @@ def _person(u: Any) -> dict[str, Any]:
 
 async def people_by_email(request: Request) -> dict[str, dict[str, Any]]:
     """Everyone a decision can name, by lowercased email: the users not disabled, and the people not disabled with an
-    email (#179), a person's name over their user's. A person keeps their user's ``id`` and ``tier``, one with no
-    sign-in has their own ``id`` and no tier. {} when neither can be read."""
+    email (#179), a person's name over their user's. A user whose person is disabled is left out: that person is
+    asked nothing and decides nothing (#704). A person keeps their user's ``id`` and ``tier``, one with no sign-in
+    has their own ``id`` and no tier. {} when neither can be read."""
     out: dict[str, dict[str, Any]] = {}
     users = getattr(request.app.state, "users_repo", None)
     people = getattr(request.app.state, "people_repo", None)
@@ -60,8 +61,11 @@ async def people_by_email(request: Request) -> dict[str, dict[str, Any]]:
             out = {u.email.lower(): _person(u) for u in await users.people()}
         if people is not None:
             off = await users.disabled_ids() if users is not None else set()
-            for p in await people.all():
-                if not p.email or (p.user_id and p.user_id in off):
+            everyone = await people.all(include_disabled=True)
+            silenced = {p.user_id for p in everyone if p.disabled and p.user_id}
+            out = {email: entry for email, entry in out.items() if entry["id"] not in silenced}
+            for p in everyone:
+                if p.disabled or not p.email or (p.user_id and p.user_id in off):
                     continue
                 entry = out.get(p.email.lower()) or {"id": p.id, "email": p.email, "tier": ""}
                 out[p.email.lower()] = {**entry, "name": p.name or p.email, "person": True}
