@@ -110,6 +110,7 @@ class ErrorCode(StrEnum):
     STORAGE = "ERR_STORAGE"  # a Postgres error escaped the workflow (constraint violation, lost connection)
     UPSTREAM_HTTP = "ERR_UPSTREAM_HTTP"  # an HTTP call to a forge / tracker / provider failed and nothing handled it
     JOB_STATE_CONFLICT = "ERR_JOB_STATE_CONFLICT"  # a job status transition lost a race (StatusTransitionConflict)
+    ORGANIZATION_REMOVED = "ERR_ORGANIZATION_REMOVED"  # a job asked for on a removed organization's repository: none starts (OrganizationRemoved, #721)
     ABANDONED = "ERR_ABANDONED"  # a person chose "abandon" at the max-retries pause (or gave no usable choice)
     AGENT_RUNNER_UNAVAILABLE = (
         "ERR_AGENT_RUNNER_UNAVAILABLE"  # a node ran without an agent runner in its config — orchestrator wiring bug
@@ -237,6 +238,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.STORAGE: _C.INFRA,
     ErrorCode.UPSTREAM_HTTP: _C.INFRA,
     ErrorCode.JOB_STATE_CONFLICT: _C.INFRA,
+    ErrorCode.ORGANIZATION_REMOVED: _C.CONFIG,
     ErrorCode.ABANDONED: _C.CANCELLED,
     ErrorCode.AGENT_RUNNER_UNAVAILABLE: _C.INFRA,
     ErrorCode.MODEL_DISABLED: _C.CONFIG,
@@ -322,6 +324,7 @@ _EXCEPTION_CODES: tuple[tuple[str, ErrorCode], ...] = (
     ("embry0.orchestration.budget:BudgetOverrunError", ErrorCode.BUDGET_OVERRUN),
     ("embry0.storage.repositories.repos:UnregisteredRepoError", ErrorCode.REPO_UNREGISTERED),
     ("embry0.storage.repositories.jobs:StatusTransitionConflict", ErrorCode.JOB_STATE_CONFLICT),
+    ("embry0.storage.repositories.jobs:OrganizationRemoved", ErrorCode.ORGANIZATION_REMOVED),
     ("embry0.orchestration.state:UnsupportedContextError", ErrorCode.UNSUPPORTED_CONTEXT),
     ("embry0.orchestration.state:TriageParseError", ErrorCode.TRIAGE_MALFORMED),
     ("embry0.workflows.issue_to_pr.plan_route:TemplateInvalidError", ErrorCode.TEMPLATE_INVALID),

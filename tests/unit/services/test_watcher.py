@@ -3,7 +3,8 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import httpx
 import pytest
@@ -1905,6 +1906,47 @@ async def test_a_stack_whose_repo_is_unregistered_records_an_error_before_any_sp
     assert "ERR_REPO_UNREGISTERED" in svc._runs.create.await_args.kwargs["detail"]
     svc._fetch_log_entries.assert_not_awaited()
     svc._jobs.create.assert_not_awaited()
+
+
+def _jobs_store(removed: str) -> Any:
+    """A jobs store shaped as the real one (autospec: a name it does not have fails here, not silently in a tick)."""
+    from embry0.storage.repositories.jobs import JobsRepository
+
+    jobs = create_autospec(JobsRepository, instance=True)
+    jobs.organization_removed.return_value = removed
+    return jobs
+
+
+@pytest.mark.asyncio
+async def test_a_stack_whose_organization_was_removed_records_an_error_tick_before_any_work():
+    """#721: no analysis starts on a removed organization's repository, so the tick says why at every tick, until the
+    stack is unwatched, without fetching logs or recording signatures first."""
+    svc = _service(config=_config(watcher_repo="acme/backend"), lines=["[c] e1", "[c] e2", "[c] e3"])
+    svc._jobs = _jobs_store("acme")
+    for _ in range(2):
+        out = await svc.run_once()
+        assert out["action"] == "error", out
+        assert svc._runs.create.await_args.kwargs["detail"] == (
+            "the organization acme was removed: no job starts on its repositories until it is made active again"
+        )
+    assert [c.args for c in svc._jobs.organization_removed.await_args_list] == [("acme/backend",)] * 2
+    svc._fetch_log_entries.assert_not_awaited()
+    svc._jobs.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [None, RuntimeError("the database is away")], ids=["not removed", "unknown"])
+async def test_a_stack_whose_organization_is_not_removed_or_unknown_goes_on_to_its_logs(answer: Any):
+    """An active or paused organization, or a lookup that fails (the job store asks again in its insert), lets the
+    tick go on to fetch its logs."""
+    svc = _service(config=_config(watcher_repo="acme/backend"), lines=["[c] one", "[c] two"])
+    if isinstance(answer, BaseException):
+        svc._jobs.organization_removed = AsyncMock(side_effect=answer)
+    else:
+        svc._jobs.organization_removed = AsyncMock(return_value=answer)
+    assert (await svc.run_once())["action"] == "skipped_quiet"
+    svc._jobs.organization_removed.assert_awaited_once_with("acme/backend")
+    svc._fetch_log_entries.assert_awaited()
 
 
 @pytest.mark.asyncio

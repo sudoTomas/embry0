@@ -90,6 +90,7 @@ from embry0.services.slop import (
 from embry0.services.watcher_budget import resolve_watcher_job_budget
 from embry0.services.watcher_recursion import drop_own_lines
 from embry0.settings.sections.slop_policy import DEFAULT_KINDS, SLOP_POLICY, SlopPolicySettings
+from embry0.storage.repositories.jobs import OrganizationRemoved
 from embry0.storage.repositories.watcher_runs import ANALYSED_ACTIONS, UNPARSEABLE_DETAIL_PREFIX
 from embry0.trackers.filing import DRAFT_TITLE_PREFIX
 
@@ -1833,6 +1834,19 @@ class WatcherService:
                 refusal = await refusal
             if isinstance(refusal, str):
                 return await record("error", detail=refusal[:500])
+            # #721: nor for one whose organization was removed. Asked here too, so the tick records why without
+            # fetching logs or recording signatures first; the job store refuses the analysis in its insert anyway,
+            # so a lookup that fails only logs.
+            if self._repo:
+                try:
+                    removed = self._jobs.organization_removed(self._repo)
+                    if inspect.isawaitable(removed):
+                        removed = await removed
+                except Exception:  # noqa: BLE001
+                    logger.warning("watcher_organization_lookup_failed", repo=self._repo, exc_info=True)
+                    removed = None
+                if isinstance(removed, str):
+                    return await record("error", detail=str(OrganizationRemoved(removed))[:500])
 
             try:
                 window_days = self._config.watcher_proposal_window_days

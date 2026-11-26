@@ -62,6 +62,7 @@ from embry0.services.background_scope import Enrollment, enrollment
 from embry0.services.leads import Lead, by_severity
 from embry0.settings.layers import PerRepository
 from embry0.settings.sections.scout import SCOUT, ScoutSettings
+from embry0.storage.repositories.jobs import OrganizationRemoved
 
 logger = structlog.get_logger(__name__)
 
@@ -499,7 +500,12 @@ class ScoutLoop:
             if refusal is not None:
                 logger.info("scout_gate_refused", reason=getattr(refusal, "message", str(refusal))[:200])
                 break
-            job_id = await self._start(unit, now, policy, modelled[unit.repo])
+            try:
+                job_id = await self._start(unit, now, policy, modelled[unit.repo])
+            except OrganizationRemoved as exc:
+                # #721: logged where the job store refused it; the next unit, of another repository, still starts.
+                logger.info("scout_skipped_organization_removed", repo=unit.repo, owner=exc.owner)
+                continue
             started.append(job_id)
         return started
 

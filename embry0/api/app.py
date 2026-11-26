@@ -3186,8 +3186,9 @@ def create_app(
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
+    from embry0.safety.error_codes import ErrorCode
     from embry0.services.progression_workers import FoldTimeout
-    from embry0.storage.repositories.jobs import StatusTransitionConflict
+    from embry0.storage.repositories.jobs import OrganizationRemoved, StatusTransitionConflict
 
     @app.exception_handler(FoldTimeout)
     async def fold_timeout_handler(request: Request, exc: FoldTimeout) -> JSONResponse:
@@ -3203,6 +3204,13 @@ def create_app(
         return JSONResponse(
             status_code=409,
             content={"detail": "Job or issue status has already changed; retry if needed."},
+        )
+
+    @app.exception_handler(OrganizationRemoved)
+    async def organization_removed_handler(request: Request, exc: OrganizationRemoved) -> JSONResponse:
+        # #721: whichever route asked for the job, the answer says why none started and what brings it back.
+        return JSONResponse(
+            status_code=409, content={"detail": str(exc), "error_code": ErrorCode.ORGANIZATION_REMOVED.value}
         )
 
     from embry0.storage.database import StoredValueTooDeep

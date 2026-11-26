@@ -142,3 +142,24 @@ async def test_dispatch_open_issue_returns_the_job_it_started():
     assert job_id == "job-42"
     executor.execute.assert_awaited_once_with("iss-1", dispatched_by=None)
     assert await dispatch_open_issue("iss-1", "triaging", repo, executor, tracker="github", reason="x") is None
+
+
+@pytest.mark.asyncio
+async def test_a_removed_organization_s_issue_goes_back_to_open_and_a_person_s_dispatch_is_told_why():
+    """#721: the job store refuses the job. A label trigger (GitHub, GitLab) answers False, quietly, the issue back in
+    `open`; the routes a person asked (accepting a case or a lead) get the refusal, the issue back in `open` too."""
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
+    for tracker in ("github", "gitlab"):
+        repo = _FakeIssues()
+        executor = AsyncMock()
+        executor.execute = AsyncMock(side_effect=OrganizationRemoved("acme"))
+        assert await start_triage("iss-1", "open", repo, executor, tracker=tracker, reason="labeled") is False
+        assert [u["status"] for u in repo.updates] == ["triaging", "open"]
+
+    repo = _FakeIssues()
+    executor = AsyncMock()
+    executor.execute = AsyncMock(side_effect=OrganizationRemoved("acme"))
+    with pytest.raises(OrganizationRemoved):
+        await dispatch_open_issue("iss-1", "open", repo, executor, tracker="github", reason="case_accepted")
+    assert [u["status"] for u in repo.updates] == ["triaging", "open"]

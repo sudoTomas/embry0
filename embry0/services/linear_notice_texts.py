@@ -95,6 +95,20 @@ def unregistered_repo(repo: str, project: str, *, auto_retry: bool) -> str:
     )
 
 
+def organization_removed(repo: str, owner: str, *, auto_retry: bool) -> str:
+    after = (
+        "After that you do not need to do anything: embry0 picks the ticket up by itself within a few minutes."
+        if auto_retry
+        else f"After that, {_RELABEL}."
+    )
+    return (
+        f"**Did not start work on this ticket** because the repository `{repo}` belongs to the organization "
+        f"`{owner}`, which was removed from embry0 (`ERR_ORGANIZATION_REMOVED`): no job starts on its "
+        "repositories. If it should run, ask the embry0 operator to make the organization active again. "
+        f"{after}"
+    )
+
+
 def gate_refused(limit: str, *, auto_retry: bool) -> str:
     what = (
         "too many embry0 jobs were started in the last hour"

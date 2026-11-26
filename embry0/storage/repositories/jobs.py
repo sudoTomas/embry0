@@ -19,6 +19,31 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+#: A removed organization of the owner the placeholder names: the one rule for "no job starts on its repositories".
+_REMOVED = "SELECT 1 FROM organizations o WHERE o.owner = {owner} AND o.status = 'removed'"
+
+
+def _owner_of(repo: str | None) -> str:
+    """The organization's owner of ``repo``: the path's first segment, as the organizations store keys it."""
+    return str(repo).split("/", 1)[0].strip().lower() if repo else ""
+
+
+class OrganizationRemoved(RuntimeError):
+    """A job asked for on a repository whose organization was removed: none starts (#721).
+
+    Raised by :meth:`JobsRepository.create`, where every job is created, so no entry can start one: an API route
+    answers 409 with the message, a background start logs it. A paused organization's repositories still start
+    jobs; making the organization active again lets its repositories start them as before, since nothing else of
+    theirs was changed.
+    """
+
+    def __init__(self, owner: str) -> None:
+        super().__init__(
+            f"the organization {owner} was removed: no job starts on its repositories until it is made active again"
+        )
+        self.owner = owner
+
+
 class StatusTransitionConflict(RuntimeError):
     """Raised when a CAS status update finds no matching row.
 
@@ -243,16 +268,24 @@ class JobsRepository:
         if context is None:
             context = {"type": "git", "repo": repo} if repo else {"type": "none"}
         job_id = f"job-{uuid.uuid4().hex[:12]}"
-        await self._db.execute(
-            """
+        # The repository the job works on: its repo, else its git context's (a job posted with a context alone stores
+        # none). Its organization's owner is the path's first segment, as the organizations store keys it.
+        named = repo or (context.get("repo") if isinstance(context, Mapping) else None)
+        owner = _owner_of(named)
+        # #721: no job starts on a removed organization's repository. Checked in the insert itself, so a removal
+        # that lands between an entry's own checks and this write is still seen.
+        created = await self._db.fetchval(
+            f"""
             INSERT INTO jobs (
                 job_id, repo, task, issue_number, issue_id,
                 pipeline_template, pipeline_config, sandbox_profile, trace_id, context,
                 dispatched_by, leader_agent
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                    (SELECT t.leader_agent FROM pipeline_templates t WHERE t.name = $6))
-            """,
+            SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                   (SELECT t.leader_agent FROM pipeline_templates t WHERE t.name = $6)
+             WHERE NOT EXISTS ({_REMOVED.format(owner="$12")})
+            RETURNING job_id
+            """,  # noqa: S608 - _REMOVED is a module constant, never input
             job_id,
             repo,
             task,
@@ -264,9 +297,25 @@ class JobsRepository:
             trace_id,
             context,
             dispatched_by,
+            owner,
         )
+        if created is None:
+            logger.warning("job_refused_organization_removed", repo=named, owner=owner, dispatched_by=dispatched_by)
+            raise OrganizationRemoved(owner)
         logger.info("job_created", job_id=job_id, repo=repo, trace_id=trace_id)
         return job_id
+
+    async def organization_removed(self, repo: str | None) -> str | None:
+        """The owner of ``repo``'s organization when it was removed, so no job starts on it (#721); else None.
+
+        The insert's own rule (:meth:`create`), asked first by a caller that would do work before its job, so it can
+        stop before that work: the watcher's tick, before it fetches logs. :meth:`create` asks again in the insert.
+        """
+        owner = _owner_of(repo)
+        if not owner:
+            return None
+        removed = await self._db.fetchval(f"SELECT EXISTS ({_REMOVED.format(owner='$1')})", owner)  # noqa: S608
+        return owner if removed else None
 
     async def status(self, job_id: str) -> str | None:
         """The job's status alone, None for a job that is gone: no JSONB column is read."""

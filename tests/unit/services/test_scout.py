@@ -336,6 +336,31 @@ async def test_a_tick_starts_jobs_pinned_to_the_local_model_up_to_the_in_flight_
 
 
 @pytest.mark.asyncio
+async def test_a_removed_organization_s_repository_is_skipped_and_the_others_still_start() -> None:
+    """#721: the job store refuses a job on a removed organization's repository; the scout logs it and goes on to the
+    next unit, of another repository, instead of ending its pass there."""
+    from structlog.testing import capture_logs
+
+    from embry0.storage.repositories.jobs import OrganizationRemoved
+
+    loop, runs, jobs, _, submitted = make_loop(repos=["gone/a", "acme/b"], max_in_flight=4)
+    create = jobs.create
+
+    async def refusing(**kwargs: Any) -> str:
+        if str(kwargs.get("repo", "")).startswith("gone/"):
+            raise OrganizationRemoved("gone")
+        return await create(**kwargs)
+
+    jobs.create = refusing  # type: ignore[method-assign]
+    with capture_logs() as logs:
+        started = await loop.dispatch()
+    assert started and {jobs.rows[j]["created_with"]["repo"] for j in started} == {"acme/b"}
+    assert {r["repo"] for r in runs.rows} == {"acme/b"} and len(submitted) == len(started)
+    skipped = [e for e in logs if e["event"] == "scout_skipped_organization_removed"]
+    assert skipped and {e["repo"] for e in skipped} == {"gone/a"}
+
+
+@pytest.mark.asyncio
 async def test_a_refused_gate_starts_nothing_and_writes_no_row() -> None:
     loop, runs, jobs, _, submitted = make_loop(repos=["acme/a"], refuse=SimpleNamespace(message="rate limit"))
     assert await loop.dispatch() == []

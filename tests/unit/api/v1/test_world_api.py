@@ -457,7 +457,7 @@ async def test_a_request_reads_an_owner_s_organization_once_for_all_its_pull_req
             reads.append(owner)
             started.set()
             await release.wait()
-            return SimpleNamespace(owner=owner, forge="github")
+            return SimpleNamespace(owner=owner, forge="github", status="active")
 
     class Forge:
         async def read(self, repo: str, number: int) -> PullRequest:
@@ -516,7 +516,7 @@ async def test_a_pull_request_not_on_github_com_shows_without_its_numbers(
 
     class Organizations:
         async def get(self, owner: str) -> Any:
-            return SimpleNamespace(owner=owner, forge=registered_on)
+            return SimpleNamespace(owner=owner, forge=registered_on, status="active")
 
     async def forge_client(_request: Any, org: Any) -> Any:
         clients.append(org.owner)
@@ -541,7 +541,7 @@ async def test_a_job_s_pull_request_is_read_only_in_the_job_s_own_repository(mon
     class Organizations:
         async def get(self, owner: str) -> Any:
             reads.append(owner)
-            return SimpleNamespace(owner=owner, forge="github")
+            return SimpleNamespace(owner=owner, forge="github", status="active")
 
     async def forge_client(_request: Any, org: Any) -> Any:
         raise AssertionError("no forge client is made for another repository's pull request")
@@ -581,7 +581,7 @@ async def test_a_gitlab_job_s_merge_request_is_read_on_its_forge(monkeypatch: py
 
     class Organizations:
         async def get(self, owner: str) -> Any:
-            return SimpleNamespace(owner=owner, forge="gitlab")
+            return SimpleNamespace(owner=owner, forge="gitlab", status="active")
 
     class Merges:
         async def read(self, repo: str, number: int) -> PullRequest:
@@ -617,3 +617,35 @@ async def test_a_gitlab_job_s_merge_request_is_read_on_its_forge(monkeypatch: py
         "title": "Fix it",
     }
     assert made == ["acme@gitlab"]
+
+
+@pytest.mark.parametrize(("status", "shown"), [("removed", False), ("paused", True)])
+async def test_a_removed_organization_s_pull_request_numbers_are_not_read(
+    monkeypatch: pytest.MonkeyPatch, status: str, shown: bool
+) -> None:
+    """The scroll reads a quest's pull request with its organization's credential: a removed organization's is not
+    used, so the numbers are left out as for an organization embry0 does not know. A paused one's are read (#721)."""
+    from starlette.requests import Request
+
+    from embry0.api.v1 import organizations as organizations_api
+
+    clients: list[str] = []
+
+    class Organizations:
+        async def get(self, owner: str) -> Any:
+            return SimpleNamespace(owner=owner, forge="github", status=status)
+
+    class Pulls:
+        async def read(self, repo: str, number: int) -> PullRequest:
+            return PullRequest(number, "open", "embry0/fix", "", False, files=2, additions=3, deletions=1)
+
+    async def pull_requests(_request: Any, org: Any) -> Pulls:
+        clients.append(org.owner)
+        return Pulls()
+
+    monkeypatch.setattr(organizations_api, "org_pull_requests", pull_requests)
+    app = SimpleNamespace(state=SimpleNamespace(organizations_repo=Organizations(), repos_repo=Repos()))
+    request = Request({"type": "http", "app": app, "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    stats = await world_api._pr_stats(request, "https://github.com/acme/web/pull/5", "acme/web")
+    assert (stats is not None) is shown, stats
+    assert (clients == ["acme"]) is shown, f"a removed organization's credential is not used: {clients}"

@@ -348,12 +348,14 @@ class Organizations:
 
     def __init__(self, **forges: str) -> None:
         self.forges = forges
+        self.statuses: dict[str, str] = {}
         self.reads: list[str] = []
 
     async def get(self, owner: str) -> Any:
         self.reads.append(owner)
         forge = self.forges.get(owner.lower())
-        return SimpleNamespace(owner=owner, forge=forge) if forge else None
+        status = self.statuses.get(owner.lower(), "active")
+        return SimpleNamespace(owner=owner, forge=forge, status=status) if forge else None
 
 
 class Forge:
@@ -498,6 +500,45 @@ async def test_closing_needs_the_owner_registered_on_the_pull_request_s_forge(ap
         "acme is registered on gitlab, but the job's pull request is on github",
     ), closing.text
     assert unregistered.status_code == 409, unregistered.text
+    assert (app.state.world_repo.ratings, forge.writes) == ([], [])
+
+
+@pytest.mark.parametrize(("status", "sent"), [("removed", False), ("paused", True)])
+async def test_a_removed_organization_s_pull_request_is_sent_back_nowhere(
+    app: Any, forge: Forge, status: str, sent: bool
+) -> None:
+    """Sending work back reads the pull request again with its organization's credential and starts a follow-up: for
+    a removed organization neither, and the answer says why (#721); a paused one's is sent back."""
+    app.state.organizations_repo.statuses["acme"] = status
+    async with await _client(app) as client:
+        answer = await client.post("/api/v1/jobs/job-1/send-back", json={"notes": "x"}, headers=HEADERS)
+    if sent:
+        assert answer.status_code == 202, answer.text
+        return
+    assert (answer.status_code, answer.json()["detail"]) == (
+        409,
+        "the organization acme was removed: no job starts on its repositories until it is made active again",
+    ), answer.text
+    app.state.comment_dispatch.start_followup.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("status", "closes"), [("removed", False), ("paused", True), ("active", True)])
+async def test_a_removed_organization_s_credential_closes_no_pull_request(
+    app: Any, forge: Forge, status: str, closes: bool
+) -> None:
+    """Closing a job's pull request acts with its owner's organization's credential: a removed organization's is not
+    used, and the answer says why; a paused one still closes (#721)."""
+    app.state.organizations_repo.statuses["acme"] = status
+    async with await _client(app) as client:
+        closing = await client.post("/api/v1/jobs/job-1/reject", json={"note": "no", "close_pr": True}, headers=HEADERS)
+    if closes:
+        assert closing.status_code == 200, closing.text
+        assert forge.writes, "the pull request was closed"
+        return
+    assert (closing.status_code, closing.json()["detail"]) == (
+        409,
+        "the organization acme was removed: embry0 does not act with its credential",
+    ), closing.text
     assert (app.state.world_repo.ratings, forge.writes) == ([], [])
 
 
