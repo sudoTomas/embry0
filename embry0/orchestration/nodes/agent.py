@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 import uuid
 from collections.abc import Mapping
@@ -56,14 +55,6 @@ TRACE_SUMMARY_CAP = 500
 
 def _redact_trace_text(text: str) -> str:
     return redact_secrets(text, secret_env_values())
-
-
-def _env_cap(name: str, default: int) -> int:
-    """Integer cap from the environment, falling back on missing/invalid."""
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError):
-        return default
 
 
 def ask_rounds_cap(state: Mapping[str, Any], *, brainstorming: bool = False) -> tuple[int, str]:
@@ -639,7 +630,23 @@ async def _local_slots(config: Any) -> tuple[Any, int] | None:
         slots = LocalSlots(LocalModelLeasesRepository(db))
     from embry0.services.local_slots import local_cap
 
-    return slots, local_cap(await _provider_config_row(config))
+    return slots, local_cap(await _local_models(config))
+
+
+async def _local_models(config: Any) -> Any:
+    """The deployment's ``local_models`` section: the run's settings store, else one over its database, else the
+    section's defaults (no database: a unit test). A read that fails raises, as every run-path read does (#551)."""
+    from embry0.settings.sections.local_models import LOCAL_MODELS
+
+    configurable = _graph_configurable(config)
+    store = configurable.get("settings_store")
+    if store is None and configurable.get("db") is not None:
+        from embry0.settings.store import SettingsStore
+
+        store = SettingsStore(configurable["db"])
+    if store is None:
+        return LOCAL_MODELS.model()
+    return (await store.snapshot()).get(LOCAL_MODELS)
 
 
 async def _local_server(state: dict[str, Any], configurable: dict[str, Any]) -> str:
@@ -673,12 +680,9 @@ async def _local_server(state: dict[str, Any], configurable: dict[str, Any]) -> 
     return server_of(getattr(credential, "id", None))
 
 
-def _slot_wait_seconds(config: Any) -> float:
-    app_config = _graph_configurable(config).get("embry0_config")
-    value = getattr(app_config, "local_llm_slot_wait_seconds", None)
-    if isinstance(value, int) and value >= 0:
-        return float(value)
-    return float(_env_cap("LOCAL_LLM_SLOT_WAIT_SECONDS", 900))
+async def _slot_wait_seconds(config: Any) -> float:
+    """How long a run that has to use a local model waits for a slot: ``local_models.slot_wait_seconds``."""
+    return float((await _local_models(config)).slot_wait_seconds)
 
 
 def _local_busy_updates(
@@ -697,7 +701,7 @@ def _local_busy_updates(
     exc = AuthConfigError(
         ErrorCode.LOCAL_MODEL_BUSY,
         f"{model} runs on the local model server, and every one of its slots stayed taken for "
-        f"{int(wait_seconds)}s (provider_config.local_max_runs; docs/providers.md, local models)",
+        f"{int(wait_seconds)}s (local_models.max_runs; docs/providers.md, local models)",
     )
     updates = _auth_error_updates(agent_type, exc, state)
     entry = updates["agent_outputs"][0]
@@ -1142,7 +1146,7 @@ async def run_agent_node(
             # A run that has to use the local model: one whose own model is
             # on it, or that moved to it (a fallback, a model a person named).
             if invocation.provider == "custom" and lease_id is None and invocation.local_first is None:
-                wait_seconds = _slot_wait_seconds(config)
+                wait_seconds = await _slot_wait_seconds(config)
 
                 def _waiting() -> None:
                     if on_event is not None:

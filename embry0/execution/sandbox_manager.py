@@ -11,7 +11,7 @@ import hashlib
 import ipaddress
 import re
 import socket
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -174,12 +174,6 @@ _DEFAULT_PROFILE: dict[str, Any] = {
 }
 
 
-def _local_llm_kwargs(local_server: Any) -> dict[str, Any]:
-    """``local_llm`` for ``enroll_sandbox`` when the sandbox has a custom server; nothing otherwise, so a proxy manager
-    that predates it is called as before."""
-    return {"local_llm": local_server} if local_server is not None else {}
-
-
 class SandboxManager:
     """Manages sandbox container lifecycle for job execution."""
 
@@ -198,7 +192,7 @@ class SandboxManager:
         runtime: AgentRuntime | None = None,
         skill_store: SkillStore | None = None,
         skill_sources_repo: Any | None = None,
-        local_llm_context_tokens: int = 0,
+        local_models: Callable[[], Awaitable[Any]] | None = None,
         instance_id: str | None = None,
     ) -> None:
         self._docker = docker
@@ -250,7 +244,9 @@ class SandboxManager:
         self._skill_mounts_creating: list[list[SkillMount]] = []
         # The local model's context window, when the operator set one; the
         # chat-completions executor asks the server otherwise.
-        self._local_llm_context_tokens = local_llm_context_tokens
+        # The settings document's local_models: the request cap and timeout a sandbox is enrolled with. None: the
+        # section's defaults (a unit test; production passes a reader of the document).
+        self._local_models = local_models
 
     @property
     def runtime(self) -> AgentRuntime:
@@ -427,7 +423,6 @@ class SandboxManager:
         resolved: dict[str, ResolvedCredential],
         *,
         local_proxy_url: str = "",
-        context_tokens: int = 0,
     ) -> str | None:
         """Apply the injection table. Returns the xAI oauth credential id, if any.
 
@@ -457,12 +452,10 @@ class SandboxManager:
                 catalog = provider_named(provider)
                 if provider == "custom":
                     if local_proxy_url and catalog is not None:
-                        from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG
+                        from embry0.sandbox.local_llm_token import LOCAL_LLM_PROXY_FLAG
 
                         env[catalog.sandbox_base_url_env] = f"{local_proxy_url.rstrip('/')}/v1"
                         env[LOCAL_LLM_PROXY_FLAG] = "true"
-                        if context_tokens > 0:
-                            env[LOCAL_LLM_CONTEXT_ENV] = str(context_tokens)
                     continue
                 if catalog is not None and catalog.sandbox_key_env and cred.kind == "llm_api_key":
                     env[catalog.sandbox_key_env] = cred.secret
@@ -507,6 +500,26 @@ class SandboxManager:
                 error_code=ErrorCode.CREDENTIAL_UNAVAILABLE,
             ) from exc
         return Upstream(credential_id=cred.id or "", root=root, api_key=cred.secret, address=pinned.address)
+
+    async def _server_kwargs(self, local_server: Any) -> dict[str, Any]:
+        """``local_llm`` and the sandbox's ``limits`` for ``enroll_sandbox`` when the sandbox has a custom server;
+        nothing otherwise, so a proxy manager that predates them is called as before. The limits are the settings
+        document's ``local_models``, read now (its defaults without a reader), and hold at every server the sandbox
+        is enrolled for."""
+        if local_server is None:
+            return {}
+        from embry0.execution.proxy.local_llm_proxy import Limits
+
+        if self._local_models is not None:
+            section = await self._local_models()
+        else:
+            from embry0.settings.sections.local_models import LOCAL_MODELS
+
+            section = LOCAL_MODELS.model()
+        limits = Limits(
+            max_request_bytes=section.max_request_bytes, timeout_seconds=float(section.request_timeout_seconds)
+        )
+        return {"local_llm": local_server, "limits": limits}
 
     async def _install_ca_bundle(self, container_id: str) -> None:
         """Merge the private CA into the container's trust store (spec 1A §3.2).
@@ -682,7 +695,6 @@ class SandboxManager:
                 env,
                 llm_resolved,
                 local_proxy_url=local_proxy_url,
-                context_tokens=self._local_llm_context_tokens,
             )
         # The server a sandbox on the custom provider reaches, worked out before any container exists: a job whose
         # server cannot be reached fails here.
@@ -899,7 +911,7 @@ class SandboxManager:
                 job_id=job_id,
                 # Only a sandbox on the custom provider gets a bearer the local-llm-proxy accepts, for its own
                 # credential's server alone (ADR 0032).
-                **_local_llm_kwargs(local_server),
+                **(await self._server_kwargs(local_server)),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.
@@ -1105,7 +1117,7 @@ class SandboxManager:
                 git_push=git_push,
                 git_push_branches=git_push_branches,
                 job_id=job_id,
-                **_local_llm_kwargs(local_server),
+                **(await self._server_kwargs(local_server)),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.

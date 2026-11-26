@@ -161,6 +161,44 @@ def test_a_background_call_to_a_local_model_takes_the_slots_agent_runs_take() ->
     [cap] = [
         node for node in ast.walk(_tree()) if isinstance(node, ast.AsyncFunctionDef) and node.name == "local_model_cap"
     ]
-    assert [ast.unparse(n) for n in cap.body] == ["return local_cap(await app.state.provider_repo.get())"], (
-        "the cap is the one agent runs read: provider_config.local_max_runs"
+    assert [ast.unparse(n) for n in cap.body] == [
+        "return local_cap((await app.state.settings.snapshot()).get(LOCAL_MODELS))"
+    ], "the cap is the one agent runs read: the settings document's local_models.max_runs"
+
+
+def test_a_sandbox_is_enrolled_with_the_local_models_limits_of_the_settings_document() -> None:
+    """#174: ``SandboxManager`` constructs without a reader and then enrolls every sandbox with the section's
+    defaults, so a request cap or a timeout an admin set would never reach the local-llm-proxy."""
+    passed = _keywords(_construction("SandboxManager"))
+    assert passed.get("local_models") == "section_reader(app.state.settings, LOCAL_MODELS)", (
+        f"the sandbox manager must read the local_models section where it enrolls: {passed.get('local_models')}"
     )
+
+
+def test_the_start_writes_what_migration_161_carried() -> None:
+    """#174: a stored local_max_runs waits in settings_carried for a start to write it into the settings
+    document; a start that never calls the writer leaves the deployment at one run per server."""
+    calls = [
+        ast.unparse(node)
+        for node in ast.walk(_tree())
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "write_carried_settings"
+    ]
+    assert calls == ["write_carried_settings(db, app.state.settings)"], (
+        f"the start must write the carried settings through the deployment's store: {calls}"
+    )
+
+
+def test_an_agent_run_reads_the_local_models_section_through_the_store_the_api_writes() -> None:
+    """#174: the agent node reads local_models from ``settings_store`` in its configurable; without it, it
+    builds a store of its own per run. Production passes the executor's."""
+    from embry0.services import issue_executor
+
+    tree = ast.parse(pathlib.Path(issue_executor.__file__).read_text())
+    passed = [
+        ast.unparse(value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values, strict=True)
+        if isinstance(key, ast.Constant) and key.value == "settings_store"
+    ]
+    assert passed == ["getattr(self, '_settings', None)"], f"the run's configurable carries the store: {passed}"

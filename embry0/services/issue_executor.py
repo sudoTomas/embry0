@@ -394,6 +394,9 @@ class IssueExecutor:
                 # check (the `budget` section, the old readers for a key not
                 # imported yet).
                 "budget_policy": self._budget_policy(),
+                # The settings document the application reads (local_models when a run takes a slot); None, a
+                # store over "db" is read instead.
+                "settings_store": getattr(self, "_settings", None),
                 "repo_preferences_repo": self._repo_prefs,
                 # getattr: unit tests build the executor via __new__ and set
                 # only what their path touches (same reason as _github_token).

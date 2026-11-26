@@ -63,15 +63,31 @@ def test_through_the_proxy_without_a_bearer_nothing_is_sent(proxied, monkeypatch
     assert proxied.requests == []
 
 
+def _windowed(monkeypatch: pytest.MonkeyPatch, window: int, **kw: Any) -> Any:
+    """A run on a custom model the catalogue lists, free, with ``window`` its context window (#174): its provider
+    record, as the orchestrator resolves it, carries the window."""
+    from dataclasses import replace
+
+    from embry0.agents.providers import provider_record
+    from tests.fixtures.provider_catalogue import enable_providers
+
+    invocation = _invocation(**kw)
+    enable_providers(
+        monkeypatch, "custom", custom={"models": {invocation.model: {"free": True, "context_window": window}}}
+    )
+    record = provider_record(invocation.model)
+    assert (record.name, record.context_window) == ("custom", window), f"the run's record: {record}"
+    return replace(invocation, provider_record=record)
+
+
 def test_a_conversation_over_the_window_elides_old_tool_output(proxied, monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("EMBRY0_LLM_CUSTOM_CONTEXT_TOKENS", "4096")
     (tmp_path / "big.txt").write_text("x" * 6_000 + "\n")
     calls = [tool_call(f"call_{i}", "Read", {"file_path": "big.txt"}) for i in range(4)]
     for call in calls:
         proxied.answer(completion(tool_calls=[call], prompt_tokens=0))
     proxied.answer(completion(content="done", prompt_tokens=0))
     # The latest read stays whole; the reads before it are what goes.
-    out = _run(_invocation(max_turns=10))
+    out = _run(_windowed(monkeypatch, 4096, max_turns=10))
     assert not out.is_error, out.error_message
     last = proxied.chat_requests()[-1]["json"]["messages"]
     elided = [m for m in last if m.get("role") == "tool" and str(m.get("content")).startswith("[earlier tool output")]
@@ -80,8 +96,7 @@ def test_a_conversation_over_the_window_elides_old_tool_output(proxied, monkeypa
 
 
 def test_a_conversation_that_cannot_fit_fails_with_its_own_code(proxied, monkeypatch) -> None:
-    monkeypatch.setenv("EMBRY0_LLM_CUSTOM_CONTEXT_TOKENS", "1100")
-    out = _run(_invocation(prompt="y" * 20_000))
+    out = _run(_windowed(monkeypatch, 1100, prompt="y" * 20_000))
     assert out.is_error
     assert out.error_code == ErrorCode.CONTEXT_WINDOW_EXCEEDED.value
     assert "1100-token context window" in (out.error_message or "")
@@ -89,16 +104,25 @@ def test_a_conversation_that_cannot_fit_fails_with_its_own_code(proxied, monkeyp
 
 
 def test_without_a_setting_the_window_comes_from_the_servers_models(proxied, monkeypatch) -> None:
-    seen: list[str] = []
+    seen: list[tuple[str, Any]] = []
 
-    async def window(base_url, api_key, model):
-        seen.append(model)
+    async def window(base_url, api_key, model, configured=None):
+        seen.append((model, configured))
         return 4096
 
     monkeypatch.setattr(eo, "_context_window", window)
     proxied.answer(completion(content="done"))
     assert not _run(_invocation(model="custom/qwen")).is_error
-    assert seen == ["qwen"], "asked for the upstream id, the routing prefix stripped"
+    assert seen == [("qwen", None)], "asked for the upstream id, the routing prefix stripped, with no window of its own"
+
+
+def test_the_catalogue_s_window_reaches_the_run_in_its_provider_record(proxied, monkeypatch) -> None:
+    """A custom model's context_window in the catalogue rides the run's record; the server is not asked."""
+    proxied.answer(completion(content="done"))
+    out = _run(_windowed(monkeypatch, 8192, model="custom/qwen"))
+    assert not out.is_error, out.error_message
+    asked = [r["path"] for r in proxied.requests if r["method"] == "GET"]
+    assert asked == [], f"the server was asked for a window the catalogue gave: {asked}"
 
 
 def test_the_servers_refusal_of_a_long_request_has_the_same_code() -> None:

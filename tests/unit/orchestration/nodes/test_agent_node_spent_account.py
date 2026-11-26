@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -271,7 +272,7 @@ async def test_a_forced_local_run_with_no_slot_waits_instead_of_failing(monkeypa
 
     enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
     monkeypatch.setattr(agent_mod, "_local_slots", _slots)
-    monkeypatch.setattr(agent_mod, "_slot_wait_seconds", lambda _config: 0.0)
+    monkeypatch.setattr(agent_mod, "_slot_wait_seconds", AsyncMock(return_value=0.0))
     with pytest.raises(AccountWaitInterrupt) as stopped:
         await _run(state={"agent_models_override": {"triage": "custom/qwen"}}, providers=("anthropic", "custom"))
     assert stopped.value.wait.reason == LOCAL_BUSY and stopped.value.wait.provider == "custom"
@@ -295,7 +296,7 @@ async def test_a_forced_local_run_with_no_slot_leaves_its_wait_where_it_cannot_p
 
     enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
     monkeypatch.setattr(agent_mod, "_local_slots", _slots)
-    monkeypatch.setattr(agent_mod, "_slot_wait_seconds", lambda _config: 0.0)
+    monkeypatch.setattr(agent_mod, "_slot_wait_seconds", AsyncMock(return_value=0.0))
     updates, ran, _traces, _health, _seen = await _run(
         state={"agent_models_override": {"triage": "custom/qwen"}}, providers=("anthropic", "custom"), waits=False
     )

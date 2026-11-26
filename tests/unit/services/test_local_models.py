@@ -101,8 +101,14 @@ def test_how_many_calls_a_server_takes_at_once() -> None:
     local_cap = getattr(local_slots, "local_cap", None)
     assert local_cap is not None, "agent runs and background calls read the cap each by a rule of their own"
 
-    assert [local_cap(row) for row in (None, {}, {"local_max_runs": 3}, {"local_max_runs": 0})] == [1, 1, 3, 1]
-    flag = local_cap({"local_max_runs": True})
+    from types import SimpleNamespace
+
+    from embry0.settings.sections.local_models import LOCAL_MODELS
+
+    section = LOCAL_MODELS.model
+    caps = [local_cap(s) for s in (None, section(), section(max_runs=3), SimpleNamespace(max_runs=0))]
+    assert caps == [1, 1, 3, 1], f"the cap is the settings document's local_models.max_runs (#174): {caps}"
+    flag = local_cap(SimpleNamespace(max_runs=True))
     assert type(flag) is int and flag == 1, f"a flag is no count: {flag!r}"
 
 

@@ -92,6 +92,44 @@
       "yaml": "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        request_extras: {\"chat_template_kwargs\":{\"enable_thinking\":false},\"temperature\":0.2}\n"
     },
     {
+      "name": "a custom model's context window, a whole number",
+      "overlay": {
+        "providers": {
+          "custom": {
+            "enabled": true,
+            "models": {
+              "custom/qwen3:32b": {
+                "free": true,
+                "context_window": 32768
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  custom:\n    enabled: true\n    models:\n      \"custom/qwen3:32b\":\n        free: true\n        context_window: 32768\n"
+    },
+    {
+      "name": "background request extras, their numbers as written",
+      "overlay": {
+        "providers": {
+          "custom": {
+            "models": {
+              "custom/local": {
+                "free": true,
+                "background_request_extras": {
+                  "chat_template_kwargs": {
+                    "enable_thinking": false
+                  },
+                  "max_tokens": 600
+                }
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        background_request_extras: {\"chat_template_kwargs\":{\"enable_thinking\":false},\"max_tokens\":600}\n"
+    },
+    {
       "name": "a shipped model taken out",
       "overlay": {
         "providers": {

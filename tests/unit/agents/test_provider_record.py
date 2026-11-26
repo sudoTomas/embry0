@@ -613,3 +613,18 @@ def test_one_catalogue_routes_the_model_and_makes_its_record(monkeypatch: pytest
     assert record is not None and (invocation.provider, record.name) == ("deepseek", "deepseek"), (
         f"routed to {invocation.provider!r}, recorded {record and record.name!r}"
     )
+
+
+def test_a_custom_model_s_window_survives_the_runner_s_config() -> None:
+    """#174: the catalogue's context_window rides the record into the sandbox; without one the executor asks the
+    server."""
+    record = _record(name="custom", context_window=65536)
+    config = json.loads(json.dumps({"agent_type": "developer", "prompt": "p", "provider_record": record.to_config()}))
+    carried = _invocation_from_config(config).provider_record
+    assert carried is not None and carried.context_window == 65536, f"the window was lost on the way: {carried}"
+    assert _record().to_config().get("context_window", "absent") is None
+
+
+@pytest.mark.parametrize("window", [0, -1, True, "65536", 1.5])
+def test_a_record_with_a_window_that_is_not_a_count_is_none(window: Any) -> None:
+    assert ProviderRecord.from_config({**_record().to_config(), "context_window": window}) is None

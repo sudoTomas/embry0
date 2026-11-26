@@ -1,14 +1,15 @@
 """Slots on the operator's local model servers (docs/providers.md, local models).
 
 A server is shared hardware with a fixed capacity, so embry0 sends each at
-most ``provider_config.local_max_runs`` calls at once (one by default). Every
+most ``local_models.max_runs`` calls at once (the settings document; one by
+default). Every
 run on the custom provider holds a slot of the server it reaches, a lease in
 ``local_model_leases``, from just before the run until just after it:
 
 - a run that only prefers the local model (local-first) takes a slot only if
   one is free now, and otherwise runs on its own cloud model;
 - a run that has to use it (a fallback to it, a model a person named) waits
-  for a slot up to ``LOCAL_LLM_SLOT_WAIT_SECONDS`` and then fails with
+  for a slot up to ``local_models.slot_wait_seconds`` and then fails with
   ``ERR_LOCAL_MODEL_BUSY`` without having run.
 
 A background call outside a job (a brief, a Slop-O-Meter judgment) holds one
@@ -30,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -51,9 +52,9 @@ def server_of(credential_id: str | None) -> str:
     return credential_id or ENV_SERVER
 
 
-def local_cap(provider_config: Mapping[str, Any] | None) -> int:
-    """How many calls each server takes at once: ``provider_config.local_max_runs``, else one."""
-    cap = (provider_config or {}).get("local_max_runs")
+def local_cap(local_models: Any) -> int:
+    """How many calls each server takes at once: the ``local_models`` section's ``max_runs``, else one."""
+    cap = getattr(local_models, "max_runs", None)
     return cap if isinstance(cap, int) and not isinstance(cap, bool) and cap > 0 else 1
 
 

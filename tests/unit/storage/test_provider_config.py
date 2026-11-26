@@ -166,7 +166,6 @@ _TIERS = ("model_heavy", "model_medium", "model_light", "default_model")
 @pytest.mark.parametrize(
     "fields",
     [
-        {"local_max_runs": 2},
         {"fallback_models": ["grok-4.7"]},
         {"disabled_models": ["claude-haiku-4-5"]},
     ],

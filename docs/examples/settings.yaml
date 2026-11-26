@@ -555,6 +555,31 @@ leads:
   # a large one.
   # large_estimate_min: 5.0
 
+# The limits of the operator's own model servers: runs at once, the wait for a
+# slot, the proxy's timeout and request cap.
+local_models:
+  # How many calls each of the operator's model servers takes at once: agent
+  # runs and background calls alike. A server is the custom credential a call
+  # is made with. A run that only prefers a local model runs on its own model
+  # when no slot is free; one that has to use it waits slot_wait_seconds.
+  # max_runs: 1
+
+  # How long a run that has to use a local model (the fallback, or the model a
+  # person named) waits for a free slot of its server before the job is parked
+  # for five minutes. 0: it does not wait.
+  # slot_wait_seconds: 900
+
+  # How long the local-llm-proxy waits for a server to answer a sandbox's
+  # call; a long completion from a model on one card can take minutes. Read
+  # when a sandbox is enrolled: a change reaches the next one.
+  # request_timeout_seconds: 900
+
+  # The largest request body the local-llm-proxy forwards to a server, in
+  # bytes; over it the call is refused with 413 and the run ends as
+  # ERR_CONTEXT_WINDOW_EXCEEDED. Every turn resends the whole conversation.
+  # Read when a sandbox is enrolled: a change reaches the next one.
+  # max_request_bytes: 8388608
+
 # The template a map's part is analysed with, and the labels on the issues a
 # map opens.
 maps:

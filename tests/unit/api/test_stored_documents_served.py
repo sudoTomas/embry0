@@ -188,6 +188,11 @@ ROWS: dict[str, dict[str, str]] = {
     },
     "agent_definitions": {},
     "provider_catalogue": {},
+    "settings_carried": {
+        "key": "'local_models.max_runs'",
+        "value": "'2'",
+        "from_where": "'provider_config.local_max_runs'",
+    },
     "settings_documents": {},
 }
 

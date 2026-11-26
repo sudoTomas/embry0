@@ -399,6 +399,20 @@ def _refuse_watcher_local_model(updates: dict[str, Any]) -> None:
         )
 
 
+def _refuse_local_max_runs(updates: dict[str, Any]) -> None:
+    """422 for ``local_max_runs``, which moved to the settings document (#174): how many calls each of the operator's
+    model servers takes at once is ``local_models.max_runs``. Refused rather than dropped, as
+    ``watcher_local_model`` is."""
+    if "local_max_runs" in updates:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "local_max_runs moved to the settings document's local_models section: "
+                'PATCH /api/v1/config/settings/local_models with {"max_runs": <n>} (docs/providers.md, local models)'
+            ),
+        )
+
+
 # RAV-1056 Phase C: admin-gated like /config/integrations — provider config
 # carries credentials-adjacent settings; operator tier was an inconsistency.
 @router.put("/config/provider", dependencies=[require_admin, deployment_writes("change the deployment's models")])
@@ -409,6 +423,7 @@ async def update_provider(
 ) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     _refuse_watcher_local_model(updates)
+    _refuse_local_max_runs(updates)
     if not updates:
         return await repo.get()
     from embry0.api.v1.provider_catalogue import catalogue_held

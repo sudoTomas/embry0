@@ -1,4 +1,5 @@
-"""PUT /config/provider and local models: the run cap, the fallback order, and the watcher's model that moved (#164)."""
+"""PUT /config/provider and local models: the fallback order, and the run cap (#174) and the watcher's model (#164)
+that moved to the settings document."""
 
 from __future__ import annotations
 
@@ -29,10 +30,15 @@ async def _put(app: Any, body: dict[str, Any]):
         return await client.put("/api/v1/config/provider", json=body, headers={"X-Requested-With": "XMLHttpRequest"})
 
 
-async def test_the_cap_is_saved(app) -> None:
-    resp = await _put(app, {"local_max_runs": 2})
-    assert resp.status_code == 200, resp.text
-    app.state.provider_repo.update.assert_awaited_once_with(local_max_runs=2)
+@pytest.mark.parametrize("cap", [2, 1, 0, 65])
+async def test_the_run_cap_is_refused_with_where_it_went(app, cap) -> None:
+    """#174: how many calls each server takes at once is the settings document's local_models.max_runs. A client
+    still sending local_max_runs learns where it went, and nothing is stored, the fields sent with it included."""
+    resp = await _put(app, {"local_max_runs": cap, "fallback_models": ["custom/qwen"]})
+    assert resp.status_code == 422, f"local_max_runs is refused, not dropped: {resp.text}"
+    detail = resp.json()["detail"]
+    assert isinstance(detail, str) and "local_models" in detail and "/config/settings/local_models" in detail, detail
+    app.state.provider_repo.update.assert_not_awaited()
 
 
 @pytest.mark.parametrize("model", ["custom/qwen", "", "claude-sonnet-5"])
@@ -43,12 +49,6 @@ async def test_the_watchers_model_is_refused_with_where_it_went(app, model) -> N
     assert resp.status_code == 422, f"watcher_local_model is refused, not dropped: {resp.text}"
     detail = resp.json()["detail"]
     assert "background_models" in detail and "/config/settings/background_models" in detail, detail
-    app.state.provider_repo.update.assert_not_awaited()
-
-
-@pytest.mark.parametrize("cap", [0, 65, -1])
-async def test_a_cap_outside_one_to_sixty_four_is_refused(app, cap) -> None:
-    assert (await _put(app, {"local_max_runs": cap})).status_code == 422
     app.state.provider_repo.update.assert_not_awaited()
 
 

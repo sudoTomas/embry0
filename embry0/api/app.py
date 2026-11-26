@@ -1230,6 +1230,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         warn_moved_variables()
     except Exception:
         logger.warning("settings_env_retired_scan_failed", exc_info=True)
+    # #174: a setting a migration took out of a retired column (provider_config.local_max_runs, migration 161) is
+    # written into the deployment's document, by the store, which alone writes its text. Never raises.
+    from embry0.settings.carried import write_carried_settings
+
+    await write_carried_settings(db, app.state.settings)
     # A deployment that skipped the releases that imported what it kept before
     # the document (a saved budget row, the meter's repositories): say so, at
     # error level and in the audit log; the meter holds its prune meanwhile.
@@ -1593,6 +1598,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.skills.store import SkillStore
 
     app.state.skill_store = SkillStore(config.skills_store_path, daemon_root=config.skills_store_daemon_path)
+    from embry0.settings.sections.local_models import LOCAL_MODELS
+    from embry0.settings.store import section_reader
+
     sandbox_mgr = SandboxManager(
         docker,
         proxy_manager=proxy_mgr,
@@ -1610,8 +1618,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # not taken from app.state: _init_app_state creates repos_repo later.
         # Without it no repo gets the daemon (closed, not open).
         docker_access_registry=ReposRepository(db, default_forge=config.default_forge),
-        # Local models: the server's context window, when the operator set one.
-        local_llm_context_tokens=config.local_llm_context_tokens,
+        # Local models: the request cap and timeout each sandbox is enrolled with at the local-llm-proxy.
+        local_models=section_reader(app.state.settings, LOCAL_MODELS),
         runtime=runtime,
         # Spec 3.3: every sandbox gets the enabled skill sources, read-only.
         # Built here, like the registry above: _init_app_state creates
@@ -1792,7 +1800,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log_redaction_fields=config.log_redaction_fields,
         # Local models (docs/providers.md): the local-llm-proxy always runs, each sandbox on the custom provider
         # enrolled with its credential's server (ADR 0032).
-        local_llm_max_request_bytes=config.local_llm_max_request_bytes,
         model_proxy_max_request_bytes=config.model_proxy_max_request_bytes,
     )
 
@@ -2805,11 +2812,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.orchestration.budget_gate import build_budget_gate
     from embry0.services.background_models import BackgroundCalls
     from embry0.services.local_slots import CallSlots, LocalSlots, local_cap
+    from embry0.settings.sections.local_models import LOCAL_MODELS
     from embry0.storage.repositories.background_spend import BackgroundSpendRepository
     from embry0.storage.repositories.local_model_leases import LocalModelLeasesRepository
 
     async def local_model_cap() -> int:
-        return local_cap(await app.state.provider_repo.get())
+        return local_cap((await app.state.settings.snapshot()).get(LOCAL_MODELS))
 
     app.state.background_calls = BackgroundCalls(
         resolver=getattr(app.state, "credential_resolver", None),

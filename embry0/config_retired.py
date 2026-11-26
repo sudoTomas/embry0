@@ -70,6 +70,9 @@ MOVED_TO_DOCUMENTS: Final[Mapping[str, str]] = {
     "WATCHER_SKIP_KNOWN_HOURS": f"{_SETTINGS} watcher.skip_known_hours",
     "OPENAI_COMPATIBLE_PROVIDERS": "the provider catalogue's providers.<name>.enabled",
     "OPENROUTER_CATALOG_REFRESH_HOURS": "the provider catalogue's openrouter.refresh_hours",
+    "LOCAL_LLM_SLOT_WAIT_SECONDS": f"{_SETTINGS} local_models.slot_wait_seconds",
+    "LOCAL_LLM_MAX_REQUEST_BYTES": f"{_SETTINGS} local_models.max_request_bytes",
+    "LOCAL_LLM_CONTEXT_TOKENS": "the provider catalogue's providers.custom.models.<model>.context_window",
 }
 
 #: Variables whose setting became a constant (#168, #665), removed before 0.1.0: nothing reads them and nothing

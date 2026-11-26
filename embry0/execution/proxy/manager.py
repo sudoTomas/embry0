@@ -54,8 +54,10 @@ from embry0.execution.proxy.git_scope import (
 )
 from embry0.execution.proxy.local_llm_proxy import (
     CUSTOM_PROVIDER,
+    LIMITS_FIELD,
     LOCAL_LLM_FIELD,
     PROVIDER_SERVERS_FIELD,
+    Limits,
     Upstream,
 )
 
@@ -264,7 +266,6 @@ class ProxyManager:
         log_redaction_fields: str = "",
         has_github_credential: bool | None = None,
         has_gitlab_credential: bool | None = None,
-        local_llm_max_request_bytes: int = 0,
         model_proxy_max_request_bytes: int = 0,
     ) -> None:
         """Start the credential proxies as DinD containers.
@@ -280,8 +281,9 @@ class ProxyManager:
 
         The local-llm-proxy always runs: it forwards each sandbox on the custom
         provider to the server its credential names (ADR 0032), which
-        ``enroll_sandbox`` gives it. ``local_llm_max_request_bytes`` caps its
-        request body; 0 keeps its default.
+        ``enroll_sandbox`` gives it with the sandbox's request cap and timeout
+        (the settings document's ``local_models``), under the ceilings the
+        proxy starts with.
 
         ``model_proxy_max_request_bytes`` caps a request body at the auth- and
         xai-proxy (``model_request``); 0 keeps their default.
@@ -477,8 +479,6 @@ class ProxyManager:
             "LISTEN_PORT": "9108",
             "PROXY_ADMIN_TOKEN": self._proxy_admin_token,
         }
-        if local_llm_max_request_bytes > 0:
-            local_env["MAX_REQUEST_BYTES"] = str(local_llm_max_request_bytes)
         await self._launch(name="local-llm-proxy", env=local_env, attach_internet=True)
         self.local_llm_proxy_url = "http://local-llm-proxy:9108"
         logger.info("local_llm_proxy_started")
@@ -548,6 +548,7 @@ class ProxyManager:
         job_id: str | None = None,
         local_llm: Upstream | None = None,
         provider_servers: Mapping[str, Upstream] | None = None,
+        limits: Limits | None = None,
     ) -> str:
         """Enroll a new sandbox with all running credential proxies.
 
@@ -611,6 +612,11 @@ class ProxyManager:
         same way as ``local_llm``. A proxy that does not echo every one of them
         exactly is refused.
 
+        ``limits`` are the sandbox's at every one of those servers (the
+        settings document's ``local_models``): its request cap and how long a
+        server has to answer, sent with them and confirmed the same way. A
+        sandbox enrolled for a server without them is a ValueError.
+
         Raises RuntimeError if any enrollment exec fails, if such a stale
         proxy cannot be revoked, or if the git-proxy does not confirm its
         grant. Caller (SandboxManager) rolls back the just-created container
@@ -658,7 +664,7 @@ class ProxyManager:
             targets.append(("auth-proxy", 9100))
         if self.xai_proxy_url:
             targets.append(("xai-proxy", 9106))
-        local_server: dict[str, str] | None = None
+        local_server: dict[str, Any] | None = None
         if local_llm is not None:
             if not self.local_llm_proxy_url:
                 raise RuntimeError("the local-llm-proxy is not running: a sandbox on the custom provider has no route")
@@ -680,7 +686,11 @@ class ProxyManager:
                 "address": server.address,
                 "api_key": server.api_key,
             }
+        limits_body: dict[str, Any] | None = None
         if local_server is not None or provider_payload:
+            if limits is None:
+                raise ValueError("a sandbox enrolled for a model server needs its limits there (local_models)")
+            limits_body = limits.to_body()
             targets.append(("local-llm-proxy", 9108))
         # context-proxy is deliberately ABSENT from this broadcast: log access is
         # per-job opt-in (watcher analysis jobs only). init_node calls
@@ -707,6 +717,8 @@ class ProxyManager:
                 body[LOCAL_LLM_FIELD] = local_server
             if name == "local-llm-proxy" and provider_payload:
                 body[PROVIDER_SERVERS_FIELD] = provider_payload
+            if name == "local-llm-proxy" and limits_body is not None:
+                body[LIMITS_FIELD] = limits_body
             response = await self._exec_admin_request(
                 container=name,
                 method="POST",
@@ -722,6 +734,8 @@ class ProxyManager:
                 await self._confirm_local_server(port, sandbox_id, local_server, response)
             if name == "local-llm-proxy" and provider_payload:
                 await self._confirm_provider_servers(port, sandbox_id, provider_payload, response)
+            if name == "local-llm-proxy" and limits_body is not None:
+                await self._confirm_limits(port, sandbox_id, limits_body, response)
 
         if xai_credential_id:
             logger.info("sandbox_xai_credential", sandbox_id=sandbox_id, credential_id=xai_credential_id)
@@ -811,7 +825,7 @@ class ProxyManager:
         raise RuntimeError("git-proxy did not confirm the repository grant (proxy image older than the orchestrator?)")
 
     async def _confirm_local_server(
-        self, port: int, sandbox_id: str, server: dict[str, str], response: dict[str, Any]
+        self, port: int, sandbox_id: str, server: dict[str, Any], response: dict[str, Any]
     ) -> None:
         """Refuse a local-llm-proxy that did not echo ``server``: its image predates per-sandbox servers (ADR 0032)."""
         echoed = (response if isinstance(response, dict) else {}).get(LOCAL_LLM_FIELD)
@@ -841,6 +855,34 @@ class ProxyManager:
         )
         raise RuntimeError(
             "local-llm-proxy did not confirm the sandbox's server (proxy image older than the orchestrator?)"
+        )
+
+    async def _confirm_limits(
+        self, port: int, sandbox_id: str, limits: dict[str, Any], response: dict[str, Any]
+    ) -> None:
+        """Refuse a local-llm-proxy that did not echo the sandbox's ``limits``: its image predates them, and would hold
+        the sandbox to no cap or timeout of its own (#174)."""
+        echoed = (response if isinstance(response, dict) else {}).get(LIMITS_FIELD)
+        if isinstance(echoed, dict) and echoed == limits:
+            return
+        logger.error(
+            "local_llm_proxy_limits_unconfirmed",
+            sandbox_id=sandbox_id,
+            detail=(
+                "the local-llm-proxy did not confirm the sandbox's limits: its image predates them, so the sandbox is "
+                "unenrolled there and refused; rebuild the proxy image"
+            ),
+        )
+        await self._exec_admin_request(
+            container="local-llm-proxy",
+            method="DELETE",
+            path=f"/admin/enroll/{sandbox_id}",
+            port=port,
+            body=None,
+            accept_404=True,
+        )
+        raise RuntimeError(
+            "local-llm-proxy did not confirm the sandbox's limits (proxy image older than the orchestrator?)"
         )
 
     async def _confirm_provider_servers(

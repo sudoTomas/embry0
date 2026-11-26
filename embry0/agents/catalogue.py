@@ -129,6 +129,8 @@ class ModelProvider:
     structured_output_models: frozenset[str] = frozenset()
     """Models a call may hold to a JSON schema while they decode (``response_format`` ``json_schema``): a background
     call sends its own schema to these, and to no other."""
+    context_windows: Mapping[str, int] = field(default_factory=dict)
+    """model -> its context window in tokens, where the catalogue says one (the custom provider's models)."""
     default_pricing_usd_per_mtok: tuple[float, float] | None = None
     """Rates for a routed model with no entry of its own; None refuses such a model (#219)."""
     probe_path: str = "/models"
@@ -165,6 +167,8 @@ ENVIRONMENT: Final[Mapping[str, Environment]] = {
         sandbox_base_url="EMBRY0_LLM_CUSTOM_BASE_URL",
     ),
 }
+#: The environment of a provider not shipped: no operator-given address.
+_NO_ADDRESS: Final = Environment(api_key="")
 
 
 # ---- the schema ----
@@ -177,6 +181,8 @@ ProbePath = Annotated[str, StringConstraints(pattern=r"^/\S{0,200}$")]
 Rate = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 Factor = Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)]
 RefreshHours = Annotated[float, Field(ge=0, le=720, allow_inf_nan=False)]
+#: A model's context window, in tokens.
+ContextWindow = Annotated[int, Field(ge=1024, le=10_000_000)]
 
 
 class _Model(BaseModel):
@@ -225,6 +231,13 @@ class ModelEntry(_Model):
         description="json_schema: the model can be held to a JSON schema while it decodes, so a background call "
         "sends its own (response_format); none: it is sent none",
     )
+    context_window: ContextWindow | None = Field(
+        default=None,
+        description=(
+            "the model's context window in tokens, for a custom model: the run is fitted to it. Unset, the "
+            "operator's server is asked (its /models)"
+        ),
+    )
 
 
 class ProviderEntry(_Model):
@@ -267,6 +280,7 @@ class ModelOverlay(_Model):
     request_extras: dict[str, JsonValue] | None = Field(default=None, max_length=16)
     background_request_extras: dict[str, JsonValue] | None = Field(default=None, max_length=16)
     structured_output: Literal["json_schema"] | None = None
+    context_window: ContextWindow | None = None
 
 
 class ProviderOverlay(_Model):
@@ -442,6 +456,9 @@ def _provider(name: str, entry: ProviderEntry, day: date, withheld: frozenset[st
         structured_output_models=frozenset(
             model for model, spec in entry.models.items() if spec.structured_output == "json_schema"
         ),
+        context_windows={
+            model: spec.context_window for model, spec in entry.models.items() if spec.context_window is not None
+        },
         default_pricing_usd_per_mtok=entry.default_price.pair if entry.default_price is not None else None,
         probe_path=entry.probe_path,
     )
@@ -481,6 +498,15 @@ def _coherence_problems(document: CatalogueDocument) -> list[Problem]:
             )
         for model, spec in entry.models.items():
             problems += _model_problems((*where, "models", model), model, spec, entry)
+            if spec.context_window is not None and not ENVIRONMENT.get(name, _NO_ADDRESS).base_url:
+                problems.append(
+                    Problem(
+                        (*where, "models", model, "context_window"),
+                        "not_custom",
+                        "a context window is the operator's to say for a model on their own server (the custom "
+                        "provider's); a provider's own models report theirs",
+                    )
+                )
     prefixes = [(prefix, name) for name, entry in document.providers.items() for prefix in entry.model_prefixes]
     for prefix, name in prefixes:
         for other, other_name in prefixes:

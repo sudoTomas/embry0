@@ -16,8 +16,11 @@ git-proxy scopes an enrolment to one repository:
 - only from an enrolled sandbox, and only to its own server: the per-sandbox
   bearer is checked and stripped, and the server's key (when it checks one) is
   added here, so neither the key nor the server's address enters a sandbox;
-- a request body over ``MAX_REQUEST_BYTES`` (``LOCAL_LLM_MAX_REQUEST_BYTES``)
-  is refused with 413, in the OpenAI error shape (``model_request``);
+- a request body over the sandbox's cap (``local_models.max_request_bytes``,
+  sent with its enrollment under the ceiling ``MAX_REQUEST_BYTES``) is refused
+  with 413, in the OpenAI error shape (``model_request``), and a server has the
+  enrollment's timeout to answer: one set of limits per sandbox, on every path
+  it calls, the custom server's and each provider's;
 - every chat completion is metered (``metering``): its tokens count toward the
   run the orchestrator declared for the sandbox.
 
@@ -63,10 +66,17 @@ from embry0.execution.proxy.server_address import refused_address, refused_serve
 logger = structlog.get_logger(__name__)
 
 PROXY_NAME = "local_llm_proxy"
+#: The settings document's local_models defaults: a sandbox's request cap and the time a server has to answer it.
 DEFAULT_MAX_REQUEST_BYTES = 8 * 1024 * 1024
-# A long completion from a model on one card can take minutes; the run's own
-# timeout bounds it. Connect fails fast so an upstream that is down says so.
-_TIMEOUT = httpx.Timeout(900.0, connect=10.0)
+DEFAULT_TIMEOUT_SECONDS = 900.0
+#: The most an enrollment may ask for, whatever the settings say: the proxy reads no body larger, and waits no
+#: longer. ``local_models``'s own bounds are these (a test holds them equal).
+MAX_REQUEST_BYTES_CEILING = 64 * 1024 * 1024
+TIMEOUT_SECONDS_CEILING = 3600.0
+# A long completion from a model on one card can take minutes; the enrollment's timeout bounds it. Connect fails
+# fast so an upstream that is down says so.
+_CONNECT_SECONDS = 10.0
+_TIMEOUT = httpx.Timeout(DEFAULT_TIMEOUT_SECONDS, connect=_CONNECT_SECONDS)
 # The request headers forwarded upstream. Everything else, the sandbox's
 # Authorization above all, stays behind.
 _FORWARDED_REQUEST_HEADERS = ("content-type", "accept")
@@ -77,6 +87,9 @@ _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
 #: The enroll body's field naming the sandbox's server, and the field the answer confirms it under.
 LOCAL_LLM_FIELD = "local_llm"
+#: The enroll body's field with the sandbox's limits at every server it is enrolled for, and the field the answer
+#: confirms them under.
+LIMITS_FIELD = "limits"
 #: The enroll body's field naming, per chat-completions provider other than custom, the server the sandbox reaches it
 #: through; the answer confirms each under the same field, without its key.
 PROVIDER_SERVERS_FIELD = "provider_servers"
@@ -107,11 +120,47 @@ class Upstream:
         return f"Upstream(credential_id={self.credential_id!r}, root={self.root!r}, address={self.address!r})"
 
 
+@dataclass(frozen=True, slots=True)
+class Limits:
+    """A sandbox's limits at every server it is enrolled for (the settings document's ``local_models``): the largest
+    request body it may send, and how long a server has to answer one."""
+
+    max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+
+    def to_body(self) -> dict[str, Any]:
+        """As the enroll body carries them, and the answer confirms them."""
+        return {"max_request_bytes": self.max_request_bytes, "timeout_seconds": float(self.timeout_seconds)}
+
+
 # This proxy's own state keys; those several proxies share are in ``app_keys``.
 #: Per enrolled sandbox: the server it reaches.
 UPSTREAM_BY_SANDBOX: web.AppKey[dict[str, Upstream]] = web.AppKey("upstream_by_sandbox")
 #: Per enrolled sandbox: the server of each other chat-completions provider it was enrolled for.
 SERVERS_BY_SANDBOX: web.AppKey[dict[str, dict[str, Upstream]]] = web.AppKey("servers_by_sandbox")
+#: Per enrolled sandbox: its limits, on every path it calls.
+LIMITS_BY_SANDBOX: web.AppKey[dict[str, Limits]] = web.AppKey("limits_by_sandbox")
+#: The ceiling of an enrollment's request cap: the largest body the proxy reads at all.
+MAX_REQUEST_BYTES: web.AppKey[int] = web.AppKey("max_request_bytes")
+
+
+def _limit(value: Any, name: str, ceiling: float) -> float:
+    """A positive number no larger than ``ceiling``; :class:`EnrollRejected` for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= ceiling:
+        raise EnrollRejected(f"{LIMITS_FIELD}.{name} must be a positive number no larger than {ceiling:g}")
+    return value
+
+
+def parse_limits(value: Any, *, max_request_bytes: int = MAX_REQUEST_BYTES_CEILING) -> Limits:
+    """The enroll body's ``limits``, checked against the ceilings (``max_request_bytes`` the one this proxy started
+    with); :class:`EnrollRejected` for anything else."""
+    if not isinstance(value, dict):
+        raise EnrollRejected(f"{LIMITS_FIELD} must be an object: the sandbox's max_request_bytes and timeout_seconds")
+    cap = _limit(value.get("max_request_bytes"), "max_request_bytes", max_request_bytes)
+    if not isinstance(cap, int):
+        raise EnrollRejected(f"{LIMITS_FIELD}.max_request_bytes must be a whole number of bytes")
+    timeout = _limit(value.get("timeout_seconds"), "timeout_seconds", TIMEOUT_SECONDS_CEILING)
+    return Limits(max_request_bytes=cap, timeout_seconds=float(timeout))
 
 
 def parse_upstream(value: Any, named: str = LOCAL_LLM_FIELD) -> Upstream:
@@ -170,15 +219,17 @@ def parse_provider_servers(value: Any) -> dict[str, Upstream]:
 
 @dataclass(frozen=True)
 class Servers:
-    """What one enrollment names: the custom server, and each other provider's."""
+    """What one enrollment names: the custom server, each other provider's, and the sandbox's limits at all of them."""
 
     local: Upstream | None = None
     providers: dict[str, Upstream] = field(default_factory=dict)
+    limits: Limits = field(default_factory=Limits)
 
 
 class _UpstreamEnroll:
-    """Every enrollment names its sandbox's servers (``local_llm``, ``provider_servers``, or both), and the answer
-    confirms which. An enrollment again replaces both: a server it no longer names is gone."""
+    """Every enrollment names its sandbox's servers (``local_llm``, ``provider_servers``, or both) and its limits at
+    every one of them (``limits``), and the answer confirms them. An enrollment again replaces all of it: a server it
+    no longer names is gone."""
 
     def parse(self, app: web.Application, body: dict[str, Any]) -> Servers:
         if LOCAL_LLM_FIELD not in body and PROVIDER_SERVERS_FIELD not in body:
@@ -187,12 +238,15 @@ class _UpstreamEnroll:
         providers = parse_provider_servers(body[PROVIDER_SERVERS_FIELD]) if PROVIDER_SERVERS_FIELD in body else {}
         if local is None and not providers:
             raise EnrollRejected(f"{PROVIDER_SERVERS_FIELD} names no provider")
-        return Servers(local, providers)
+        if LIMITS_FIELD not in body:
+            raise EnrollRejected(f"an enrollment names the sandbox's limits at its servers ({LIMITS_FIELD})")
+        return Servers(local, providers, parse_limits(body[LIMITS_FIELD], max_request_bytes=app[MAX_REQUEST_BYTES]))
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: Servers) -> dict[str, Any]:
         # An enrollment again ends the sandbox's earlier one first (``on_unenroll``, :func:`_forget`), so a server
         # this one does not name is already gone.
-        answer: dict[str, Any] = {}
+        app[LIMITS_BY_SANDBOX][sandbox_id] = parsed.limits
+        answer: dict[str, Any] = {LIMITS_FIELD: parsed.limits.to_body()}
         if parsed.local is not None:
             app[UPSTREAM_BY_SANDBOX][sandbox_id] = parsed.local
             answer[LOCAL_LLM_FIELD] = _confirmed(parsed.local)
@@ -213,16 +267,20 @@ def _confirmed(server: Upstream) -> dict[str, str]:
 def create_local_llm_proxy_app(
     admin_token: str,
     *,
-    max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
+    max_request_bytes: int = MAX_REQUEST_BYTES_CEILING,
     require_run: bool = False,
 ) -> web.Application:
-    """The proxy app, forwarding each enrolled sandbox to the server it was enrolled with. With ``require_run`` a
-    call from a sandbox with no declared run is refused."""
-    if max_request_bytes <= 0:
-        raise ValueError("MAX_REQUEST_BYTES must be positive")
+    """The proxy app, forwarding each enrolled sandbox to the server it was enrolled with, under that enrollment's
+    request cap and timeout. ``max_request_bytes`` is the ceiling: no enrollment may ask for more, and no body
+    larger is read. With ``require_run`` a call from a sandbox with no declared run is refused."""
+    if not 0 < max_request_bytes <= MAX_REQUEST_BYTES_CEILING:
+        # A container's MAX_REQUEST_BYTES lowers the ceiling, never raises it: the settings' bounds are this one.
+        raise ValueError(f"MAX_REQUEST_BYTES must be positive and at most {MAX_REQUEST_BYTES_CEILING}")
     app = web.Application(client_max_size=max_request_bytes)
+    app[MAX_REQUEST_BYTES] = max_request_bytes
     app[UPSTREAM_BY_SANDBOX] = {}
     app[SERVERS_BY_SANDBOX] = {}
+    app[LIMITS_BY_SANDBOX] = {}
     register_admin_routes(
         app, proxy_name=PROXY_NAME, admin_token=admin_token, on_unenroll=_forget, enroll_extension=_UpstreamEnroll()
     )
@@ -239,6 +297,7 @@ def _forget(app: web.Application, sandbox_id: str) -> None:
     """An enrollment ended: drop its server, and end its tallies (they stay for the orchestrator to read)."""
     app[UPSTREAM_BY_SANDBOX].pop(sandbox_id, None)
     app[SERVERS_BY_SANDBOX].pop(sandbox_id, None)
+    app[LIMITS_BY_SANDBOX].pop(sandbox_id, None)
     app[METER].sandbox_gone(sandbox_id)
 
 
@@ -304,9 +363,21 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
         logger.error("local_llm_proxy_no_server", sandbox_id=sandbox_id)
         return openai_error("no_server", "no model server is enrolled for this sandbox", 503)
 
+    # Set with the server by the same enrollment. A server with no limits is a bug: refuse rather than forward
+    # under defaults the sandbox was never given.
+    limits = request.app[LIMITS_BY_SANDBOX].get(sandbox_id)
+    if limits is None:
+        logger.error("local_llm_proxy_no_limits", sandbox_id=sandbox_id, provider=provider)
+        return openai_error("no_limits", "no limits are enrolled for this sandbox", 503)
     body = b""
     if method == "POST":
-        read = await read_body(request, "local-llm-proxy", setting="LOCAL_LLM_MAX_REQUEST_BYTES", shape="openai")
+        read = await read_body(
+            request,
+            "local-llm-proxy",
+            setting="local_models.max_request_bytes",
+            shape="openai",
+            limit=limits.max_request_bytes,
+        )
         if isinstance(read, web.Response):
             return read
         body = read
@@ -338,7 +409,7 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     )
     try:
         with pinned(url, upstream.address):
-            return await _forward(request, client, method, url, body, sandbox_id, metered, upstream)
+            return await _forward(request, client, method, url, body, sandbox_id, metered, upstream, limits)
     finally:
         if metered is not None:
             metered.close()
@@ -353,6 +424,7 @@ async def _forward(
     sandbox_id: str,
     metered: Metered | None,
     server: Upstream,
+    limits: Limits,
 ) -> web.StreamResponse:
     """Send the call upstream and stream its answer back through the meter. A call whose answer never came back
     after it was sent is charged its ceiling; one that never connected costs nothing."""
@@ -362,6 +434,7 @@ async def _forward(
             url,
             headers=_upstream_headers(request, server),
             content=body or None,
+            timeout=httpx.Timeout(limits.timeout_seconds, connect=_CONNECT_SECONDS),
         ) as upstream:
             if metered is not None:
                 metered.answer(upstream.status_code, upstream.headers.get("content-type"))

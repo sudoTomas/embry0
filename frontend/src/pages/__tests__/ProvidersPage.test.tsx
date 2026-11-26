@@ -461,7 +461,7 @@ describe("ProvidersPage keys and spend", () => {
     });
 
     it("offers the local model, which no catalogue lists, to end the order", async () => {
-      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, fallback_models: ["grok-4.7"], local_max_runs: 1 });
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, fallback_models: ["grok-4.7"] });
       // A model of the operator's own server is named by the background models (#164).
       mockFetchEffectiveSettings.mockResolvedValue(effectiveSettings({ default: "custom/qwen" }));
       renderPage();
@@ -476,8 +476,27 @@ describe("ProvidersPage keys and spend", () => {
   });
 
   describe("local model", () => {
-    it("saves how many runs at once, and nothing about a model", async () => {
-      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1 });
+    /** The effective settings with the local_models section (#174), its max_runs at ``maxRuns``. */
+    function withLocalModels(maxRuns: number) {
+      const effective = effectiveSettings({});
+      return {
+        ...effective,
+        sections: [
+          ...effective.sections,
+          { name: "local_models", summary: "", keys: [backgroundKey("max_runs", maxRuns, { default: 1 })] },
+        ],
+      };
+    }
+
+    it("shows the settings document's local_models.max_runs", async () => {
+      mockFetchEffectiveSettings.mockResolvedValue(withLocalModels(3));
+      renderPage();
+      const card = await screen.findByTestId("local-model");
+      expect(within(card).getByLabelText("Runs at once")).toHaveValue(3);
+    });
+
+    it("saves how many runs at once to the settings document, and nothing about a model", async () => {
+      mockFetchEffectiveSettings.mockResolvedValue(withLocalModels(1));
       renderPage();
       const card = await screen.findByTestId("local-model");
       const save = within(card).getByRole("button", { name: "Save" });
@@ -487,11 +506,14 @@ describe("ProvidersPage keys and spend", () => {
       await userEvent.clear(runs);
       await userEvent.type(runs, "2");
       await userEvent.click(save);
-      await waitFor(() => expect(mockUpdateProviderConfig).toHaveBeenCalledWith({ local_max_runs: 2 }));
+      await waitFor(() =>
+        expect(mockSetSettingsKeys).toHaveBeenCalledWith({ section: "local_models", values: { max_runs: 2 } }, undefined),
+      );
+      expect(mockUpdateProviderConfig).not.toHaveBeenCalled();
     });
 
     it("will not save a cap out of range", async () => {
-      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1 });
+      mockFetchEffectiveSettings.mockResolvedValue(withLocalModels(1));
       renderPage();
       const card = await screen.findByTestId("local-model");
       const runs = within(card).getByLabelText("Runs at once");
@@ -501,7 +523,8 @@ describe("ProvidersPage keys and spend", () => {
       expect(within(card).getByRole("button", { name: "Save" })).toBeDisabled();
     });
 
-    it("is hidden against a backend without the setting", async () => {
+    it("is hidden against a backend without the section", async () => {
+      mockFetchProviderConfig.mockResolvedValue({ ...PROVIDER_CONFIG, local_max_runs: 1 });
       renderPage();
       await screen.findByTestId("provider-card-anthropic");
       expect(screen.queryByTestId("local-model")).toBeNull();

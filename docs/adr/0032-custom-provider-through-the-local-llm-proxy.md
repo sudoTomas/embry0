@@ -1,6 +1,6 @@
 # ADR 0032: Every sandbox reaches its custom credential's server through the local-llm-proxy, enrolled with that server alone
 
-Status: accepted (2026-11-25). Replaces the sentence of [ADR 0018](0018-openai-compatible-providers.md) that made a custom endpoint's host an egress exception, and the single upstream of [ADR 0023](0023-local-llm-proxy.md).
+Status: accepted (2026-11-25). Replaces the sentence of [ADR 0018](0018-openai-compatible-providers.md) that made a custom endpoint's host an egress exception, and the single upstream of [ADR 0023](0023-local-llm-proxy.md). Since #174's last step the request cap below, and a timeout, are each sandbox's: the settings document's `local_models`, sent with its enrollment under ceilings the proxy starts with, in place of `LOCAL_LLM_MAX_REQUEST_BYTES` ([providers](../providers.md#local-models)).
 
 ADR 0023 left two routes to an operator's model server. With `LOCAL_LLM_UPSTREAM` set, every sandbox on the `custom` provider went through the local-llm-proxy to that one root with `LOCAL_LLM_API_KEY`, whatever its credential named. Without it, the credential's host was an egress exception for the job, which opens every port of the server's machine to code the job runs, with the server's key in the sandbox. The two variables configured the server a second time, two credentials scoped to different repositories could not reach different servers, and the orchestrator's own calls used the credential's address and key while the runs did not.
 

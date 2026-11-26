@@ -184,7 +184,8 @@ keeps the outcome the agent reached, logging
 
 Each agent run carries its provider's record, resolved by the orchestrator from
 the deployment's catalogue when the run starts: the provider's runtime, the id
-its API knows the model by, the model's `request_extras`, the rates in force
+its API knows the model by, the model's `request_extras` and, for a custom
+model, its `context_window`, the rates in force
 that day, the cache factors (a cached input token at 0.1 of the input rate, a
 cache write at 1.25), the provider's address and the sandbox variable of its
 key. The executors in the sandbox read the record, not a table of their own,
@@ -404,7 +405,8 @@ error, an alias, a key written twice), past 256 KiB (413), an overlay field
 it may not set, a catalogue it makes that cannot be (a chat-completions model
 without a price, prefixes of two providers that are on overlapping), a
 `request_extras` or `background_request_extras` value past 4,096 bytes as
-JSON or nested deeper than 32, and any model a tier, the fallback order, an
+JSON or nested deeper than 32, a `context_window` on a model that is not a custom
+one (1,024 to 10,000,000 tokens), and any model a tier, the fallback order, an
 agent definition, a pipeline template's step (its `config.model`, or a legacy
 top-level `model`), a repository's review model (`pr_review.model`) or a
 `background_models` value names that the change would take out, leave
@@ -902,7 +904,7 @@ fails as a run the account refused does. Nothing is parked and no
 spent still quarantines it at once, so the next job's pre-check sees it.
 
 A forced run on the local model still waits for a free slot inside the run
-first, for `LOCAL_LLM_SLOT_WAIT_SECONDS` (900 by default), whatever the
+first, for `local_models.slot_wait_seconds` (900 by default), whatever this
 section says. Only when no slot came free does it park for
 `local_busy_retry_seconds`, or, when the job may not wait, fail with
 `ERR_LOCAL_MODEL_BUSY`.
@@ -965,9 +967,13 @@ and forwards that sandbox to that server and nowhere else:
   the server's address is in the sandbox. A host name in the root is sent as
   the address it resolves to on the orchestrator, since DinD resolves none;
   an https root keeps its name, for the certificate;
-- a request over `LOCAL_LLM_MAX_REQUEST_BYTES` (8 MiB) is refused with 413,
-  saying `request_too_large`, so the run ends as
-  `ERR_CONTEXT_WINDOW_EXCEEDED`.
+- a request over `local_models.max_request_bytes` (8 MiB) is refused with
+  413, saying `request_too_large`, so the run ends as
+  `ERR_CONTEXT_WINDOW_EXCEEDED`; a server that has not answered within
+  `local_models.request_timeout_seconds` (900) is a 504. Both are read when a
+  sandbox is enrolled, so a change reaches the next sandbox, never past the
+  ceilings the proxy starts with (64 MiB, an hour), and hold on every path
+  the sandbox calls: its custom server's and each provider's (`/p/<provider>/v1`).
 
 No egress exception is declared for a server's machine, so a sandbox cannot
 reach anything else on it. A job on the custom provider does not start
@@ -1026,9 +1032,18 @@ custom credential keeps the address and key it was written with: point it at
 its server if it carried a placeholder address before. While either variable
 is set, startup logs `settings_env_retired`, and `embry0 config` names it.
 
-**One run at a time, per server.** `local_max_runs` in the provider settings
-(default 1, at most 64) is how many calls embry0 sends each of the
-operator's servers at once. A server is the custom credential a call is
+**The limits** are the settings document's `local_models` section, one set
+for every server of the deployment, read where they are used (no restart):
+`max_runs`, `slot_wait_seconds`, `request_timeout_seconds` and
+`max_request_bytes` ([configuration](configuration.md)). The Providers page
+sets `max_runs` too. Before #174 `max_runs` was `local_max_runs` in the
+provider settings, which the upgrade carries into the section (a value other
+than 1), and the wait and the cap were `LOCAL_LLM_SLOT_WAIT_SECONDS` and
+`LOCAL_LLM_MAX_REQUEST_BYTES`, no longer read.
+
+**One run at a time, per server.** `local_models.max_runs` (default 1, at
+most 64) is how many calls embry0 sends each of the operator's servers at
+once. A server is the custom credential a call is
 made with, so two credentials bound to different repositories are two
 servers, each with its own slots; the environment's credential
 (`CUSTOM_LLM_API_KEY`) is one more. One machine may go by several names (an
@@ -1041,7 +1056,7 @@ Each run on the custom provider holds a slot of its server, a row in
 ends. A lease expires by itself five minutes after the run's own time limit,
 so one left by a process that died frees its slot. A run that has to use the
 local model (it is the fallback, or the job named it) waits for a slot up to
-`LOCAL_LLM_SLOT_WAIT_SECONDS` (900), saying so in a `progress` event. Then
+`local_models.slot_wait_seconds` (900), saying so in a `progress` event. Then
 the job is parked for `account_wait.local_busy_retry_seconds` (five minutes)
 and tries again, or, when it may not wait, fails with `ERR_LOCAL_MODEL_BUSY`
 ([Whether a job waits](#whether-a-job-waits)).
@@ -1074,9 +1089,12 @@ person chose. For each agent of such a job, when the model is a
 The trace's `model` is the model that ran, local or not.
 
 **The context window.** A model on one card often has a small window. For a
-custom model, the chat-completions executor reads its window from
-`LOCAL_LLM_CONTEXT_TOKENS` when set, else from the server's `/models`
-(`max_model_len`, `context_length` or `context_window`). Before each request
+custom model, the chat-completions executor reads its window from the
+catalogue, the model's `context_window` (`providers.custom.models.<model>`;
+only a custom model takes one), which reaches the run in its provider record,
+else from the server's `/models` (`max_model_len`, `context_length` or
+`context_window`). `LOCAL_LLM_CONTEXT_TOKENS`, one window for every custom
+model, is no longer read. Before each request
 it estimates the conversation's tokens, kept honest by the server's own
 `prompt_tokens`; over the window less room for the answer, it replaces the
 oldest tool results with a one-line note, keeping the task and the last
@@ -1298,8 +1316,8 @@ on a 27B model on one card timed out), so raise them in the overlay
 #173 keeps the old 2.0 for both, written once into its overlay at the first
 start of that release: a context audit on a `custom/` model there still gets
 80 turns and 40 minutes. A `free` custom model is not bounded by
-`budget_usd`; the turn and time caps and `local_max_runs` are; a priced one
-is bounded like any other.
+`budget_usd`; the turn and time caps and `local_models.max_runs` are; a
+priced one is bounded like any other.
 
 A run that reaches its cap is reported as `ERR_AGENT_MAX_TURNS` by both
 executors. That is what lets triage and review resume once to decide from

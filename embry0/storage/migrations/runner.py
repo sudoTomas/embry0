@@ -5091,6 +5091,42 @@ deliverable under an "Assumptions" heading.$seed$
             'seconds the job has spent parked for LLM accounts (account_wait), over every wait, resume and relaunch; added when each wait ends; account_wait.max_total_wait_seconds bounds it';
         """,
     ),
+    (
+        161,
+        "settings_carried: provider_config.local_max_runs leaves for the settings document's local_models.max_runs",
+        # #174: how many calls each of the operator's model servers takes at once
+        # is the settings document's local_models.max_runs. SQL cannot write the
+        # document (its text is the operator's YAML, which only the store patches
+        # and checks), so a stored value other than the default (1) waits in
+        # settings_carried, and the first start writes it into the document and
+        # deletes the row (embry0.settings.carried). The column goes.
+        """
+        CREATE TABLE IF NOT EXISTS settings_carried (
+            key        TEXT PRIMARY KEY CHECK (key ~ '^[a-z_]+[.][a-z_]+$'),
+            value      JSONB NOT NULL,
+            from_where TEXT NOT NULL,
+            carried_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        COMMENT ON TABLE settings_carried IS
+            'a setting a migration took out of a retired column, as section.key, which the next start writes into the deployment''s settings document and deletes';
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = current_schema() AND table_name = 'provider_config'
+                   AND column_name = 'local_max_runs'
+            ) THEN
+                INSERT INTO settings_carried (key, value, from_where)
+                SELECT 'local_models.max_runs', to_jsonb(local_max_runs), 'provider_config.local_max_runs'
+                  FROM provider_config
+                 WHERE id = 'default' AND local_max_runs <> 1
+                ON CONFLICT (key) DO NOTHING;
+            END IF;
+        END
+        $$;
+        ALTER TABLE provider_config DROP COLUMN IF EXISTS local_max_runs;
+        """,
+    ),
 ]
 
 

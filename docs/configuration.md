@@ -14,9 +14,6 @@ embry0 uses environment variables for infrastructure config and API endpoints fo
 | `CUSTOM_LLM_BASE_URL` | — | The custom provider's OpenAI-compatible API root for that env key, e.g. `http://10.0.0.5:11434/v1` |
 | `LOCAL_LLM_UPSTREAM` | (empty) | **Routes nothing** ([ADR 0032](adr/0032-custom-provider-through-the-local-llm-proxy.md)): every sandbox on the custom provider reaches its own credential's server through the `local-llm-proxy`. `embry0 credentials import-env` copies it once into the environment's custom credential, `custom/api-key`, as its address ([Local models](providers.md#local-models)); while it is set, startup logs `settings_env_retired`. Remove it once imported |
 | `LOCAL_LLM_API_KEY` | (empty) | **Routes nothing**, as `LOCAL_LLM_UPSTREAM`: the import makes it `custom/api-key`'s key (else `CUSTOM_LLM_API_KEY`, else the placeholder `no-key`). Remove it once imported |
-| `LOCAL_LLM_MAX_REQUEST_BYTES` | `8388608` | The largest request the local-llm-proxy forwards; over it the proxy answers 413 |
-| `LOCAL_LLM_CONTEXT_TOKENS` | `0` | The context window of every `custom/` model, in tokens, overriding what the server's `/models` reports; `0` reads `/models` |
-| `LOCAL_LLM_SLOT_WAIT_SECONDS` | `900` | How long a run that has to use the local model waits for one of its slots (`local_max_runs` in the provider settings) before the job is parked for `account_wait.local_busy_retry_seconds` (five minutes), or fails with `ERR_LOCAL_MODEL_BUSY` when it may not wait ([Whether a job waits](providers.md#whether-a-job-waits)) |
 | `MODEL_PROXY_MAX_REQUEST_BYTES` | `33554432` | The largest model request the xai-proxy and auth-proxy forward. Every agent turn resends the whole conversation; over the cap the proxy answers 413 and the run ends as `ERR_CONTEXT_WINDOW_EXCEEDED` |
 | `GITHUB_TOKEN` | — | GitHub personal access token |
 | `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for webhook verification |
@@ -290,6 +287,9 @@ Each of these set a feature's policy before the feature moved into a document st
 | `WATCHER_SKIP_KNOWN_HOURS` | the settings document's watcher.skip_known_hours |
 | `OPENAI_COMPATIBLE_PROVIDERS` | the provider catalogue's providers.<name>.enabled |
 | `OPENROUTER_CATALOG_REFRESH_HOURS` | the provider catalogue's openrouter.refresh_hours |
+| `LOCAL_LLM_SLOT_WAIT_SECONDS` | the settings document's local_models.slot_wait_seconds |
+| `LOCAL_LLM_MAX_REQUEST_BYTES` | the settings document's local_models.max_request_bytes |
+| `LOCAL_LLM_CONTEXT_TOKENS` | the provider catalogue's providers.custom.models.<model>.context_window |
 
 `SCOUT_TICK_SECONDS`, `PROPOSAL_BRIEFS_PER_TICK`,
 `PROPOSAL_BRIEF_INTERVAL_SECONDS`, `JOB_BRIEFS_PER_TICK` and
@@ -593,6 +593,17 @@ Whether the finders run, which ones and how often, and which leads are offered a
 | `epic_title_words` | list of text | `["epic"]` |  | organization | Words that make a ticket an epic by its title, unlabelled: a title starting with one in brackets ([Epic] ...) or followed by a colon or a dash, with an optional scope in parentheses (Epic: ..., epic(billing): ...), in any case. It takes the not_ready weight. At most 32, each at most 40 characters. |
 | `small_estimate_max` | number | `2.0` | ≥ 0, ≤ 1000 | organization | A ticket whose tracker estimate is at most this reads as small, whatever its labels. |
 | `large_estimate_min` | number | `5.0` | ≥ 0, ≤ 1000 | organization | A ticket whose tracker estimate is at least this reads as large, whatever its labels; a ticket that reads as both small and large has the effort of a large one. |
+
+#### `local_models`
+
+The limits of the operator's own model servers: runs at once, the wait for a slot, the proxy's timeout and request cap.
+
+| Key | Type | Default | Allowed | Overridable by | Description |
+|---|---|---|---|---|---|
+| `max_runs` | whole number | `1` | ≥ 1, ≤ 64 |  | How many calls each of the operator's model servers takes at once: agent runs and background calls alike. A server is the custom credential a call is made with. A run that only prefers a local model runs on its own model when no slot is free; one that has to use it waits slot_wait_seconds. |
+| `slot_wait_seconds` | whole number | `900` | ≥ 0, ≤ 86400 |  | How long a run that has to use a local model (the fallback, or the model a person named) waits for a free slot of its server before the job is parked for five minutes. 0: it does not wait. |
+| `request_timeout_seconds` | whole number | `900` | ≥ 10, ≤ 3600 |  | How long the local-llm-proxy waits for a server to answer a sandbox's call; a long completion from a model on one card can take minutes. Read when a sandbox is enrolled: a change reaches the next one. |
+| `max_request_bytes` | whole number | `8388608` | ≥ 1024, ≤ 67108864 |  | The largest request body the local-llm-proxy forwards to a server, in bytes; over it the call is refused with 413 and the run ends as ERR_CONTEXT_WINDOW_EXCEEDED. Every turn resends the whole conversation. Read when a sandbox is enrolled: a change reaches the next one. |
 
 #### `maps`
 

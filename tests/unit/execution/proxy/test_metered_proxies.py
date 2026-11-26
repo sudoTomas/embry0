@@ -31,6 +31,9 @@ _AUTH = {"Authorization": f"Bearer {_TOKEN}"}
 _ADMIN_HEADERS = {"X-Admin-Token": _ADMIN}
 _SSE = "text/event-stream"
 
+#: The limits every enrollment carries (the settings document's local_models; the section's defaults here).
+LIMITS: dict[str, Any] = {"max_request_bytes": 8 * 1024 * 1024, "timeout_seconds": 900.0}
+
 
 class _Answer:
     """One upstream answer: its status, content type and the chunks it streams, or how it fails."""
@@ -336,7 +339,7 @@ async def _local(aiohttp_client: Any, server: Any, **kw: Any) -> TestClient:
     }
     enrolled = await client.post(
         "/admin/enroll",
-        json={"sandbox_id": "sbx-1", "sandbox_token": _TOKEN, "local_llm": server_of_sandbox},
+        json={"sandbox_id": "sbx-1", "sandbox_token": _TOKEN, "local_llm": server_of_sandbox, "limits": LIMITS},
         headers=_ADMIN_HEADERS,
     )
     assert enrolled.status == 200
