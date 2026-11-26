@@ -121,6 +121,32 @@
       "yaml": "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        request_extras: {\"max_tokens\":4096}\n"
     },
     {
+      "name": "request extras too small or large for plain JSON, in plain decimals",
+      "overlay": {
+        "providers": {
+          "custom": {
+            "models": {
+              "custom/local": {
+                "free": true,
+                "request_extras": {
+                  "temperature": 1e-07,
+                  "max_tokens": 1000000000000000000000,
+                  "chat_template_kwargs": {
+                    "min_p": 5e-07,
+                    "weights": [
+                      1e-07,
+                      2
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        request_extras: {\"temperature\":0.0000001,\"max_tokens\":1000000000000000000000,\"chat_template_kwargs\":{\"min_p\":0.0000005,\"weights\":[0.0000001,2]}}\n"
+    },
+    {
       "name": "a custom model's context window, a whole number",
       "overlay": {
         "providers": {

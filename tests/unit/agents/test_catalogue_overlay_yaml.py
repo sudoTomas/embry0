@@ -228,3 +228,16 @@ def _leaves(value: Any) -> list[Any]:
     if isinstance(value, list):
         return [leaf for item in value for leaf in _leaves(item)]
     return [value]
+
+
+@pytest.mark.parametrize("case", CASES, ids=[case["name"] for case in CASES])
+def test_each_json_field_reads_as_yaml_as_it_reads_as_json(case: dict[str, Any]) -> None:
+    """The form writes a free-form field as JSON for the catalogue to read as YAML. YAML 1.1 reads a number JSON
+    writes in exponent form (1e-7, 1e+21) as a string, so the provider would be sent one (#753): every value on a
+    JSON field's line must read the same either way, types included."""
+    for line in case["yaml"].splitlines():
+        head, sep, text = line.strip().partition(": ")
+        if head in _listed("json_keys") and sep:
+            as_yaml = load_text(f"x: {text}")["x"]
+            wrong = _differences(as_yaml, json.loads(text))
+            assert not wrong, f"{case['name']!r}: {head} reads otherwise as YAML than as JSON: {wrong}"

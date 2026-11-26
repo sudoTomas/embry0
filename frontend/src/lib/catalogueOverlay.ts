@@ -232,6 +232,14 @@ function keyText(key: string): string {
 
 /** A free-form field's value, whatever it is: JSON, which YAML reads as written. Its numbers stay as they are. */
 function flow(value: unknown): string {
+  // JSON.stringify's own, but a number in plain decimals: it writes 1e-7 and 1e+21 in exponent form, which the
+  // catalogue's loader (YAML 1.1) reads as a string, so the provider would be sent "1e-7" (#753).
+  if (typeof value === "number") return Number.isFinite(value) ? plainDecimal(value) : "null";
+  if (Array.isArray(value)) return `[${value.map((item) => (item === undefined ? "null" : flow(item))).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined);
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${flow(v)}`).join(",")}}`;
+  }
   return JSON.stringify(value) ?? "null";
 }
 
