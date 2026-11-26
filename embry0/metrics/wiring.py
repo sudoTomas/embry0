@@ -128,14 +128,17 @@ def build_snapshot(
     """
 
     async def open_proposals() -> dict[str, int]:
-        return {
+        # #746: the stacks change while the process runs. Their views are taken before the first count, and a
+        # stack stopped meanwhile is left out, so its series, removed when it stopped, is not written again.
+        counts = {
             stack: int(
                 await healing_cases_repo.count_open_unaccepted_watcher_cases(
                     days=view.watcher_proposal_window_days, repo=stack
                 )
             )
-            for stack, view in stacks.items()
+            for stack, view in list(stacks.items())
         }
+        return {stack: count for stack, count in counts.items() if stack in stacks}
 
     async def reconciler_daily() -> int:
         since = datetime.now(UTC) - timedelta(days=1)

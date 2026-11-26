@@ -1,6 +1,7 @@
 """Watcher API (RAV-657) — run audit trail + manual trigger."""
 
 import asyncio
+import inspect
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -24,6 +25,18 @@ async def list_watcher_runs(request: Request, limit: int = 50, stack: str | None
         raise HTTPException(status_code=503, detail="watcher storage not initialized")
     ticks = await runs_repo.list_recent(limit=min(max(limit, 1), 200), repo=stack, repos=covered_slugs(request))
     return cast("list[dict[str, Any]]", ticks)
+
+
+async def _still_watched(service: Any) -> bool:
+    """Whether ``service``'s stack is still watched, its row read now (#746): a stack disabled or deleted since its
+    watcher last read it is one nobody watches. The read applies the row to the tick that follows."""
+    refresh = getattr(service, "refresh", None)
+    if refresh is None:
+        return True
+    still = refresh()
+    if inspect.isawaitable(still):
+        still = await still
+    return still is not False
 
 
 class WatcherRunBody(BaseModel):
@@ -55,8 +68,12 @@ async def trigger_watcher_run(
     Works even when the scheduled loop is disabled (`WATCHER_ENABLED=false`)
     so the flow can be exercised deliberately; the tick still enforces every
     guardrail (proposal cap, dedup, min-signal, human-gate-by-label).
-    ``run_with`` must be one every ticking stack may use.
+    ``run_with`` must be one every ticking stack may use. A stack disabled or
+    deleted since its watcher last read its row answers as one nobody watches,
+    and a changed row applies to the tick (#746).
     """
+    from embry0.services.watcher import NOT_WATCHED
+
     chosen = body.run_with if body else None
     services = getattr(request.app.state, "watcher_services", None) or {}
     if not services:
@@ -81,8 +98,19 @@ async def trigger_watcher_run(
             await hide_unless_covered(request, stack, unwatched, action="run the watcher")
         raise unwatched
     if stack:
+        if not await _still_watched(watched[stack]):
+            raise HTTPException(status_code=404, detail=f"{stack} is not a watched stack")
         run_with = await checked_run_with(request, chosen, stack)
-        return cast("dict[str, Any]", await watched[stack].run_once(run_with))
+        ticked = cast("dict[str, Any]", await watched[stack].run_once(run_with))
+        if ticked.get("action") == NOT_WATCHED:
+            # Stopped by the fleet after the check above; its watcher ran nothing (#746).
+            raise HTTPException(status_code=404, detail=f"{stack} is not a watched stack")
+        return ticked
+    # Each stack's row is read at once, not one stack's lock after another's (#746).
+    still = await asyncio.gather(*(_still_watched(service) for service in watched.values()))
+    watched = {name: service for (name, service), kept in zip(watched.items(), still, strict=True) if kept}
+    if not watched:
+        raise HTTPException(status_code=503, detail="watcher not initialized")
     if len(watched) > 1:
         # The dashboard's Run tick now and MCP watcher_trigger name no stack;
         # unnamed means all of them, never one picked for the caller.

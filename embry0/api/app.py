@@ -735,6 +735,19 @@ def _watcher_settings(app: FastAPI) -> Any:
     return read
 
 
+def _watcher_stack(app: FastAPI, repo: str) -> Any:
+    """``() -> stack``: the stack's row as it is stored now, None when it is gone (#746).
+
+    Each watcher reads it before every tick, so a PUT applies to the next tick
+    without a restart: its settings, LogQL, tracker and whether it is enabled.
+    """
+
+    async def read() -> Any:
+        return await app.state.watcher_stacks_repo.get(repo)
+
+    return read
+
+
 def _watcher_auto_acceptor(app: FastAPI) -> Any:
     """``(repo, bar) -> accepted``: accepts a stack's tracked drafts that clear its bar (spec 2026-10-25).
 
@@ -2342,6 +2355,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     auto_acceptor = _watcher_auto_acceptor(app)
 
+    def filer_for(stack: WatcherStack) -> Any:
+        return build_filer(
+            stack,
+            linear_sync=linear_sync,
+            github_token=getattr(config, "github_token", "") or "",
+            credential_resolver=app.state.credential_resolver,
+        )
+
     def _watcher_for(stack: WatcherStack) -> WatcherService:
         return WatcherService(
             auto_acceptor=auto_acceptor,
@@ -2349,6 +2370,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             signature_masks=_watcher_signature_masks(app, stack.repo),
             slop_policy=_watcher_slop_policy(app, stack.repo),
             watcher_settings=_watcher_settings(app),
+            stack_reader=_watcher_stack(app, stack.repo),
+            filer_for=filer_for,
             cases_repo=app.state.healing_cases_repo,
             case_recorder=app.state.case_recorder,
             # #278: a deploy marker is reported on a case only after the forge
@@ -2368,12 +2391,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             watcher_runs_repo=app.state.watcher_runs_repo,
             integration_repo=app.state.integration_repo,
             executor=app.state.issue_executor,
-            filer=build_filer(
-                stack,
-                linear_sync=linear_sync,
-                github_token=getattr(config, "github_token", "") or "",
-                credential_resolver=app.state.credential_resolver,
-            ),
+            filer=filer_for(stack),
             webhook_notifier=webhook_notifier,
             patterns_repo=app.state.watcher_patterns_repo,
             signatures_repo=app.state.log_signatures_repo,
@@ -2381,44 +2399,56 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             metrics=loop_metrics,
         )
 
-    watched = await watched_stacks(app.state.watcher_stacks_repo)
-    app.state.watcher_services = {stack.repo: _watcher_for(stack) for stack in watched}
-    # Back-compat for the single-stack callers (POST /watcher/run with no
-    # stack, the health check's default): the first stack, or None.
-    app.state.watcher_service = next(iter(app.state.watcher_services.values()), None)
-    logger.info("watcher_stacks_loaded", stacks=sorted(app.state.watcher_services))
+    # #746: the running watchers follow the table without a restart. The fleet builds one per enabled stack now
+    # and, every minute, starts the stacks enabled since and stops those disabled or deleted; each watcher reads
+    # its own row before every tick. WATCHER_ENABLED still gates every loop: it is the deployment's "is the watcher
+    # running at all" switch, while a single stack is silenced by disabling its row. Without it the watchers are
+    # still built, for POST /watcher/run.
+    from embry0.services.watcher_fleet import WatcherFleet, read_enabled_stacks
+
+    def _first_watcher() -> None:
+        # Back-compat for the single-stack callers (POST /watcher/run with no
+        # stack, the health check's default): the first stack, or None.
+        app.state.watcher_service = next(iter(fleet.services.values()), None)
+
+    async def _read_stacks() -> tuple[list[Any], list[str]]:
+        return await read_enabled_stacks(app.state.watcher_stacks_repo)
+
+    fleet = WatcherFleet(
+        build=_watcher_for,
+        read_stacks=_read_stacks,
+        runs_repo=app.state.watcher_runs_repo,
+        run_loops=config.watcher_enabled,
+        background_tasks=app.state.background_tasks,
+        metrics=loop_metrics,
+        on_change=_first_watcher,
+    )
+    # The startup's look: each enabled stack's watcher, its tick timestamps seeded from watcher_runs (#285), so a
+    # restart does not read as "never ticked". One stack whose row holds a value too deep to read (#527) is left
+    # out and logged critical by name; any other failure to read the table leaves none watched, logged critical.
+    await fleet.sync()
+    app.state.watcher_fleet = fleet
+    app.state.watcher_services = fleet.services
+    _first_watcher()
+    logger.info("watcher_stacks_loaded", stacks=sorted(fleet.services))
 
     if loop_metrics is not None:
-        # #285: the DB-backed gauges, and the tick timestamps restored from
-        # watcher_runs — a restart must not read as "never ticked".
-        from embry0.metrics.wiring import build_snapshot, seed_watcher_ticks
+        # #285: the DB-backed gauges. #448: the cap gauges are per stack, read through the same view the stack's
+        # watcher reads its cap and window from, as it reads it now (#746).
+        from embry0.metrics.wiring import build_snapshot
 
-        # #448: the cap gauges are per stack, read through the same view the
-        # stack's watcher reads its cap and window from.
-        stack_views = {stack.repo: StackConfig(config, stack) for stack in watched}
-        loop_metrics.watcher_configured(
-            enabled=config.watcher_enabled,
-            max_open_proposals={repo: view.watcher_max_open_proposals for repo, view in stack_views.items()},
-        )
-        for watched_repo in app.state.watcher_services:
-            await seed_watcher_ticks(loop_metrics, app.state.watcher_runs_repo, repo=watched_repo)
+        loop_metrics.watcher_configured(enabled=config.watcher_enabled, max_open_proposals={})
         app.state.loop_snapshot = build_snapshot(
             loop_metrics,
             healing_cases=app.state.healing_cases,
             healing_cases_repo=app.state.healing_cases_repo,
             jobs_repo=app.state.jobs_repo,
-            stacks=stack_views,
+            stacks=fleet.views,
             reconciler_actor=_RECONCILER_ACTOR,
         )
-    if config.watcher_enabled:
-        # One loop per stack. WATCHER_ENABLED still gates them all: it is the
-        # deployment's "is the watcher running at all" switch, while a single
-        # stack is silenced by disabling its row.
-        for watched_repo, service in app.state.watcher_services.items():
-            watcher_task = asyncio.create_task(service.start())
-            app.state.background_tasks.add(watcher_task)
-            watcher_task.add_done_callback(app.state.background_tasks.discard)
-            logger.info("watcher_loop_started", stack=watched_repo)
+    fleet_task = asyncio.create_task(fleet.run())
+    app.state.background_tasks.add(fleet_task)
+    fleet_task.add_done_callback(app.state.background_tasks.discard)
 
     # #312 (SH-P5.4): confirm-healed. Read-only apart from ticket comments, so
     # it ships on rather than in shadow. Optional like merge sync — whatever
@@ -3162,31 +3192,6 @@ def _start_recovered_jobs(executor: Any, jobs: list[dict[str, Any]]) -> None:
             resumed=[j["job_id"] for j in jobs if j["action"] == "resume"],
             relaunched=[j["job_id"] for j in jobs if j["action"] != "resume"],
         )
-
-
-async def watched_stacks(stacks_repo: Any) -> list[Any]:
-    """The enabled watched stacks a start watches.
-
-    One stack whose stored row holds a value too deep to read (#527) is left out, and logged critical by name;
-    the others are watched. Any other failure to read them leaves none watched, logged critical, as before.
-    """
-    from embry0.storage.database import StoredValueTooDeep
-
-    try:
-        try:
-            return list(await stacks_repo.list_all(enabled_only=True))
-        except StoredValueTooDeep:
-            watched, unreadable = await stacks_repo.list_readable(enabled_only=True)
-            for repo in unreadable:
-                logger.critical(
-                    "watcher_stack_unreadable",
-                    repo=repo,
-                    reason="its stored row holds a value too deep to read; it is not watched until stored again",
-                )
-            return list(watched)
-    except Exception:
-        logger.critical("watcher_stacks_unreadable", exc_info=True)
-        return []
 
 
 def create_app(

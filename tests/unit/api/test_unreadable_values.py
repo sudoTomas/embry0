@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -316,9 +317,11 @@ async def test_an_issue_still_shows_with_a_job_too_deep_to_read(client: AsyncCli
 
 
 async def test_one_stack_too_deep_to_read_leaves_the_others_watched(client: AsyncClient) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
     import structlog
 
-    from embry0.api.app import watched_stacks
+    from embry0.services.watcher_fleet import WatcherFleet, read_enabled_stacks
     from embry0.services.watcher_stacks import WatcherStack
     from embry0.storage.repositories.watcher_stacks import WatcherStacksRepository
 
@@ -329,11 +332,25 @@ async def test_one_stack_too_deep_to_read_leaves_the_others_watched(client: Asyn
         await stacks.upsert(WatcherStack(repo=repo, logql='{app="x"}'))
     await db.execute("UPDATE watcher_stacks SET settings = $1::text::jsonb WHERE repo = 'acme/deep'", _doc({}))
 
+    async def read() -> Any:
+        return await read_enabled_stacks(stacks)
+
+    # The startup's look (#746): the fleet's first.
+    fleet = WatcherFleet(
+        build=lambda stack: SimpleNamespace(stack_config=SimpleNamespace(watcher_max_open_proposals=1)),
+        read_stacks=read,
+        runs_repo=MagicMock(last_tick_times=AsyncMock(return_value={})),
+        run_loops=False,
+        background_tasks=set(),
+    )
     with structlog.testing.capture_logs() as logs:
-        watched = await watched_stacks(stacks)
-    assert [stack.repo for stack in watched] == ["acme/widgets"], "one bad stack leaves every stack unwatched"
+        await fleet.sync()
+        await fleet.sync()
+    assert sorted(fleet.services) == ["acme/widgets"], "one bad stack leaves every stack unwatched"
     named = [entry for entry in logs if entry.get("event") == "watcher_stack_unreadable"]
-    assert [entry.get("repo") for entry in named] == ["acme/deep"] and named[0]["log_level"] == "critical", logs
+    assert [entry.get("repo") for entry in named] == ["acme/deep"] and named[0]["log_level"] == "critical", (
+        f"said once, while it stays unreadable: {logs}"
+    )
 
 
 async def test_one_organization_too_deep_to_read_leaves_the_others_rediscovered(client: AsyncClient) -> None:

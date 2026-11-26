@@ -45,6 +45,24 @@ def _service(action: str = "no_issue") -> Any:
     return SimpleNamespace(run_once=AsyncMock(return_value={"action": action}))
 
 
+async def test_a_stack_disabled_since_its_watcher_read_it_is_not_ticked_by_hand() -> None:
+    """#746: a manual tick reads each stack's row first; a stack disabled or deleted since answers as one nobody
+    watches, and the others still tick."""
+    gone = SimpleNamespace(
+        run_once=AsyncMock(return_value={"action": "no_issue"}), refresh=AsyncMock(return_value=False)
+    )
+    kept = SimpleNamespace(
+        run_once=AsyncMock(return_value={"action": "no_issue"}), refresh=AsyncMock(return_value=True)
+    )
+    async with _client(_app({STACK: gone, SELF: kept})) as client:
+        named = await client.post(f"/api/v1/watcher/run?stack={STACK}")
+        every = await client.post("/api/v1/watcher/run")
+    assert named.status_code == 404, f"a stack disabled since its last read must not tick by hand: {named.text}"
+    gone.run_once.assert_not_awaited()
+    assert every.status_code == 200 and kept.run_once.await_count == 1, every.text
+    assert kept.refresh.await_count == 1, "the stack's row is read before the tick, which applies it"
+
+
 async def test_one_stack_still_ticks_without_being_named() -> None:
     services = {STACK: _service()}
     async with _client(_app(services)) as client:
@@ -164,18 +182,28 @@ def _tree() -> ast.Module:
 
 
 def test_a_watcher_is_built_and_started_for_every_enabled_stack() -> None:
+    """#746: the fleet builds and starts them, at startup and as the table changes
+    (its behaviour: tests/unit/services/test_watcher_fleet.py)."""
     source = pathlib.Path(app_module.__file__).read_text()
-    assert "list_all(enabled_only=True)" in source, "app.py must read the enabled stacks"
-    assert "app.state.watcher_services = {" in source
+    assert "read_enabled_stacks(app.state.watcher_stacks_repo)" in source, "app.py must read the enabled stacks"
+    assert "app.state.watcher_services = fleet.services" in source, "the API and health read the fleet's registry"
 
-    started = [
+    fleets = [
+        n
+        for n in ast.walk(_tree())
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "WatcherFleet"
+    ]
+    assert len(fleets) == 1, "app.py builds no watcher fleet"
+    passed = {kw.arg: ast.unparse(kw.value) for kw in fleets[0].keywords if kw.arg}
+    assert passed.get("build") == "_watcher_for" and passed.get("run_loops") == "config.watcher_enabled", passed
+    looped = [
         n
         for n in ast.walk(_tree())
         if isinstance(n, ast.Call)
         and ast.unparse(n.func) == "asyncio.create_task"
-        and ast.unparse(n.args[0]) == "service.start()"
+        and ast.unparse(n.args[0]) == "fleet.run()"
     ]
-    assert started, "app.py starts no per-stack watcher loop"
+    assert looped, "app.py never starts the fleet's look at the table: a stack added later never ticks"
 
 
 def test_each_watcher_gets_its_own_stack_config_and_filer() -> None:
@@ -188,7 +216,9 @@ def test_each_watcher_gets_its_own_stack_config_and_filer() -> None:
     )
     passed = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
     assert passed["config"] == "StackConfig(config, stack)"
-    assert passed["filer"].startswith("build_filer(")
+    assert (passed["filer"], passed.get("filer_for")) == ("filer_for(stack)", "filer_for"), passed
+    built = next(n for n in ast.walk(_tree()) if isinstance(n, ast.FunctionDef) and n.name == "filer_for")
+    assert "build_filer(stack" in ast.unparse(built), "a stack's filer is build_filer's for its own tracker"
 
 
 @pytest.mark.parametrize("attr", ["watcher_services", "watcher_service"])
