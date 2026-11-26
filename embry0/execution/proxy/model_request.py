@@ -5,8 +5,10 @@ agent's conversation outgrows that long before its model's window: every turn
 resends the whole conversation, and a 300k-token prompt is more than a
 megabyte of JSON. The cap is the operator's, handed to each proxy as
 ``MAX_REQUEST_BYTES``: ``MODEL_PROXY_MAX_REQUEST_BYTES`` for the xai- and
-auth-proxy, 32 MiB by default, the size the Anthropic API itself takes;
-``LOCAL_LLM_MAX_REQUEST_BYTES`` for the local-llm-proxy, 8 MiB by default.
+auth-proxy, 32 MiB by default, the size the Anthropic API itself takes.
+The local-llm-proxy reads each sandbox's body with that sandbox's own cap
+(``read_body``'s ``limit``: the settings document's
+``local_models.max_request_bytes``, 8 MiB by default), under its ceiling.
 
 A request over the cap gets a 413 saying ``request_too_large``, in the error
 shape its client reads: Anthropic's for the agent SDK, OpenAI's for the
@@ -32,13 +34,21 @@ async def read_body(
     *,
     setting: str = "MODEL_PROXY_MAX_REQUEST_BYTES",
     shape: Literal["anthropic", "openai"] = "anthropic",
+    limit: int | None = None,
 ) -> bytes | web.Response:
-    """The request's body, or the 413 to answer when it is over the app's cap: ``setting`` is the variable the
-    operator sets that cap with, and ``shape`` the error shape the proxy's clients read."""
+    """The request's body, or the 413 to answer when it is over the cap: ``limit`` when given (a cap of the
+    caller's, no larger than the app's), else the app's own. ``setting`` is where the operator sets that cap, and
+    ``shape`` the error shape the proxy's clients read."""
+    cap: int = limit if limit is not None else request.app._client_max_size  # noqa: SLF001 - the app's own cap
     try:
-        return await request.read()
+        if request.content_length is not None and request.content_length > cap:
+            raise web.HTTPRequestEntityTooLarge(max_size=cap, actual_size=request.content_length)
+        body = await request.read()
+        if len(body) > cap:
+            raise web.HTTPRequestEntityTooLarge(max_size=cap, actual_size=len(body))
+        return body
     except web.HTTPRequestEntityTooLarge:
-        limit = request.app._client_max_size  # noqa: SLF001 - the cap the app was built with
+        limit = cap
         logger.warning(
             "model_proxy_request_too_large",
             proxy=proxy_name,

@@ -38,6 +38,8 @@ async def test_a_provider_on_another_s_address_never_rides_its_verified_connecti
                 "openai": server_for("models.test", "key-openai", "cred-o"),
                 "groq": server_for("wrong.test", "key-groq", "cred-g"),
             },
+            # The limits every enrollment carries (#174): the local_models section's defaults.
+            "limits": {"max_request_bytes": 8 * 1024 * 1024, "timeout_seconds": 900.0},
         },
     )
     assert enrolled.status == 200, await enrolled.text()

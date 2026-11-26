@@ -249,6 +249,7 @@ def provider_record(model: str, catalogue: Catalogue | None = None, *, at: datet
         key_env=provider.sandbox_key_env if chat else provider.api_key_env,
         base_url_env=provider.sandbox_base_url_env if chat else "",
         request_extras=dict(provider.request_extras.get(model, {})),
+        context_window=provider.context_windows.get(model),
         resolved_at=moment.isoformat(),
     )
 

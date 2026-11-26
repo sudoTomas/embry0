@@ -15,12 +15,11 @@ from pathlib import Path
 # Home-relative so writer (root docker exec) and reader (agent user) agree.
 LOCAL_LLM_PROXY_TOKEN_REL = ".embry0/local_llm_proxy_token"
 
-# Sandbox env, both under the reserved EMBRY0_LLM_ prefix so a repository
-# cannot set them. The flag says the custom provider's base URL is the
-# local-llm-proxy, so the executor authenticates with the bearer file instead
-# of a key; the window is the model's context in tokens, when the operator set one.
+# Sandbox env, under the reserved EMBRY0_LLM_ prefix so a repository cannot set
+# it. The flag says the custom provider's base URL is the local-llm-proxy, so
+# the executor authenticates with the bearer file instead of a key. (A custom
+# model's context window rides the run's provider record, from the catalogue.)
 LOCAL_LLM_PROXY_FLAG = "EMBRY0_LLM_CUSTOM_VIA_PROXY"
-LOCAL_LLM_CONTEXT_ENV = "EMBRY0_LLM_CUSTOM_CONTEXT_TOKENS"
 
 
 def build_local_llm_token_write_cmd() -> list[str]:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -54,7 +55,7 @@ def _no_local_slot(monkeypatch: pytest.MonkeyPatch) -> None:
 
     enable_providers(monkeypatch, "custom", **LOCAL_SERVER)
     monkeypatch.setattr(agent_mod, "_local_slots", _slots)
-    monkeypatch.setattr(agent_mod, "_slot_wait_seconds", lambda _config: 0.0)
+    monkeypatch.setattr(agent_mod, "_slot_wait_seconds", AsyncMock(return_value=0.0))
 
 
 async def test_a_job_that_may_not_wait_fails_its_spent_run_with_the_account_s_code() -> None:

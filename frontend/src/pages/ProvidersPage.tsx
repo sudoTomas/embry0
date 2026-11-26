@@ -24,6 +24,7 @@ import { ProviderSpend } from "@/components/providers/ProviderSpend";
 import { BackgroundModelsCard } from "@/components/providers/BackgroundModelsCard";
 import { CatalogueEditor } from "@/components/providers/CatalogueEditor";
 import { useBackgroundModelIds } from "@/hooks/useBackgroundModels";
+import { useLocalMaxRuns, useSetLocalMaxRuns } from "@/hooks/useLocalModelSettings";
 import { isLlmProvider } from "@/lib/llmProviders";
 
 // RAV-1297: LLM Providers — the complete catalog (Anthropic first-class),
@@ -518,17 +519,18 @@ function LocalModelCard({
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Your own model server, reached as custom/&lt;model&gt;. Agents run on it at most this many at a time; one
-          that has to use it waits for a free slot. Log analyses and context audits that prefer it run on their own
-          model at once when no slot is free.
+          Your own model servers, each reached as custom/&lt;model&gt; through its credential. Each takes at most
+          this many calls at a time; a run that has to use one waits for a free slot. Log analyses and context
+          audits that prefer it run on their own model at once when no slot is free. This is the settings
+          document&apos;s local_models.max_runs; Settings › Policy has the wait, the timeout and the request cap.
         </p>
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-end gap-4">
           <div>
-            <Label htmlFor="local_max_runs">Runs at once</Label>
+            <Label htmlFor="local_models_max_runs">Runs at once</Label>
             <Input
-              id="local_max_runs"
+              id="local_models_max_runs"
               type="number"
               min={1}
               max={64}
@@ -549,6 +551,9 @@ export function ProvidersPage() {
   const { data: catalog, isLoading, isError, refetch } = useModelsCatalog();
   const { data: providerConfig } = useProviderConfig();
   const updateProvider = useUpdateProviderConfig();
+  // How many calls each of the operator's model servers takes at once: the settings document's local_models (#174).
+  const localMaxRuns = useLocalMaxRuns();
+  const setLocalMaxRuns = useSetLocalMaxRuns();
 
   const isAdmin = useIsAdmin();
 
@@ -742,14 +747,14 @@ export function ProvidersPage() {
 
       <BackgroundModelsCard localModels={fallbackModels.filter((m) => m.startsWith("custom/"))} />
 
-      {providerConfig?.local_max_runs !== undefined && (
+      {localMaxRuns.data !== undefined && (
         <LocalModelCard
-          savedRuns={providerConfig.local_max_runs}
+          savedRuns={localMaxRuns.data}
           isAdmin={isAdmin}
-          pending={updateProvider.isPending}
+          pending={setLocalMaxRuns.isPending}
           onSave={(runs, done) =>
-            updateProvider.mutate(
-              { local_max_runs: runs },
+            setLocalMaxRuns.mutate(
+              runs,
               {
                 onSuccess: () => {
                   done();

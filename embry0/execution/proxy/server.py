@@ -38,7 +38,7 @@ from embry0.execution.proxy.auth_proxy import create_auth_proxy_app
 from embry0.execution.proxy.context_proxy import create_context_proxy_app
 from embry0.execution.proxy.git_proxy import create_git_proxy_app
 from embry0.execution.proxy.github_proxy import create_github_proxy_app
-from embry0.execution.proxy.local_llm_proxy import DEFAULT_MAX_REQUEST_BYTES, create_local_llm_proxy_app
+from embry0.execution.proxy.local_llm_proxy import MAX_REQUEST_BYTES_CEILING, create_local_llm_proxy_app
 from embry0.execution.proxy.minio_proxy import create_minio_proxy_app
 from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES as MODEL_MAX_REQUEST_BYTES
 from embry0.execution.proxy.presign_proxy import create_presign_proxy_app
@@ -171,7 +171,8 @@ def build_app_from_env() -> web.Application:
         # The operator's model servers: each sandbox is enrolled with its own (ADR 0032), so none is configured here.
         return create_local_llm_proxy_app(
             admin_token,
-            max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or DEFAULT_MAX_REQUEST_BYTES),
+            # The ceiling no enrollment's own cap may pass (local_models.max_request_bytes is each sandbox's).
+            max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or MAX_REQUEST_BYTES_CEILING),
             require_run=_flag("METER_REQUIRE_RUN"),
         )
     if proxy_type == "context":

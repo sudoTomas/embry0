@@ -611,10 +611,8 @@ class Embry0Config(BaseSettings):
     # Local models (docs/providers.md): the operator's own OpenAI-compatible
     # model servers, the custom provider's. A custom credential is its server,
     # address and key, and every sandbox reaches it through the local-llm-proxy
-    # (ADR 0032), which refuses a request over the size cap. The context window,
-    # when set, overrides what the server's /models reports. A run that must use
-    # the server waits at most the slot wait for one of its slots
-    # (provider_config.local_max_runs).
+    # (ADR 0032). Their limits are the settings document's local_models section,
+    # and a custom model's context window the provider catalogue's.
     #
     # LOCAL_LLM_UPSTREAM and LOCAL_LLM_API_KEY route nothing any more: `embry0
     # credentials import-env` copies them into the environment's custom
@@ -622,9 +620,6 @@ class Embry0Config(BaseSettings):
     # them and startup warns while either is set (settings_env_retired).
     local_llm_upstream: Annotated[str, NOT_SECRET] = ""
     local_llm_api_key: SecretSetting = ""
-    local_llm_max_request_bytes: Annotated[int, NOT_SECRET] = 8 * 1024 * 1024
-    local_llm_context_tokens: Annotated[int, NOT_SECRET] = 0
-    local_llm_slot_wait_seconds: Annotated[int, NOT_SECRET] = 900
     # The largest model request the xai- and auth-proxy forward. Every agent
     # turn resends the whole conversation, and a 300k-token prompt is more
     # than a megabyte of JSON. Over it, the run ends as ERR_CONTEXT_WINDOW_EXCEEDED.

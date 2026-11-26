@@ -19,20 +19,20 @@ def test_migration_115_present() -> None:
 
 @pytest.mark.requires_postgres
 @pytest.mark.asyncio
-async def test_one_run_at_a_time_and_no_local_first_by_default(db_with_migrations: DatabasePool) -> None:
+async def test_no_local_first_by_default_and_the_run_cap_left_for_the_settings(
+    db_with_migrations: DatabasePool,
+) -> None:
+    """The run cap this migration added left for the settings document's local_models.max_runs with migration 161
+    (tests/unit/storage/test_migration_161.py)."""
     from embry0.storage.repositories.provider_config import ProviderConfigRepository
 
     db = db_with_migrations
     await db.execute("INSERT INTO provider_config (id) VALUES ('default') ON CONFLICT (id) DO NOTHING")
-    row = await ProviderConfigRepository(db).get()
-    assert row["local_max_runs"] == 1
     assert await db.fetchval("SELECT watcher_local_model FROM provider_config WHERE id = 'default'") == ""
-    updated = await ProviderConfigRepository(db).update(local_max_runs=2)
-    assert updated["local_max_runs"] == 2
+    row = await ProviderConfigRepository(db).get()
     # #164: the column stays, for a rollback, and is no longer part of the provider settings.
-    assert "watcher_local_model" not in updated
-    with pytest.raises(Exception, match="local_max_runs"):
-        await db.execute("UPDATE provider_config SET local_max_runs = 0 WHERE id = 'default'")
+    assert "watcher_local_model" not in row
+    assert "local_max_runs" not in row, "the provider settings still answer the run cap migration 161 moved"
 
 
 @pytest.mark.requires_postgres

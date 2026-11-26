@@ -57,7 +57,7 @@ from embry0.agents.providers import provider_named, upstream_model
 from embry0.agents.xai_tools import execute_tool
 from embry0.execution.agent_runner import AgentOutput
 from embry0.safety.error_codes import ErrorCode, classify_agent_error
-from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG, read_local_llm_proxy_token
+from embry0.sandbox.local_llm_token import LOCAL_LLM_PROXY_FLAG, read_local_llm_proxy_token
 
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
@@ -306,15 +306,15 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
-async def _context_window(base_url: str, api_key: str, model: str) -> int | None:
-    """The context window of ``model`` on the operator's server: the setting, else its ``/models``.
+async def _context_window(base_url: str, api_key: str, model: str, configured: int | None = None) -> int | None:
+    """The context window of ``model`` on the operator's server: the catalogue's (``configured``, the run's
+    provider record), else its server's ``/models``.
 
     None when neither says: the run is then not fitted, and a request the
     server refuses as too long still fails with ERR_CONTEXT_WINDOW_EXCEEDED.
     """
-    configured = os.environ.get(LOCAL_LLM_CONTEXT_ENV, "").strip()
-    if configured.isdigit() and int(configured) > 0:
-        return int(configured)
+    if configured is not None and configured > 0:
+        return configured
     client = _make_client(base_url, api_key)
     try:
         resp = await client.get("models", timeout=10.0)
@@ -338,6 +338,7 @@ class _Target:
     key_env: str
     upstream_model: str
     request_extras: dict[str, Any]
+    context_window: int | None = None
 
     @property
     def endpoint(self) -> str:
@@ -360,6 +361,7 @@ def _target(invocation: AgentInvocation) -> _Target | str:
             record.key_env,
             record.upstream_model or invocation.model,
             dict(record.request_extras),
+            record.context_window,
         )
     provider = provider_named(invocation.provider)
     if provider is None or provider.runtime != "chat_completions":
@@ -413,7 +415,11 @@ class OpenAICompatibleExecutor:
             )
         model = provider.upstream_model
         extras = provider.request_extras
-        window = await _context_window(base_url, api_key, model) if provider.name == "custom" else None
+        window = (
+            await _context_window(base_url, api_key, model, provider.context_window)
+            if provider.name == "custom"
+            else None
+        )
         return await run_tool_loop(
             invocation,
             config,

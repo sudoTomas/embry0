@@ -32,7 +32,7 @@ park that is not for an account (the proxies taking a woken job's sandbox
 back) does not count.
 
 A forced local run waits for a slot inside the run first
-(``LOCAL_LLM_SLOT_WAIT_SECONDS``), whatever this section says; only when none
+(``local_models.slot_wait_seconds``), whatever this section says; only when none
 came free does it wait ``local_busy_retry_seconds`` parked, or, if the job
 may not wait, fail with ``ERR_LOCAL_MODEL_BUSY``.
 

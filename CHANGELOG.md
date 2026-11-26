@@ -141,6 +141,20 @@ describes what embry0 does rather than listing changes.
   `areas` and `area` beside them (#180; an upload may still use the old
   names), and `GET /api/v1/progression` answers `account.cloak_trim` alone,
   not `divine_trim` (#176).
+- **Local model limits move to the settings document (breaking).** The
+  limits of the operator's model servers are the `local_models` section:
+  `max_runs`, `slot_wait_seconds`, `request_timeout_seconds` and
+  `max_request_bytes`. `local_max_runs` leaves the provider settings:
+  `PUT /api/v1/config/provider` refuses it with a 422 naming
+  `local_models.max_runs`, and `GET` no longer answers it; the Providers page
+  sets the section instead. The upgrade carries a stored value other than 1
+  into the section (migration 161, written at the first start).
+  `LOCAL_LLM_SLOT_WAIT_SECONDS` and `LOCAL_LLM_MAX_REQUEST_BYTES` are no longer
+  read: set the section's keys. `LOCAL_LLM_CONTEXT_TOKENS` is no longer read:
+  give each custom model its `context_window` in the provider catalogue. While
+  one is still set, startup logs `settings_env_retired`. The proxy image and
+  the sandbox images must be rebuilt
+  ([docs/providers.md](docs/providers.md#local-models)).
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

@@ -22,7 +22,6 @@ _ROW = {
     "default_model": "",
     "disabled_models": [],
     "fallback_models": [],
-    "local_max_runs": 1,
 }
 
 
@@ -361,3 +360,74 @@ async def test_a_cancel_while_the_slot_is_released_closes_the_run_s_trace() -> N
     assert traces.closed, "a cancel while the slot was given back left the trace running"
     assert traces.closed[0]["metering"]["closed"]["cause"] == "cancelled"
     assert (traces.closed[0]["result"], traces.closed[0]["error_code"]) == ("success", None)
+
+
+# --- #174: the cap and the wait are the settings document's local_models -------------------------------------
+
+
+class _LocalModelsStore:
+    """A settings store whose deployment document sets ``values`` in local_models."""
+
+    def __init__(self, **values: Any) -> None:
+        self.values = values
+
+    async def snapshot(self) -> Any:
+        from embry0.settings.sections import CATALOG
+        from embry0.settings.store import build_snapshot
+
+        rows = [{"scope": "deployment", "data": {"local_models": self.values}, "generation": 1, "updated_at": None}]
+        return build_snapshot(CATALOG, rows, token=(), log=False)
+
+
+class _WaitingSlots(_Slots):
+    def __init__(self, *, free: bool = True) -> None:
+        super().__init__(free=free)
+        self.wait_seconds: list[float] = []
+
+    async def acquire(self, *, wait_seconds: float, on_wait: Any = None, **kwargs: Any) -> str | None:
+        self.wait_seconds.append(wait_seconds)
+        return await super().acquire(wait_seconds=wait_seconds, on_wait=on_wait, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_a_run_takes_its_slot_under_the_cap_and_wait_of_the_settings_document() -> None:
+    slots = _WaitingSlots()
+    store = _LocalModelsStore(max_runs=3, slot_wait_seconds=42)
+    model, *_ = await _run(
+        slots=slots, state={"agent_models_override": {"*": _LOCAL}}, configurable={"settings_store": store}
+    )
+    assert model == _LOCAL
+    assert [t.get("cap") for t in slots.taken] == [3], f"the cap is local_models.max_runs: {slots.taken}"
+    assert slots.wait_seconds == [42.0], f"the wait is local_models.slot_wait_seconds: {slots.wait_seconds}"
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_waited_its_while_names_the_setting_that_sizes_the_server() -> None:
+    slots = _WaitingSlots(free=False)
+    store = _LocalModelsStore(slot_wait_seconds=7)
+    _model, update, *_ = await _run(
+        slots=slots, state={"agent_models_override": {"*": _LOCAL}}, configurable={"settings_store": store}
+    )
+    message = update["agent_outputs"][0]["error_message"]
+    assert "7s" in message and "local_models.max_runs" in message, message
+
+
+@pytest.mark.asyncio
+async def test_without_the_run_s_store_the_section_is_read_over_its_database(monkeypatch) -> None:
+    """A graph built without the executor's store (a resumed run from an older executor) reads the document over the
+    run's database, never the variables no longer read."""
+    from embry0.settings import store as store_module
+
+    built: list[Any] = []
+
+    class _Store(_LocalModelsStore):
+        def __init__(self, db: Any) -> None:
+            built.append(db)
+            super().__init__(max_runs=2, slot_wait_seconds=5)
+
+    monkeypatch.setattr(store_module, "SettingsStore", _Store)
+    monkeypatch.setenv("LOCAL_LLM_SLOT_WAIT_SECONDS", "999")
+    slots = _WaitingSlots()
+    await _run(slots=slots, state={"agent_models_override": {"*": _LOCAL}}, configurable={"settings_store": None})
+    assert built and all(isinstance(db, _Db) for db in built), f"the store was not built over the run's db: {built}"
+    assert ([t.get("cap") for t in slots.taken], slots.wait_seconds) == ([2], [5.0])

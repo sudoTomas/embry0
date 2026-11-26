@@ -814,3 +814,65 @@ def test_a_write_records_every_dropped_model_it_knew_of_named_or_not() -> None:
     assert written["deepseek"]["deepseek-flash"]["prices"][0] == {"in": 0.3, "out": 1.2, "from": None}
     later = catalogue.records(previous, {"openai": {"gpt-6.1-sol": {"chat_only": False}}})
     assert later["openai"]["gpt-6.1-sol"] == {"chat_only": False} and "gpt-6-luna" in later["openai"]
+
+
+# ---- a custom model's context window (#174) ----
+
+
+def test_a_custom_model_s_context_window_reaches_its_run_s_record(installed: None) -> None:
+    """In place of LOCAL_LLM_CONTEXT_TOKENS, one number for every custom model: each says its own, and the run
+    carries it to the chat-completions executor in its provider record."""
+    built = _install(
+        {
+            "providers": {
+                "custom": {
+                    "enabled": True,
+                    "models": {
+                        "custom/qwen": {"free": True, "context_window": 65536},
+                        "custom/llama": {"free": True},
+                    },
+                }
+            }
+        }
+    )
+    [custom] = [p for p in built.providers if p.name == "custom"]
+    assert dict(custom.context_windows) == {"custom/qwen": 65536}, custom.context_windows
+    assert providers.provider_record("custom/qwen").context_window == 65536, "the window never reached the run"
+    assert providers.provider_record("custom/llama").context_window is None, "a model without one asks its server"
+
+
+def test_an_overlay_sets_and_takes_out_a_context_window() -> None:
+    doc = _merged({"providers": {"custom": {"models": {"custom/qwen": {"free": True, "context_window": 32768}}}}})
+    assert doc.providers["custom"].models["custom/qwen"].context_window == 32768
+    doc = merge(doc, {"providers": {"custom": {"models": {"custom/qwen": {"context_window": None}}}}})
+    assert doc.providers["custom"].models["custom/qwen"].context_window is None
+
+
+@pytest.mark.parametrize(
+    ("overlay", "where", "says"),
+    [
+        (
+            {"providers": {"openai": {"models": {"gpt-6-luna": {"context_window": 65536}}}}},
+            "providers.openai.models.gpt-6-luna.context_window",
+            "the custom provider's",
+        ),
+        (
+            {"providers": {"custom": {"models": {"custom/qwen": {"context_window": 1000}}}}},
+            "providers.custom.models.custom/qwen.context_window",
+            "greater than or equal to 1024",
+        ),
+        (
+            {"providers": {"custom": {"models": {"custom/qwen": {"context_window": 10_000_001}}}}},
+            "providers.custom.models.custom/qwen.context_window",
+            "less than or equal to 10000000",
+        ),
+        (
+            {"providers": {"custom": {"models": {"custom/qwen": {"context_window": "64k"}}}}},
+            "providers.custom.models.custom/qwen.context_window",
+            "integer",
+        ),
+    ],
+)
+def test_a_context_window_is_a_custom_model_s_and_a_count_of_tokens(overlay: Any, where: str, says: str) -> None:
+    refused = _refused(overlay)
+    assert any(loc == where and says in msg for loc, msg in refused), f"{where}: {refused}"

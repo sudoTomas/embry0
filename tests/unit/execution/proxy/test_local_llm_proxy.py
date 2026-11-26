@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import aiohttp
@@ -18,6 +19,9 @@ _ADMIN = "test-admin-secret-not-real"
 _SANDBOX_TOKEN = "sandbox-bearer-token-at-least-32-chars-long"
 _SERVER_KEY = "server-key-the-sandbox-never-sees"
 _API_ROOT = "/v1/"
+
+#: The limits every enrollment carries (the settings document's local_models; the section's defaults here).
+LIMITS: dict[str, Any] = {"max_request_bytes": 8 * 1024 * 1024, "timeout_seconds": 900.0}
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +78,7 @@ async def upstream(make_upstream) -> Any:
 
 def _server(
     upstream: Any, *, api_key: str = "", credential_id: str = "cred-a", name: str = "127.0.0.1"
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """An enrollment's server: the fake server's root under ``name``, and the address it was checked at."""
     return {
         "credential_id": credential_id,
@@ -84,10 +88,13 @@ def _server(
     }
 
 
-async def _enroll(client: TestClient, sandbox_id: str, token: str, server: Any) -> Any:
+async def _enroll(client: TestClient, sandbox_id: str, token: str, server: Any, **limits: Any) -> Any:
+    """Enroll ``sandbox_id`` with ``server`` and the sandbox's limits (``limits`` over the section's defaults; a None
+    value leaves its key out)."""
+    sent = {k: v for k, v in {**LIMITS, **limits}.items() if v is not None}
     return await client.post(
         "/admin/enroll",
-        json={"sandbox_id": sandbox_id, "sandbox_token": token, "local_llm": server},
+        json={"sandbox_id": sandbox_id, "sandbox_token": token, "local_llm": server, "limits": sent},
         headers={"X-Admin-Token": _ADMIN},
     )
 
@@ -102,9 +109,11 @@ def create_local_llm_proxy_app(admin_token: str, **kwargs: Any) -> web.Applicati
         pytest.fail(f"the local-llm-proxy must be built with no server of its own (ADR 0032): {exc}")
 
 
-async def _proxy(aiohttp_client, upstream: Any, *, api_key: str = "", **kwargs: Any) -> TestClient:
+async def _proxy(
+    aiohttp_client, upstream: Any, *, api_key: str = "", limits: dict[str, Any] | None = None, **kwargs: Any
+) -> TestClient:
     client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, **kwargs))
-    enrolled = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream, api_key=api_key))
+    enrolled = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream, api_key=api_key), **(limits or {}))
     assert enrolled.status == 200, await enrolled.text()
     return client
 
@@ -128,8 +137,18 @@ def test_the_admin_token_and_a_positive_cap_must_be_set():
         {"credential_id": "cred-a", "upstream": "file:///etc/passwd", "api_key": "", "address": "10.0.0.5"},
         {"credential_id": "cred-a", "upstream": "ftp://10.0.0.5/v1", "api_key": "", "address": "10.0.0.5"},
         {"credential_id": "cred-a", "upstream": "http:///v1", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://user:pw@10.0.0.5/v1", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://10.0.0.5/v1?x=1", "api_key": "", "address": "10.0.0.5"},
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://user:pw@10.0.0.5/v1",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://10.0.0.5/v1?x=1",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
         {
             "credential_id": "cred-a",
             "upstream": "http://10.0.0.5/v1",
@@ -137,20 +156,75 @@ def test_the_admin_token_and_a_positive_cap_must_be_set():
             "address": "10.0.0.5",
         },
         {"credential_id": 7, "upstream": "http://10.0.0.5/v1", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://127.0.0.2:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://127.0.0.2:8000/v1",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
         {"credential_id": "cred-a", "upstream": "http://[::1]:8000/v1", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://localhost:8000/v1", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://169.254.169.254/latest", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://[fe80::1]:8000/v1", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://0.0.0.0:8000/v1", "api_key": "", "address": "10.0.0.5"},
-        {"credential_id": "cred-a", "upstream": "http://2130706434:8000/v1", "api_key": "", "address": "10.0.0.5"},
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://localhost:8000/v1",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://169.254.169.254/latest",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://[fe80::1]:8000/v1",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://0.0.0.0:8000/v1",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://2130706434:8000/v1",
+            "api_key": "",
+            "address": "10.0.0.5",
+        },
         {"credential_id": "cred-a", "upstream": "http://0xa9fea9fe/v1", "api_key": "", "address": "10.0.0.5"},
         {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": ""},
-        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "models.test"},
-        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "2130706433"},
-        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "127.0.0.2"},
-        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "169.254.169.254"},
-        {"credential_id": "cred-a", "upstream": "http://models.test/v1", "api_key": "", "address": "::ffff:127.0.0.3"},
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://models.test/v1",
+            "api_key": "",
+            "address": "models.test",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://models.test/v1",
+            "api_key": "",
+            "address": "2130706433",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://models.test/v1",
+            "api_key": "",
+            "address": "127.0.0.2",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://models.test/v1",
+            "api_key": "",
+            "address": "169.254.169.254",
+        },
+        {
+            "credential_id": "cred-a",
+            "upstream": "http://models.test/v1",
+            "api_key": "",
+            "address": "::ffff:127.0.0.3",
+        },
     ],
     ids=[
         "none",
@@ -202,6 +276,7 @@ async def test_the_enrollment_answer_confirms_the_server_and_never_the_key(aioht
         "upstream": f"http://127.0.0.1:{upstream.port}/v1",
         "address": "127.0.0.1",
     }, f"the answer must echo the server, without its trailing slash: {answer}"
+    assert answer["limits"] == LIMITS, f"the answer must echo the sandbox's limits: {answer}"
     assert _SERVER_KEY not in await enrolled.text(), "the enrollment answer carried the server's key"
 
 
@@ -351,7 +426,7 @@ async def test_a_revoked_sandbox_gets_nothing(aiohttp_client, upstream):
 
 
 async def test_a_request_over_the_size_limit_is_refused(aiohttp_client, upstream):
-    client = await _proxy(aiohttp_client, upstream, max_request_bytes=1024)
+    client = await _proxy(aiohttp_client, upstream, limits={"max_request_bytes": 1024})
     resp = await client.post(
         "/v1/chat/completions", data=b"x" * 2048, headers={**_AUTH, "Content-Type": "application/json"}
     )
@@ -359,7 +434,7 @@ async def test_a_request_over_the_size_limit_is_refused(aiohttp_client, upstream
     error = (await resp.json())["error"]
     # The OpenAI error shape the chat-completions executor reads, saying what classifies as a context overflow.
     assert error["code"] == "request_too_large" and error["message"].startswith("request_too_large"), error
-    assert "1024" in error["message"] and "LOCAL_LLM_MAX_REQUEST_BYTES" in error["message"], error
+    assert "1024" in error["message"] and "local_models.max_request_bytes" in error["message"], error
     assert upstream.seen == []
     ok = await client.post("/v1/chat/completions", data=b"{}", headers={**_AUTH, "Content-Type": "application/json"})
     assert ok.status == 200
@@ -373,7 +448,7 @@ async def test_the_executor_reads_the_proxy_s_413_as_an_outgrown_conversation(ai
     from embry0.agents.executor_openai import ProviderHTTPError, _error_detail
     from embry0.safety.error_codes import ErrorCode
 
-    client = await _proxy(aiohttp_client, upstream, max_request_bytes=1024)
+    client = await _proxy(aiohttp_client, upstream, limits={"max_request_bytes": 1024})
     resp = await client.post(
         "/v1/chat/completions", data=b"x" * 2048, headers={**_AUTH, "Content-Type": "application/json"}
     )
@@ -424,7 +499,117 @@ async def test_a_request_carrying_the_server_key_counts_on_any_path(upstream):
 
 async def test_an_unreachable_server_is_a_502(aiohttp_client):
     client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
-    dead = {"credential_id": "cred-a", "upstream": "http://127.0.0.1:9/v1", "api_key": "", "address": "127.0.0.1"}
+    dead = {
+        "credential_id": "cred-a",
+        "upstream": "http://127.0.0.1:9/v1",
+        "api_key": "",
+        "address": "127.0.0.1",
+    }
     assert (await _enroll(client, "sbx-1", _SANDBOX_TOKEN, dead)).status == 200
     resp = await client.post("/v1/chat/completions", json={}, headers=_AUTH)
     assert resp.status == 502
+
+
+# --- #174: each sandbox's limits are its enrollment's, under the ceilings the proxy starts with -----------------
+
+
+_TOKEN_1, _TOKEN_2 = (f"sandbox-bearer-token-{n}-at-least-32-chars-long" for n in (1, 2))
+
+
+async def test_each_sandbox_has_the_request_cap_it_was_enrolled_with(aiohttp_client, upstream):
+    """The cap is the settings document's local_models.max_request_bytes, sent with each enrollment: a change
+    reaches the next sandbox while the proxy keeps running."""
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    for sandbox, token, cap in (("sbx-1", _TOKEN_1, 1024), ("sbx-2", _TOKEN_2, 4096)):
+        enrolled = await _enroll(client, sandbox, token, _server(upstream), max_request_bytes=cap)
+        assert enrolled.status == 200, await enrolled.text()
+    body = b"x" * 2048
+    small = await client.post(
+        "/v1/chat/completions", data=body, headers={"Authorization": f"Bearer {_TOKEN_1}", "Content-Type": "text/plain"}
+    )
+    large = await client.post(
+        "/v1/chat/completions", data=body, headers={"Authorization": f"Bearer {_TOKEN_2}", "Content-Type": "text/plain"}
+    )
+    assert (small.status, large.status) == (413, 200), (
+        f"each sandbox's cap is its own enrollment's: 1024 bytes -> {small.status}, 4096 bytes -> {large.status}"
+    )
+    assert "1024-byte cap" in (await small.json())["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("limits", "named"),
+    [
+        ({"max_request_bytes": None}, "max_request_bytes"),
+        ({"timeout_seconds": None}, "timeout_seconds"),
+        ({"max_request_bytes": 0}, "max_request_bytes"),
+        ({"max_request_bytes": -1}, "max_request_bytes"),
+        ({"max_request_bytes": 8193}, "max_request_bytes"),  # past the ceiling this proxy started with
+        ({"max_request_bytes": True}, "max_request_bytes"),
+        ({"max_request_bytes": 1024.5}, "max_request_bytes"),
+        ({"max_request_bytes": "1024"}, "max_request_bytes"),
+        ({"timeout_seconds": 0}, "timeout_seconds"),
+        ({"timeout_seconds": 3600.5}, "timeout_seconds"),
+        ({"timeout_seconds": False}, "timeout_seconds"),
+        ({"timeout_seconds": "900"}, "timeout_seconds"),
+    ],
+)
+async def test_an_enrollment_without_its_limits_or_past_a_ceiling_is_refused(aiohttp_client, upstream, limits, named):
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, max_request_bytes=8192))
+    resp = await _enroll(client, "sbx-1", _SANDBOX_TOKEN, _server(upstream), **{"max_request_bytes": 4096, **limits})
+    assert resp.status == 400, f"an enrollment with {limits} was taken: {await resp.text()}"
+    assert f"limits.{named}" in await resp.text(), await resp.text()
+    assert "sbx-1" not in client.server.app[local_llm_proxy.UPSTREAM_BY_SANDBOX]
+
+
+async def test_an_enrollment_at_the_ceilings_is_taken_and_echoed(aiohttp_client, upstream):
+    """The ceilings themselves are allowed; the echo, which the orchestrator compares with what it sent, carries the
+    limits the proxy holds."""
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, max_request_bytes=8192))
+    resp = await _enroll(
+        client, "sbx-1", _SANDBOX_TOKEN, _server(upstream), max_request_bytes=8192, timeout_seconds=3600
+    )
+    assert resp.status == 200, await resp.text()
+    echoed = (await resp.json())["limits"]
+    assert (echoed["max_request_bytes"], echoed["timeout_seconds"]) == (8192, 3600.0), echoed
+    held = client.server.app[local_llm_proxy.LIMITS_BY_SANDBOX]["sbx-1"]
+    assert (held.max_request_bytes, held.timeout_seconds) == (8192, 3600.0), held
+
+
+def test_the_proxy_starts_with_the_ceiling_the_settings_are_bounded_by():
+    """With no MAX_REQUEST_BYTES of its own the proxy reads up to the ceiling, so any cap local_models allows can be
+    enrolled; the section's bounds and the proxy's are one pair of numbers."""
+    from embry0.settings.sections import local_models
+
+    app = create_local_llm_proxy_app(_ADMIN)
+    assert app[local_llm_proxy.MAX_REQUEST_BYTES] == local_llm_proxy.MAX_REQUEST_BYTES_CEILING
+    assert local_models.MAX_REQUEST_BYTES_CEILING == local_llm_proxy.MAX_REQUEST_BYTES_CEILING
+    assert local_models.TIMEOUT_SECONDS_CEILING == local_llm_proxy.TIMEOUT_SECONDS_CEILING
+    fields = local_models.LocalModelsSettings.model_json_schema()["properties"]
+    assert fields["max_request_bytes"]["maximum"] == local_llm_proxy.MAX_REQUEST_BYTES_CEILING, fields
+    assert fields["request_timeout_seconds"]["maximum"] == local_llm_proxy.TIMEOUT_SECONDS_CEILING, fields
+    defaults = local_models.LocalModelsSettings()
+    assert defaults.max_request_bytes == local_llm_proxy.DEFAULT_MAX_REQUEST_BYTES
+    assert defaults.request_timeout_seconds == local_llm_proxy.DEFAULT_TIMEOUT_SECONDS
+
+
+async def test_a_server_has_the_enrollment_s_timeout_to_answer(aiohttp_client, aiohttp_server):
+    """local_models.request_timeout_seconds, per enrollment: a server slower than a sandbox's timeout is a 504 for
+    that sandbox, and answers another sandbox that allows it longer."""
+
+    async def slow(_request: web.Request) -> web.Response:
+        await asyncio.sleep(0.6)
+        return web.json_response({"answer": "late"})
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", slow)
+    server = await aiohttp_server(app)
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    for sandbox, token, timeout in (("sbx-1", _TOKEN_1, 0.2), ("sbx-2", _TOKEN_2, 5)):
+        enrolled = await _enroll(client, sandbox, token, _server(server), timeout_seconds=timeout)
+        assert enrolled.status == 200, await enrolled.text()
+    impatient = await client.post("/v1/chat/completions", json={}, headers={"Authorization": f"Bearer {_TOKEN_1}"})
+    patient = await client.post("/v1/chat/completions", json={}, headers={"Authorization": f"Bearer {_TOKEN_2}"})
+    assert (impatient.status, patient.status) == (504, 200), (
+        f"a 0.2 s timeout -> {impatient.status}, a 5 s one -> {patient.status}: the enrollment's timeout must bound "
+        "the server's answer"
+    )

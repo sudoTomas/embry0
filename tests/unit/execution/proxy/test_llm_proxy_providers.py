@@ -17,6 +17,7 @@ from embry0.execution.proxy import local_llm_proxy
 from tests.unit.execution.proxy.test_local_llm_proxy import (
     _ADMIN,
     _SANDBOX_TOKEN,
+    LIMITS,
     _fake_servers_on_loopback,  # noqa: F401, E402
     create_local_llm_proxy_app,
 )
@@ -45,7 +46,8 @@ def _server(upstream: Any, key: str, credential_id: str, name: str = "127.0.0.1"
 
 
 async def _enroll(client: TestClient, **fields: Any) -> Any:
-    body = {"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN, **fields}
+    """Enroll sbx-1 with ``fields``, and the section's default limits unless ``fields`` names its own (#174)."""
+    body = {"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN, "limits": LIMITS, **fields}
     return await client.post("/admin/enroll", json=body, headers=_H)
 
 
@@ -215,7 +217,9 @@ async def test_a_provider_path_needs_the_sandbox_s_bearer(aiohttp_client, upstre
 async def test_a_request_over_the_size_limit_is_refused_on_a_provider_path(aiohttp_client, upstreams):
     openai = await upstreams("openai")
     client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN, max_request_bytes=1024))
-    assert (await _enroll(client, provider_servers={"openai": _server(openai, "k", "cred-o")})).status == 200
+    servers = {"openai": _server(openai, "k", "cred-o")}
+    # The sandbox's cap, at the ceiling this proxy started with (#174).
+    assert (await _enroll(client, provider_servers=servers, limits={**LIMITS, "max_request_bytes": 1024})).status == 200
     answer = await client.post("/p/openai/v1/chat/completions", data=b"x" * 2048, headers=_BEARER)
     assert answer.status == 413 and openai.seen == []
 
@@ -284,3 +288,61 @@ async def test_an_https_provider_keeps_its_name_for_tls(aiohttp_client, aiohttp_
     assert answer.status == 200, await answer.text()
     assert tls.seen == [{"host": f"api.provider.test:{tls.port}", "authorization": "Bearer k"}], tls.seen
     assert tls.handshakes == ["api.provider.test"], f"the TLS server name must be the provider's: {tls.handshakes}"
+
+
+# --- #174: one set of limits per sandbox, on every path it calls ---------------------------------------------------
+
+
+async def test_each_path_of_a_sandbox_is_held_to_its_one_request_cap(aiohttp_client, upstreams):
+    """The custom server's path and every provider's take the sandbox's limits from its enrollment: a body over its
+    cap is refused on each, naming the setting, and reaches no server."""
+    custom, openai = await upstreams("custom"), await upstreams("openai")
+    client = await _proxy(
+        aiohttp_client,
+        local_llm=_server(custom, "key-custom", "cred-c"),
+        provider_servers={"openai": _server(openai, "key-openai", "cred-o")},
+        limits={**LIMITS, "max_request_bytes": 1024},
+    )
+    big, small = b"x" * 2048, b"{}"
+    headers = {**_BEARER, "Content-Type": "application/json"}
+    statuses = {}
+    for path in ("/v1/chat/completions", "/p/custom/v1/chat/completions", "/p/openai/v1/chat/completions"):
+        refused = await client.post(path, data=big, headers=headers)
+        answered = await client.post(path, data=small, headers=headers)
+        statuses[path] = (refused.status, answered.status)
+        if refused.status == 413:
+            assert "local_models.max_request_bytes" in (await refused.json())["error"]["message"]
+    assert statuses == {path: (413, 200) for path in statuses}, f"a path was not held to the sandbox's cap: {statuses}"
+    assert all(len(r.get("body", b"")) <= 1024 for r in custom.seen + openai.seen), "a body over the cap was sent"
+
+
+async def test_a_provider_s_server_has_the_sandbox_s_timeout_to_answer(aiohttp_client, aiohttp_server):
+    import asyncio
+
+    async def slow(_request: web.Request) -> web.Response:
+        await asyncio.sleep(0.6)
+        return web.json_response({"choices": []})
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", slow)
+    server = await aiohttp_server(app)
+    client = await _proxy(
+        aiohttp_client,
+        provider_servers={"openai": _server(server, "key-openai", "cred-o")},
+        limits={**LIMITS, "timeout_seconds": 0.2},
+    )
+    resp = await client.post("/p/openai/v1/chat/completions", json={"messages": []}, headers=_BEARER)
+    assert resp.status == 504, f"a provider's server slower than the sandbox's timeout was waited for: {resp.status}"
+
+
+@pytest.mark.parametrize("limits", [None, "8MiB", {"max_request_bytes": 1024}], ids=["none", "not-an-object", "half"])
+async def test_an_enrollment_for_providers_alone_still_names_its_limits(aiohttp_client, upstreams, limits):
+    openai = await upstreams("openai")
+    client = await aiohttp_client(create_local_llm_proxy_app(_ADMIN))
+    fields: dict[str, Any] = {"provider_servers": {"openai": _server(openai, "key-openai", "cred-o")}}
+    body = {"sandbox_id": "sbx-1", "sandbox_token": _SANDBOX_TOKEN, **fields}
+    if limits is not None:
+        body["limits"] = limits
+    resp = await client.post("/admin/enroll", json=body, headers=_H)
+    assert resp.status == 400 and "limits" in await resp.text(), f"enrolled with limits {limits!r}: {await resp.text()}"
+    assert "sbx-1" not in client.server.app[local_llm_proxy.SERVERS_BY_SANDBOX]

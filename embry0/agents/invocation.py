@@ -60,6 +60,8 @@ class ProviderRecord:
     key_env: str = ""
     base_url_env: str = ""
     request_extras: Mapping[str, Any] = field(default_factory=dict)
+    #: The model's context window in tokens, where the catalogue says one (a custom model); None asks its server.
+    context_window: int | None = None
     resolved_at: str = ""
 
     @property
@@ -93,6 +95,7 @@ class ProviderRecord:
             "key_env": self.key_env,
             "base_url_env": self.base_url_env,
             "request_extras": dict(self.request_extras),
+            "context_window": self.context_window,
             "resolved_at": self.resolved_at,
         }
 
@@ -116,6 +119,9 @@ class ProviderRecord:
         rates = _rate_pair(value.get("rates"))
         if value.get("rates") is not None and rates is None:
             return None
+        window = value.get("context_window")
+        if window is not None and (isinstance(window, bool) or not isinstance(window, int) or window <= 0):
+            return None
         return cls(
             name=str(value["name"]),
             runtime=value["runtime"],
@@ -128,6 +134,7 @@ class ProviderRecord:
             key_env=str(value.get("key_env") or ""),
             base_url_env=str(value.get("base_url_env") or ""),
             request_extras=dict(extras),
+            context_window=window,
             resolved_at=str(value.get("resolved_at") or ""),
         )
 

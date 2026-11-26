@@ -15,6 +15,9 @@ from tests.fixtures.model_servers import fake_dns
 ADMIN = "test-admin-secret-not-real"
 TOKEN = "sandbox-bearer-token-at-least-32-chars-long"
 
+#: The limits every enrollment carries (the settings document's local_models; the section's defaults here).
+LIMITS: dict[str, Any] = {"max_request_bytes": 8 * 1024 * 1024, "timeout_seconds": 900.0}
+
 
 def _module() -> Any:
     try:
@@ -136,6 +139,7 @@ async def test_the_proxy_refuses_an_enrollment_naming_this_machine(aiohttp_clien
                 "api_key": "",
                 "address": "127.0.0.1",
             },
+            "limits": LIMITS,
         },
         headers={"X-Admin-Token": ADMIN},
     )

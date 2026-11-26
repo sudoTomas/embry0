@@ -170,6 +170,8 @@ async def _enroll(client: Any, name: str, port: int) -> None:
             "sandbox_id": "sbx-right" if name == RIGHT else "sbx-wrong",
             "sandbox_token": _TOKENS[name],
             "local_llm": {**server, "address": "127.0.0.1"},
+            # The limits every enrollment carries (#174): the local_models section's defaults.
+            "limits": {"max_request_bytes": 8 * 1024 * 1024, "timeout_seconds": 900.0},
         },
         headers={"X-Admin-Token": _ADMIN},
     )

@@ -13,7 +13,7 @@ from embry0.execution.auth_provider import env_override_refusal
 from embry0.execution.proxy import local_llm_proxy
 from embry0.execution.sandbox_manager import SandboxInitError, SandboxManager, SandboxReenrollError
 from embry0.safety.error_codes import ErrorCode
-from embry0.sandbox.local_llm_token import LOCAL_LLM_CONTEXT_ENV, LOCAL_LLM_PROXY_FLAG, LOCAL_LLM_PROXY_TOKEN_REL
+from embry0.sandbox.local_llm_token import LOCAL_LLM_PROXY_FLAG, LOCAL_LLM_PROXY_TOKEN_REL
 from embry0.services.credentials.resolver import CredentialUnavailableError
 from tests.fixtures.model_servers import fake_dns
 from tests.unit.execution import test_sandbox_reenroll as reenroll
@@ -45,14 +45,12 @@ _ITS_SERVER = _its_server()
 
 def test_the_sandbox_gets_the_proxy_and_no_key_or_server_address() -> None:
     env: dict[str, str] = {}
-    SandboxManager._inject_llm_env(env, {"custom": _CUSTOM}, local_proxy_url=_PROXY, context_tokens=65536)
-    assert env["EMBRY0_LLM_CUSTOM_BASE_URL"] == f"{_PROXY}/v1"
-    assert env[LOCAL_LLM_PROXY_FLAG] == "true"
-    assert env[LOCAL_LLM_CONTEXT_ENV] == "65536"
-    assert "EMBRY0_LLM_CUSTOM_API_KEY" not in env
-    assert "10.0.0.5" not in str(env), "the server's address stays with the proxy"
-    for key in (LOCAL_LLM_PROXY_FLAG, LOCAL_LLM_CONTEXT_ENV):
-        assert env_override_refusal(key, "x") is not None, f"{key} must be reserved from repository override"
+    SandboxManager._inject_llm_env(env, {"custom": _CUSTOM}, local_proxy_url=_PROXY)
+    assert env == {"EMBRY0_LLM_CUSTOM_BASE_URL": f"{_PROXY}/v1", LOCAL_LLM_PROXY_FLAG: "true"}, (
+        f"the sandbox gets the proxy and its flag alone: no key, no address, no window (the catalogue's, per run): "
+        f"{sorted(env)}"
+    )
+    assert env_override_refusal(LOCAL_LLM_PROXY_FLAG, "x") is not None, "the flag must be reserved from override"
 
 
 def test_without_the_proxy_the_sandbox_is_given_neither_key_nor_address() -> None:
@@ -381,3 +379,48 @@ def test_only_the_env_s_names_leave_the_daemon() -> None:
     template = cmd[cmd.index("--format") + 1]
     assert template == '{{range .Config.Env}}{{println (index (split . "=") 0)}}{{end}}', template
     assert cmd[-1] == "cid-1"
+
+
+def _limits(max_request_bytes: int, request_timeout_seconds: int) -> AsyncMock:
+    """A reader of the settings document's local_models section, as production passes the manager (#174)."""
+    from embry0.settings.sections.local_models import LocalModelsSettings
+
+    return AsyncMock(
+        return_value=LocalModelsSettings(
+            max_request_bytes=max_request_bytes, request_timeout_seconds=request_timeout_seconds
+        )
+    )
+
+
+def _enrolled_limits(pm: Any) -> tuple[Any, Any]:
+    """The limits the sandbox was enrolled with, for every server it is enrolled for (``enroll_sandbox(limits=)``)."""
+    limits = pm.enroll_sandbox.await_args.kwargs.get("limits")
+    return getattr(limits, "max_request_bytes", None), getattr(limits, "timeout_seconds", None)
+
+
+async def test_a_sandbox_is_enrolled_under_the_local_models_limits_read_when_it_is_created() -> None:
+    """local_models.max_request_bytes and request_timeout_seconds go with each enrollment, read at that moment, so
+    an admin's change reaches the next sandbox with no restart."""
+    mgr, _, pm = _proxied_manager({"custom": _CUSTOM})
+    mgr._local_models = _limits(2048, 60)
+    await mgr.create("job-1", repo="acme/widgets", llm_providers=["custom"])
+    assert _enrolled_limits(pm) == (2048, 60.0), f"the sandbox's limits are the section's: {_enrolled_limits(pm)}"
+    mgr._local_models = _limits(4096, 120)
+    await mgr.create("job-2", repo="acme/widgets", llm_providers=["custom"])
+    assert _enrolled_limits(pm) == (4096, 120.0), "a change of the section did not reach the next sandbox"
+
+
+async def test_without_a_reader_a_sandbox_gets_the_section_s_defaults() -> None:
+    from embry0.settings.sections.local_models import LOCAL_MODELS
+
+    mgr, _, pm = _proxied_manager({"custom": _CUSTOM})
+    await mgr.create("job-1", repo="acme/widgets", llm_providers=["custom"])
+    defaults = LOCAL_MODELS.model()
+    assert _enrolled_limits(pm) == (defaults.max_request_bytes, float(defaults.request_timeout_seconds))
+
+
+async def test_a_resumed_sandbox_is_enrolled_under_the_limits_in_force_now() -> None:
+    mgr, pm, _calls = _reenrolling({"custom": _CUSTOM})
+    mgr._local_models = _limits(2048, 60)
+    await _reenroll(mgr, custom_credential_id="cred-custom")
+    assert _enrolled_limits(pm) == (2048, 60.0), f"a resumed sandbox kept no limits of now: {_enrolled_limits(pm)}"
