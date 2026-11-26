@@ -183,6 +183,12 @@ describes what embry0 does rather than listing changes.
   on the People page; each login no person held is kept in a
   `user.github_login_retired` audit row for that. A hand-off may go to
   anyone who signs in or is a person with an email.
+- **Config writes refuse a field they do not know.** `PUT /api/v1/config/provider`,
+  `/config/integrations`, `/config/context`, `/config/context/repos/{repo}` and
+  `/config/budget` answered 200 to a misspelled, removed or made-up field and
+  changed nothing; each now answers 422 naming it (#750). A client that sends
+  back what a read answered (a read carries fields no write takes) must send
+  the fields it changes.
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

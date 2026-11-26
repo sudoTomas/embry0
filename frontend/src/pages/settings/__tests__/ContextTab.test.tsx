@@ -7,6 +7,7 @@ const mockFetchRepos = vi.fn();
 const mockFetchGlobalContext = vi.fn();
 const mockFetchRepoContexts = vi.fn();
 const mockUpdateRepoContext = vi.fn();
+const mockUpdateGlobalContext = vi.fn();
 
 vi.mock("@/api/repos", () => ({
   fetchRepos: () => mockFetchRepos(),
@@ -14,7 +15,7 @@ vi.mock("@/api/repos", () => ({
 
 vi.mock("@/api/config", () => ({
   fetchGlobalContext: () => mockFetchGlobalContext(),
-  updateGlobalContext: vi.fn(),
+  updateGlobalContext: (ctx: unknown) => mockUpdateGlobalContext(ctx),
   fetchRepoContexts: () => mockFetchRepoContexts(),
   updateRepoContext: (repo: string, ctx: unknown) => mockUpdateRepoContext(repo, ctx),
   deleteRepoContext: vi.fn(),
@@ -115,5 +116,24 @@ describe("ContextTab — RAV-1296 repo selector", () => {
         assistant_context: "",
       }),
     );
+  });
+});
+
+describe("ContextTab — the global context's save (#750)", () => {
+  it("sends the two fields alone, though the read answered the stored row", async () => {
+    // GET /config/context answers the stored row, its id and time with it; PUT refuses a field it does not know.
+    mockFetchGlobalContext.mockResolvedValue({
+      id: "global",
+      scope: "global",
+      repo: null,
+      system_context: "be brief",
+      assistant_context: "",
+      updated_at: "2026-11-01T00:00:00Z",
+    });
+    mockUpdateGlobalContext.mockResolvedValue(undefined);
+    renderTab();
+    await userEvent.click(await screen.findByRole("button", { name: "Save global context" }));
+    await waitFor(() => expect(mockUpdateGlobalContext).toHaveBeenCalledTimes(1));
+    expect(mockUpdateGlobalContext).toHaveBeenCalledWith({ system_context: "be brief", assistant_context: "" });
   });
 });
