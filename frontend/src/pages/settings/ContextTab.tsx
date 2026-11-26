@@ -73,7 +73,11 @@ export default function ContextTab() {
     if (!globalForm) return;
     setGlobalSaving(true);
     try {
-      await updateGlobalContext(globalForm);
+      // The two fields alone: the read answers the stored row (its id and time too), which the write refuses (#750).
+      await updateGlobalContext({
+        system_context: globalForm.system_context,
+        assistant_context: globalForm.assistant_context,
+      });
       qc.invalidateQueries({ queryKey: ["global-context"] });
       toast.success("Global context saved");
     } catch (e) {

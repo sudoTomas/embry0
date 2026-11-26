@@ -393,3 +393,53 @@ async def test_catalog_reports_the_last_connection_test_per_provider(app):
     assert by_name["xai"]["last_probe"] == {"status": "entitlement_refused", "checked_at": tested_at.isoformat()}
     assert by_name["anthropic"]["last_probe"] is None
     assert {call.args[0] for call in audit.latest_entry.await_args_list} == {"provider_connection_tested"}
+
+
+# --- #750: a field a config route does not know is refused, never dropped with a 200 ---
+
+_CONFIG_WRITES = [
+    ("/api/v1/config/provider", {"default_model": ""}),
+    ("/api/v1/config/integrations", {"telegram_chat_id": "1"}),
+    ("/api/v1/config/context", {"system_context": "s"}),
+    ("/api/v1/config/context/repos/acme/widgets", {"system_context": "s"}),
+    ("/api/v1/config/budget", {"daily_cap_usd": 5.0}),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "body"), _CONFIG_WRITES, ids=[p.rsplit("/config/", 1)[1] for p, _ in _CONFIG_WRITES])
+@pytest.mark.parametrize("unknown", ["default_modle", "provider_mode", "no_such_field"])
+async def test_a_config_write_refuses_a_field_it_does_not_know_naming_it(app, path, body, unknown) -> None:
+    """A misspelled field, one removed long ago (provider_mode) or a made-up one answered 200 and changed nothing, so
+    the caller believed it saved. It is refused naming the field, and nothing is written."""
+    app.state.integration_repo = MagicMock(update=AsyncMock(return_value={}), get=AsyncMock(return_value={}))
+    app.state.provider_repo.update = AsyncMock(return_value={})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(path, json={**body, unknown: "x"}, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert resp.status_code == 422, f"{path} took {unknown}: {resp.status_code} {resp.text}"
+    named = [e.get("loc") for e in resp.json()["detail"] if isinstance(e, dict)]
+    assert ["body", unknown] in named, f"the refusal does not name {unknown}: {resp.text}"
+    for written in (
+        app.state.context_repo.set_global,
+        app.state.context_repo.set_repo,
+        app.state.provider_repo.update,
+        app.state.integration_repo.update,
+    ):
+        written.assert_not_called()
+
+
+#: The writes this fake app can take whole: the budget's goes to the settings store.
+_TAKEN = [w for w in _CONFIG_WRITES if not w[0].endswith("/budget")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "body"), _TAKEN, ids=[p.rsplit("/config/", 1)[1] for p, _ in _TAKEN])
+async def test_a_config_write_of_known_fields_is_still_taken(app, path, body) -> None:
+    """The budget's write goes through the settings store, proven on a database (test_budget_settings.py)."""
+    app.state.integration_repo = MagicMock(update=AsyncMock(return_value={}), get=AsyncMock(return_value={}))
+    app.state.provider_repo.update = AsyncMock(return_value={})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.put(path, json=body, headers={"X-Requested-With": "XMLHttpRequest"})
+    assert resp.status_code != 422, f"{path} refused a field it knows: {resp.text}"

@@ -492,11 +492,19 @@ class SandboxProfileRequest(BaseModel):
 
 
 class ContextConfigRequest(BaseModel):
+    # #750: a field this route does not know is refused (422 naming it), never dropped with a 200 that changed
+    # nothing: a misspelled or removed field would otherwise look saved.
+    model_config = ConfigDict(extra="forbid")
+
     system_context: str = ""
     assistant_context: str = ""
 
 
 class BudgetConfigRequest(BaseModel):
+    # #750: a field this route does not know is refused (422 naming it), never dropped with a 200 that changed
+    # nothing: a misspelled or removed field would otherwise look saved.
+    model_config = ConfigDict(extra="forbid")
+
     max_budget_per_job_usd: float | None = Field(None, gt=0)
     daily_cap_usd: float | None = Field(None, gt=0)
     monthly_cap_usd: float | None = Field(None, gt=0)
@@ -795,6 +803,10 @@ class TemplateDuplicateRequest(BaseModel):
 
 
 class IntegrationConfigUpdate(BaseModel):
+    # #750: a field this route does not know is refused (422 naming it), never dropped with a 200 that changed
+    # nothing: a misspelled or removed field would otherwise look saved.
+    model_config = ConfigDict(extra="forbid")
+
     trigger_labels: list[str] | None = None
     webhook_secret: str | None = None
     slack_webhook_url: str | None = None
@@ -812,6 +824,10 @@ class IntegrationConfigUpdate(BaseModel):
 
 
 class ProviderConfigUpdate(BaseModel):
+    # #750: a field this route does not know is refused (422 naming it), never dropped with a 200 that changed
+    # nothing: a misspelled or removed field would otherwise look saved.
+    model_config = ConfigDict(extra="forbid")
+
     # RAV-1239: provider_mode/ollama_base_url removed — no execution path
     # ever read them (the DB columns remain, ignored, for ledger reasons).
     model_heavy: str | None = None
