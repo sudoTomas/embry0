@@ -15,6 +15,7 @@ from embry0.api.session import TIER_ADMIN
 from embry0.api.v1._audit import audit
 from embry0.api.v1._skill_writes import check_added_skills
 from embry0.api.v1.provider_catalogue import catalogue_held
+from embry0.safety.policy import SHELL_TOOLS
 from embry0.services import job_briefs, proposal_briefs
 from embry0.services.brief_writer import voice_problem
 from embry0.services.model_enablement import (
@@ -31,7 +32,18 @@ from embry0.services.provider_readiness import (
 from embry0.services.tool_catalog import unknown_tools, unknown_tools_message
 from embry0.services.world import forget_rows
 from embry0.storage.repositories.agent_definitions import AgentDefinitionsRepository
-from embry0.workflows.row_behaviour import is_coder, quest_template_problem, untemplated_task_problem
+from embry0.workflows.row_behaviour import (
+    CODER,
+    DEFAULT_CODER,
+    NEVER_CODERS,
+    PUSH_ROLES,
+    coder_steps_problem,
+    coders_of,
+    is_coder,
+    quest_template_problem,
+    roles,
+    untemplated_task_problem,
+)
 
 # Agent definitions run in every repository's jobs: not a key with a repository allowlist's to change.
 router = APIRouter(dependencies=[deployment_writes("change the deployment's agents")], route_class=ServedRoute)
@@ -182,9 +194,95 @@ def _triage_may_add_warnings(agent: dict[str, Any]) -> list[str]:
     ]
 
 
+#: The tools an agent puts files on the job's branch with: one of them, or a shell tool (``SHELL_TOOLS``).
+_WRITING_TOOLS: Final = frozenset({"Write", "Edit", *SHELL_TOOLS})
+
+
+def _no_writing_tool_warnings(agent: dict[str, Any]) -> list[str]:
+    """The warning an agent holding a role that puts files on the job's branch (``coder``, ``docs``) gets when none
+    of its tools can change a file: its step would push nothing (#395)."""
+    held = sorted(roles(agent) & PUSH_ROLES)
+    if not held or _WRITING_TOOLS & set(agent.get("tools") or []):
+        return []
+    return [
+        f"{agent.get('type')!r} has the {' and '.join(held)} role{'s' if len(held) > 1 else ''} but none of "
+        f"{', '.join(sorted(_WRITING_TOOLS))}: its step can change no file, so it would put nothing on the job's branch"
+    ]
+
+
 def _agent_warnings(agent: dict[str, Any]) -> list[str]:
     """What a write tells the operator about the row it stored: what a job will run without, and why."""
-    return [*_no_tools_warnings(agent), *_no_shell_server_warnings(agent), *_triage_may_add_warnings(agent)]
+    return [
+        *_no_tools_warnings(agent),
+        *_no_shell_server_warnings(agent),
+        *_triage_may_add_warnings(agent),
+        *_no_writing_tool_warnings(agent),
+    ]
+
+
+async def _reject_unfit_roles(
+    request: Request, repo: AgentDefinitionsRepository, agent: dict[str, Any], held: frozenset[str]
+) -> None:
+    """A 422 naming ``roles`` when the agent's row, as the write leaves it (``agent``), may not hold what it would
+    hold (#395):
+
+    - either role on a definition no job runs (a brief writer's voice);
+    - the coder role on one of the graph's own steps (review, QA, triage, output), which may hold ``docs``;
+    - the built-in developer without it: it is the coder of a route that names none, and of the legacy route;
+    - the coder role on an agent a saved template names next to another coder: a route has at most one.
+    """
+    agent_type = str(agent.get("type") or "")
+    if held and agent.get("runs_in_jobs") is False:
+        raise HTTPException(
+            status_code=422, detail=f"roles: {agent_type!r} cannot hold {', '.join(sorted(held))}: no job runs it"
+        )
+    if CODER in held and agent_type in NEVER_CODERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"roles: {agent_type!r} cannot hold the {CODER} role: it is a step with a node of its own",
+        )
+    if agent_type == DEFAULT_CODER and CODER not in held:
+        raise HTTPException(
+            status_code=422,
+            detail=f"roles: {DEFAULT_CODER!r} always holds the {CODER} role: it codes every route that names no coder",
+        )
+    if CODER not in held:
+        return
+    problems = await _two_coder_problems(request, repo, agent)
+    if problems:
+        raise HTTPException(status_code=422, detail=f"roles: giving {agent_type!r} the {CODER} role: {problems[0]}")
+
+
+async def _two_coder_problems(request: Request, repo: AgentDefinitionsRepository, agent: dict[str, Any]) -> list[str]:
+    """What each saved template says when the agent ``agent`` holds the coder role: one that would then have two coder
+    steps (#395). Nothing without the templates."""
+    templates = getattr(request.app.state, "templates_repo", None)
+    if templates is None:
+        return []
+    agent_type = str(agent.get("type") or "")
+    coders = coders_of(
+        [*(r for r in await repo.list_all() if r.get("type") != agent_type), {**agent, "roles": [CODER]}]
+    )
+    found = []
+    for summary in await templates.list_all():
+        row = await templates.get(str(summary.get("id") or ""))
+        problem = coder_steps_problem(str(summary.get("name") or ""), (row or {}).get("graph_definition"), coders)
+        if problem is not None:
+            found.append(problem)
+    return found
+
+
+async def _two_coder_warnings(request: Request, repo: AgentDefinitionsRepository, agent: dict[str, Any]) -> list[str]:
+    return [
+        f"roles: {agent.get('type')!r} holds the coder role again: {p}"
+        for p in await _two_coder_problems(request, repo, agent)
+    ]
+
+
+async def _audit_roles(request: Request, agent_type: str, before: frozenset[str], after: frozenset[str]) -> None:
+    """``agent.roles_changed`` with the roles before and after, when they differ (#395)."""
+    if before != after:
+        await audit(request, "agent.roles_changed", agent_type=agent_type, before=sorted(before), after=sorted(after))
 
 
 async def _template_names(request: Request) -> set[str] | None:
@@ -227,8 +325,9 @@ async def create_agent(
 
 async def _create_agent(req: AgentCreateRequest, request: Request, repo: AgentDefinitionsRepository) -> dict[str, Any]:
     await _reject_if_disabled(request, req.model)
-    # A new agent holds no role (#395): roles are not written through this route.
-    await _reject_unrunnable_task(request, req.type, req.quest_template, coder=False)
+    held = roles({"roles": req.roles})
+    await _reject_unfit_roles(request, repo, {"type": req.type, "tools": req.tools, "roles": req.roles}, held)
+    await _reject_unrunnable_task(request, req.type, req.quest_template, coder=CODER in held)
     servers = _servers_sent(req.mcp_servers, {})
     warnings = await check_added_skills(request, req.skills or [])
     try:
@@ -249,11 +348,13 @@ async def _create_agent(req: AgentCreateRequest, request: Request, repo: AgentDe
             triage_may_add_skills=req.triage_may_add_skills,
             station=req.station,
             quest_template=req.quest_template,
+            roles=req.roles,
         )
     except Exception as exc:
         if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
             raise HTTPException(status_code=409, detail=f"Agent type '{req.type}' already exists") from exc
         raise
+    await _audit_roles(request, req.type, frozenset(), roles(created))
     forget_rows(request.app.state, "agents")
     [shown] = await _shown(request, [created])
     return {**shown, "warnings": [*warnings, *_agent_warnings(created)]}
@@ -301,10 +402,20 @@ async def _update_agent(
     if nulls:
         raise HTTPException(status_code=422, detail=f"{', '.join(sorted(nulls))} cannot be null")
     await _reject_if_disabled(request, updates.get("model"))
+    current: dict[str, Any] = (
+        (await repo.get(agent_type) or {}) if ("roles" in updates or "quest_template" in updates) else {}
+    )
+    held_before = roles(current)
+    held = roles({"roles": updates["roles"]}) if "roles" in updates else held_before
+    if "roles" in updates and held != held_before:
+        await _reject_unfit_roles(request, repo, {**current, "type": agent_type, **updates}, held)
+    if "roles" in updates and "quest_template" not in updates and CODER in held_before and CODER not in held:
+        # The stored task: one that names no template runs triage's route, which only a coder works on.
+        if (problem := untemplated_task_problem(agent_type, current.get("quest_template"), coder=False)) is not None:
+            raise HTTPException(status_code=422, detail=problem)
     if "quest_template" in updates:
-        current = await repo.get(agent_type) or {}
         if updates["quest_template"] != current.get("quest_template"):
-            await _reject_unrunnable_task(request, agent_type, updates["quest_template"], coder=is_coder(current))
+            await _reject_unrunnable_task(request, agent_type, updates["quest_template"], coder=CODER in held)
     if updates.get("system_prompt"):
         # A definition no job runs is a brief writer's voice (#166): the answer's format is the code's, so a voice
         # that defines one of its keys would fight the format added after it.
@@ -341,7 +452,18 @@ async def _update_agent(
             raise HTTPException(status_code=404, detail="Agent type not found")
         [shown] = await _shown(request, [agent])
         return {**shown, "warnings": [*warnings, *_agent_warnings(agent)]}
-    updated = await repo.update(agent_type, **updates)
+    try:
+        if "roles" in updates:
+            # The roles the row held just before this write are read with it, under its lock: a concurrent write
+            # between the checks above and this one cannot make a change of roles look like none, and go unrecorded.
+            updated, written_over = await repo.update_with_roles_before(agent_type, **updates)
+            await _audit_roles(request, agent_type, roles({"roles": written_over}), roles(updated))
+        else:
+            updated = await repo.update(agent_type, **updates)
+    except ValueError as exc:
+        if "not found" in str(exc):
+            raise HTTPException(status_code=404, detail="Agent type not found") from exc
+        raise
     forget_rows(request.app.state, "agents")
     [shown] = await _shown(request, [updated])
     return {**shown, "warnings": [*warnings, *_agent_warnings(updated)]}
@@ -370,12 +492,17 @@ async def reset_agent(
     repo: AgentDefinitionsRepository = Depends(get_agent_defs_repo),
 ) -> dict[str, Any]:
     try:
-        reset = await repo.reset(agent_type)
+        reset, written_over = await repo.reset_with_roles_before(agent_type)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    before = roles({"roles": written_over})
+    await _audit_roles(request, agent_type, before, roles(reset))
     forget_rows(request.app.state, "agents")
     [shown] = await _shown(request, [reset])
-    return shown
+    # A reset can give back the coder role a template was saved without: it is done, and says which template now has
+    # two coder steps (plan_route skips such a template at plan time).
+    warnings = await _two_coder_warnings(request, repo, reset) if CODER in roles(reset) - before else []
+    return {**shown, "warnings": warnings}
 
 
 @router.post("/agents/{agent_type}/skills/{skill_name}", dependencies=[require_admin])

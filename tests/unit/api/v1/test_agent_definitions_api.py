@@ -28,6 +28,10 @@ def app():
     mock_repo.update = AsyncMock(return_value={**DEVELOPER_AGENT, "description": "Updated"})
     mock_repo.delete = AsyncMock()
     mock_repo.reset = AsyncMock(return_value=DEVELOPER_AGENT)
+    # The reset route reads the roles the reset replaced with it (#395).
+    mock_repo.reset_with_roles_before = AsyncMock(
+        return_value=(DEVELOPER_AGENT, list(DEVELOPER_AGENT.get("roles") or []))
+    )
     app.state.agent_defs_repo = mock_repo
     return app
 
@@ -211,7 +215,7 @@ async def test_reset_agent(app):
 
 @pytest.mark.asyncio
 async def test_reset_agent_not_found(app):
-    app.state.agent_defs_repo.reset = AsyncMock(side_effect=ValueError("Agent type not found"))
+    app.state.agent_defs_repo.reset_with_roles_before = AsyncMock(side_effect=ValueError("Agent type not found"))
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(

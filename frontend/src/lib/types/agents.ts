@@ -66,6 +66,9 @@ export interface AgentDefinition {
   quest_template?: string | null;
   /** Read-only: whether the developer node runs it, so a guild task naming no template is its to take. */
   coding_agent?: boolean;
+  /** What a job lets it do beyond its tools (#395): "coder" runs it on the developer node, with the job's branch
+   * and its pull request. Absent on a backend that predates it. */
+  roles?: string[];
   /** Write responses only: skills accepted from a source that is not ready, and what a job runs without. */
   warnings?: string[];
   created_at?: string;
@@ -89,6 +92,8 @@ export interface AgentCreateRequest {
   triage_may_add_skills?: string[];
   station?: string;
   quest_template?: string | null;
+  /** ["coder"] runs it on the developer node (#395). */
+  roles?: string[];
 }
 
 /** PUT semantics: omitted fields stay untouched. Only execution_mode and auth_mode
@@ -115,4 +120,6 @@ export interface AgentUpdateRequest {
   station?: string;
   /** null takes the agent's task out of the guild. */
   quest_template?: string | null;
+  /** Not nullable on the backend: [] holds no role (#395). */
+  roles?: string[];
 }

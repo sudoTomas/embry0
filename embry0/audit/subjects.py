@@ -146,6 +146,7 @@ AUDIT_ACTION_SUBJECTS: Final[dict[AuditAction, Subject]] = {
     "progression.pack_reset": DEPLOYMENT,
     "agent.skill_added": DEPLOYMENT,
     "agent.skill_removed": DEPLOYMENT,
+    "agent.roles_changed": DEPLOYMENT,
     "skill_source.created": DEPLOYMENT,
     "skill_source.updated": DEPLOYMENT,
     "skill_source.synced": DEPLOYMENT,

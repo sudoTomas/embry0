@@ -116,6 +116,7 @@ AuditAction = Literal[
     # Agents and skills
     "agent.skill_added",
     "agent.skill_removed",
+    "agent.roles_changed",
     "skill_source.created",
     "skill_source.updated",
     "skill_source.synced",
@@ -258,6 +259,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "progression.pack_reset": "Game content reset to the shipped default",
     "agent.skill_added": "Skill added to an agent",
     "agent.skill_removed": "Skill removed from an agent",
+    "agent.roles_changed": "An agent's roles changed",
     "skill_source.created": "Skill source added",
     "skill_source.updated": "Skill source updated",
     "skill_source.synced": "Skill source synced",
