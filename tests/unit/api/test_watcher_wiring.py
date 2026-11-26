@@ -45,6 +45,9 @@ REQUIRED_IN_PRODUCTION = (
     "slop_policy",
     # #738 — without this the settings document's watcher section never reaches a tick: auto-accept stays off.
     "watcher_settings",
+    # #746 — without these a stack's row is read once, at startup: a PUT waits for a restart.
+    "stack_reader",
+    "filer_for",
 )
 
 
@@ -120,7 +123,7 @@ def test_the_filer_is_built_per_stack() -> None:
     tests/unit/services/test_watcher_multi_stack.py)."""
     call = _watcher_service_call()
     passed = {kw.arg: kw.value for kw in call.keywords if kw.arg}
-    assert ast.unparse(passed["filer"]).startswith("build_filer(stack")
+    assert ast.unparse(passed["filer"]) == "filer_for(stack)", "the filer of the stack's own tracker"
 
 
 def test_the_stack_table_is_wired_and_seeded_at_startup() -> None:

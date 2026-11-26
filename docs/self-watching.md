@@ -173,9 +173,9 @@ failed for record <record>: upstream timeout`.
 - **This stack's lines only, everywhere.** The clustering, the signature
   memory (`log_signatures`) and the attribution of a finding to the line
   its evidence quotes all use the same masks, so a line has one signature.
-- **Read every tick.** A PUT applies to the next tick without a restart (the
-  other overrides are still read at startup). A row that cannot be read
-  keeps the masks of the tick before.
+- **Read every tick.** A PUT applies to the next tick without a restart, as
+  does every other change to the stack's row (#746). A row that cannot be
+  read keeps the masks of the tick before.
 - **Checked at write.** `pattern` is a Python regular expression of 1 to 500
   characters that compiles, that the mask engine below can match, and that
   cannot match an empty string anywhere. `replacement` is a placeholder like
@@ -288,10 +288,11 @@ deployment's fork or clone of this repository.
    severities one of their words. A value stored before these checks that no
    longer passes is ignored with a `watcher_stack_setting_invalid` warning,
    and the deployment's value applies.
-4. **Restart the orchestrator.** Stacks are read once at startup
-   (`watcher_stacks_loaded`); a new or re-enabled row starts ticking after
-   the next restart, and a changed setting applies from then on, except
-   `signature_masks`, which every tick reads. `GET /api/v1/health/ready` then lists it under
+4. **Wait a minute; no restart.** The orchestrator looks at the table every
+   minute: a new or re-enabled row starts ticking (`watcher_stacks_synced`),
+   and a disabled or deleted one stops after the tick it is running, if any.
+   Each watcher reads its row before every tick, so a changed setting,
+   LogQL or tracker applies to its next tick (#746). `GET /api/v1/health/ready` then lists it under
    `checks.watcher_stacks` to a caller with a key or a session (send
    `Authorization: Bearer <key>`; without one the check answers only its
    overall `checks.watcher`, the worst state across the stacks), and the per-stack metrics

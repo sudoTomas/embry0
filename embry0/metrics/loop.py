@@ -538,6 +538,37 @@ class LoopMetrics:
             self._watcher_open_proposals_cap.labels(stack=stack).set(cap)
 
     @_never_raises
+    def watcher_stack_cap(self, *, stack: str, cap: int) -> None:
+        """A stack's proposal cap as its row sets it now: a stack started, or a row changed, after startup (#746)."""
+        self._watcher_open_proposals_cap.labels(stack=stack).set(cap)
+
+    @_never_raises
+    def watcher_stack_removed(self, stack: str) -> None:
+        """A stack no longer watched (disabled or deleted, #746): every series of it goes, so a dead-man alert does
+        not read a stack nobody watches as one that stopped ticking. Started again, it is seeded again."""
+        from embry0.storage.repositories.watcher_runs import WATCHER_ACTIONS
+
+        series: list[tuple[Any, tuple[str, ...]]] = [
+            *((self._watcher_ticks, (action, stack)) for action in (*WATCHER_ACTIONS, "other")),
+            *((self._watcher_health, (state, stack)) for state in WATCHER_HEALTH_STATES),
+            *(
+                (gauge, (stack,))
+                for gauge in (
+                    self._watcher_last_tick,
+                    self._watcher_last_analysed,
+                    self._watcher_last_verdict,
+                    self.watcher_open_proposals,
+                    self._watcher_open_proposals_cap,
+                )
+            ),
+        ]
+        for collector, labels in series:
+            try:
+                collector.remove(*labels)
+            except KeyError:
+                pass  # never written for this stack
+
+    @_never_raises
     def seed_watcher_ticks(
         self,
         *,

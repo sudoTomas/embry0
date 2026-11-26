@@ -89,6 +89,7 @@ from embry0.services.slop import (
 )
 from embry0.services.watcher_budget import resolve_watcher_job_budget
 from embry0.services.watcher_recursion import drop_own_lines
+from embry0.services.watcher_stacks import StackConfig, WatcherStack
 from embry0.settings.sections.slop_policy import DEFAULT_KINDS, SLOP_POLICY, SlopPolicySettings
 from embry0.settings.sections.watcher import WATCHER, WatcherSettings
 from embry0.storage.repositories.jobs import OrganizationRemoved
@@ -541,8 +542,18 @@ class WatcherService:
         # under the stack's own values of its keys (``config.section_overrides``), so a change applies to the next
         # tick without a restart. None: the section's defaults, for good.
         watcher_settings: Callable[[], Awaitable[WatcherSettings]] | None = None,
+        # #746: ``() -> stack``, this stack's row as it is stored now (None when it is gone). Read before every
+        # scheduled tick and every tick started by hand (:meth:`refresh`), so a PUT applies to the next tick without
+        # a restart: its settings, LogQL and whether it is enabled. None: the stack this watcher was built with
+        # (``config``), for good.
+        stack_reader: Callable[[], Awaitable[WatcherStack | None]] | None = None,
+        # #746: ``stack -> filer``, the draft filer a stack's tracker and target build, for a row whose tracker
+        # changed. None: the filer this watcher was built with, for good.
+        filer_for: Callable[[WatcherStack], Any] | None = None,
     ) -> None:
         self._config = config
+        self._stack_reader = stack_reader
+        self._filer_for = filer_for
         self._signature_masks = signature_masks
         self._slop_policy = slop_policy
         self._watcher_settings = watcher_settings
@@ -582,6 +593,62 @@ class WatcherService:
         # Publish the starting health LAST: `health` reads the attributes
         # above, so this has to be the final line of __init__.
         self._metrics.watcher_health(self.health, stack=self._repo)
+
+    # ---- the stack's row (#746) ---------------------------------------------
+
+    @property
+    def stack_config(self) -> Any:
+        """The config this stack's ticks read now: its row's overrides over the process config."""
+        return self._config
+
+    @property
+    def ticking(self) -> bool:
+        """Whether a tick is running now; a watcher stopped meanwhile finishes it first."""
+        return self._running_tick.locked()
+
+    async def refresh(self) -> bool:
+        """Read this stack's row now and apply it to the ticks that follow; False when it is gone or disabled.
+
+        Its settings, LogQL, tracker and target apply to the next tick without a restart (#746). A changed tracker
+        or target builds the stack's filer again; a changed LogQL leaves the queries unverified, so the scheduled
+        loop asks Loki about them again before it ticks on them. A row that cannot be read leaves the row last read
+        in force: a database blip neither stops a stack nor changes what it reads.
+        """
+        if self._stack_reader is None:
+            return True
+        try:
+            stack = await self._stack_reader()
+        except Exception:  # noqa: BLE001 - the row last read still applies
+            logger.warning("watcher_stack_unread", stack=self._repo, exc_info=True)
+            return True
+        if stack is None or not stack.enabled:
+            return False
+        async with self._running_tick:
+            self._apply_stack(stack)
+        return True
+
+    def _apply_stack(self, stack: WatcherStack) -> None:
+        before = getattr(self._config, "stack", None)
+        if stack == before:
+            return
+        base = getattr(self._config, "base", self._config)
+        self._config = StackConfig(base, stack)
+        changed = sorted(
+            name
+            for name in ("logql", "tracker", "tracker_target", "settings")
+            if before is None or getattr(before, name) != getattr(stack, name)
+        )
+        if {"tracker", "tracker_target"} & set(changed) and self._filer_for is not None:
+            self._filer = self._filer_for(stack)
+        if before is None or (before.logql, before.settings.get("deploy_logql")) != (
+            stack.logql,
+            stack.settings.get("deploy_logql"),
+        ):
+            # The queries Loki judged are not the ones the stack reads now.
+            self._query_checks = {}
+            self._metrics.watcher_health(self.health, stack=self._repo)
+        self._metrics.watcher_stack_cap(stack=self._repo, cap=int(self._config.watcher_max_open_proposals))
+        logger.info("watcher_stack_reloaded", stack=self._repo, changed=changed)
 
     # ---- query validation (#270) -------------------------------------------
 
@@ -2293,6 +2360,11 @@ class WatcherService:
                 last_iteration_at = self._now()
 
     async def _iterate(self) -> None:
+        if not await self.refresh():
+            # #746: disabled or deleted since the last tick. The fleet stops this loop at its next look; until
+            # then, nothing is ticked.
+            logger.info("watcher_stack_not_watched", stack=self._repo)
+            return
         if self.health != "ok":
             # Unreachable at startup: get a verdict once Loki is back.
             # Faulty: re-probing re-raises the CRITICAL every interval, so

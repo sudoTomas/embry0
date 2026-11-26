@@ -1,5 +1,10 @@
 """Watcher stacks API (#378): what embry0 watches, editable without a redeploy.
 
+A change applies without a restart (#746): each watcher reads its stack's row
+before every tick, and every minute the watcher fleet starts the stacks added
+or enabled since and stops those disabled or deleted
+(:mod:`embry0.services.watcher_fleet`).
+
 Reads are operator-tier like the rest of the watcher API; writes are
 admin-tier, because adding a stack points embry0's log analysis — and the
 spend behind it — at another deployment.

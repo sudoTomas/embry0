@@ -196,6 +196,31 @@ async def test_the_lifespan_publishes_the_configured_caps(booted: Any) -> None:
     )
 
 
+async def test_a_stack_added_or_disabled_after_startup_is_watched_or_dropped_without_a_restart(booted: Any) -> None:
+    """#746: the fleet the lifespan builds keeps the registry the API, the health check and the metrics read in step
+    with the table; a stack disabled since startup leaves every reader, and its series go."""
+    import dataclasses
+
+    from embry0.services.watcher_stacks import WatcherStack
+
+    fleet = getattr(booted.state, "watcher_fleet", None)
+    assert fleet is not None, "the lifespan builds no watcher fleet: a stack changed after startup waits for a restart"
+    registry = booted.state.loop_metrics.registry
+    added = WatcherStack(repo="acme/api", logql='{app="api"}', tracker="github")
+    await booted.state.watcher_stacks_repo.upsert(added)
+    await fleet.sync()
+    assert "acme/api" in booted.state.watcher_services, "a stack added after startup is watched"
+    assert registry.get_sample_value("embry0_watcher_open_proposals_cap", {"stack": "acme/api"}) is not None
+    await booted.state.watcher_stacks_repo.upsert(dataclasses.replace(added, enabled=False))
+    await fleet.sync()
+    assert "acme/api" not in booted.state.watcher_services, "a stack disabled after startup is no longer watched"
+    assert registry.get_sample_value("embry0_watcher_open_proposals_cap", {"stack": "acme/api"}) is None, (
+        "a stack nobody watches leaves no series behind"
+    )
+    assert _STACK in booted.state.watcher_services, "the other stacks are left as they were"
+
+
+_SMALL_STACK = "acme/widgets"
 _SMALL_STACK = "acme/widgets"
 
 
