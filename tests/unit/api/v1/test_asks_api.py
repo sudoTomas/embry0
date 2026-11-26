@@ -166,21 +166,13 @@ JOB = {
 
 
 class FakeUsers:
-    """Users who signed in, none of them a person yet: each stands in as one with their GitHub login (#179)."""
+    """Users who signed in. Ada, Nora and Cy are people too (:class:`FakePeople`), holding their GitHub logins."""
 
     USERS = {
-        "ada@example.com": SimpleNamespace(
-            id="usr-ada", email="ada@example.com", name="Ada", github_login="ada", tier="operator"
-        ),
-        "nora@example.com": SimpleNamespace(
-            id="usr-nora", email="nora@example.com", name="Nora", github_login="nora", tier="none"
-        ),
-        "cy@example.com": SimpleNamespace(
-            id="usr-cy", email="cy@example.com", name="Cy", github_login="cy", tier="operator"
-        ),
-        "root@example.com": SimpleNamespace(
-            id="usr-root", email="root@example.com", name="Root", github_login=None, tier="admin"
-        ),
+        "ada@example.com": SimpleNamespace(id="usr-ada", email="ada@example.com", name="Ada", tier="operator"),
+        "nora@example.com": SimpleNamespace(id="usr-nora", email="nora@example.com", name="Nora", tier="none"),
+        "cy@example.com": SimpleNamespace(id="usr-cy", email="cy@example.com", name="Cy", tier="operator"),
+        "root@example.com": SimpleNamespace(id="usr-root", email="root@example.com", name="Root", tier="admin"),
     }
 
     async def get_by_email(self, email: str) -> Any:
@@ -191,6 +183,21 @@ class FakeUsers:
 
     async def disabled_ids(self) -> set[str]:
         return set()
+
+
+class FakePeople:
+    """The people an admin made (#179): each of :class:`FakeUsers` but Root, linked and holding their GitHub login."""
+
+    def __init__(self) -> None:
+        from tests.fixtures.people_directory import person
+
+        self.rows = [
+            person(name, email=f"{login}@example.com", user_id=f"usr-{login}", identities=[("github", login)])
+            for name, login in (("Ada", "ada"), ("Nora", "nora"), ("Cy", "cy"))
+        ]
+
+    async def all(self, *, include_disabled: bool = False) -> list[Any]:
+        return [p for p in self.rows if include_disabled or not p.disabled]
 
 
 class FakeSettings:
@@ -233,6 +240,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     app.state.db = None
     app.state.asks_repo = FakeAsks()
     app.state.users_repo = FakeUsers()
+    app.state.people_repo = FakePeople()
     app.state.webhook_notifier = FakeNotifier()
     app.state.settings = FakeSettings({"asks": {"enabled": True}})
     open_decisions = {"offer:crack:1": dict(CRACK), "done:job-1": dict(JOB)}
@@ -281,7 +289,6 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
         "key": "ada@example.com",
         "email": "ada@example.com",
         "name": "Ada",
-        "github_login": "ada",
         # #179: a person embry0 knows; to a caller with no repository allowlist, their chat handles (none here) and
         # the time zone their ask is timed by.
         "unknown": False,
@@ -290,7 +297,7 @@ async def test_the_feed_gives_each_due_ask_its_card_code_person_and_chat_actions
     }
     assert due[0]["actions"] == ["start", "decline", "later", "send_to"]
     assert due[0]["dashboard_url"] == "https://e0.example/decisions?stage=offered"
-    assert due[1]["recipient"]["github_login"] == "bo" and due[1]["actions"] == ["send_to"], (
+    assert due[1]["recipient"]["key"] == "github:bo" and due[1]["actions"] == ["send_to"], (
         "no merge without an approval"
     )
     assert app.state.asks_repo.rows[2]["state"] == "queued", (
@@ -495,7 +502,6 @@ async def test_a_group_is_asked_by_name_and_anyone_embry0_knows_may_answer_for_i
     assert due[0]["recipient"] == {
         "key": "group:triage",
         "group": "triage",
-        "github_login": None,
         "email": None,
         "name": "triage",
         # A group follows its decision's organization (#179); it has no handle of a person's.

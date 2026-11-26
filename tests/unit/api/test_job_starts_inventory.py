@@ -629,10 +629,9 @@ async def _offered(app: FastAPI, kind: str) -> str:
 async def _asked(app: FastAPI, db: DatabasePool) -> Mapping[str, str]:
     """An ask about the other repository's open issue, with the code a chat answers it by."""
     # The person who answers: an owner of the repository (its preferences name ``ada``), by their GitHub login.
-    await db.execute(
-        "INSERT INTO users (id, auth0_sub, email, name, tier, github_login) VALUES ('usr-ada', 'auth0|ada', "
-        "'ada@example.com', 'ada', 'operator', 'ada') ON CONFLICT DO NOTHING"
-    )
+    from tests.fixtures.people_directory import stored_person
+
+    await stored_person(db, user_id="usr-ada", email="ada@example.com", name="ada", github="ada")
     decision = f"offer:issue:{CHILD[UNCOVERED]}"
     await db.execute("INSERT INTO decision_codes (decision_id, code) VALUES ($1, 'STRT01')", decision)
     await db.execute(
@@ -745,10 +744,9 @@ async def _map_file(_app: FastAPI, db: DatabasePool) -> None:
 
 async def _starter(_app: FastAPI, db: DatabasePool) -> None:
     """The person who started the other repository's job, known to embry0, as a chat names them."""
-    await db.execute(
-        "INSERT INTO users (id, auth0_sub, email, name, tier, github_login) VALUES ('usr-ada', 'auth0|ada', "
-        "'ada@example.com', 'ada', 'operator', 'ada') ON CONFLICT DO NOTHING"
-    )
+    from tests.fixtures.people_directory import stored_person
+
+    await stored_person(db, user_id="usr-ada", email="ada@example.com", name="ada", github="ada")
 
 
 async def _issueless_question(_app: FastAPI, db: DatabasePool) -> Mapping[str, str]:
@@ -946,7 +944,6 @@ CALLS: dict[tuple[str, str], tuple[Call, ...]] = {
         for path in ("/api/v1/progression/pack", "/api/v1/progression/pack/draft")
     },
     ("POST", "/api/v1/repos"): (Call(body={"repo": UNCOVERED, "forge": "github", "notes": "Again"}),),
-    ("PUT", "/api/v1/me/github-login"): (Call(body={"login": "ada"}),),
     ("POST", "/api/v1/repos/{full_repo:repo}/-/setup/proposal/{proposal_id}/apply"): (Call(setup=_proposed_setup),),
     ("PUT", "/api/v1/maps/{slug}/owner"): (Call(body=lambda v: {"owner": v["owner"]}),),
 }

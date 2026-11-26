@@ -14,22 +14,23 @@ from embry0.api.v1 import decisions as decisions_api
 from embry0.api.v1 import handoffs as handoffs_api
 from embry0.config import Embry0Config
 from embry0.services.handoffs import settle
+from tests.fixtures.people_directory import person
 
 HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 ME = "ada@example.com"
 
 
-def user(uid: str, email: str, *, name: str = "", tier: str = "operator", login: str | None = None) -> Any:
-    return SimpleNamespace(id=uid, email=email, name=name, tier=tier, disabled=False, github_login=login)
+def user(uid: str, email: str, *, name: str = "", tier: str = "operator") -> Any:
+    return SimpleNamespace(id=uid, email=email, name=name, tier=tier, disabled=False)
 
 
 class FakeUsers:
     def __init__(self) -> None:
         self.rows = [
-            user("u1", ME, name="Ada", login="ada"),
-            user("u2", "bo@example.com", name="Bo", login="bo"),
+            user("u1", ME, name="Ada"),
+            user("u2", "bo@example.com", name="Bo"),
             user("u3", "guest@example.com", tier="none"),
-            user("u4", "cy@example.com", name="Cy", tier="none", login="cy"),
+            user("u4", "cy@example.com", name="Cy", tier="none"),
         ]
 
     async def people(self) -> list[Any]:
@@ -41,11 +42,19 @@ class FakeUsers:
     async def get_by_email(self, email: str) -> Any:
         return next((u for u in self.rows if u.email.lower() == email.lower()), None)
 
-    async def set_github_login(self, user_id: str, login: str | None, *, actor: str = "system") -> Any:
-        u = next((u for u in self.rows if u.id == user_id), None)
-        if u is not None:
-            u.github_login = login
-        return u
+
+class FakePeople:
+    """The people an admin made (#179): Ada, who signs in, and Cy and Dee, who do not (Cy's user may not)."""
+
+    def __init__(self) -> None:
+        self.rows = [
+            person("Ada", email=ME, user_id="u1", identities=[("github", "ada")]),
+            person("Cy", email="cy@example.com", user_id="u4", identities=[("github", "cy")]),
+            person("Dee", email="dee@example.com"),
+        ]
+
+    async def all(self, *, include_disabled: bool = False) -> list[Any]:
+        return [p for p in self.rows if include_disabled or not p.disabled]
 
 
 class FakeHandoffs:
@@ -117,6 +126,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> Any:
     app = create_app(Embry0Config(_env_file=None, auth_dev_mode=True, webhook_dev_mode=True))
     app.state.db = None
     app.state.users_repo = FakeUsers()
+    app.state.people_repo = FakePeople()
     app.state.handoffs_repo = FakeHandoffs()
     app.state.webhook_notifier = FakeNotifier()
 
@@ -143,17 +153,35 @@ async def call(app: Any, method: str, url: str, **kw: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_the_people_a_decision_can_go_to_sign_in_or_have_a_github_login(app: Any) -> None:
+async def test_the_people_a_decision_can_go_to_sign_in_or_are_people(app: Any) -> None:
     people = (await call(app, "GET", "/api/v1/handoffs/people")).json()["people"]
-    assert [p["email"] for p in people] == [ME, "bo@example.com", "cy@example.com"], "not a guest with neither"
-    assert people[1] == {"id": "u2", "email": "bo@example.com", "name": "Bo", "github_login": "bo", "tier": "operator"}
+    assert [p["email"] for p in people] == [ME, "bo@example.com", "cy@example.com", "dee@example.com"], (
+        f"everyone who signs in and every person, not a guest who is neither: {people}"
+    )
+    assert people[1] == {"id": "u2", "email": "bo@example.com", "name": "Bo", "tier": "operator"}, "no GitHub login"
+    assert people[3] == {"id": "per-dee", "email": "dee@example.com", "name": "Dee", "tier": ""}, (
+        "a person with no sign-in, by their own id"
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_decision_can_go_to_someone_named_by_a_login_who_never_signed_in(app: Any) -> None:
-    resp = await call(app, "POST", "/api/v1/decisions/offer:crack:1/send-to", json={"to": "cy@example.com"})
-    assert resp.status_code == 201, resp.text
-    assert resp.json()["to_email"] == "cy@example.com"
+async def test_a_user_whose_person_is_disabled_is_sent_nothing(app: Any) -> None:
+    """#740 review: Bo signs in, but an admin disabled Bo's person, who is asked nothing and decides nothing (#704)."""
+    app.state.people_repo.rows.append(person("Bo", email="bo@example.com", user_id="u2", disabled=True))
+    people = (await call(app, "GET", "/api/v1/handoffs/people")).json()["people"]
+    assert "bo@example.com" not in [p["email"] for p in people], (
+        f"a user whose person is disabled must not be offered as a recipient: {people}"
+    )
+    sent = await call(app, "POST", "/api/v1/decisions/offer:crack:1/send-to", json={"to": "bo@example.com"})
+    assert sent.status_code == 422, f"a hand-off to a user whose person is disabled must be refused: {sent.text}"
+
+
+@pytest.mark.asyncio
+async def test_a_decision_can_go_to_a_person_who_never_signed_in(app: Any) -> None:
+    for to in ("cy@example.com", "dee@example.com"):
+        resp = await call(app, "POST", "/api/v1/decisions/offer:crack:1/send-to", json={"to": to})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["to_email"] == to
 
 
 @pytest.mark.asyncio
@@ -204,15 +232,11 @@ async def test_the_recipient_sends_it_back_with_a_note_and_the_sender_can_take_i
 
 
 @pytest.mark.asyncio
-async def test_a_github_login_is_named_by_its_person_and_checked(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    from embry0.api.v1 import handoffs
-
-    monkeypatch.setattr(handoffs, "request_session", lambda _r: SimpleNamespace(email=ME))
-    assert (await call(app, "PUT", "/api/v1/me/github-login", json={"login": "@ada-l"})).json()[
-        "github_login"
-    ] == "ada-l"
-    assert (await call(app, "PUT", "/api/v1/me/github-login", json={"login": "not a login"})).status_code == 422
-    assert (await call(app, "PUT", "/api/v1/users/u2/github-login", json={"login": ""})).json()["github_login"] is None
+async def test_nobody_names_a_github_login_of_their_own_any_more(app: Any) -> None:
+    """The logins a person is named by are their identities, which an admin writes on the People page (#179)."""
+    for url in ("/api/v1/me/github-login", "/api/v1/users/u2/github-login"):
+        resp = await call(app, "PUT", url, json={"login": "ada-l"})
+        assert resp.status_code == 404, f"{url} was retired with users.github_login: {resp.status_code} {resp.text}"
 
 
 @pytest.mark.asyncio

@@ -293,10 +293,6 @@ ACTOR_COLUMNS: dict[str, tuple[str, str | tuple[str, ...]]] = {
     "knowledge_map_marks.map_owner": (_VISIBLE, _OWNER),
     "knowledge_map_sends.map_owner": (_VISIBLE, _OWNER),
     "users.email": (_UNSERVED, "the admin-only users router; GET /people lists who can be sent one, not who did what"),
-    "users.github_login": (
-        _UNSERVED,
-        "the admin-only users router; GET /people lists who can be sent one, not who did what",
-    ),
     # People (#179): no route reads the tables yet; the people API decides how each is shown.
     "people.created_by": (_UNSERVED, "no route returns it: who added a person is the audit log's (person.created)"),
     "people.email": (

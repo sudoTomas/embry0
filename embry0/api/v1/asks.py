@@ -130,23 +130,16 @@ async def _person(
     person = directory.of_recipient(key) if directory is not None else None
     if key.startswith("group:"):
         name = key.removeprefix("group:")
-        out: dict[str, Any] = {"key": key, "group": name, "github_login": None, "email": None, "name": name}
+        out: dict[str, Any] = {"key": key, "group": name, "email": None, "name": name}
     elif "@" not in key:
         forge, _, login = key.partition(":")
-        out = {
-            "key": key,
-            "github_login": login if forge == "github" else None,
-            "email": None,
-            "name": person.name if person is not None else login,
-        }
+        out = {"key": key, "email": None, "name": person.name if person is not None else login}
     else:
         found = await users.get_by_email(who) if users is not None else None
-        github = next((i.value for i in person.identities if i.kind == "github"), None) if person is not None else None
         out = {
             "key": key,
             "email": who,
             "name": (person.name if person is not None else "") or (found.name if found is not None else "") or who,
-            "github_login": (found.github_login if found is not None else None) or github,
         }
     out["unknown"] = directory is not None and unknown(key, directory)
     if timed_by is not None:

@@ -168,7 +168,6 @@ export function PeoplePage() {
                   <span className="font-medium">{user.name || user.email}</span>
                   <span className="block text-xs text-fg-muted">
                     Signs in as {user.email}
-                    {user.github_login ? ` · GitHub ${user.github_login}` : ""}
                   </span>
                 </span>
                 <AdminButton
@@ -183,7 +182,7 @@ export function PeoplePage() {
                         name: user.name || user.email,
                         email: user.email,
                         user_id: user.user_id,
-                        identities: user.github_login ? [{ kind: "github", value: user.github_login }] : [],
+                        identities: [],
                       },
                     })
                   }

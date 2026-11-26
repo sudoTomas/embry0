@@ -167,7 +167,7 @@ async def _skipped_owners(app: Any, quests_each: int) -> None:  # noqa: F811 - t
 
 
 def _ada_in(due: list[dict[str, Any]]) -> bool:
-    return any(a["recipient"]["github_login"] == "ada" for a in due)
+    return any(a["recipient"]["key"] == "github:ada" for a in due)
 
 
 @pytest.mark.parametrize("minutes", [10, 20], ids=["while-their-leases-run", "once-their-leases-lapsed"])
@@ -193,8 +193,7 @@ async def test_ada_reaches_the_page_while_owners_the_assistant_skips_hold_many_a
         later[0] = timedelta(minutes=minutes)
         page = await _due(client)
         assert _ada_in(page), (
-            f"the next poll, {minutes} minutes on, hands out ada's ask: "
-            f"{[a['recipient']['github_login'] for a in page]}"
+            f"the next poll, {minutes} minutes on, hands out ada's ask: {[a['recipient']['key'] for a in page]}"
         )
 
         later[0] = timedelta(days=7, minutes=1)

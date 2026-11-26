@@ -37,7 +37,7 @@ const ADA = {
 };
 const PAT = { ...ADA, id: "per-pat", name: "Pat", email: null, user_id: null, timezone: null, hours: null, identities: [] };
 const SUGGESTED = {
-  users: [{ user_id: "usr-bo", email: "bo@example.test", name: "Bo", github_login: "bo-l" }],
+  users: [{ user_id: "usr-bo", email: "bo@example.test", name: "Bo" }],
   owners: [{ forge: "gitlab", login: "cy", repos: ["acme/web", "acme/api"] }],
 };
 
@@ -90,14 +90,13 @@ describe("PeoplePage", () => {
     expect(mockDirectory).toHaveBeenLastCalledWith(true);
   });
 
-  it("starts a person from a user who signs in, with their sign-in and GitHub login", async () => {
+  it("starts a person from a user who signs in, with their sign-in, for an admin to give their logins", async () => {
     renderPage();
     await userEvent.click(within(screen.getByTestId("suggested-user")).getByRole("button", { name: "Add Bo" }));
     expect(screen.getByLabelText("Name")).toHaveValue("Bo");
     expect(screen.getByLabelText("Email")).toHaveValue("bo@example.test");
     expect(screen.getByLabelText("Signs in as")).toHaveValue("usr-bo");
-    expect(screen.getByLabelText("Identity 1 kind")).toHaveValue("github");
-    expect(screen.getByLabelText("Identity 1 value")).toHaveValue("bo-l");
+    expect(screen.queryByLabelText("Identity 1 value"), "a user has no login of their own to start from").toBeNull();
   });
 
   it("starts a person from an owner login on its own forge", async () => {

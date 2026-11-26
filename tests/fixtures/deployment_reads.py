@@ -173,17 +173,15 @@ class Deployment:
         app, db, env = self.app, self.db, self.monkeypatch
         # A person, who makes every change below with a key of their own.
         await db.execute(
-            "INSERT INTO users (id, auth0_sub, email, name, tier, github_login) "
-            "VALUES ('usr-ops', 'auth0|ops', $1, 'Ops', 'admin', $2)",
+            "INSERT INTO users (id, auth0_sub, email, name, tier) VALUES ('usr-ops', 'auth0|ops', $1, 'Ops', 'admin')",
             PERSON,
-            OWN["a person's GitHub login"],
         )
+        # A person not linked to the user, who is then a suggestion to add (GET /people/suggestions).
         await db.execute("INSERT INTO people (id, name, email) VALUES ($1, 'Ops', $2)", PERSON_ID, PERSON)
-        await db.execute(
-            "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, 'telegram', $2)",
-            PERSON_ID,
-            OWN["a person's chat handle"],
-        )
+        for kind, value in (("telegram", OWN["a person's chat handle"]), ("github", OWN["a person's GitHub login"])):
+            await db.execute(
+                "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, $2, $3)", PERSON_ID, kind, value
+            )
         _row, ops = await ApiKeysRepository(db).create(name="ops", scope="admin", user_id="usr-ops", created_by=PERSON)
         bust_api_key_cache()
         variables = [

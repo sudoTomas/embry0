@@ -26,7 +26,6 @@ def assignee(row: Mapping[str, Any], people: Mapping[str, Mapping[str, Any]]) ->
         "handoff_id": row.get("id"),
         "email": email,
         "name": str(person.get("name") or "") or email,
-        "github_login": person.get("github_login"),
         "from": row.get("from_actor"),
         "note": row.get("note") or "",
         "at": created.isoformat() if isinstance(created, datetime) else created,

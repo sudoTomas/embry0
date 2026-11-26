@@ -66,3 +66,32 @@ def asked(found: Directory) -> Callable[[Iterable[str | None]], Awaitable[Direct
 def users_of(*rows: Any) -> list[Any]:
     """Rows as ``UsersRepository.people`` answers them."""
     return list(rows)
+
+
+async def stored_person(
+    db: Any, *, user_id: str, email: str, name: str, github: str | None = None, tier: str = "operator"
+) -> str:
+    """A user who signs in, stored with the person they are, holding the GitHub login ``github``: an owner the way an
+    admin makes one on the People page since ``users.github_login`` was retired (#179). Idempotent. The person's id."""
+    person_id = f"per-{user_id}"
+    await db.execute(
+        "INSERT INTO users (id, auth0_sub, email, name, tier) VALUES ($1, $1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        user_id,
+        email,
+        name,
+        tier,
+    )
+    await db.execute(
+        "INSERT INTO people (id, name, email, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        person_id,
+        name,
+        email,
+        user_id,
+    )
+    if github:
+        await db.execute(
+            "INSERT INTO person_identities (person_id, kind, value) VALUES ($1, 'github', $2) ON CONFLICT DO NOTHING",
+            person_id,
+            github,
+        )
+    return person_id

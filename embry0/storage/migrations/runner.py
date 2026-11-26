@@ -47,8 +47,8 @@ logger = structlog.get_logger(__name__)
 # with hashtextextended: `qa_image_tags:<repo>`, `org_needs:<owner>`,
 # `standards:<owner>:<kind>`, `org_discovery:<owner>`,
 # `credential_bindings:<scope_kind>:<scope_value>`,
-# `settings_documents:<scope>`, `asks:hand_out`, `local_model_slots:<server>`,
-# `progression_rollup` and `github_login:<login>`.
+# `settings_documents:<scope>`, `asks:hand_out`, `local_model_slots:<server>`
+# and `progression_rollup`.
 MIGRATIONS_ADVISORY_LOCK_KEY = 0x656D62727930
 
 # Acquisition is usually instantaneous; anything slower means another replica
@@ -5125,6 +5125,42 @@ deliverable under an "Assumptions" heading.$seed$
         END
         $$;
         ALTER TABLE provider_config DROP COLUMN IF EXISTS local_max_runs;
+        """,
+    ),
+    (
+        162,
+        "users.github_login retired: owners, asks and deciders read the people's identities alone (#179)",
+        # Owners resolve to people through their identities since #704; the user's
+        # GitHub login stood in for a user with no person, and was kept in step
+        # with a linked person's GitHub identities, for one release (spec
+        # 2026-11-23, section 3). A login no person holds as an identity would be
+        # lost with the column, so each is written to a user.github_login_retired
+        # audit row first (who, and the login), for an admin to add on the People
+        # page, and counted in a warning. The column's unique index goes with it.
+        """
+        DO $$
+        DECLARE kept integer;
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = current_schema() AND table_name = 'users' AND column_name = 'github_login'
+            ) THEN
+                INSERT INTO audit_log (action, actor, details)
+                SELECT 'user.github_login_retired', 'embry0:migration',
+                       jsonb_build_object('user_id', u.id, 'email', u.email, 'login', u.github_login)
+                  FROM users u
+                 WHERE NULLIF(BTRIM(u.github_login), '') IS NOT NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM person_identities i
+                        WHERE i.kind = 'github' AND LOWER(i.value) = LOWER(BTRIM(u.github_login))
+                   );
+                GET DIAGNOSTICS kept = ROW_COUNT;
+                IF kept > 0 THEN
+                    RAISE WARNING '% user(s) had a GitHub login no person holds: see their user.github_login_retired audit rows, and add them on the People page', kept;
+                END IF;
+                ALTER TABLE users DROP COLUMN github_login;
+            END IF;
+        END $$;
         """,
     ),
 ]

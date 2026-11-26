@@ -178,6 +178,7 @@ AuditAction = Literal[
     "person.deleted",
     "person.identity.added",
     "person.identity.removed",
+    "user.github_login_retired",
 ]
 
 AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
@@ -306,6 +307,7 @@ AUDIT_ACTION_LABELS: Final[dict[AuditAction, str]] = {
     "person.deleted": "Person removed",
     "person.identity.added": "Identity added to a person",
     "person.identity.removed": "Identity taken from a person",
+    "user.github_login_retired": "A user's GitHub login kept when the column was retired",
 }
 
 AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))
@@ -313,7 +315,13 @@ AUDIT_ACTIONS: Final[frozenset[str]] = frozenset(typing.get_args(AuditAction))
 #: Registered actions nothing writes any more: the one-time imports that wrote them are gone (#168, #175). Kept so
 #: the rows already written still read with their label and match a filter; never written again.
 NO_LONGER_WRITTEN: Final[frozenset[str]] = frozenset(
-    {"background_enrollment.blocked", "provider_catalogue.bootstrapped", "repo.areas_imported"}
+    {
+        "background_enrollment.blocked",
+        "provider_catalogue.bootstrapped",
+        "repo.areas_imported",
+        # Written once, by migration 162's SQL, for each login no person held when users.github_login went (#179).
+        "user.github_login_retired",
+    }
 )
 
 #: Names that older rows carry and nothing writes any more, each with the name that replaced it.

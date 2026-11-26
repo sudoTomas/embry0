@@ -25,7 +25,7 @@ const ADA: DirectoryPerson = {
   identities: [{ kind: "github", value: "ada-l" }],
   updated_at: "2026-11-25T09:00:00+00:00",
 };
-const USERS = [{ user_id: "usr-bo", email: "bo@example.test", name: "Bo", github_login: null }];
+const USERS = [{ user_id: "usr-bo", email: "bo@example.test", name: "Bo" }];
 
 function refused(status: number, detail: unknown) {
   return (_v: unknown, opts: { onError: (e: unknown) => void }) => opts.onError({ response: { status, data: { detail } } });

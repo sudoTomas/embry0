@@ -10,15 +10,13 @@ const mockUseDecisions = vi.fn();
 const mutate = vi.fn();
 const send = vi.fn();
 const giveBack = vi.fn();
-const link = vi.fn();
-const people = { current: [] as { email: string; name: string; github_login: string | null }[] };
+const people = { current: [] as { email: string; name: string }[] };
 vi.mock("@/hooks/useDecisions", () => ({
   useDecisions: (filters: unknown) => mockUseDecisions(filters),
   useAnswerDecision: () => ({ mutate, isPending: false }),
   usePeople: () => ({ data: people.current }),
   useSendDecision: () => ({ mutate: send, isPending: false }),
   useReturnHandoff: () => ({ mutate: giveBack, isPending: false }),
-  useSetMyGithubLogin: () => ({ mutate: link, isPending: false }),
 }));
 const admin = { current: true };
 vi.mock("@/stores/authStore", () => ({
@@ -89,8 +87,8 @@ beforeEach(() => {
   admin.current = true;
   catalogue.current = new Map();
   people.current = [
-    { email: "owner@example.com", name: "Owner", github_login: "owner" },
-    { email: "bo@example.com", name: "Bo", github_login: "bo" },
+    { email: "owner@example.com", name: "Owner" },
+    { email: "bo@example.com", name: "Bo" },
   ];
   mockUseDecisions.mockImplementation((filters: { for?: string }) =>
     filters.for === "me" ? { data: [] } : { data: [CRACK, REVIEW, WEED] },
@@ -137,7 +135,7 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
     renderPage("/decisions?stage=done");
     await userEvent.click(screen.getByRole("button", { name: "Send to…" }));
     const form = within(screen.getByTestId("decision-send-to"));
-    expect(form.getAllByRole("option").map((o) => o.textContent)).toEqual(["Who should decide this?", "Bo (@bo)"]);
+    expect(form.getAllByRole("option").map((o) => o.textContent)).toEqual(["Who should decide this?", "Bo"]);
     expect(form.getByRole("button", { name: "Send" })).toBeDisabled();
     await userEvent.selectOptions(form.getByRole("combobox"), "bo@example.com");
     await userEvent.type(form.getByRole("textbox"), "Your area");
@@ -149,7 +147,7 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
     admin.current = false;
     const sent = {
       ...REVIEW,
-      assigned_to: { handoff_id: "ho-1", email: "owner@example.com", name: "Owner", github_login: "owner", from: "bo@example.com", note: "Yours", at: "2026-10-27T12:00:00+00:00" },
+      assigned_to: { handoff_id: "ho-1", email: "owner@example.com", name: "Owner", from: "bo@example.com", note: "Yours", at: "2026-10-27T12:00:00+00:00" },
     };
     mockUseDecisions.mockImplementation((filters: { for?: string }) =>
       filters.for === "me" ? { data: [sent] } : { data: [CRACK, REVIEW, WEED] },
@@ -163,12 +161,10 @@ describe("DecisionsPage (decisions, spec 2026-10-27)", () => {
     expect(giveBack).toHaveBeenCalledWith({ handoffId: "ho-1", note: "" }, expect.anything());
   });
 
-  it("asks once for your GitHub login, so the quests your login owns wait for you", async () => {
-    people.current = [{ email: "owner@example.com", name: "Owner", github_login: null }];
+  it("asks nobody for their own login: an admin names a person's logins on the People page (#179)", () => {
     renderPage();
-    await userEvent.type(screen.getByRole("textbox", { name: "Your GitHub login" }), "octo");
-    await userEvent.click(screen.getByRole("button", { name: "Link" }));
-    expect(link).toHaveBeenCalledWith("octo", expect.anything());
+    expect(screen.queryByRole("textbox", { name: "Your GitHub login" }), "no self-service login").toBeNull();
+    expect(screen.getByText(/An admin names your logins on the People page/)).toBeInTheDocument();
   });
 
   it("answers in one click, and asks for words before a send-back", async () => {

@@ -155,6 +155,16 @@ describes what embry0 does rather than listing changes.
   one is still set, startup logs `settings_env_retired`. The proxy image and
   the sandbox images must be rebuilt
   ([docs/providers.md](docs/providers.md#local-models)).
+- **A user's GitHub login is retired** (#179). Owners, asks and who may
+  decide read the people's identities alone. `users.github_login` is
+  dropped (migration 162), and with it `PUT /api/v1/me/github-login`,
+  `PUT /api/v1/users/{id}/github-login` and the `github_login` field of
+  `GET /api/v1/asks/due` recipients, `GET /api/v1/handoffs/people`, a
+  decision's `assigned_to`, `GET /api/v1/users` and the people suggestions.
+  A user who signs in and is no person owns nothing until an admin adds them
+  on the People page; each login no person held is kept in a
+  `user.github_login_retired` audit row for that. A hand-off may go to
+  anyone who signs in or is a person with an email.
 - **Policy variables are no longer read.** The policy a feature read from
   environment variables before it moved into a document stored in the database
   (the settings document's sections, the provider catalogue) is set there only:

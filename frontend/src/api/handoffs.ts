@@ -1,12 +1,12 @@
 import { api } from "./client";
 
-/** Someone who signs in to embry0, and so can be sent a decision (hand-offs, spec 2026-10-27). */
+/** Someone a decision can be sent to (hand-offs, spec 2026-10-27): who signs in to embry0, or a person (#179). */
 export interface Person {
+  /** Their sign-in's id, else their person's. */
   id: string;
   email: string;
   name: string;
-  /** The GitHub login owners are named by; null until set. */
-  github_login: string | null;
+  /** Their sign-in's tier; empty for a person who does not sign in. */
   tier: string;
 }
 
@@ -15,7 +15,6 @@ export interface Assignee {
   handoff_id: string;
   email: string;
   name: string;
-  github_login: string | null;
   /** Who sent it. */
   from: string;
   note: string;
@@ -48,10 +47,5 @@ export async function sendDecision(decisionId: string, to: string, note: string)
 
 export async function returnHandoff(handoffId: string, note: string): Promise<Handoff> {
   const { data } = await api.post<Handoff>(`/handoffs/${encodeURIComponent(handoffId)}/return`, { note });
-  return data;
-}
-
-export async function setMyGithubLogin(login: string): Promise<Person> {
-  const { data } = await api.put<Person>("/me/github-login", { login });
   return data;
 }

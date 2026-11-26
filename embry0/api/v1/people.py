@@ -185,7 +185,7 @@ async def change_person(
 
 @router.delete("/people/{person_id}", dependencies=_WRITES)
 async def remove_person(person_id: str, request: Request) -> dict[str, Any]:
-    """Remove the person and their identities. A user they were linked to keeps their GitHub login."""
+    """Remove the person and their identities."""
     if not await _repo(request).delete(person_id, actor=request_actor(request)):
         raise _not_found()
     return {"deleted": person_id}
