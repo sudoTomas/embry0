@@ -204,6 +204,43 @@ describe("CatalogueEditor", () => {
     await waitFor(() => expect(api.saveProviderCatalogue).toHaveBeenCalledWith(text, 4, undefined));
   });
 
+  it("says it needs this release's orchestrator when the read carries no shipped catalogue, and nothing else breaks", async () => {
+    const { shipped: _dropped, ...older } = doc();
+    api.fetchProviderCatalogue.mockResolvedValue(older);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CatalogueEditor isAdmin />
+        <p>the rest of the page</p>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId("catalogue-needs-orchestrator")).toHaveTextContent("this release's orchestrator");
+    expect(screen.getByText("the rest of the page")).toBeInTheDocument();
+    expect(screen.queryByTestId("catalogue-review-form")).toBeNull();
+  });
+
+  it("keeps a fault of the card in the card", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    api.fetchProviderCatalogue.mockResolvedValue(doc({ shipped: { version: 1, providers: { broken: null as never } } }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CatalogueEditor isAdmin />
+        <p>the rest of the page</p>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId("catalogue-failed")).toBeInTheDocument();
+    expect(screen.getByText("the rest of the page")).toBeInTheDocument();
+  });
+
+  it("keeps each model's marker and action in its first column, reachable on a phone without a sideways scroll", async () => {
+    renderEditor();
+    const row = await screen.findByTestId("catalogue-model-deepseek-deepseek-flash");
+    const first = row.querySelector("td")!;
+    expect(within(first).getByText("Shipped")).toBeInTheDocument();
+    expect(within(first).getByRole("button", { name: "Take out" })).toBeInTheDocument();
+  });
+
   it("shows a reader the catalogue and nothing to change it with", async () => {
     renderEditor(false);
     const deepseek = await screen.findByTestId("catalogue-provider-deepseek");

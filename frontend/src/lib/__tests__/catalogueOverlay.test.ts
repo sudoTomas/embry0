@@ -9,6 +9,7 @@ import {
   hasDatedPrices,
   modelSource,
   overlayYaml,
+  plainDecimal,
   plainPrice,
   providerView,
   withEnabled,
@@ -129,5 +130,20 @@ describe("providerView", () => {
     expect(
       plainPrice({ prices: [{ in: 1, out: 2, from: "2026-12-01" }], free: false, chat_only: false, request_extras: {} }),
     ).toBeNull();
+  });
+});
+
+describe("plainDecimal", () => {
+  it("never writes an exponent, which the catalogue's loader would read as a string", () => {
+    expect([1e-7, 1.5e-7, 2.5e-10, 1e21, 1.25e22, 0.15, 3, -1e-7].map(plainDecimal)).toEqual([
+      "0.0000001",
+      "0.00000015",
+      "0.00000000025",
+      "1000000000000000000000",
+      "12500000000000000000000",
+      "0.15",
+      "3",
+      "-0.0000001",
+    ]);
   });
 });

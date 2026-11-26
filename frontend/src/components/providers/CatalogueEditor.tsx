@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { apiErrorMessage, isConflict } from "@/api/errorDetail";
 import type { ProviderCatalogueDocument } from "@/api/providerCatalogue";
 import { TextDiff } from "@/components/documents/TextDiff";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -30,6 +31,7 @@ import {
 import { documentProblems, type DocumentProblem } from "@/lib/settingsDocument";
 import { providerLabel } from "@/lib/status";
 import { parseUnifiedDiff } from "@/lib/textDiff";
+import { cn } from "@/lib/utils";
 
 /** The source of a model row, in words. */
 const SOURCE_LABEL: Record<ModelRow["source"], string> = {
@@ -91,29 +93,51 @@ function ModelRowEditor({
     );
   }
 
+  // The marker and the row's action sit under the id, in the first column, so a phone reaches them without a
+  // sideways scroll.
+  const action =
+    disabled ? null : row.source === "taken out" ? (
+      <Button size="xs" variant="ghost" onClick={() => onReplace(withoutModelEntry(overlay, provider, row.id))}>
+        Put back
+      </Button>
+    ) : row.source === "changed" ? (
+      <Button size="xs" variant="ghost" onClick={() => onReplace(withoutModelEntry(overlay, provider, row.id))}>
+        Reset to shipped
+      </Button>
+    ) : row.source === "shipped" ? (
+      <Button size="xs" variant="ghost" onClick={() => onReplace(withModelTakenOut(overlay, provider, row.id))}>
+        Take out
+      </Button>
+    ) : (
+      <Button size="xs" variant="ghost" onClick={() => onReplace(withoutModelEntry(overlay, provider, row.id))}>
+        Remove
+      </Button>
+    );
+  const idCell = (
+    <td className="py-1 pr-2 align-top">
+      <div className={cn("break-all font-mono text-xs", model === null && "line-through")}>{row.id}</div>
+      <div className="mt-0.5 flex flex-wrap items-center gap-1">
+        <Badge tone={row.source === "shipped" ? "neutral" : row.source === "taken out" ? "warning" : "info"}>
+          {SOURCE_LABEL[row.source]}
+        </Badge>
+        {action}
+      </div>
+    </td>
+  );
+
   if (model === null) {
     return (
       <tr data-testid={testId} className="text-fg-muted">
-        <td className="py-1 pr-2 font-mono text-xs line-through">{row.id}</td>
-        <td colSpan={4} className="py-1 pr-2 text-xs">
+        {idCell}
+        <td colSpan={4} className="py-1 pr-2 align-top text-xs">
           Taken out of the catalogue
-        </td>
-        <td className="py-1 pr-2">
-          <Badge tone="warning">{SOURCE_LABEL[row.source]}</Badge>
-        </td>
-        <td className="py-1 text-right">
-          {!disabled && (
-            <Button size="xs" variant="ghost" onClick={() => onReplace(withoutModelEntry(overlay, provider, row.id))}>
-              Put back
-            </Button>
-          )}
         </td>
       </tr>
     );
   }
   return (
     <tr data-testid={testId}>
-      <td className="py-1 pr-2 font-mono text-xs">{row.id}</td>
+      {idCell}
       <td className="py-1 pr-2">
         {dated ? (
           <span className="text-xs text-fg-muted" title="Edit dated prices under Advanced">
@@ -165,26 +189,6 @@ function ModelRowEditor({
           disabled={disabled || dated}
           onCheckedChange={(chatOnly) => edit({ chatOnly })}
         />
-      </td>
-      <td className="py-1 pr-2">
-        <Badge tone={row.source === "shipped" ? "neutral" : "info"}>{SOURCE_LABEL[row.source]}</Badge>
-      </td>
-      <td className="py-1 text-right">
-        {!disabled && row.source === "changed" && (
-          <Button size="xs" variant="ghost" onClick={() => onReplace(withoutModelEntry(overlay, provider, row.id))}>
-            Reset to shipped
-          </Button>
-        )}
-        {!disabled && row.source === "shipped" && (
-          <Button size="xs" variant="ghost" onClick={() => onReplace(withModelTakenOut(overlay, provider, row.id))}>
-            Take out
-          </Button>
-        )}
-        {!disabled && row.source === "added" && (
-          <Button size="xs" variant="ghost" onClick={() => onReplace(withoutModelEntry(overlay, provider, row.id))}>
-            Remove
-          </Button>
-        )}
       </td>
     </tr>
   );
@@ -296,10 +300,44 @@ function Problems({ problems }: { problems: DocumentProblem[] }) {
  * named. A save is in force at once, with no restart.
  */
 export function CatalogueEditor({ isAdmin }: { isAdmin: boolean }) {
+  // A fault of this card is the card's: the rest of the Providers page (its list, its probes) stays.
+  return (
+    <ErrorBoundary fallback={<CardNote testId="catalogue-failed">The provider catalogue could not be shown.</CardNote>}>
+      <CatalogueCard isAdmin={isAdmin} />
+    </ErrorBoundary>
+  );
+}
+
+function CardNote({ children, testId }: { children: ReactNode; testId: string }) {
+  return (
+    <Card data-testid="provider-catalogue">
+      <CardHeader>
+        <CardTitle className="text-lg">Provider catalogue</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-fg-secondary" data-testid={testId}>
+          {children}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CatalogueCard({ isAdmin }: { isAdmin: boolean }) {
   const doc = useProviderCatalogue();
   if (doc.isLoading) return <Skeleton className="h-40 w-full" />;
   if (doc.isError || !doc.data) {
-    return <p className="text-sm text-destructive">The provider catalogue could not be read.</p>;
+    return <CardNote testId="catalogue-unread">The provider catalogue could not be read.</CardNote>;
+  }
+  if (!doc.data.shipped?.providers) {
+    // An orchestrator of an earlier release (the dashboard deployed first, or the orchestrator rolled back) does
+    // not say what embry0 ships, which the form edits against: it is not guessed from the catalogue in force.
+    return (
+      <CardNote testId="catalogue-needs-orchestrator">
+        Editing the catalogue here needs this release&apos;s orchestrator. Until it runs, change the catalogue with{" "}
+        <code className="font-mono text-xs">PUT /api/v1/config/providers/catalog</code>.
+      </CardNote>
+    );
   }
   return <Editor key={doc.data.generation} doc={doc.data} isAdmin={isAdmin} />;
 }
@@ -398,7 +436,7 @@ function Editor({ doc, isAdmin }: { doc: ProviderCatalogueDocument; isAdmin: boo
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        {doc.refused.length > 0 && (
+        {(doc.refused ?? []).length > 0 && (
           <p className="text-sm text-warning" data-testid="catalogue-refused">
             Part of the stored overlay is not in force: {doc.refused.map((p) => p.loc.join(".")).join(", ")}.
           </p>
@@ -440,8 +478,6 @@ function Editor({ doc, isAdmin }: { doc: ProviderCatalogueDocument; isAdmin: boo
                             <th className="pr-2 font-normal">Out</th>
                             <th className="pr-2 font-normal">Free</th>
                             <th className="pr-2 font-normal">Chat-only</th>
-                            <th className="pr-2 font-normal">From</th>
-                            <th />
                           </tr>
                         </thead>
                         <tbody>
@@ -488,8 +524,8 @@ function Editor({ doc, isAdmin }: { doc: ProviderCatalogueDocument; isAdmin: boo
             <Label htmlFor="catalogue-yaml">The overlay, as YAML</Label>
             <p className="text-xs text-fg-muted">
               Only what differs from the shipped catalogue: per provider <code>enabled</code>, <code>factors</code>,{" "}
-              <code>default_price</code> and <code>models</code>. Comments are kept. An empty text is the catalogue
-              embry0 ships.
+              <code>default_price</code>, <code>models</code> and, for OpenRouter, <code>refresh_hours</code>.
+              Comments are kept. An empty text is the catalogue embry0 ships.
             </p>
             <Textarea
               id="catalogue-yaml"

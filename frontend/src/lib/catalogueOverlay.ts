@@ -171,18 +171,44 @@ export function hasDatedPrices(model: Pick<CatalogueModel, "prices"> | null | un
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const PLAIN_KEY = /^[A-Za-z_][A-Za-z0-9_./-]*$/;
+/**
+ * A plain key YAML 1.1 (what the catalogue's loader reads) would take for something else: a bool or null
+ * (`on`, `No`, `TRUE`, `~`), a number or a date. Such a key is quoted.
+ */
+const NOT_A_STRING =
+  /^(?:y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|null|Null|NULL|~|[-+]?(?:\d[\d_]*)?\.?\d[\d_]*(?:[eE][-+]?\d+)?|\.(?:inf|Inf|INF|nan|NaN|NAN)|\d{4}-\d{1,2}-\d{1,2}.*)$/;
+
+/**
+ * A number as plain decimals, never in exponent form (`1e-7`, `1e+21`), which the catalogue's loader would read
+ * as a string. From JavaScript's own shortest form of it, so no digit is made up.
+ */
+export function plainDecimal(value: number): string {
+  const text = String(value);
+  const match = /^(-?)(\d+)(?:\.(\d+))?e([-+]\d+)$/.exec(text);
+  if (!match) return text;
+  const [, sign, whole, fraction = "", power] = match;
+  const digits = whole + fraction;
+  const point = whole.length + Number(power);
+  if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
+  if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
 
 function scalar(value: unknown, key: string): string {
-  // The schema's version is a whole number; every other number of the overlay (a price, a factor, hours) a float.
+  // The schema's version is a whole number; every other number of the overlay (a price, a factor, hours) a float,
+  // so a whole one is written with its ".0".
   if (typeof value === "number" && key === "version") return String(value);
-  if (typeof value === "number") return Number.isInteger(value) ? value.toFixed(1) : String(value);
+  if (typeof value === "number") {
+    const text = plainDecimal(value);
+    return text.includes(".") ? text : `${text}.0`;
+  }
   // A price's day is a YAML date, as the catalogue reads it; any other string is quoted.
   if (key === "from" && typeof value === "string" && DAY.test(value)) return value;
   return JSON.stringify(value) ?? "null";
 }
 
 function keyText(key: string): string {
-  return PLAIN_KEY.test(key) ? key : JSON.stringify(key);
+  return PLAIN_KEY.test(key) && !NOT_A_STRING.test(key) ? key : JSON.stringify(key);
 }
 
 /** A request extra's value: JSON, which YAML reads as written. Its numbers stay as they are. */

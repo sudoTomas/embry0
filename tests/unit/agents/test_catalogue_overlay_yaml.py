@@ -36,4 +36,5 @@ def _json_form(value: Any) -> Any:
 def test_what_the_form_writes_reads_back_as_the_overlay_it_meant(case: dict[str, Any]) -> None:
     loaded = load_text(case["yaml"]) if case["yaml"] else {}
     assert _json_form(loaded) == case["overlay"], f"the catalogue reads {case['name']!r} as another overlay"
-    catalogue.merge(catalogue.seed().document, loaded or None)
+    if case.get("valid", True):
+        catalogue.merge(catalogue.seed().document, loaded or None)

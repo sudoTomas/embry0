@@ -1,5 +1,5 @@
 {
-  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other.",
+  "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other. A case with \"valid\": false is no catalogue (its id routes to no provider): the backend reads it back but does not merge it.",
   "cases": [
     {
       "name": "nothing: the shipped catalogue",
@@ -121,6 +121,55 @@
         }
       },
       "yaml": "version: 1\nproviders:\n  custom:\n    factors:\n      turns: 2.0\n    default_price:\n      in: 0.0\n      out: 0.0\n"
+    },
+    {
+      "name": "a tiny and a huge price, in plain decimals",
+      "overlay": {
+        "providers": {
+          "openai": {
+            "enabled": true,
+            "models": {
+              "gpt-edge": {
+                "prices": [
+                  {
+                    "in": 1e-07,
+                    "out": 1e+21
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  openai:\n    enabled: true\n    models:\n      gpt-edge:\n        prices:\n          - {in: 0.0000001, out: 1000000000000000000000.0}\n"
+    },
+    {
+      "name": "model ids YAML 1.1 would read as a bool, a null or a number, quoted",
+      "valid": false,
+      "overlay": {
+        "providers": {
+          "deepseek": {
+            "models": {
+              "on": {
+                "free": true
+              },
+              "No": {
+                "free": true
+              },
+              "null": {
+                "free": true
+              },
+              "~": {
+                "free": true
+              },
+              "1.5": {
+                "free": true
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  deepseek:\n    models:\n      \"on\":\n        free: true\n      \"No\":\n        free: true\n      \"null\":\n        free: true\n      \"~\":\n        free: true\n      \"1.5\":\n        free: true\n"
     }
   ]
 }
