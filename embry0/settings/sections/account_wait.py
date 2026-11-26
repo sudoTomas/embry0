@@ -26,7 +26,10 @@ spent usage window gets, ``QUOTA_RESET_QUARANTINE_MAX``), is more likely
 misread than real. ``max_total_wait_seconds`` bounds all of a job's waits
 together, over every wait, resume and relaunch (``jobs.account_waited_seconds``):
 a wait is cut to what is left of it, and once it is spent the job fails with
-the account's code instead of waiting again.
+the account's code instead of waiting again. The total is the job's: a
+relaunch keeps it, and the world's Run again, a new job, starts its own. A
+park that is not for an account (the proxies taking a woken job's sandbox
+back) does not count.
 
 A forced local run waits for a slot inside the run first
 (``LOCAL_LLM_SLOT_WAIT_SECONDS``), whatever this section says; only when none

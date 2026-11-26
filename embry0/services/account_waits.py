@@ -86,8 +86,10 @@ class AccountWait:
     # The answer a person gave the resume that was parked (a Command's value),
     # handed to the resume that goes on; None for none.
     resume_with: Any = None
-    # When the job was parked: the account-wait loop adds the time from then to
-    # jobs.account_waited_seconds when it goes on. None for a wait not parked yet.
+    # When the job was parked, by the database's clock (JobsRepository.update's
+    # count_account_wait): the account-wait loop adds the time from then to
+    # jobs.account_waited_seconds when it goes on. None for a wait not parked
+    # yet, and for one that does not count (a park for the proxies).
     since: datetime | None = None
 
     def record(self) -> dict[str, Any]:

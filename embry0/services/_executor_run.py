@@ -1208,15 +1208,12 @@ async def _park_for_account(self: IssueExecutor, job_id: str, wait: Any) -> NoRe
     on with it. Raises :class:`JobParked`, which the runners' failure paths do
     not see: a paused job keeps its sandbox, and its tracker hears nothing.
     """
-    from dataclasses import replace
-    from datetime import UTC, datetime
-
     from embry0.execution import events
     from embry0.services.account_waits import JobParked
 
-    # Since when: the account-wait loop adds the time from now to the job's account_waited_seconds as it goes on.
-    wait = replace(wait, since=datetime.now(UTC))
-    await self._jobs.update(job_id, status="paused", account_wait=wait.record())
+    # Its since is set by the database in the same write (count_account_wait), from the clock the account-wait loop
+    # subtracts it from when it adds this wait to the job's account_waited_seconds.
+    await self._jobs.update(job_id, status="paused", account_wait=wait.record(), count_account_wait=True)
     logger.info(
         "job_parked_for_account",
         job_id=job_id,

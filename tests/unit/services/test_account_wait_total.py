@@ -156,19 +156,22 @@ async def test_a_run_s_wait_is_cut_to_what_is_left() -> None:
 
 
 @pytest.mark.asyncio
-async def test_each_park_says_since_when_so_the_loop_can_add_the_time(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_each_park_has_the_database_stamp_its_start_so_the_loop_can_add_the_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The start is set by the database in the park's own write, from the clock the loop subtracts it from."""
     _policy()
     executor = _streaming_executor(monkeypatch, _Resolver(SPENT), AsyncMock())
-    before = datetime.now(UTC)
     with pytest.raises(JobParked):
         await executor._execute_workflow_stream({"repo": "acme/app", "job_id": "job-1"}, "iss-1", "job-1")
     [call] = [c for c in executor._jobs.update.await_args_list if c.kwargs.get("status") == "paused"]
-    since = AccountWait.from_record(call.kwargs["account_wait"]).since  # type: ignore[union-attr]
-    assert since is not None and before <= since <= datetime.now(UTC), f"the park records when it began: {since}"
+    assert call.kwargs.get("count_account_wait") is True, "a park for an account asks the database to stamp its start"
+    assert "since" not in call.kwargs["account_wait"], "not the orchestrator's clock: the database sets it"
 
 
 @pytest.mark.asyncio
-async def test_a_park_again_after_a_failed_reenrolment_starts_its_own_clock() -> None:
+async def test_a_park_again_after_a_failed_reenrolment_is_not_counted() -> None:
+    """Five minutes for the proxies to take the sandbox back is not a wait for an account."""
     from embry0.execution.sandbox_manager import SandboxReenrollError
     from tests.unit.services.test_spent_account_park import _resuming_executor
 
@@ -181,9 +184,10 @@ async def test_a_park_again_after_a_failed_reenrolment_starts_its_own_clock() ->
     )
     [call] = executor._jobs.update.await_args_list
     again = AccountWait.from_record(call.kwargs["account_wait"])
-    assert again is not None and again.since is not None and again.since > long_ago + timedelta(days=2), (
-        "the new park counts from now: the loop already added the last one's time when it took the job back"
+    assert again is not None and again.since is None, (
+        "a park for the proxies has no start, so the loop adds nothing for it (the account wait was added already)"
     )
+    assert not call.kwargs.get("count_account_wait"), "and it does not ask the database for one"
 
 
 @pytest.mark.requires_postgres
@@ -212,11 +216,18 @@ async def test_a_resume_across_the_total_fails_instead_of_waiting_again(
         await executor._execute_workflow_stream(Command(resume={"answer": "csv"}), "iss-1", job_id)
     assert parked.value.wait.until <= datetime.now(UTC) + timedelta(hours=1), "parked for the hour left, no more"
 
-    # The hour passes; the account-wait loop takes the job back and adds it.
+    stamped = await db_with_migrations.fetchval(
+        "SELECT NOW() - (account_wait->>'since')::timestamptz FROM jobs WHERE job_id = $1", job_id
+    )
+    assert stamped is not None and timedelta(0) <= stamped < timedelta(seconds=30), (
+        f"the park's start is the database's now: {stamped}"
+    )
+
+    # The hour passes (by the database's clock); the account-wait loop takes the job back and adds it.
     await db_with_migrations.execute(
-        "UPDATE jobs SET account_wait = jsonb_set(account_wait, '{since}', to_jsonb($2::text)) WHERE job_id = $1",
+        "UPDATE jobs SET account_wait = jsonb_set(account_wait, '{since}', to_jsonb(NOW() - interval '3601 seconds')) "
+        "WHERE job_id = $1",
         job_id,
-        (datetime.now(UTC) - timedelta(seconds=3601)).isoformat(),
     )
     assert await jobs.claim_account_wait(job_id)
     row = await jobs.get(job_id)

@@ -584,6 +584,7 @@ class JobsRepository:
         *,
         before_start: bool = False,
         expected_status: Collection[str] | None = None,
+        count_account_wait: bool = False,
         **fields: Any,
     ) -> None:
         """Update specific fields on a job. Validates status transitions.
@@ -603,6 +604,11 @@ class JobsRepository:
         write is a compare-and-swap on the status it checked, a same-status
         write's too, so nothing changes in between. A write without a
         ``status`` cannot name one (ValueError).
+
+        ``count_account_wait``: the ``account_wait`` written is a wait for an
+        account, which ``account_waited_seconds`` counts: its ``since`` is set
+        from the database's clock in the same statement, the clock
+        :meth:`claim_account_wait` subtracts it from (migration 160).
         """
         valid = {k: v for k, v in fields.items() if k in _UPDATABLE_FIELDS}
         if expected_status is not None and "status" not in valid:
@@ -655,7 +661,10 @@ class JobsRepository:
         args: list[Any] = [job_id]
         idx = 2
         for key, value in valid.items():
-            sets.append(f"{key} = ${idx}")
+            if key == "account_wait" and count_account_wait and value is not None:
+                sets.append(f"account_wait = jsonb_set(${idx}::jsonb, '{{since}}', to_jsonb(NOW()))")
+            else:
+                sets.append(f"{key} = ${idx}")
             args.append(value)
             idx += 1
 
@@ -975,9 +984,11 @@ class JobsRepository:
         and recovers it like any other (#307).
 
         The same statement adds the time since the job was parked (the wait's
-        ``since``) to ``account_waited_seconds`` (migration 160), which
-        ``account_wait.max_total_wait_seconds`` bounds. A wait parked before
-        that release has no ``since`` and adds nothing."""
+        ``since``, set by the database when it parked the job, :meth:`update`'s
+        ``count_account_wait``) to ``account_waited_seconds`` (migration 160),
+        which ``account_wait.max_total_wait_seconds`` bounds. A wait with no
+        ``since`` (a park for the proxies, or one from before that release)
+        adds nothing."""
         row = await self._db.fetchrow(
             """
             UPDATE jobs SET status = 'running', account_wait = NULL,

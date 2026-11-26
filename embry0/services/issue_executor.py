@@ -1539,8 +1539,9 @@ class IssueExecutor:
             if account_wait is not None:
                 # Nothing ran; the checkpoint still holds the stopped node.
                 logger.warning("account_wait_reenroll_failed_parked_again", job_id=job_id, error=str(exc))
-                now = datetime.now(UTC)
-                retry = replace(account_wait, until=now + REENROLL_RETRY, watch=False, since=now)
+                # A wait for the proxies, not for an account: no since, so the job's account_waited_seconds
+                # does not count it (the loop already added the account wait that ended).
+                retry = replace(account_wait, until=datetime.now(UTC) + REENROLL_RETRY, watch=False, since=None)
                 await self._jobs.update(job_id, status="paused", account_wait=retry.record())
                 return
             if after_restart:

@@ -910,11 +910,17 @@ section says. Only when no slot came free does it park for
 **The total.** `max_total_wait_seconds` bounds all of a job's waits
 together, over every wait, resume and relaunch. The job's row keeps the sum
 (`account_waited_seconds`, migration 160): each park records when it began,
-and the account-wait loop adds the time since then when it takes the job
-back (Try now does the same). A new wait is cut to what is left of the total,
-and once it is spent the job fails with the account's own code, as with
-`enabled: false`; its error says the total was reached. A wait parked before
-the release that added the sum counts as nothing.
+by the database's clock in the park's own write, and the account-wait loop
+adds the time since then when it takes the job back (Try now does the same).
+A new wait is cut to what is left of the total, and once it is spent the job
+fails with the account's own code, as with `enabled: false`; its error says
+the total was reached. What is not a wait for an account does not count: the
+five minutes a woken job waits when the proxies would not take its sandbox
+back, and a wait parked before the release that added the sum.
+
+The total belongs to the job. A relaunch of the same job (one parked before
+it started, a qa, onboard or pr-review job, a start after a restart) keeps
+it; **Run again** in the world starts a new job, with a total of its own.
 
 An organization's layer and a repository's may set every key. A job reads
 the section for its repository when it starts and keeps those values through
