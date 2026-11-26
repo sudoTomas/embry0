@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mockMutate = vi.fn();
@@ -107,16 +107,33 @@ describe("CreateIssueDialog", () => {
   // The picker closes its list 150 ms after it loses focus, and a click on
   // an option lands inside that window. The pick must outlast it: the close
   // used to put the filter typed to find the option back, and the dialog
-  // then created the issue on a repository named "wid" (#267).
-  it("creates the issue on the repository picked from the list, not on the filter typed to find it", async () => {
+  // then created the issue on a repository named "wid" (#267). The wait runs
+  // inside act, so React has rendered what the close did before the check
+  // reads: on a loaded host the event loop can stall past both timers, and a
+  // plain wait then read the pick before the close could undo it.
+  async function pickWidgets(stalledFor = 0) {
     mockMutate.mockImplementation((_req, opts) => opts.onSuccess({ job_id: "job-1", dispatch_error_code: null, dispatch_error: null }));
     render(<CreateIssueDialog onClose={vi.fn()} />);
     const picker = screen.getByPlaceholderText("Select repository...");
     await userEvent.type(picker, "wid");
     await userEvent.click(screen.getByRole("button", { name: "acme/widgets" }));
     expect(picker).toHaveValue("acme/widgets");
+    const waited = act(() => new Promise<void>((resolve) => setTimeout(resolve, 200)));
+    const from = Date.now();
+    while (Date.now() - from < stalledFor) {
+      // busy: what a loaded host does to the event loop
+    }
+    await waited;
+    return picker;
+  }
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
+  it("keeps the pick when the event loop stalls past the list's close, as on a loaded host", async () => {
+    const picker = await pickWidgets(300);
+    expect(picker, "the pick outlasts the list's 150 ms close").toHaveValue("acme/widgets");
+  });
+
+  it("creates the issue on the repository picked from the list, not on the filter typed to find it", async () => {
+    const picker = await pickWidgets();
     // Soft, so a regression also reports what the dialog then submits.
     expect.soft(picker, "the pick outlasts the list's 150 ms close").toHaveValue("acme/widgets");
 
