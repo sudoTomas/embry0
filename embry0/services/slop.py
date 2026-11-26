@@ -32,7 +32,7 @@ MAX_EVIDENCE = 8
 _WHY_CHARS = 300
 _PATH_CHARS = 300
 
-#: The agent that cleans slop, on the developer node (row_behaviour.CODING_AGENT_TYPES).
+#: The agent that cleans slop, on the developer node (its coder role, row_behaviour.CODER).
 SLOPMASTER = "slopmaster"
 
 #: The Slopmaster's system prompt (its builtin agent definition).

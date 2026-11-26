@@ -91,12 +91,12 @@ def no_context() -> dict[str, Any]:
     return {}
 
 
-def route_template_checker(rows: Iterable[Mapping[str, Any]]) -> Callable[[str], str | None]:
+def route_template_checker(rows: Iterable[Mapping[str, Any]], coders: frozenset[str]) -> Callable[[str], str | None]:
     """``name -> problem``: why a slop policy cannot route a code job to the template ``name``, of ``rows``.
 
     A template the rows do not hold is none; one they hold must take a code
     job (``row_behaviour.code_job_problem``: its jobs recorded as code jobs,
-    and a coding step in its route).
+    and a coding step in its route, a step of one of ``coders``).
     """
     from embry0.workflows.row_behaviour import code_job_problem
 
@@ -106,7 +106,7 @@ def route_template_checker(rows: Iterable[Mapping[str, Any]]) -> Callable[[str],
         row = templates.get(name)
         if row is None:
             return f"no pipeline template named {name!r}: GET /api/v1/pipelines/templates lists them"
-        return code_job_problem(row)
+        return code_job_problem(row, coders)
 
     return problem
 
@@ -164,7 +164,9 @@ async def deployment_reads(conn: Any, sections: frozenset[str]) -> dict[str, Any
             )
         ]
         if SLOP_POLICY.name in sections:
-            found[ROUTE_TEMPLATES] = route_template_checker(rows)
+            from embry0.storage.repositories.agent_definitions import coders_on
+
+            found[ROUTE_TEMPLATES] = route_template_checker(rows, await coders_on(conn, share=True))
         if MAPS.name in sections:
             found[ANALYSIS_TEMPLATES] = analysis_template_checker(rows)
     if MAPS.name in sections or LEADS.name in sections:

@@ -20,6 +20,8 @@ REPO = Path(__file__).resolve().parents[3]
         ("embry0.workflows.issue_to_pr.specialist_agents", "SPECIALIST_TEMPLATE_NAMES"),
         ("embry0.workflows.issue_to_pr.route_plan", "specialist_job_kind"),
         ("embry0.workflows.issue_to_pr.nodes._salvage", "CODING_AGENTS"),
+        ("embry0.workflows.row_behaviour", "CODING_AGENT_TYPES"),
+        ("embry0.workflows.issue_to_pr.route_plan", "CODING_AGENT_TYPES"),
         ("embry0.services.job_briefs", "_TEMPLATE_DELIVERS"),
         ("embry0.services.world", "LEADER_BY_TEMPLATE"),
         ("embry0.services.world", "QUEST_TEMPLATE_BY_AGENT"),
@@ -33,11 +35,15 @@ def test_the_name_list_is_gone(module: str, name: str) -> None:
     assert not hasattr(importlib.import_module(module), name), f"{module}.{name} still decides by built-in name"
 
 
-def test_the_coding_agents_are_listed_once() -> None:
-    from embry0.workflows import row_behaviour
-    from embry0.workflows.issue_to_pr import route_plan
-
-    assert route_plan.CODING_AGENT_TYPES is row_behaviour.CODING_AGENT_TYPES
+def test_no_module_names_the_coding_agents_by_a_list() -> None:
+    """#395: the coder is a role on the agent's row; no module of the tree keeps the list the role replaced."""
+    hits = [
+        str(path.relative_to(REPO))
+        for path in sorted((REPO / "embry0").rglob("*.py"))
+        if "CODING_AGENT_TYPES" in path.read_text(encoding="utf-8")
+        and path.relative_to(REPO).as_posix() != "embry0/storage/migrations/runner.py"
+    ]
+    assert hits == [], hits
 
 
 def test_the_progression_and_world_queries_credit_from_the_rows() -> None:

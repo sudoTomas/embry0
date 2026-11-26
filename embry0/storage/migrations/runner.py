@@ -5163,6 +5163,28 @@ deliverable under an "Assumptions" heading.$seed$
         END $$;
         """,
     ),
+    (
+        163,
+        "agent_definitions.roles: coder and docs, in place of a list of names in the code (#395)",
+        # #395: the agents the developer node runs were a list of two names in
+        # the code (row_behaviour.CODING_AGENT_TYPES), so an operator's own
+        # coding agent ran as a generic step. The role is a column of the row
+        # now, as #167 made every other such behaviour. The two built-in coding
+        # agents hold coder, written by name as the list named them. docs lets
+        # a step that is no coder put files on the job's branch: triage, the
+        # reviewer and the context auditor hold it, as the seed gives it them.
+        # Every other row holds none. The check names the roles there are.
+        """
+        ALTER TABLE agent_definitions ADD COLUMN IF NOT EXISTS roles TEXT[] NOT NULL DEFAULT '{}';
+        ALTER TABLE agent_definitions DROP CONSTRAINT IF EXISTS agent_definitions_roles_known;
+        ALTER TABLE agent_definitions
+            ADD CONSTRAINT agent_definitions_roles_known CHECK (roles <@ ARRAY['coder', 'docs']::text[]);
+        UPDATE agent_definitions SET roles = ARRAY['coder'] WHERE type IN ('developer', 'slopmaster');
+        UPDATE agent_definitions SET roles = ARRAY['docs'] WHERE type IN ('triage', 'review', 'context-auditor');
+        COMMENT ON COLUMN agent_definitions.roles IS
+            '#395: what a job lets this agent do beyond its tools: coder runs it on the developer node, with the job''s branch, its pull request and its credit; docs lets it put files on the job''s branch. Either makes the branch pushable from its step to the job''s end.';
+        """,
+    ),
 ]
 
 

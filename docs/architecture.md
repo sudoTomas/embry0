@@ -1452,6 +1452,7 @@ The whole pass is serialised across processes by a session-level Postgres adviso
 | 160 | spent account waits: `jobs.account_waited_seconds`, the seconds a job has spent parked for LLM accounts over every wait, resume and relaunch, which the account-wait loop adds to when it takes the job back and `account_wait.max_total_wait_seconds` bounds (#173) | `jobs.account_waited_seconds` |
 | 161 | local models: `provider_config.local_max_runs` leaves for the settings document's `local_models.max_runs` (#174). SQL cannot write the document's text, so a stored value other than 1 waits in `settings_carried` (as `section.key`) for the first start, which writes it through the settings store as an `upgrade` revision unless the document sets it already, and deletes the row (`embry0/settings/carried.py`); the column is dropped | `settings_carried`, `provider_config` |
 | 162 | people (#179): `users.github_login` retired, with the sync that kept it one of a linked person's GitHub identities; owners, asks and deciders read the people's identities alone. Each login no person held is written to a `user.github_login_retired` audit row first, for an admin to add | `users.github_login` (dropped) |
+| 163 | agent roles (#395): `agent_definitions.roles` (`TEXT[]`, NOT NULL, default `'{}'`, checked against `coder` and `docs`): `coder` runs an agent on the developer node in place of a list of names in the code, and `docs` lets a step that is no coder put files on the job's branch; the developer and the Slopmaster hold `coder`, written by name as the list named them, triage, the reviewer and the context auditor hold `docs`, every other row none | `agent_definitions` |
 
 Note: LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) are created and mutated by `langgraph-checkpoint-postgres` / `orchestration/checkpoint.py`, outside `embry0_migrations` entirely — they're excluded from this ledger by design, not an oversight.
 
@@ -1532,6 +1533,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_STORAGE` | A Postgres error escaped the workflow. |
 | `ERR_UPSTREAM_HTTP` | An unhandled HTTP failure talking to a forge, tracker or provider. |
 | `ERR_JOB_STATE_CONFLICT` | A job status transition lost a race. |
+| `ERR_AGENT_ROLE_REVOKED` | A coder's step started and its agent was gone, or no longer held the `coder` role its step was planned with (#395): plan_route records each step's roles when it plans the job, and the developer node asks the agent's row again before it runs. A built-in agent with no row runs as its seed says. Give the agent the role again, or run the job on another template. |
 | `ERR_ORGANIZATION_REMOVED` | **API responses only, never `jobs.error_code`.** A job was asked for on a repository whose organization was removed: none starts, whatever asked (#721). A paused organization's repositories still start jobs; making the organization active again lets its repositories start them as before. |
 | `ERR_ABANDONED` | A person chose "abandon" at the max-retries pause. |
 | `ERR_AGENT_RUNNER_UNAVAILABLE` | A node ran without an agent runner — orchestrator wiring bug. |

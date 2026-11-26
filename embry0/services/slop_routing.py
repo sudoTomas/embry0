@@ -123,12 +123,15 @@ def slop_route_guard(documents: SettingsDocumentsRepository, catalog: Catalog) -
     (``row_behaviour.analysis_job_problem``, ``maps.analysis_template``, #180)."""
 
     async def guard(conn: asyncpg.Connection, before: Mapping[str, Any], after: Mapping[str, Any] | None) -> None:
+        from embry0.storage.repositories.agent_definitions import coders_on
+
         name = str(before.get("name") or "")
+        coders = await coders_on(conn) if after is not None else frozenset()
         if after is None:
             change = "delete it"
         elif str(after.get("name") or "") != name:
             change = f"rename it to {str(after.get('name') or '')!r}"
-        elif code_job_problem(before) is None and (problem := code_job_problem(after)) is not None:
+        elif code_job_problem(before, coders) is None and (problem := code_job_problem(after, coders)) is not None:
             change = f"change it so that it no longer takes a code job ({problem})"
         else:
             return
@@ -191,8 +194,15 @@ async def unfit_named_templates(db: Any, catalog: Catalog) -> list[dict[str, Any
                 "SELECT name, default_for_kind, job_kind, graph_definition FROM pipeline_templates"
             )
         }
+        from embry0.storage.repositories.agent_definitions import coders_on
+
+        coders = await coders_on(conn)
+
+        def takes_a_code_job(row: Mapping[str, Any]) -> str | None:
+            return code_job_problem(row, coders)
+
         checks = (
-            (SLOP_POLICY, "route_template", code_job_problem, documents_routing_to),
+            (SLOP_POLICY, "route_template", takes_a_code_job, documents_routing_to),
             (MAPS, "analysis_template", analysis_job_problem, documents_analysing_with),
         )
         for section, key, check, naming in checks:

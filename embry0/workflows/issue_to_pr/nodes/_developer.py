@@ -1023,12 +1023,16 @@ def _unconfirmed_explanation(branch: str, diagnostics: dict[str, Any]) -> str:
 
 
 def _coding_agent(state: dict[str, Any]) -> str:
-    """The agent this node runs as (spec 2026-10-25, slop dungeon): the Slopmaster on a
-    slop-cleanup route, else the developer. A job planned before then has none."""
-    from embry0.workflows.row_behaviour import CODING_AGENT_TYPES, DEFAULT_CODER
+    """The agent this node runs as: the one whose step of the job's route has the coder role, as plan_route
+    recorded it (#395); the developer for a job with no route, or one planned before roles (spec 2026-10-25).
+    A ``coding_agent`` the route does not run as its coder is not run here."""
+    from embry0.workflows.issue_to_pr.route_plan import coding_agent_of
+    from embry0.workflows.row_behaviour import DEFAULT_CODER
 
+    plan = state.get("route_plan") or []
+    coder = coding_agent_of(plan) if plan else DEFAULT_CODER
     agent = str(state.get("coding_agent") or DEFAULT_CODER)
-    return agent if agent in CODING_AGENT_TYPES else DEFAULT_CODER
+    return agent if agent == coder else coder
 
 
 def _fallback_system_prompt(coding_agent: str) -> str:
@@ -1084,6 +1088,24 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     coding_agent = _coding_agent(state)
     attempt = agent_attempt(state, coding_agent)
     writer(events.node_started(node="developer", agent=coding_agent, attempt=attempt))
+    # #395: the route was planned with this coder; its row is asked again now, so an agent deleted since, or one the
+    # role was taken from, never runs here (and never with the developer's default definition in its place).
+    from embry0.workflows.issue_to_pr.role_check import role_revoked
+    from embry0.workflows.row_behaviour import CODER
+
+    revoked = await role_revoked(config, coding_agent, CODER)
+    if revoked is not None:
+        from embry0.safety.error_codes import ErrorCode
+
+        logger.error("developer_coder_role_revoked", job_id=state.get("job_id"), agent=coding_agent)
+        return Command(
+            goto=END,
+            update={
+                "current_stage": "developer_failed",
+                "errors": [revoked],
+                "error_code": ErrorCode.AGENT_ROLE_REVOKED.value,
+            },
+        )
 
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_runner = configurable.get("agent_runner")
@@ -1191,22 +1213,34 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
     # RAV-602: definition (model/tools/skills) from the DB row, per-step
     # template overrides from the current route step; triage's
     # pipeline_config.agent_* still wins on top (resolver precedence).
-    from embry0.orchestration.nodes.agent import load_agent_definition
+    from embry0.orchestration.nodes.agent import load_agent_definition_or_none
+    from embry0.storage.repositories.agent_definitions import BUILTIN_SEED
     from embry0.workflows.issue_to_pr.route_plan import step_template_config
 
-    developer_definition = await load_agent_definition(
-        config,
-        coding_agent,
-        {
-            "model": "claude-sonnet-5",
-            "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-            "skills": [],
-            "system_prompt": _fallback_system_prompt(coding_agent),
-            "mcp_servers": {},
-            "execution_mode": None,
-            "auth_mode": None,
-        },
-    )
+    # #395: the code's definition stands in only for a built-in coder, or where there is no database: an agent of the
+    # operator's own whose row is gone by now (after the check above) never runs with the developer's tools.
+    loaded = await load_agent_definition_or_none(config, coding_agent)
+    if loaded is None and coding_agent not in BUILTIN_SEED and configurable.get("db") is not None:
+        from embry0.safety.error_codes import ErrorCode
+
+        logger.error("developer_coder_definition_gone", job_id=state.get("job_id"), agent=coding_agent)
+        return Command(
+            goto=END,
+            update={
+                "current_stage": "developer_failed",
+                "errors": [f"the agent {coding_agent!r} this step was planned with no longer exists"],
+                "error_code": ErrorCode.AGENT_ROLE_REVOKED.value,
+            },
+        )
+    developer_definition = loaded or {
+        "model": "claude-sonnet-5",
+        "tools": ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+        "skills": [],
+        "system_prompt": _fallback_system_prompt(coding_agent),
+        "mcp_servers": {},
+        "execution_mode": None,
+        "auth_mode": None,
+    }
     # SH-P4.4: invocation-scoped log tool — only when init_node recorded the
     # containers the context-proxy CONFIRMED for this sandbox (a job with no
     # case/evidence, or whose enrollment failed, never has the key).
@@ -1453,7 +1487,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         "container_id": state.get("sandbox_container_id"),
         "branch": branch,
         "job_id": state.get("job_id"),
-        "agent": _salvage.coding_agent(result, state),
+        "agent": coding_agent,
         "subject_template": salvage_policy.commit_subject,
         "commit": salvage_policy.enabled,
         "forge_url": forge_url,
@@ -1498,7 +1532,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
         # discarded. Commit it, then push it, whether or not an earlier push
         # put the branch on origin. A clean finish keeps the old behaviour,
         # where an empty branch correctly means "pause".
-        stopped = _salvage.stop_reason(result)
+        stopped = _salvage.stop_reason(result, coding_agent)
         kept = None
         if stopped:
             kept = await _salvage.preserve_unfinished_work(**salvage, reason=stopped, diagnostics=push_diagnostics)
@@ -1636,7 +1670,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 goto = held
             elif state.get("route_plan"):
                 from embry0.workflows.issue_to_pr.route_plan import ROUTE_TARGETS, advance, next_route
-                from embry0.workflows.row_behaviour import CODING_AGENT_TYPES
+                from embry0.workflows.row_behaviour import is_coder_step
 
                 # RAV-1271: advance only when the cursor is ON a developer
                 # step (fresh forward progression). Re-entry paths — the
@@ -1646,7 +1680,7 @@ async def developer_node(state: dict[str, Any], config: RunnableConfig) -> Comma
                 # developer → QA with no re-review).
                 plan = state.get("route_plan") or []
                 cursor = int(state.get("route_cursor", 0) or 0)
-                if 0 <= cursor < len(plan) and plan[cursor].get("agent_type") in CODING_AGENT_TYPES:
+                if 0 <= cursor < len(plan) and is_coder_step(plan[cursor]):
                     updates.update(advance(state))
                 target = next_route({**state, **updates})
                 goto = END if target == "end" else ROUTE_TARGETS[target]
