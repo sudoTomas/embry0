@@ -18,8 +18,9 @@ from embry0.workflows.row_behaviour import CODER, NEVER_CODERS, builtin_roles, r
 async def role_revoked(config: RunnableConfig | None, agent_type: str, role: str) -> str | None:
     """Why the agent ``agent_type`` may no longer run its step as ``role``; None when it may.
 
-    Without a database the built-in rows answer, as everywhere else. A read that fails raises: a step that cannot
-    tell whether its agent still holds its role does not run as it.
+    Without a database there is no row to ask again, and nothing is revoked: the code's definitions answer, as they
+    do everywhere else without one. A read that fails raises: a step that cannot tell whether its agent still holds
+    its role does not run as it.
     """
     configurable: dict[str, Any] = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     db = configurable.get("db")

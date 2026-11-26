@@ -92,6 +92,9 @@ class GitGrant:
     # ``push`` means every ref update is refused.
     push_branches: frozenset[str] = frozenset()
     job_id: str = ""
+    # Whether the enrollment named its branches, none included: an orchestrator enrolls a job's sandbox with none
+    # until its route is planned with a coder step (#395). One that names no list at all is older than the proxy.
+    branches_named: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,7 +260,14 @@ class GitScope:
         job_id = body.get(JOB_FIELD)
         if job_id is not None and (not isinstance(job_id, str) or not _JOB_RE.fullmatch(job_id)):
             raise EnrollRejected(f"{JOB_FIELD} {str(job_id)[:200]!r} is not a job id")
-        return GitGrant(upstream=upstream, repos=repos, push=push, push_branches=branches, job_id=job_id or "")
+        return GitGrant(
+            upstream=upstream,
+            repos=repos,
+            push=push,
+            push_branches=branches,
+            job_id=job_id or "",
+            branches_named=raw_branches is not None,
+        )
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: GitGrant | None) -> dict[str, Any]:
         grants = app[GIT_GRANT_BY_ID]
@@ -270,12 +280,17 @@ class GitScope:
             )
             return {}
         grants[sandbox_id] = parsed
-        if parsed.push and not parsed.push_branches:
+        if parsed.push and not parsed.push_branches and not parsed.branches_named:
             logger.warning(
                 f"{self._proxy_name}_enrollment_without_push_branches",
                 sandbox_id=sandbox_id,
                 job_id=parsed.job_id,
                 detail=f"git_push without {PUSH_BRANCHES_FIELD}; every push from this sandbox will be refused",
+            )
+        elif parsed.push and not parsed.push_branches:
+            # #395: a job's sandbox has no branch until its first step that holds coder or docs starts.
+            logger.info(
+                f"{self._proxy_name}_enrollment_no_push_branch_yet", sandbox_id=sandbox_id, job_id=parsed.job_id
             )
         return _echo(parsed)
 
