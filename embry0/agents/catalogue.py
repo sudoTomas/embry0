@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import copy
 import json
+import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -332,6 +334,18 @@ def _cut(loc: tuple[str | int, ...]) -> tuple[str | int, ...]:
     return loc if len(loc) <= MAX_LOC_PARTS else (*loc[: MAX_LOC_PARTS - 1], LOC_CUT)
 
 
+def _finite(value: Any) -> bool:
+    """Whether every number ``value`` holds, at any depth (bounded by :data:`MAX_EXTRA_DEPTH`), is one JSON can
+    hold: no infinity and no NaN."""
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, dict):
+        return all(_finite(item) for item in value.values())
+    if isinstance(value, list):
+        return all(_finite(item) for item in value)
+    return True
+
+
 def _depth(value: Any, limit: int) -> int:
     """How deep ``value`` nests, counting no further than ``limit + 1``."""
     if limit < 0 or not isinstance(value, dict | list):
@@ -544,6 +558,16 @@ def _model_problems(where: tuple[str | int, ...], model: str, spec: ModelEntry, 
                 continue
             if _depth(value, MAX_EXTRA_DEPTH) > MAX_EXTRA_DEPTH:
                 problems.append(Problem((*where, name, key), "too_deep", f"nests deeper than {MAX_EXTRA_DEPTH} levels"))
+            elif not _finite(value):
+                # JSON has no such number: the stored overlay (jsonb) refused it at the save, after a dry run passed.
+                problems.append(
+                    Problem(
+                        (*where, name, key),
+                        "finite_number",
+                        "holds a number JSON cannot hold: an infinity or not a number (.inf, .nan, or one as large "
+                        "as 1e400)",
+                    )
+                )
             elif len(json.dumps(value, separators=(",", ":"))) > MAX_EXTRA_BYTES:
                 problems.append(
                     Problem((*where, name, key), "too_large", f"larger than {MAX_EXTRA_BYTES} bytes as JSON")
@@ -560,10 +584,30 @@ def _model_problems(where: tuple[str | int, ...], model: str, spec: ModelEntry, 
     return problems
 
 
+class CatalogueLoader(yaml.SafeLoader):
+    """PyYAML's safe loader, but a number in exponent form with no decimal point (``1e-7``, ``5E+3``, ``1e21``) is a
+    float, as YAML 1.2 and JSON read it and as the dashboard's editor shows it; YAML 1.1 reads it as a string, so a
+    hand-typed ``temperature: 1e-7`` reached the provider as ``"1e-7"`` (#756). Only that form changes: what YAML 1.1
+    reads as a number still is, and a scalar that does not start with a digit, a sign or a point never becomes one,
+    so no provider name, model id (each starts with its provider's prefix) or extras key can. The shipped catalogue
+    is read with it, an overlay when it is written (``provider_catalogue_store.load_text``), and a stored overlay's
+    text again when it is installed and when it is answered: one stored before this rule is in force as it reads
+    now when a number in exponent form is all that differs (``provider_catalogue_store.read_again``)."""
+
+
+#: A number in exponent form, as YAML 1.2 reads one. YAML 1.1 reads it as a number only with a decimal point and a sign
+#: after the ``e`` (``1.0e-7``), and as a string otherwise (``1e-7``).
+EXPONENT_NUMBER: Final = re.compile(r"^[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[eE][-+]?[0-9]+$")
+
+# Added on the subclass, which PyYAML gives a copy of the resolvers: the safe loader every other reader uses is left
+# as it is.
+CatalogueLoader.add_implicit_resolver("tag:yaml.org,2002:float", EXPONENT_NUMBER, list("-+0123456789."))
+
+
 @cache
 def seed() -> Catalogue:
     """The catalogue embry0 ships. A seed that does not validate is a bug, so this raises."""
-    return Catalogue.build(parse(yaml.safe_load(SEED_FILE.read_text(encoding="utf-8"))))
+    return Catalogue.build(parse(yaml.load(SEED_FILE.read_text(encoding="utf-8"), Loader=CatalogueLoader)))  # noqa: S506 - a safe loader
 
 
 def merge(

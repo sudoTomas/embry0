@@ -21,6 +21,8 @@ from embry0.services.provider_catalogue_store import load_text
 
 SHARED = Path(__file__).resolve().parents[3] / "frontend/src/lib/__tests__/fixtures/catalogue_overlay_yaml.json"
 CASES = json.loads(SHARED.read_text())["cases"]
+#: The cases the form writes; a case typed by hand (``typed_by_hand``) is read back as the others but is not the form's.
+FORM_CASES = [case for case in CASES if not case.get("typed_by_hand")]
 
 
 def _json_form(value: Any) -> Any:
@@ -168,7 +170,7 @@ def test_each_whole_number_field_has_a_case_the_form_writes() -> None:
     """A case per whole-number field pins on both sides how the form writes it: as an integer the catalogue takes."""
     listed = set(json.loads(SHARED.read_text()).get("whole_number_keys") or ())
     written: set[str] = set()
-    for case in CASES:
+    for case in FORM_CASES:
         if case.get("valid", True):
             _keys_with_int(case["overlay"], written)
     assert listed <= written, f"no valid case writes {sorted(listed - written)} with a whole number"
@@ -192,7 +194,7 @@ def test_each_day_field_has_a_case_the_form_writes_as_a_day() -> None:
     """A case per day field pins on both sides that the form writes it bare, a date the catalogue reads as one: a
     quoted day is a string, which it refuses."""
     days = set()
-    for case in CASES:
+    for case in FORM_CASES:
         if case.get("valid", True) and case["yaml"]:
             loaded = load_text(case["yaml"])
             days |= {
@@ -207,7 +209,7 @@ def test_each_json_field_has_a_case_the_form_writes_as_json() -> None:
     """A case per free-form JSON field pins on both sides that the form writes it as JSON on its key's line, a whole
     number in it kept whole: written field by field, it would read 256 as 256.0."""
     written = set()
-    for case in CASES:
+    for case in FORM_CASES:
         if not case.get("valid", True):
             continue
         for key in _listed("json_keys"):

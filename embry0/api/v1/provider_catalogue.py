@@ -32,6 +32,7 @@ from embry0.services.provider_catalogue_store import (
     NotUndoable,
     RevisionNotFound,
     SaveResult,
+    read_again,
 )
 
 router = APIRouter(route_class=ServedRoute)
@@ -106,8 +107,13 @@ async def get_provider_catalogue(
     """The deployment's catalogue overlay and the catalogue in force.
 
     ``yaml_text`` is the overlay as written (empty: the shipped catalogue as it
-    is), ``data`` its values, ``generation`` the version to name in a write's
-    ``If-Match`` (also the ``ETag``). ``catalogue`` is what this process runs
+    is), ``data`` its values in force, ``generation`` the version to name in a
+    write's ``If-Match`` (also the ``ETag``). The values are those the text
+    reads to with this release where they differ from the stored ones only by
+    a number in exponent form (an overlay stored before ``1e-7`` read as a
+    number), and the stored ones otherwise; ``text_not_read_again`` is null,
+    or says why the stored ones stay in force (``reason`` ``unreadable``,
+    ``differs`` or ``refused``, and ``problems`` in the 422 shape). ``catalogue`` is what this process runs
     on: the shipped catalogue with the overlay merged in. ``in_force`` says how
     much of the overlay that is: ``whole``; ``in_part``, every part this
     release takes, the parts it refuses named in ``refused`` (a release that
@@ -128,9 +134,11 @@ async def get_provider_catalogue(
         return Response(content=stored.yaml_text, media_type="application/yaml", headers={"ETag": etag})
     response.headers["ETag"] = etag
     shown = await deployment_actor_shown(request)
+    # The values in force, as installing reads them: the dashboard's form starts from them and writes them back.
+    reading = read_again(stored)
     return {
         "yaml_text": stored.yaml_text,
-        "data": stored.data,
+        "data": reading.row.data,
         "generation": stored.generation,
         "updated_by": shown(stored.updated_by) if stored.updated_by else stored.updated_by,
         "updated_at": stored.updated_at.isoformat() if stored.updated_at is not None else None,
@@ -140,6 +148,7 @@ async def get_provider_catalogue(
         "in_force_generation": store.in_force_generation,
         "refused": [problem.to_dict() for problem in store.refused],
         "notes": [problem.to_dict() for problem in store.notes],
+        "text_not_read_again": reading.kept(),
     }
 
 

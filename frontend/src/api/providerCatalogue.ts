@@ -8,11 +8,22 @@ export interface CatalogueProblem {
   msg: string;
 }
 
+/** Why the values stored with the overlay stay in force, not its text as this release reads it. */
+export interface TextNotReadAgain {
+  /**
+   * `unreadable`: the text does not read; `differs`: it reads to other values than those stored with it (not only a
+   * number in exponent form that was stored as text); `refused`: it reads to a part the catalogue refuses.
+   */
+  reason: "unreadable" | "differs" | "refused";
+  /** Where the text does not read, or each part refused; never a value. */
+  problems: CatalogueProblem[];
+}
+
 /** `GET /config/providers/catalog`: the deployment's overlay and the catalogue in force. Any key reads it. */
 export interface ProviderCatalogueDocument {
   /** The overlay as written, comments included; empty: the catalogue embry0 ships, as it is. */
   yaml_text: string;
-  /** The overlay's values. */
+  /** The overlay's values in force, which the form edits: its text's as this release reads it, or the stored ones. */
   data: CatalogueOverlay;
   /** The version a write names in `If-Match`. */
   generation: number;
@@ -27,6 +38,8 @@ export interface ProviderCatalogueDocument {
   /** Each part of the stored overlay this release does not run on. */
   refused: CatalogueProblem[];
   notes: CatalogueProblem[];
+  /** Set when the values stored with the overlay stay in force; an orchestrator of an earlier release leaves it out. */
+  text_not_read_again?: TextNotReadAgain | null;
 }
 
 /** What a write would change, or changed: the overlay's text before and after, as a unified diff. */

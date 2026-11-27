@@ -281,6 +281,39 @@ describe("CatalogueEditor", () => {
     expect(row.className).toMatch(/@lg:table-row/);
   });
 
+  it.each([
+    [
+      "unreadable",
+      [{ loc: [], type: "yaml_syntax", msg: "the YAML cannot be read at line 1, column 12" }],
+      "its text does not read with this release (the YAML cannot be read at line 1, column 12).",
+    ],
+    ["differs", [], "its text reads to other values than those stored with it."],
+    [
+      "refused",
+      [{ loc: ["providers", "custom", "request_extras", "temperature"], type: "finite_number", msg: "holds a number JSON cannot hold" }],
+      "has a part the catalogue refuses (providers.custom.request_extras.temperature: holds a number JSON cannot hold).",
+    ],
+  ] as const)("says why the values stored with the overlay are in force, not its text: %s", async (reason, problems, why) => {
+    const listed = problems.map((p) => ({ ...p, loc: [...p.loc] }));
+    api.fetchProviderCatalogue.mockResolvedValue(doc({ text_not_read_again: { reason, problems: listed } }));
+    renderEditor(false);
+    const note = await screen.findByTestId("catalogue-text-not-read-again");
+    expect(note.textContent, "the note says the stored values are in force").toContain(
+      "The values stored with the overlay are in force, not its text:",
+    );
+    expect(note.textContent, `the note says why (${reason})`).toContain(why);
+  });
+
+  it.each([
+    ["the text is in force", null],
+    ["an earlier orchestrator", undefined],
+  ])("says nothing of the stored values when %s", async (_case, kept) => {
+    api.fetchProviderCatalogue.mockResolvedValue(doc({ text_not_read_again: kept }));
+    renderEditor();
+    await screen.findByTestId("catalogue-provider-deepseek");
+    expect(screen.queryByTestId("catalogue-text-not-read-again"), "a note with nothing kept").toBeNull();
+  });
+
   it("shows a reader the catalogue and nothing to change it with", async () => {
     renderEditor(false);
     const deepseek = await screen.findByTestId("catalogue-provider-deepseek");

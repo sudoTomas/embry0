@@ -49,8 +49,9 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -58,8 +59,10 @@ import structlog
 import yaml
 
 from embry0.agents.catalogue import (
+    EXPONENT_NUMBER,
     Catalogue,
     CatalogueInvalid,
+    CatalogueLoader,
     CatalogueOverlay,
     Problem,
     StoredRead,
@@ -146,11 +149,11 @@ def load_text(text: str) -> dict[str, Any]:
     if "\x00" in text:
         raise CatalogueInvalid([Problem((), "nul_character", "the catalogue cannot hold the NUL character")])
     try:
-        root = yaml.compose(text, Loader=yaml.SafeLoader)
+        root = yaml.compose(text, Loader=CatalogueLoader)
         structure = structure_problems(root, what="the provider catalogue")
         if structure:
             raise CatalogueInvalid(_structure_placed(structure))
-        loaded = yaml.safe_load(text)
+        loaded = yaml.load(text, Loader=CatalogueLoader)  # noqa: S506 - a safe loader
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
@@ -493,7 +496,25 @@ class CatalogueStore:
         and a warning is logged; :meth:`_take` audits them. Models kept as the
         deployment's own are :attr:`notes`, logged.
         """
-        candidate, read = built(stored)
+        reading = read_again(stored)
+        stored = reading.row
+        if reading.how == "read_again":
+            # Once a generation: a process installs each generation once (at its start, or after a write).
+            logger.warning(
+                "provider_catalogue_read_again",
+                generation=stored.generation,
+                msg="the stored overlay's text reads a number in exponent form as a number with this release's "
+                "loader: the values read from it now are in force, and the next save stores them",
+            )
+        elif reading.how == "kept":
+            logger.warning(
+                "provider_catalogue_text_not_read_again",
+                generation=stored.generation,
+                reason=reading.why,
+                problems=[str(problem) for problem in reading.problems[:10]],
+                msg="the values stored with the overlay stay in force, not its text as this release reads it",
+            )
+        candidate, read = _built(stored)
         refused = read.refused
         if not refused or self._installed_generation is None:
             install(candidate)
@@ -753,9 +774,106 @@ async def _held_row(conn: Any, lock: str) -> _Row:
 
 def built(stored: _Row) -> tuple[Catalogue, StoredRead]:
     """The catalogue a stored overlay makes with this release's seed: every part of it that applies, its models
-    whose price is left out unpriced, and why (``catalogue.merge_stored``)."""
+    whose price is left out unpriced, and why (``catalogue.merge_stored``). Its values are those in force
+    (:func:`read_again`)."""
+    return _built(read_again(stored).row)
+
+
+def _built(stored: _Row) -> tuple[Catalogue, StoredRead]:
     read = merge_stored(seed().document, dict(stored.data) or None, stored.shipped)
     return Catalogue.build(read.document, withheld=read.withheld), read
+
+
+ReadAgain = Literal["same", "read_again", "kept"]
+KeptBecause = Literal["unreadable", "differs", "refused"]
+
+
+@dataclass(frozen=True)
+class Reading:
+    """A stored overlay as this release reads it (:func:`read_again`): the row with the values in force, and how."""
+
+    row: _Row
+    how: ReadAgain
+    #: Why the stored values stay in force, when ``how`` is ``kept``: the text does not read (``unreadable``), reads
+    #: to values that differ from them otherwise than by a number in exponent form (``differs``), or reads to a part
+    #: of the catalogue this release refuses (``refused``).
+    why: KeptBecause | None = None
+    #: Where the text does not read, or each part its reading refuses; never a value.
+    problems: tuple[Problem, ...] = ()
+
+    def kept(self) -> dict[str, Any] | None:
+        """Why the stored values stay in force, for ``GET``'s ``text_not_read_again``; None when they do not."""
+        if self.how != "kept":
+            return None
+        return {"reason": self.why, "problems": [problem.to_dict() for problem in self.problems]}
+
+
+def read_again(stored: _Row) -> Reading:
+    """``stored`` with the values in force: those its text reads to with this release's loader, or those stored.
+
+    The values a row holds were read when the text was written, by that release's loader: an overlay stored before
+    the loader read ``1e-7`` as a number (#756) holds the string, and a save of the same text records nothing. So
+    the text is read again when the overlay is installed and when it is answered, and its values are in force
+    (``read_again``) when the only difference is that: a string of the stored values that now reads as the number
+    it spells (:data:`EXPONENT_NUMBER`). A float the text reads to equals the integer jsonb wrote it back as
+    (:func:`_written_back`). The stored values stay in force (``kept``, :attr:`Reading.why`) when the
+    text does not read, reads to anything else (a text changed beside its values, by a hand at the database), or
+    reads to a part this release refuses (``1e400``, now infinite), so a deployment never loses its catalogue to
+    a new reading; ``same`` when nothing differs (an empty text keeps its values)."""
+    if not stored.yaml_text.strip():
+        return Reading(stored, "same")
+    try:
+        data = stored_form(load_text(stored.yaml_text))
+    except CatalogueInvalid as invalid:
+        return Reading(stored, "kept", "unreadable", tuple(invalid.problems))
+    except CatalogueTooLarge as large:
+        return Reading(stored, "kept", "unreadable", (Problem((), "too_large", str(large)),))
+    differs = _differs(stored.data, data)
+    if differs == "nothing":
+        return Reading(stored, "same")
+    if differs == "more":
+        return Reading(stored, "kept", "differs")
+    again = replace(stored, data=data)
+    refused_before = {problem.loc for problem in _built(stored)[1].refused}
+    refused = tuple(problem for problem in _built(again)[1].refused if problem.loc not in refused_before)
+    if refused:
+        return Reading(stored, "kept", "refused", refused)
+    return Reading(again, "read_again")
+
+
+Differs = Literal["nothing", "numbers", "more"]
+
+
+def _differs(stored: Any, again: Any) -> Differs:
+    """How ``again``, the values a text reads to, differs from ``stored``, the values stored with it: ``nothing``;
+    only where a string of ``stored`` now reads as the number it spells (``numbers``); or ``more``.
+
+    The same keys and the same lengths throughout, and every other value equal and of the same type, or a float the
+    text reads to beside the integer jsonb wrote it back as (:func:`_written_back`)."""
+    if isinstance(stored, Mapping) and isinstance(again, Mapping):
+        if stored.keys() != again.keys():
+            return "more"
+        found = {_differs(stored[key], again[key]) for key in stored}
+    elif isinstance(stored, list) and isinstance(again, list):
+        if len(stored) != len(again):
+            return "more"
+        found = set(map(_differs, stored, again))
+    elif isinstance(stored, str) and isinstance(again, float):
+        return "numbers" if EXPONENT_NUMBER.fullmatch(stored) is not None and float(stored) == again else "more"
+    else:
+        same = (type(stored) is type(again) and stored == again) or _written_back(stored, again)
+        return "nothing" if same else "more"
+    return "more" if "more" in found else "numbers" if "numbers" in found else "nothing"
+
+
+def _written_back(stored: Any, again: Any) -> bool:
+    """Whether ``stored`` is the integer jsonb wrote the float ``again`` back as. A row's values are stored as JSON,
+    which writes a float of 1e16 or more in exponent form (``1e23`` as ``1e+23``), and jsonb writes such a number
+    with no fraction back as a whole one (``100000000000000000000000``), which the float, ``99999999999999991611392``
+    exactly, does not equal. A number written with a point keeps it (``4096.0`` stays ``4096.0``). A stored value
+    of any other type that equals the decimal is the float itself, which :func:`_differs` compared before."""
+    written = repr(again)
+    return isinstance(again, float) and "e" in written and Decimal(written) == stored
 
 
 async def held_catalogue(conn: Any) -> Catalogue:
@@ -792,10 +910,12 @@ __all__ = [
     "GenerationMismatch",
     "NotUndoable",
     "Preview",
+    "Reading",
     "Reference",
     "RevisionNotFound",
     "SaveResult",
     "broken_references",
     "load_text",
+    "read_again",
     "read_references",
 ]
