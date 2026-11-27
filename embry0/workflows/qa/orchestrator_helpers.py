@@ -23,6 +23,7 @@ from typing import Any
 import structlog
 
 from embry0.execution import events
+from embry0.safety.error_codes import ErrorCode
 from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
 from embry0.workflows.qa.qa_yaml_v2 import QAYamlConfigV2
 from embry0.workflows.qa.subtask_graph import run_subtask
@@ -220,12 +221,17 @@ async def fan_out_subtasks(
                     config=config,
                 )
             except Exception as exc:  # noqa: BLE001
+                # An exception that knows its code keeps it (a hard-mode refusal of a call over the job's cap,
+                # BudgetCallRefusedError), and the limit it names, for the orchestrator to route on.
+                own_code = getattr(exc, "error_code", None)
                 result = SubTaskResult(
                     app_name=resolved.app_name,
                     status=SubTaskStatus.INFRA_FAILURE,
                     duration_ms=0,
                     cache_hits=CacheHits(),
                     failure_summary=f"sub-task crashed: {exc}",
+                    error_code=str(own_code) if isinstance(own_code, ErrorCode) else None,
+                    budget_refused=limit if isinstance(limit := getattr(exc, "budget_limit", None), str) else None,
                 )
             writer(
                 events.qa_subtask_finished(

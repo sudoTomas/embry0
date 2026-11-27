@@ -3141,3 +3141,90 @@ async def test_orchestrator_adds_the_job_s_done_when_list_after_each_app_s_own_c
         "Exercise Place Order",
         "Hub deep check",
     ]
+
+
+def _refused_result(app_name: str, limit: str):
+    """An app whose QA agent run had a call refused at a metering proxy for ``limit`` (#759)."""
+    from embry0.workflows.qa.subtask_result_schema import CacheHits, SubTaskResult, SubTaskStatus
+
+    try:
+        return SubTaskResult(
+            app_name=app_name,
+            status=SubTaskStatus.QA_FAILURE,
+            duration_ms=10,
+            cache_hits=CacheHits(),
+            error_code="ERR_BUDGET_CALL_REFUSED",
+            budget_refused=limit,  # type: ignore[call-arg]
+        )
+    except TypeError as exc:
+        pytest.fail(f"a sub-task's result cannot say which limit refused its run's call: {exc}")
+
+
+def _refusing(monkeypatch, limit: str) -> None:
+    async def fake_run_subtask(resolved, **kw):
+        return _refused_result(resolved.app_name, limit)
+
+    monkeypatch.setattr("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask)
+
+
+@pytest.mark.asyncio
+async def test_a_qa_app_s_refusal_for_the_job_s_cap_pauses_the_job_in_soft_mode(monkeypatch):
+    """$3 of a $5 cap spent: short of it, so only the refusal can send the job to its budget pause."""
+    from embry0.orchestration.routing.conditions import check_budget
+
+    state, config, _ = _budget_harness(monkeypatch, trace_total=3.0)
+    _refusing(monkeypatch, "job")
+    out = await qa_orchestrator_node(state, config("soft"))
+    assert out.get("budget_refused_cap_usd") == pytest.approx(5.0), (
+        f"the QA app's refusal was not recorded for the job's routing: {out.get('budget_refused_cap_usd')}"
+    )
+    assert check_budget({**state, **out}) == "over_budget", "the job would run on past a refusal for its cap"
+
+
+@pytest.mark.asyncio
+async def test_a_qa_app_s_refusal_for_the_job_s_cap_fails_the_job_in_hard_mode(monkeypatch):
+    from embry0.safety.error_codes import classify_failure
+
+    state, config, _ = _budget_harness(monkeypatch, trace_total=3.0)
+    _refusing(monkeypatch, "job")
+    try:
+        await qa_orchestrator_node(state, config("hard"))
+    except Exception as exc:  # noqa: BLE001 — what the job fails with is the point
+        raised = exc
+    else:
+        pytest.fail("a QA app's refusal for the job's cap in hard mode left the job running")
+    assert classify_failure(exc=raised).value == "ERR_BUDGET_CALL_REFUSED", f"the job failed with {raised!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+async def test_a_qa_app_s_refusal_for_the_day_s_cap_fails_that_app_and_nothing_more(monkeypatch, mode):
+    from embry0.orchestration.routing.conditions import check_budget
+
+    state, config, _ = _budget_harness(monkeypatch, trace_total=3.0)
+    _refusing(monkeypatch, "daily")
+    out = await qa_orchestrator_node(state, config(mode))
+    assert out.get("budget_refused_cap_usd") is None, "a refusal for the day's cap was routed as the job's"
+    assert check_budget({**state, **out}) == "within_budget"
+    assert out["qa"]["final_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_sub_task_ended_by_a_hard_refusal_keeps_its_code_and_limit():
+    try:
+        from embry0.orchestration.budget import BudgetCallRefusedError
+    except ImportError as exc:
+        pytest.fail(f"no error says a call was refused for the job's cap in hard mode: {exc}")
+    from embry0.workflows.qa.orchestrator_helpers import fan_out_subtasks
+    from embry0.workflows.qa.qa_yaml_resolve import ResolvedAppConfig
+
+    async def fake_run_subtask(resolved, **kw):
+        raise BudgetCallRefusedError(9.9, 10.0)
+
+    resolved = [MagicMock(spec=ResolvedAppConfig, app_name="a", target="managed")]
+    with patch("embry0.workflows.qa.orchestrator_helpers.run_subtask", fake_run_subtask):
+        (result,) = await fan_out_subtasks(
+            resolved, parent_run_id="job-qa", repo="o/r", branch_name="main", max_concurrent=1, config={}
+        )
+    assert result.error_code == "ERR_BUDGET_CALL_REFUSED", result
+    assert getattr(result, "budget_refused", None) == "job", result

@@ -1507,7 +1507,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_AGENT_TIMEOUT` | Agent SDK call exceeded its configured timeout. The runner kills the agent inside the sandbox as well as its `docker exec` client, since the job pauses with its sandbox kept; `agent_runner_wall_clock_timeout` records whether that kill landed (`runner_stopped`). |
 | `ERR_NO_RESULT` | Sandbox produced no final `ResultMessage`. |
 | `ERR_BUDGET_OVERRUN` | The job ran and its per-job cap stopped it in-run (`overrun_mode=hard`). It spent money, so it counts toward its actor's rate limit and toward dispatch-attempt caps. Rows written before #331 also carry this code for gate refusals; readers tell those apart by evidence (no `traces` row and `budget_overrun_usd = 0`). |
-| `ERR_BUDGET_CALL_REFUSED` | A metering proxy refused a model call of the run (`budget_exceeded`): its ceiling, at the run's rates, would have taken the run past what its job, or the deployment's day or month, had left when the run was declared, and the run then failed. Nothing of the call was sent or charged ([Budget Controls](#budget-controls)). |
+| `ERR_BUDGET_CALL_REFUSED` | A metering proxy refused a model call of the run (`budget_exceeded`): its ceiling, at the run's rates, would have taken the run past what its job, or the deployment's day or month, had left when the run was declared. The run fails with it, and for the job's cap in `hard` mode so does the job (its overrun 0); nothing of the call was sent or charged ([Budget Controls](#budget-controls)). |
 | `ERR_BUDGET_REFUSED` | The dispatch gate refused the job before any agent ran — a daily/monthly cap or the per-actor rate limit (#331). The only outcome exempt from rate-limit and attempt counts; the one definition is `gate_refusal_sql` (`embry0/storage/repositories/gate_refusal.py`). |
 | `ERR_MAX_RETRIES` | Reviewer rejected past `max_feedback_loops`. |
 | `ERR_TRIAGE_MALFORMED` | Triage LLM output failed to parse or failed schema validation twice: the answer and the one repair retry that fed the error back (#455). Also used when the triage agent run itself errored. |
@@ -1626,7 +1626,7 @@ is where every agent turn ends, so the cap is evaluated there after each turn
 
 **Continuing past the cap.** A job that crossed its cap in `soft` mode pauses (`max_retries`), and the pause's summary carries `budget`: `{spent, cap, continue_adds}`. Answering it with `continue_retrying` is a person deciding to spend more. The job then gets `budget_allowance_usd`, so it may spend what it has spent plus one more cap (`budget.continue_default_extra_usd` when set), or plus `extra_budget_usd` from the resume body; whichever it is, at most `budget.continue_extra_max_usd` (1,000 by default). `resolve_job_cap` adds the allowance on top of the fleet ceiling, because the ceiling bounds what triage or a job-create field picks, not a person's continue: **a continue can take a job past `max_budget_per_job_usd`**, unless `budget.continue_may_exceed_ceiling` is false. Then the ceiling bounds the allowance too: a continue adds at most what is left under it, and a job at it is not offered one. A person may continue a job up to its `agent_questions.retry_rounds_cap` times; of those, at most `budget.continue_past_ceiling_max` (5 by default, the deployment's alone, read when the job starts) may take it past the ceiling, counted on the job as `continues_past_ceiling`. Once that many have, the ceiling bounds the job's next continues the same way, whatever amount a person names and whatever a layer sets `retry_rounds_cap` to. A pause that bounds a continue says the most it may add and why (`continue_max`, `continue_max_because` in its `budget`), and a resume naming more says it was capped: worked out when the resume comes in, through the node's own `continue_bound`, from the budget section then and the state the job saved at its pause (`IssueExecutor.paused_state`, which only reads: it never sets the saver's tables up, and before any job has saved one there is no saved state), on any pause. An allowance is never lowered, and a continue within budget grants none. Each raise writes a `job.budget_raised` audit row naming who continued the job, what it had spent, and its cap before and after; the settings document's revisions record changes to the caps themselves.
 
-**The cap in force decides the soft-mode route (#283).** Every check of the per-job cap records the cap it enforced and the spend it counted on the job's state (`budget_cap_usd`, `budget_spent_usd`), and `check_budget` compares the two. So a continued job stops at the cap its pause promised even when triage picked more than the ceiling, and a lowered ceiling, or one a continue may no longer pass, holds for a job already continued, from its next agent turn. The two keys are optional and have no value until a check records one, so a job a release without them checkpointed resumes with no recorded cap and routes as before (its overrun verdict and allowance decide) until its next turn; a reducer over a plain number would have started them at 0, an over-budget cap that a continue would have raised.
+**The cap in force decides the soft-mode route (#283).** Every check of the per-job cap records the cap it enforced and the spend it counted on the job's state (`budget_cap_usd`, `budget_spent_usd`), and `check_budget` compares the two. A check that finds a call of its run refused for the cap records the cap then too (`budget_refused_cap_usd`, cleared by a run with none refused), which `check_budget` reads as a crossing until a continue raises the cap past it. So a continued job stops at the cap its pause promised even when triage picked more than the ceiling, and a lowered ceiling, or one a continue may no longer pass, holds for a job already continued, from its next agent turn. The two keys are optional and have no value until a check records one, so a job a release without them checkpointed resumes with no recorded cap and routes as before (its overrun verdict and allowance decide) until its next turn; a reducer over a plain number would have started them at 0, an over-budget cap that a continue would have raised.
 
 **An organization's audit caps** are read from its own settings until its layer has them (`embry0/services/budget_policy.py`): the copy at a release's first start is tried again while the orchestrator runs.
 
@@ -1642,24 +1642,31 @@ crossing is recorded on `budget_overrun_usd`, a hard one fails the job with
 anywhere else; a metered run's calls are checked as they go (below). Layers 2
 and 3 roll up from the same trace rows.
 
-**Each call of a metered run, at the metering proxies.** A run whose calls
-pass the xai-proxy or the llm-proxy is declared there with its budget
-(`embry0/orchestration/run_budget.py`): the least of what its job has left
-under the cap in force and what the deployment has left today and this month
-under `daily_cap_usd` and `monthly_cap_usd`, where each is set, with the
-run's rates. The proxy refuses a call whose ceiling, priced at those rates
-(its output ceiling and its input estimate), would take what the run has been
-charged, its calls in flight at their ceilings included, past that: 402,
-`budget_exceeded`, in the wire's error shape, and nothing is sent. This holds
-in every overrun mode: it refuses one call and stops no run. A run that fails
-after such a refusal carries `ERR_BUDGET_CALL_REFUSED`, and its trace's
-`metering` counts the refusals (`budget_refused`). Not checked: a free run
-(an unpriced model, or rates of 0), a run with no cap set, and a run declared
-by an older orchestrator or at an older proxy image (`proxy_run_budget_not_held`).
-Each run is held to what was left when it was declared, so runs at the same
-time (a QA fan-out, other jobs under the day's cap) are each held to that
-amount, not to one shared between them; a run's spend is added to the job and
-the day after its turn, as before. Detail:
+**Each call of a metered run, at the metering proxies.** A run whose calls pass
+the xai-proxy or the llm-proxy is declared there with its budget
+(`embry0/orchestration/run_budget.py`): the least of what its job has left under
+the cap in force and what the deployment has left today and this month under
+`daily_cap_usd` and `monthly_cap_usd`, where each is set, with the run's rates.
+The proxy refuses a call whose ceiling, priced at those rates (its output
+ceiling and its input estimate), would take what the run has been charged, its
+calls in flight at their ceilings included, past that: 402, `budget_exceeded`,
+in the wire's error shape, and nothing is sent. A refusal is routed as crossing
+its limit is: for the job's cap, by the job's overrun mode (`soft` pauses the
+job for a person, as a crossing does, saying a model call was refused, and a
+continue raises the cap; `hard` fails the job with `ERR_BUDGET_CALL_REFUSED`,
+its overrun 0, wherever a hard crossing would, a QA fan-out's apps included);
+for the day's or the month's, by failing the run with `ERR_BUDGET_CALL_REFUSED`,
+since crossing those caps stops no running job (the dispatch gate checks them
+only when a job starts), and the job goes on as after any failed run. The run
+carries `ERR_BUDGET_CALL_REFUSED` when it fails, and its trace's `metering`
+counts the refusals (`budget_refused`). Not checked: a free run (an unpriced
+model, or rates of 0), a run with no cap set, and a run declared by an older
+orchestrator or at an older proxy image (`proxy_run_budget_not_held`). Each run
+is held to what was left when it was declared, so runs at the same time are each
+held to that amount, not to one shared between them: jobs running together can
+pass the day's cap, but each by no more than what its own job had left, and the
+apps of one QA fan-out are each held to their job's remainder. A run's spend is
+added to the job and the day after its turn, as before. Detail:
 [providers.md](providers.md#metering-at-the-proxies).
 
 The cap in force is triage's

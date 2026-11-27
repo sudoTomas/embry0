@@ -312,3 +312,68 @@ async def test_a_run_that_failed_on_a_budget_refusal_says_so_whatever_its_sandbo
     assert len(meter.begun) == 1, "the run was moved to another model as though its account were spent"
     assert [o.get("error_code") for o in updates["agent_outputs"]] == ["ERR_BUDGET_CALL_REFUSED"]
     assert any("budget_exceeded" in e for e in updates["errors"]), updates["errors"]
+
+
+def _failed(**kwargs: Any) -> Any:
+    async def run(**_kw: Any) -> AgentOutput:
+        return AgentOutput(
+            agent_type="developer",
+            is_error=True,
+            error_message="xai answered HTTP 402: embry0 budget_exceeded: this call could cost up to $0.80",
+            **kwargs,
+        )
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_for_the_job_s_cap_in_soft_mode_routes_the_job_to_its_budget_pause() -> None:
+    from embry0.orchestration.routing.conditions import check_budget
+
+    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    # $9.80 spent, and the run's own $0.12: the job stays short of its $10 cap, so only the refusal can stop it.
+    state = {"sandbox_container_id": "c1", "job_id": "job-1", "total_cost_usd": 9.8}
+    updates = await _run(_runner(meter, _failed()), traces, state=state)
+    assert updates["budget_spent_usd"] < 10.0, "not the case under test: the job crossed its cap"
+    assert updates.get("budget_refused_cap_usd") == pytest.approx(10.0), (
+        f"the refusal was not recorded for the job's routing: {updates.get('budget_refused_cap_usd')}"
+    )
+    assert check_budget({**state, **updates}) == "over_budget", "the job would run on past a refusal for its cap"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run", [_failed(), _done()], ids=["failed", "recovered"])
+async def test_a_refusal_for_the_job_s_cap_in_hard_mode_fails_the_job_with_its_code(run: Any) -> None:
+    from embry0.safety.error_codes import classify_failure
+
+    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    state = {"total_cost_usd": 9.8, "budget_overrun_mode_override": "hard"}  # short of the cap, its run included
+    try:
+        await _run(_runner(meter, run), traces, state=state)
+    except Exception as exc:  # noqa: BLE001 — what the job fails with is the point
+        raised = exc
+    else:
+        pytest.fail("a refusal for the job's cap in hard mode left the job running")
+    assert classify_failure(exc=raised).value == "ERR_BUDGET_CALL_REFUSED", f"the job failed with {raised!r}"
+    assert getattr(raised, "current_cost", None) == pytest.approx(9.8 + PROXY_COST)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+async def test_a_refusal_for_the_day_s_cap_fails_the_run_and_nothing_more(mode: str) -> None:
+    """Crossing the day's cap stops no running job: its refusal fails the run, with its code, in either mode."""
+
+    class _Spent(_Db):
+        async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+            if "date_trunc('day'" in sql:
+                return {"daily": 99.95, "monthly": 120.0}
+            return await super().fetchrow(sql, *args)
+
+    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    state = {"budget_overrun_mode_override": mode}
+    updates = await _run(_runner(meter, _done()), traces, state=state, db=_Spent())
+    (output,) = updates["agent_outputs"]
+    assert (output["is_error"], output.get("error_code")) == (True, "ERR_BUDGET_CALL_REFUSED"), output
+    assert output.get("budget_refused") == "daily", output
+    assert updates.get("budget_refused_cap_usd") is None, "a refusal for the day's cap was routed as the job's"
+    assert traces.finished[0]["error_code"] == "ERR_BUDGET_CALL_REFUSED"

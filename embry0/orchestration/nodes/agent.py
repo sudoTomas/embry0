@@ -34,6 +34,7 @@ from embry0.execution.auth_provider import AuthConfigError
 from embry0.execution.run_meter import RunMeter
 from embry0.execution.skill_actions import count_action
 from embry0.orchestration.budget import (
+    BudgetCallRefusedError,
     BudgetCheckResult,
     BudgetOverrunError,
     check_budget,
@@ -486,6 +487,14 @@ async def _spend_rollup(config: Any) -> dict[str, float] | None:
     except Exception:  # noqa: BLE001 — the job's own cap still holds
         logger.warning("run_budget_spend_unread", exc_info=True)
         return None
+
+
+#: How a refusal's message names each limit.
+_LIMIT_NAMES = {
+    "job": "the job's budget",
+    "daily": "the deployment's daily budget",
+    "monthly": "the deployment's monthly budget",
+}
 
 
 def _budget_refused(metering: Any) -> int:
@@ -1402,18 +1411,21 @@ async def run_agent_node(
             run_meter = None  # a runner without a meter, or a test double whose every attribute is a mock
         meter_window: Any = None
         metering: Any = None
+        # The budget the run was declared with at the metering proxies: which limit leaves it, when one refuses a call.
+        declared: dict[str, Any] | None = None
         if run_meter is not None and container:
             try:
                 # Held to its provider: the llm-proxy refuses the sandbox's calls to any other while the run is current.
                 # And to its budget: a call whose ceiling would take the run past what is left is refused.
                 record = invocation.provider_record
+                # Read only for a run a proxy meters: the day's and month's spend is a rollup of every job's.
+                declared = await declared_budget(state, config, record) if run_meter.meters(container) else None
                 meter_window = await run_meter.begin(
                     container,
                     run_id,
                     trace_job_id or None,
                     provider=record.name if record is not None else None,
-                    # Read only for a run a proxy meters: the day's and month's spend is a rollup of every job's.
-                    budget=await declared_budget(state, config, record) if run_meter.meters(container) else None,
+                    budget=declared,
                 )
             except Exception:  # noqa: BLE001 — the run goes ahead, charged its sandbox's figure
                 logger.warning("run_meter_begin_failed", run_id=run_id, exc_info=True)
@@ -1546,6 +1558,10 @@ async def run_agent_node(
 
     result = _priced_from_the_catalog(result, invocation, agent_type)
     charged_fields: dict[str, Any] = {}
+    # The limit a metering proxy held the run to when it refused a call of it ("job", "daily", "monthly"); None when
+    # it refused none. Routed as crossing that limit is: the job's cap by its overrun mode (below), the day's and the
+    # month's by failing the run, since crossing them stops no running job.
+    refused_limit: str | None = None
     if run_meter is not None:
         charge = _charge(
             run_meter,
@@ -1565,25 +1581,29 @@ async def run_agent_node(
         )
         refused = _budget_refused(charge.metering)
         if refused:
+            refused_limit = str((declared or {}).get("limit") or "job")
             logger.warning(
                 "agent_calls_refused_for_budget",
                 agent_type=agent_type,
                 run_id=run_id,
                 refused=refused,
+                limit=refused_limit,
                 is_error=result.is_error,
             )
-            if result.is_error:
-                # The run failed on it: that is its code, whatever its sandbox read from the refusal's text (an image
-                # that predates the code reads "$1,429.00" in it as a rate limit, and the job would wait for one).
+            if result.is_error or refused_limit != "job":
+                # The run failed on it (or fails on it: a day's or month's cap stops no running job, so its refusal
+                # fails the run): that is its code, whatever its sandbox read from the refusal's text (an image that
+                # predates the code reads "$1,429.00" in it as a rate limit, and the job would wait for one).
                 said = result.error_message or ""
                 result = replace(
                     result,
+                    is_error=True,
                     error_code=ErrorCode.BUDGET_CALL_REFUSED.value,
                     error_message=said
                     if "budget_exceeded" in said
                     else (
                         f"{refused} model call(s) refused (budget_exceeded): each could have cost more than the run "
-                        f"had left of its budget. {said}"
+                        f"had left of {_LIMIT_NAMES.get(refused_limit, 'its budget')}. {said}"
                     ).strip(),
                 )
 
@@ -1603,6 +1623,9 @@ async def run_agent_node(
     )
     if getattr(result, "error_code", None):
         output_entry["error_code"] = result.error_code
+    if refused_limit is not None:
+        # For a pipeline that reads its runs' outputs (a QA sub-task's result): which limit refused the run's call.
+        output_entry["budget_refused"] = refused_limit
     resets_at = getattr(result, "provider_resets_at", None)
     if isinstance(resets_at, datetime):
         output_entry["provider_resets_at"] = resets_at.isoformat()
@@ -1720,6 +1743,9 @@ async def run_agent_node(
     # decides on these, not on the cap triage picked plus an allowance (#283).
     updates["budget_cap_usd"] = cap_check.cap
     updates["budget_spent_usd"] = cap_check.total
+    # A call refused because it could have taken the job past this cap is routed as a crossing of it: soft mode
+    # pauses the job (check_budget), hard mode fails it (below). Cleared by a run that had none refused.
+    updates["budget_refused_cap_usd"] = cap_check.cap if refused_limit == "job" else None
     if decision.overrun > 0:
         updates["budget_overrun_usd"] = decision.overrun
         logger.warning(
@@ -1733,6 +1759,8 @@ async def run_agent_node(
         )
     if not decision.allowed:
         raise BudgetOverrunError(cap_check.total, cap_check.cap)
+    if refused_limit == "job" and cap_check.mode == "hard":
+        raise BudgetCallRefusedError(cap_check.total, cap_check.cap)
 
     logger.info(
         "agent_node_complete",

@@ -110,3 +110,30 @@ def test_a_job_over_budget_that_paused_for_another_reason_still_gets_its_budget_
     updates, summary = _run(state, {"choice": "continue_retrying"})
     assert summary["budget"] == {"spent": 11.49, "cap": 10.0, "continue_adds": 10.0}
     assert updates["budget_allowance_usd"] == 11.49
+
+
+#: A run's call was refused because it could have taken the job past its $10 cap, with $9.90 spent (#759).
+REFUSED = {
+    "pipeline_config": {"budget_usd": 10.0},
+    "total_cost_usd": 9.9,
+    "budget_cap_usd": 10.0,
+    "budget_spent_usd": 9.9,
+    "budget_refused_cap_usd": 10.0,
+}
+
+
+def test_a_call_refused_for_the_job_s_cap_is_routed_as_a_crossing_of_it() -> None:
+    assert check_budget(REFUSED) == "over_budget", "a refusal for the job's cap left the job running on"
+    assert check_budget({**REFUSED, "budget_refused_cap_usd": None}) == "within_budget"
+
+
+def test_a_refusal_pause_says_so_and_continuing_raises_the_cap_past_it() -> None:
+    state = {**REFUSED, "job_id": "job-1", "current_stage": "developer_failed", "retry_count": 1}
+    updates, summary = _run(state, {"choice": "continue_retrying"})
+    assert summary["message"].startswith("A model call was refused: it could have taken the job past its budget"), (
+        summary["message"]
+    )
+    assert summary["budget"] == {"spent": 9.9, "cap": 10.0, "continue_adds": 10.0}, summary.get("budget")
+    assert updates["current_stage"] == "developer_retry"
+    assert updates["budget_cap_usd"] == pytest.approx(19.9), updates
+    assert check_budget({**state, **updates}) == "within_budget", "the continued job went straight back to its pause"

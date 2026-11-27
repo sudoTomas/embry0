@@ -1177,6 +1177,7 @@ async def emit_result_node(state: SubTaskState, config: RunnableConfig) -> dict[
         boot_phase=state.get("boot_phase"),
         error_code=str(last_error["error_code"]) if last_error and last_error.get("error_code") else None,
         account_wait=last_error.get("account_wait") if last_error else None,
+        budget_refused=str(last["budget_refused"]) if last and last.get("budget_refused") else None,
     )
 
     # spec 3.7: the final per-app status rides the job stream too, so it is
