@@ -51,6 +51,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -814,7 +815,8 @@ def read_again(stored: _Row) -> Reading:
     the loader read ``1e-7`` as a number (#756) holds the string, and a save of the same text records nothing. So
     the text is read again when the overlay is installed and when it is answered, and its values are in force
     (``read_again``) when the only difference is that: a string of the stored values that now reads as the number
-    it spells (:data:`EXPONENT_NUMBER`). The stored values stay in force (``kept``, :attr:`Reading.why`) when the
+    it spells (:data:`EXPONENT_NUMBER`). A float the text reads to equals the integer jsonb wrote it back as
+    (:func:`_written_back`). The stored values stay in force (``kept``, :attr:`Reading.why`) when the
     text does not read, reads to anything else (a text changed beside its values, by a hand at the database), or
     reads to a part this release refuses (``1e400``, now infinite), so a deployment never loses its catalogue to
     a new reading; ``same`` when nothing differs (an empty text keeps its values)."""
@@ -826,9 +828,10 @@ def read_again(stored: _Row) -> Reading:
         return Reading(stored, "kept", "unreadable", tuple(invalid.problems))
     except CatalogueTooLarge as large:
         return Reading(stored, "kept", "unreadable", (Problem((), "too_large", str(large)),))
-    if data == stored.data:
+    differs = _differs(stored.data, data)
+    if differs == "nothing":
         return Reading(stored, "same")
-    if not _reads_as_numbers(stored.data, data):
+    if differs == "more":
         return Reading(stored, "kept", "differs")
     again = replace(stored, data=data)
     refused_before = {problem.loc for problem in _built(stored)[1].refused}
@@ -838,16 +841,39 @@ def read_again(stored: _Row) -> Reading:
     return Reading(again, "read_again")
 
 
-def _reads_as_numbers(stored: Any, again: Any) -> bool:
-    """Whether ``again`` differs from ``stored`` only where a string of ``stored`` now reads as the number it spells:
-    the same keys and the same lengths throughout, every other value equal and of the same type."""
+Differs = Literal["nothing", "numbers", "more"]
+
+
+def _differs(stored: Any, again: Any) -> Differs:
+    """How ``again``, the values a text reads to, differs from ``stored``, the values stored with it: ``nothing``;
+    only where a string of ``stored`` now reads as the number it spells (``numbers``); or ``more``.
+
+    The same keys and the same lengths throughout, and every other value equal and of the same type, or a float the
+    text reads to beside the integer jsonb wrote it back as (:func:`_written_back`)."""
     if isinstance(stored, Mapping) and isinstance(again, Mapping):
-        return stored.keys() == again.keys() and all(_reads_as_numbers(stored[key], again[key]) for key in stored)
-    if isinstance(stored, list) and isinstance(again, list):
-        return len(stored) == len(again) and all(map(_reads_as_numbers, stored, again))
-    if isinstance(stored, str) and isinstance(again, float):
-        return EXPONENT_NUMBER.fullmatch(stored) is not None and float(stored) == again
-    return type(stored) is type(again) and stored == again
+        if stored.keys() != again.keys():
+            return "more"
+        found = {_differs(stored[key], again[key]) for key in stored}
+    elif isinstance(stored, list) and isinstance(again, list):
+        if len(stored) != len(again):
+            return "more"
+        found = set(map(_differs, stored, again))
+    elif isinstance(stored, str) and isinstance(again, float):
+        return "numbers" if EXPONENT_NUMBER.fullmatch(stored) is not None and float(stored) == again else "more"
+    else:
+        same = (type(stored) is type(again) and stored == again) or _written_back(stored, again)
+        return "nothing" if same else "more"
+    return "more" if "more" in found else "numbers" if "numbers" in found else "nothing"
+
+
+def _written_back(stored: Any, again: Any) -> bool:
+    """Whether ``stored`` is the integer jsonb wrote the float ``again`` back as. A row's values are stored as JSON,
+    which writes a float of 1e16 or more in exponent form (``1e23`` as ``1e+23``), and jsonb writes such a number
+    with no fraction back as a whole one (``100000000000000000000000``), which the float, ``99999999999999991611392``
+    exactly, does not equal. A number written with a point keeps it (``4096.0`` stays ``4096.0``). A stored value
+    of any other type that equals the decimal is the float itself, which :func:`_differs` compared before."""
+    written = repr(again)
+    return isinstance(again, float) and "e" in written and Decimal(written) == stored
 
 
 async def held_catalogue(conn: Any) -> Catalogue:

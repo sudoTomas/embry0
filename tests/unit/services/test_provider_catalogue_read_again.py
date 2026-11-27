@@ -91,6 +91,8 @@ _TWO_MODELS = (
     "providers:\n  custom:\n    models:\n      custom/a:\n        free: true\n      custom/b:\n        free: true\n"
 )
 _KWARGS = _MODEL + "        request_extras: {{temperature: 1e-7, chat_template_kwargs: {{weights: {weights}}}}}\n"
+_FLAG = _MODEL + "        request_extras: {{chat_template_kwargs: {{thinking: {flag}}}}}\n"
+_TOKENS = _MODEL + "        request_extras: {{max_tokens: {tokens}}}\n"
 
 
 @pytest.mark.parametrize(
@@ -105,6 +107,9 @@ _KWARGS = _MODEL + "        request_extras: {{temperature: 1e-7, chat_template_k
             _MODEL + "        request_extras: {temperature: 1e-7, max_tokens: 4096.0}\n",
         ),
         (_KWARGS.format(weights="[1, 2]"), _KWARGS.format(weights="[1]")),
+        (_FLAG.format(flag="true"), _FLAG.format(flag="1.0")),
+        (_TOKENS.format(tokens="4096"), _TOKENS.format(tokens="'default'")),
+        (_TOKENS.format(tokens="1.0e+23"), _TOKENS.format(tokens="2.0e+23")),
     ],
     ids=[
         "a-model-dropped",
@@ -113,6 +118,9 @@ _KWARGS = _MODEL + "        request_extras: {{temperature: 1e-7, chat_template_k
         "a-number-not-in-exponent-form",
         "a-whole-number-made-a-float",
         "a-list-item-dropped",
+        "a-flag-made-a-number",
+        "a-number-made-text",
+        "another-large-number",
     ],
 )
 async def test_a_text_that_reads_to_other_values_keeps_the_stored_ones(
@@ -130,6 +138,39 @@ async def test_a_text_that_reads_to_other_values_keeps_the_stored_ones(
     kept = [e for e in logs if e["event"] == "provider_catalogue_text_not_read_again"]
     assert [e.get("reason") for e in kept] == ["differs"], _events(logs)
     assert read_again(await store.document()).kept() == {"reason": "differs", "problems": []}
+
+
+@pytest.mark.parametrize("typed", ["1e23", "1.0e+23", "12345678901234567890.5", "1e16", "4096"])
+async def test_a_number_jsonb_writes_back_as_a_whole_one_reads_as_stored(
+    db_with_migrations: DatabasePool, typed: str
+) -> None:
+    """The values are stored as jsonb, which writes a large float back as an integer (1e23 as
+    100000000000000000000000, which the float is not exactly): that is no difference, so nothing is said at each
+    start, and the overlay is not left unread (#757 review)."""
+    db = db_with_migrations
+    await CatalogueStore(db).save(_TOKENS.format(tokens=typed), actor="ops@example.test")
+    store = CatalogueStore(db)
+    with capture_logs() as logs:
+        await store.refresh()
+    reading = read_again(await store.document())
+    assert not [e for e in logs if "read_again" in e["event"]], f"{typed}: {_events(logs)}"
+    assert (reading.how, reading.kept()) == ("same", None), f"{typed}: {reading.how} {reading.why}"
+    assert await _stored_values_in_force(store)
+
+
+async def test_a_number_jsonb_wrote_back_beside_one_in_exponent_form_is_read_again(
+    db_with_migrations: DatabasePool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1.0e+23 was a float to the earlier release too, stored as a whole number; 1e-7 was a string. The text reads to
+    both as floats, and only the string is a new reading."""
+    db = db_with_migrations
+    text = _MODEL + "        request_extras: {temperature: 1e-7, max_tokens: 1.0e+23}\n"
+    await _stored_by_an_older_release(db, monkeypatch, text)
+    store = CatalogueStore(db)
+    with capture_logs() as logs:
+        await store.refresh()
+    assert _installed_temperature() == 1e-07, f"kept: {_events(logs)}"
+    assert _events(logs) == ["provider_catalogue_read_again"], _events(logs)
 
 
 async def test_a_text_that_now_reads_to_a_refused_part_keeps_the_stored_values(
