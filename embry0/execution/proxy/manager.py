@@ -30,6 +30,7 @@ embry0/workflows/_validation.py).
 from __future__ import annotations
 
 import asyncio
+import math
 import secrets
 import socket
 import time
@@ -249,6 +250,18 @@ class ProxyManager:
         # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
         # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
         self._unordered_runs: set[tuple[str, str]] = set()
+        # (proxy, run id) -> boot id -> what the run could have spent at that proxy process (its charges, and its
+        # calls in flight at their ceilings), by its budget's rates, as the last read of it there said.
+        self._run_spent: dict[tuple[str, str], dict[str, float]] = {}
+        # Each proxy's process as last heard from (its boot id), and the purses its runs draw on as last sent there
+        # (embry0.execution.run_meter's ledger): key -> {limit, remaining_usd, members}.
+        self._proxy_boot: dict[str, str] = {}
+        self._purse_figures: dict[str, dict[str, dict[str, Any]]] = {}
+        # (proxy, run id) -> what a purse member could have spent at the proxy's processes before its current one,
+        # taken when the proxy was recreated; None when that is not known (no read of it there). Every purse figure
+        # sent to the proxy is lowered by its members' (to nothing for one not known): the new process counts them
+        # from nothing.
+        self._carried: dict[tuple[str, str], float | None] = {}
         # The proxies whose last replay was given up at a timeout, each with the entries it did not send: they are sent
         # in the background once the proxy answers again (a request of the given-up replay that still lands is older
         # than anything sent since, so the proxy refuses it).
@@ -1283,12 +1296,19 @@ class ProxyManager:
         ]
 
     async def declare_run(
-        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+        self,
+        proxy: str,
+        sandbox_id: str,
+        run_id: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        budget: Mapping[str, Any] | None = None,
     ) -> str:
         """Declare ``run_id`` as ``sandbox_id``'s run on ``proxy``, so the calls it forwards count under it, on
         ``provider`` (the run's provider record's name) when given: the llm-proxy then refuses the sandbox's calls to
-        any other provider while the run is current. Returns the proxy's boot id. Raises RuntimeError when the proxy
-        refuses or cannot be reached."""
+        any other provider while the run is current. With ``budget`` (``embry0.orchestration.run_budget``) the proxy
+        refuses a call whose ceiling would take the run past it. Returns the proxy's boot id. Raises RuntimeError when
+        the proxy refuses or cannot be reached."""
         port = METERED_PROXIES[proxy][0]
         seq = self._next_seq()
         body: dict[str, Any] = {"sandbox_id": sandbox_id, "run_id": run_id, "seq": seq}
@@ -1296,6 +1316,11 @@ class ProxyManager:
             body["job_id"] = job_id
         if provider:
             body["provider"] = provider
+        if budget:
+            body["budget"] = {
+                **budget,
+                "purses": [self._carried_off(proxy, p, joining=run_id) for p in budget.get("purses") or []],
+            }
         # A sandbox runs one run at a time: whatever run it held before is over, so a recreated proxy must never
         # be given it back (its calls would count under the old run).
         held = self._admin_state.get(proxy, {})
@@ -1315,7 +1340,61 @@ class ProxyManager:
             # Nor the provider: its image predates runs held to their provider, so the sandbox's calls to another one
             # count under this run too, at this run's rates. Its tally there is not taken as whole either.
             self._unordered_runs.add((proxy, run_id))
+        if budget and not isinstance(response.get("budget"), dict):
+            # Nor the budget: its image predates budgets, so the run's calls are checked against nothing there. What
+            # they cost is still counted, and checked after the run's turn as before.
+            logger.warning("proxy_run_budget_not_held", proxy=proxy, run_id=run_id)
+        self._heard(proxy, response.get("boot_id"))
+        if budget:
+            for purse in budget.get("purses") or []:
+                self._purse_figures.setdefault(proxy, {})[str(purse["key"])] = {
+                    "limit": purse["limit"],
+                    "remaining_usd": float(purse["remaining_usd"]),
+                    "members": {*purse["members"], run_id},
+                }
         return str(response.get("boot_id") or "")
+
+    async def update_purses(self, proxy: str, purses: list[dict[str, Any]]) -> None:
+        """Give ``proxy`` the ledger's figures for ``purses`` (``[{key, limit, remaining_usd, members}]``): what each
+        has left once its settled runs are charged, and its members there. Raises RuntimeError when the proxy refuses
+        or cannot be reached."""
+        port = METERED_PROXIES[proxy][0]
+        seq = self._next_seq()
+        await self._after_replay(proxy)
+        sent = [self._carried_off(proxy, purse) for purse in purses]
+        await self._exec_admin_request(
+            container=proxy, method="PUT", path="/admin/purses", port=port, body={"purses": sent, "seq": seq}
+        )
+        figures = self._purse_figures.setdefault(proxy, {})
+        for purse in purses:
+            if purse["members"]:
+                figures[str(purse["key"])] = {
+                    "limit": purse["limit"],
+                    "remaining_usd": float(purse["remaining_usd"]),
+                    "members": set(purse["members"]),
+                }
+            else:
+                figures.pop(str(purse["key"]), None)
+        members = {m for figure in figures.values() for m in figure["members"]}
+        for key in [k for k in self._carried if k[0] == proxy and k[1] not in members]:
+            del self._carried[key]
+
+    def _carried_off(self, proxy: str, purse: Mapping[str, Any], joining: str | None = None) -> dict[str, Any]:
+        """``purse`` as it goes to ``proxy``: its figure lowered by what its members (``joining`` too) could have
+        spent at the proxy's processes before its current one, or to nothing when that is not known for one."""
+        left = float(purse["remaining_usd"])
+        for member in {*purse["members"], *([joining] if joining else [])}:
+            if (proxy, member) not in self._carried:
+                continue
+            carried = self._carried[(proxy, member)]
+            if carried is None:
+                return {**purse, "remaining_usd": 0.0}
+            left -= carried
+        return {**purse, "remaining_usd": max(0.0, left)}
+
+    def _heard(self, proxy: str, boot_id: Any) -> None:
+        if isinstance(boot_id, str) and boot_id:
+            self._proxy_boot[proxy] = boot_id
 
     async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
         """End ``run_id`` on ``proxy``: its last tally and the proxy's boot id (``{"boot_id", "tally"}``), or None
@@ -1345,6 +1424,8 @@ class ProxyManager:
             return None  # a newer request for the sandbox came first (its next run ended this one): no final tally
         if not isinstance(response.get("tally"), dict):
             return None
+        # The run's last word at this process: what it could have spent here, should the proxy go before it settles.
+        self._note_run_spend(proxy, response.get("boot_id"), [response["tally"]])
         return response
 
     async def read_meter(self, proxy: str) -> dict[str, Any]:
@@ -1355,7 +1436,54 @@ class ProxyManager:
         )
         if not isinstance(response.get("boot_id"), str) or not isinstance(response.get("tallies"), list):
             raise RuntimeError(f"{proxy} answered its meter without a boot id or tallies")
+        self._heard(proxy, response["boot_id"])
+        self._note_run_spend(proxy, response["boot_id"], response["tallies"])
         return response
+
+    def _note_run_spend(self, proxy: str, boot_id: Any, tallies: Any) -> None:
+        """Keep what each purse member at ``proxy`` could have spent at process ``boot_id``, as ``tallies`` (a read,
+        or a run's last tally at its end) say, for a recreation to carry off its purses (:meth:`_carry`)."""
+        members = {m for figure in self._purse_figures.get(proxy, {}).values() for m in figure["members"]}
+        for tally in tallies if isinstance(tallies, list) else []:
+            if not isinstance(tally, Mapping):
+                continue
+            run_id, budget = tally.get("run_id"), tally.get("budget")
+            if not isinstance(run_id, str) or run_id not in members or not isinstance(budget, Mapping):
+                continue
+            spent = budget.get("spent_usd")
+            if isinstance(spent, int | float) and not isinstance(spent, bool) and math.isfinite(spent) and spent >= 0:
+                boots = self._run_spent.setdefault((proxy, run_id), {})
+                boots[str(boot_id)] = max(boots.get(str(boot_id), 0.0), float(spent))
+        for key in [k for k in self._run_spent if k[0] == proxy and k[1] not in members]:
+            del self._run_spent[key]
+
+    def _carry(self, proxy: str) -> None:
+        """``proxy`` was recreated: carry off its purses what each member could have spent at the processes before,
+        as their reads said (:meth:`_carried_off`). A member never read at the process that went away could have
+        spent anything there: its purses are given nothing more (fail closed)."""
+        gone = self._proxy_boot.get(proxy)
+        members = {m for figure in self._purse_figures.get(proxy, {}).values() for m in figure["members"]}
+        for member in members:
+            boots = self._run_spent.get((proxy, member), {})
+            self._carried[(proxy, member)] = sum(boots.values()) if gone is not None and gone in boots else None
+
+    def _replayed_budget(self, proxy: str, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """A run's declaration ``body`` as a recreated ``proxy`` is given it back: each purse at its latest figure,
+        carried off (:meth:`_carried_off`), with its latest members."""
+        budget = body.get("budget")
+        if not isinstance(budget, Mapping) or not isinstance(budget.get("purses"), list):
+            return body
+        figures = self._purse_figures.get(proxy, {})
+        purses = []
+        for purse in budget["purses"]:
+            latest = figures.get(str(purse.get("key"))) if isinstance(purse, Mapping) else None
+            if latest is None:
+                purses.append(purse)
+                continue
+            members = sorted(set(latest["members"]) - {run_id})
+            figure = {**purse, "remaining_usd": latest["remaining_usd"], "members": members}
+            purses.append(self._carried_off(proxy, figure, joining=run_id))
+        return {**body, "budget": {**budget, "purses": purses}}
 
     async def _after_replay(self, proxy: str) -> bool:
         """Wait until no replay of ``proxy``'s state is under way, so a run is declared or ended on a proxy that holds
@@ -1497,6 +1625,8 @@ class ProxyManager:
             env, attach_internet = self._launch_specs[name]
             logger.warning("proxy_not_running_recreating", proxy=name)
             await self._remove_proxies([name], phase="revive")
+            # What its runs could have spent at the process that went away is carried off their purses.
+            self._carry(name)
             try:
                 await self._launch(name=name, env=env, attach_internet=attach_internet)
             except Exception as exc:  # noqa: BLE001 — the caller gets its original error
@@ -1553,6 +1683,8 @@ class ProxyManager:
             replay = dict(body)
             if key.startswith("enroll:"):
                 replay["ttl_seconds"] = max(1, int(expires - now))
+            elif key.startswith("run:"):
+                replay = self._replayed_budget(name, key.removeprefix("run:"), replay)
             try:
                 await self._exec_admin_once(
                     container=name, method="POST", path=path, port=port, body=replay, accept_404=False

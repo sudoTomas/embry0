@@ -197,6 +197,18 @@ def check_review_decision(state: dict[str, Any]) -> Literal["approved", "changes
     return "approved"
 
 
+def refused_at_cap(state: dict[str, Any]) -> bool:
+    """Whether the last agent run checked against the cap now in force had a model call refused at a metering proxy
+    because it could have taken the job past that cap (``budget_refused_cap_usd``, the cap then). A cap a continue
+    raised since is past it."""
+    cap, refused = state.get("budget_cap_usd"), state.get("budget_refused_cap_usd")
+    if isinstance(cap, bool) or isinstance(refused, bool):
+        return False
+    if not isinstance(cap, int | float) or not isinstance(refused, int | float):
+        return False
+    return float(refused) >= float(cap)
+
+
 def check_budget(state: dict[str, Any]) -> Literal["within_budget", "over_budget"]:
     """Soft-mode routing gate: has the job's per-job cap been crossed?
 
@@ -209,11 +221,15 @@ def check_budget(state: dict[str, Any]) -> Literal["within_budget", "over_budget
     agent node has checked since this was recorded fall back to the node's
     overrun verdict, and once a person let the job spend past its cap, to the
     comparison against the raised cap.
+
+    A run whose model call a metering proxy refused because it could have taken
+    the job past that cap is over budget as a crossing is (:func:`refused_at_cap`):
+    the job pauses for a person, and a continue raises the cap past it.
     """
     cap = state.get("budget_cap_usd")
     if isinstance(cap, int | float) and not isinstance(cap, bool):
         spent = max(float(state.get("total_cost_usd") or 0.0), float(state.get("budget_spent_usd") or 0.0))
-        return "over_budget" if spent > cap else "within_budget"
+        return "over_budget" if spent > cap or refused_at_cap(state) else "within_budget"
     if state.get("budget_overrun_usd", 0.0) > 0 and budget_allowance(state) <= 0:
         return "over_budget"
     cost = state.get("total_cost_usd", 0.0)

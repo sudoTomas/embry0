@@ -1010,3 +1010,152 @@ async def test_a_proxy_that_does_not_echo_the_provider_leaves_the_run_not_whole(
     except TypeError as exc:
         pytest.fail(f"a run cannot be declared on its provider: {exc}")
     assert proxy.mgr.declared_unordered("xai-proxy", "run-1"), "a run its proxy did not hold to its provider is whole"
+
+
+_PURSE = {"key": "job:job-1", "limit": "job", "remaining_usd": 10.0, "members": []}
+_BUDGET = {"rates": {"in": 2.0, "out": 6.0}, "cache": {"read": 0.25, "write": 1.5}, "purses": [_PURSE]}
+
+
+async def _declared_with_budget(mgr: Any, run_id: str = "run-1", sandbox: str = "sbx-1", **purse: Any) -> None:
+    budget = {**_BUDGET, "purses": [{**_PURSE, **purse}]}
+    try:
+        await mgr.declare_run("xai-proxy", sandbox, run_id, "job-1", provider="xai", budget=budget)
+    except (TypeError, RuntimeError) as exc:
+        pytest.fail(f"a run cannot be declared with its purse: {exc}")
+
+
+def _left(server: Any) -> float:
+    purse = server.app[METER].snapshot()["purses"].get("job:job-1")
+    assert purse is not None, "the proxy holds no purse for the job"
+    return float(purse["left_usd"])
+
+
+async def _a_call_in_flight(server: Any, run_sandbox: str = "sbx-1") -> None:
+    """1,000,000 output tokens at its ceiling: $6 at $6 a million, held at the proxy."""
+    from embry0.execution.proxy.metering import read_call
+
+    body = b'{"model": "grok-4.7", "max_tokens": 1000000, "stream": true, "messages": []}'
+    server.app[METER].open(run_sandbox, read_call("anthropic", body))
+
+
+async def test_a_run_is_declared_at_the_proxy_with_its_purse(proxy: Any) -> None:
+    await _declared_with_budget(proxy.mgr)
+    assert _left(proxy) == pytest.approx(10.0)
+
+
+async def test_a_recreated_proxy_holds_a_purse_to_what_its_runs_could_not_have_spent_before(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """The new process counts the run from nothing: given back its whole purse, the run could spend it twice."""
+    mgr = proxy.mgr
+    await _declared_with_budget(mgr)
+    await _a_call_in_flight(proxy)
+    await mgr.read_meter("xai-proxy")  # the orchestrator's read every 5 seconds
+    spent = proxy.app[METER].snapshot()["tallies"][0]["budget"]["spent_usd"]
+    assert spent == pytest.approx(6.0, abs=0.01), spent
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    mgr._carry("xai-proxy")  # the recreation, as _revive does it
+    restored, failed = await mgr._replay("xai-proxy")
+    assert failed == 0
+    assert _left(new) == pytest.approx(10.0 - spent), (
+        f"the recreated proxy holds the purse to ${_left(new):.2f}, though the run could have spent ${spent:.2f}"
+    )
+    # A later figure from the ledger (worked out from settled runs alone) is carried off the same way.
+    await mgr.update_purses("xai-proxy", [{**_PURSE, "remaining_usd": 8.0, "members": ["run-1"]}])
+    assert _left(new) == pytest.approx(8.0 - spent), f"a later figure was given whole: ${_left(new):.2f}"
+
+
+async def test_a_recreated_proxy_with_no_read_of_the_run_gives_it_nothing_more(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """What the run spent at the process that went away is not known: fail closed."""
+    mgr = proxy.mgr
+    await _declared_with_budget(mgr)
+    await _a_call_in_flight(proxy)
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    mgr._carry("xai-proxy")
+    await mgr._replay("xai-proxy")
+    assert _left(new) == 0.0, f"a run never read before the recreation was given ${_left(new):.2f} more"
+
+
+async def test_a_run_ended_but_not_settled_is_carried_off_its_purse_after_a_recreation(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """Its last tally, at its end, says it could have spent $6 there; it counts in the purse until it settles."""
+    from embry0.execution.proxy.metering import Usage, _ModelTally
+
+    mgr = proxy.mgr
+    await _declared_with_budget(mgr, run_id="run-1")
+    proxy.app[METER]._runs["run-1"].models["grok-4.7"] = _ModelTally(usage=Usage(output_tokens=1_000_000), requests=1)
+    assert await mgr.end_run("xai-proxy", "run-1") is not None
+    await _declared_with_budget(mgr, run_id="run-2", members=["run-1"])
+    await mgr.read_meter("xai-proxy")  # run-2 read, having spent nothing
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    mgr._carry("xai-proxy")
+    await mgr._replay("xai-proxy")
+    assert _left(new) == pytest.approx(4.0), f"the ended run's $6 was let go: ${_left(new):.2f} left"
+
+
+async def test_a_run_declared_after_a_recreation_draws_on_its_purse_carried_off(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    mgr = proxy.mgr
+    await _declared_with_budget(mgr)
+    await _a_call_in_flight(proxy)
+    await mgr.read_meter("xai-proxy")
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    mgr._carry("xai-proxy")
+    await mgr._replay("xai-proxy")
+    enrolled = await mgr._exec_admin_request(
+        container="xai-proxy",
+        method="POST",
+        path="/admin/enroll",
+        port=new.port,
+        body={"sandbox_id": "sbx-2", "sandbox_token": "another-sandbox-bearer-of-32-chars"},
+    )
+    assert enrolled is not None
+    await _declared_with_budget(mgr, run_id="run-2", sandbox="sbx-2", members=["run-1"])
+    assert _left(new) == pytest.approx(4.0, abs=0.01), f"the new run was given the purse whole: ${_left(new):.2f}"
+
+
+async def test_a_proxy_is_carried_off_when_it_is_recreated_before_it_is_given_its_state_back() -> None:
+    order: list[str] = []
+    mgr = ProxyManager(_LocalExec(), proxy_admin_token=ADMIN)  # type: ignore[arg-type]
+    mgr._launch_specs["xai-proxy"] = ({}, False)
+
+    async def _not_running(name: str) -> bool:
+        return False
+
+    async def _removed(names: Any, **_kw: Any) -> None:
+        order.append("remove")
+
+    async def _launched(**_kw: Any) -> None:
+        order.append("launch")
+
+    async def _replayed(name: str) -> tuple[int, int]:
+        order.append("replay")
+        return 0, 0
+
+    mgr._is_running = _not_running  # type: ignore[method-assign]
+    mgr._remove_proxies = _removed  # type: ignore[method-assign]
+    mgr._launch = _launched  # type: ignore[method-assign]
+    mgr._replay = _replayed  # type: ignore[method-assign]
+    carry = getattr(mgr, "_carry", None)
+    assert carry is not None, "the manager carries nothing off a recreated proxy"
+    mgr._carry = lambda name: (order.append("carry"), carry(name))[1]  # type: ignore[method-assign]
+    assert await mgr._revive("xai-proxy") is True
+    assert "carry" in order and order.index("carry") < order.index("replay"), order
+
+
+async def test_a_recreated_proxy_is_given_the_latest_figure_not_the_declared_one(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """A run settled since its sibling's declaration left $3 in the purse; the replay must not restore the $10."""
+    mgr = proxy.mgr
+    await _declared_with_budget(mgr)
+    await mgr.update_purses("xai-proxy", [{**_PURSE, "remaining_usd": 3.0, "members": ["run-1"]}])
+    await mgr.read_meter("xai-proxy")  # run-1 read, having spent nothing
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    mgr._carry("xai-proxy")
+    await mgr._replay("xai-proxy")
+    assert _left(new) == pytest.approx(3.0), f"the replay restored the declared figure: ${_left(new):.2f}"

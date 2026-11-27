@@ -2,6 +2,7 @@
   "about": "The provider catalogue's overlay as the dashboard's form writes it (frontend/src/lib/catalogueOverlay.ts overlayYaml, its test beside this file): each case's yaml is what the form writes for its overlay, and what the catalogue reads back to the same overlay (tests/unit/agents/test_catalogue_overlay_yaml.py). Both sides read this file, so neither can drift from the other. A case with \"valid\": false is no catalogue (its id routes to no provider): the backend reads it back but does not merge it. The form decides by a field's name how to write it: \"whole_number_keys\" as integers (WHOLE_NUMBER_KEYS; every other number as a float), \"date_keys\" as bare days (DATE_KEYS; any other string quoted), \"json_keys\" as JSON, their numbers as they are (EXTRAS_KEYS). The backend checks each list against the overlay's schema and the frontend against the writer, so a field the schema gains cannot be written as the wrong type. A number is in this file with the type the catalogue reads it as (2.0 where it reads a float, 2 where a whole number), and the backend compares types: 256.0 is not 256. A case with \"typed_by_hand\": true is YAML an operator types, not what the form writes: the frontend does not write it, the backend reads it back as the others.",
   "whole_number_keys": [
     "context_window",
+    "max_output_tokens",
     "version"
   ],
   "date_keys": [
@@ -162,6 +163,22 @@
         }
       },
       "yaml": "providers:\n  custom:\n    enabled: true\n    models:\n      \"custom/qwen3:32b\":\n        free: true\n        context_window: 32768\n"
+    },
+    {
+      "name": "a chat model's output limit, a whole number",
+      "overlay": {
+        "providers": {
+          "deepseek": {
+            "enabled": true,
+            "models": {
+              "deepseek-flash": {
+                "max_output_tokens": 8192
+              }
+            }
+          }
+        }
+      },
+      "yaml": "providers:\n  deepseek:\n    enabled: true\n    models:\n      deepseek-flash:\n        max_output_tokens: 8192\n"
     },
     {
       "name": "background request extras, their numbers as written",

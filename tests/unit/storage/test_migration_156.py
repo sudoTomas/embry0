@@ -121,3 +121,17 @@ async def test_a_trace_keeps_how_its_charge_was_reached_and_the_sandbox_s_figure
         await db.execute(
             "INSERT INTO run_meter (proxy, boot_id, tally_key, sandbox_id, snapshot) VALUES ('p', 'b', 'k', 's', '[]')"
         )
+
+
+@pytest.mark.requires_postgres
+async def test_the_tallies_of_many_runs_are_read_in_one_go(db_with_migrations: DatabasePool) -> None:
+    """At start-up, what every run the last process left was counted, without a read a run (#759)."""
+    repo = RunMeterRepository(db_with_migrations)
+    await repo.record("xai-proxy", "b1", [_tally("run-1", 1), _tally("run-2", 2), _tally("run-3", 3)])
+    await repo.record("xai-proxy", "b2", [_tally("run-1", 4)], final=True)
+    for_runs = getattr(repo, "for_runs", None)
+    assert for_runs is not None, "the tallies of many runs cannot be read in one go"
+    kept = await for_runs(["run-1", "run-2", "run-9"])
+    assert sorted(kept) == ["run-1", "run-2"], kept
+    assert kept["run-1"] == await repo.for_run("run-1"), "a run's tallies read in one go differ from its own read"
+    assert [r["snapshot"]["models"]["grok-4.7"]["requests"] for r in kept["run-2"]] == [2]

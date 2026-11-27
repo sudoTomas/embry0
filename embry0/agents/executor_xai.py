@@ -127,6 +127,7 @@ class _AnthropicMessagesWire:
             parts=parts,
             tool_calls=tool_calls,
             wants_tools=getattr(resp, "stop_reason", None) == "tool_use",
+            cut_short=getattr(resp, "stop_reason", None) == "max_tokens",
             usage=usage,
             # Full blocks, so the next request has the tool_use blocks its results answer.
             assistant_message={"role": "assistant", "content": content},

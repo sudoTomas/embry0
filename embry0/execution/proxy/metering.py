@@ -9,19 +9,35 @@ proxy that carries several providers' calls (the llm-proxy) then refuses the
 sandbox's calls to any other while the run is current, so a run's tally holds
 its own provider's calls alone, and the tally says which provider that is. The
 orchestrator reads the tallies (``GET /admin/meter``, cumulative, so a lost
-read counts nothing twice) and prices them at the run's rates; this module
-knows tokens, not prices.
+read counts nothing twice) and prices them at the run's rates.
+
+A declaration may carry the run's budget too: what the run may still spend
+(the least of what its job, and the deployment's day and month, have left
+when it is declared) and the run's rates. The proxy then refuses a call
+(``budget_exceeded``) whose ceiling, priced at those rates, would take what
+the run has been charged, its calls in flight at their ceilings included,
+past that, and forwards none of it. A declaration without one (no cap, a free
+model, an older orchestrator) is checked against nothing.
 
 Everything here fails toward counting more, never less:
 
-- an answer whose usage cannot be read (a cut stream, a client that went away,
-  a shape this release does not know) is charged an estimate from the bytes it
-  carried, above what the provider counts for ordinary text, and marked
-  ``estimated``;
+- an answer that ended whose usage cannot be read (a shape this release does
+  not know, a JSON answer too large to read) is charged an estimate from the
+  bytes it carried, above what the provider counts for ordinary text, and
+  marked ``estimated``;
 - a call whose answer never arrived (a timeout, a connect timeout included,
   since the proxy cannot tell whether the request left; or a failure past the
   connect) is charged its ceiling: the request's size as input and the most
   output it asked for;
+- so is one whose answer broke off before its usage was read: the upstream cut
+  it, it could not be decoded, or the sandbox went away while it came. The
+  provider may have generated all of it, and what was read is no measure of
+  that, so its output is the most the request allowed; the input counts the
+  answer did give stand (its input is the request's size only when it gave
+  none). An answer whose usage was read in full is charged that usage, however
+  it ended. One limit: an answer whose end is the connection closing (no
+  length, not chunked) that is cut short looks like one that ended whole, and
+  keeps the estimate: the two cannot be told apart;
 - a call still in flight shows in every snapshot with that ceiling, so a reader
   that loses the proxy (a restart) can charge it;
 - an error answer (no 2xx) is counted as an error and charged nothing: the
@@ -32,8 +48,10 @@ Everything here fails toward counting more, never less:
 Two wire formats are read: Anthropic's Messages API (``anthropic``, which
 xAI's compat endpoint also speaks) and OpenAI's chat completions
 (``openai_chat``), each as plain JSON or as server-sent events. A chat
-completions request that streams is sent upstream with
-``stream_options.include_usage``, without which its answer carries no usage.
+completions request that streams is sent upstream with ``stream_options``
+exactly ``{"include_usage": true}``, without which its answer carries no
+usage: another option (a usage in every chunk) is dropped, and a stream's usage
+counts as the answer's only in a chunk with no choice still open.
 """
 
 from __future__ import annotations
@@ -58,10 +76,12 @@ from embry0.execution.proxy.enrollment import (
     request_seq,
     stale_request,
 )
-from embry0.execution.proxy.model_request import anthropic_error
+from embry0.execution.proxy.model_request import anthropic_error, openai_error
 
 __all__ = [
     "METER",
+    "Budget",
+    "BudgetExceededError",
     "Call",
     "Meter",
     "Metered",
@@ -69,6 +89,7 @@ __all__ = [
     "Reading",
     "Usage",
     "Wire",
+    "budget_answer",
     "read_call",
     "reader_for",
     "register_meter_routes",
@@ -82,9 +103,13 @@ Wire = Literal["anthropic", "openai_chat"]
 #: four characters a token for English, two to three for code and for text in other scripts), so an estimate from
 #: bytes lands above their count.
 BYTES_PER_TOKEN = 2
-#: The output a call is taken to be able to produce when it names no limit: above what the providers' models emit
-#: in one answer.
+#: The output a call is taken to be able to produce in one answer when it names no limit: above what the providers'
+#: models emit in one. It assumes the server stops by then; vLLM and llama.cpp, given no limit, run to the model's
+#: context.
 DEFAULT_OUTPUT_CEILING = 128_000
+#: The most output a call may be able to produce (its ceiling, the limit times the answers it asks for): a request
+#: whose ceiling is higher is refused, so that a call charged its ceiling is charged a figure the traces can hold.
+MAX_OUTPUT_CEILING = 10_000_000
 #: The largest JSON answer read whole for its usage. A bigger one is charged its estimate.
 MAX_JSON_ANSWER_BYTES = 16 * 1024 * 1024
 #: The longest server-sent event line kept. Past it the stream is no longer read (its estimate stands).
@@ -99,6 +124,95 @@ DEFAULT_MAX_TALLIES = 1000
 MAX_MODEL_CHARS = 200
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+#: Output limits some servers of the OpenAI-style API honour besides (or over) ``max_tokens`` and
+#: ``max_completion_tokens``, compared with case folded: llama.cpp's ``n_predict`` (which overrides both),
+#: Ollama's ``num_predict`` (in ``options``), TGI and Hugging Face's ``max_new_tokens``, Gemini's ``max_output_tokens``
+#: (``maxOutputTokens``) and the old Anthropic ``max_tokens_to_sample``. The meter's ceiling is the limit it reads,
+#: so a chat completion naming one of these, at its top level or in its ``options``, is refused: a server honouring it
+#: could generate past the ceiling the call is charged.
+_SERVER_OUTPUT_LIMITS: frozenset[str] = frozenset(
+    {"n_predict", "num_predict", "max_new_tokens", "max_output_tokens", "maxoutputtokens", "max_tokens_to_sample"}
+)
+#: The keys a chat completion names how many answers it wants with, compared with case folded: OpenAI's and vLLM's
+#: ``n``, llama.cpp's ``n_cmpl`` and older vLLM's ``best_of`` (that many generated, ``n`` of them returned). Each
+#: answer may run to the output limit, so the ceiling is the limit times the largest. A server that matches keys with
+#: case folded reads ``N`` as ``n``, so the meter does too: it can only charge more. No server of the Messages API
+#: reads them, so the Anthropic wire's ceiling is its limit alone.
+_ANSWER_COUNTS: frozenset[str] = frozenset({"n", "n_cmpl", "best_of"})
+#: The ``stream_options`` a streamed chat completion goes upstream with, whatever the sandbox asked for.
+_STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
+# What a metered call may carry, in this one place (``_unmetered``). The budget check prices a call by its bytes (at
+# most a token a byte, which bounds text) and its output ceiling, at its run's rates. What a provider fetches or runs for
+# the call, or bills at a price of its own, is bounded by neither, so a request carrying it is refused, 400
+# ``unmetered_content``, whether or not its run has a budget. Media goes only as an image given inline, which the check
+# holds at IMAGE_TOKENS. A request whose shape is not one of these is refused too, never passed over unread.
+#: Fields, at the top level or on a message, that have the provider spend on the call's behalf or bill it at another
+#: price: OpenAI's web search; OpenRouter's plugins (web search, file parsing), its fallback ``models`` (an ``:online``
+#: id among them searches the web), its ``provider`` preferences and ``route`` (another upstream, at its own prices);
+#: xAI's live search (retrieved content and a fee a source); audio (billed at audio rates); predicted output (rejected
+#: prediction tokens bill as output); Anthropic's MCP servers and code execution container (billed by the hour).
+#: Compared with case folded.
+_UNMETERED_FIELDS: frozenset[str] = frozenset(
+    {
+        "web_search_options",
+        "plugins",
+        "models",
+        "provider",
+        "route",
+        "search_parameters",
+        "audio",
+        "prediction",
+        "mcp_servers",
+        "container",
+    }
+)
+#: The ``modalities`` a request may ask for: text alone (``audio`` bills at audio rates).
+_METERED_MODALITIES: frozenset[str] = frozenset({"text"})
+#: The ``service_tier`` values a request may name: the ones billed at the standard rates or below.
+_METERED_SERVICE_TIERS: frozenset[str] = frozenset({"auto", "default", "flex", "standard_only"})
+#: A model id suffix a router reads as a web search with every call (OpenRouter's ``:online``).
+_UNMETERED_MODEL_SUFFIXES: tuple[str, ...] = (":online",)
+#: The object-valued top-level fields a chat completion may carry, each known to change neither which model answers nor
+#: what its tokens cost: OpenAI's ``response_format``, ``tool_choice``, ``stream_options`` (rewritten for a stream),
+#: ``logit_bias`` and ``metadata``; vLLM's and SGLang's ``chat_template_kwargs``, arguments to the model's chat template
+#: such as ``enable_thinking`` (the catalogue's request extras send it); Ollama's and llama.cpp's ``options``, sampling
+#: and context settings (an output limit among them is refused above); and an ``extra_body`` holding only what
+#: :data:`_EXTRA_BODY` lets through. Any other object, a router's or a server's own extension, is refused: what it does
+#: to the bill is not known here. The Messages API has no such container: its billed fields are named above.
+_CHAT_OBJECT_FIELDS: frozenset[str] = frozenset(
+    {
+        "response_format",
+        "tool_choice",
+        "stream_options",
+        "logit_bias",
+        "metadata",
+        "chat_template_kwargs",
+        "options",
+        "extra_body",
+    }
+)
+#: What a chat completion's ``extra_body`` may hold, by vendor: Gemini's ``thinking_config`` (its thinking tokens bill
+#: as output, within the call's limit). Not its ``cached_content``: a server-side cache, billed as input the request
+#: does not carry.
+_EXTRA_BODY: dict[str, frozenset[str]] = {"google": frozenset({"thinking_config"})}
+#: The tool types a request may define, which the client runs: none of a provider's own (web search, web fetch, code
+#: execution, a model id of its own).
+_CLIENT_TOOL_TYPES: dict[str, frozenset[str | None]] = {
+    "openai_chat": frozenset({"function", "custom"}),
+    "anthropic": frozenset({None, "custom"}),
+}
+#: Chat-completions content parts that are text. An ``image_url`` part is let through when its URL is inline data.
+_CHAT_TEXT_PARTS: frozenset[str] = frozenset({"text", "refusal"})
+#: Messages-API content blocks that are text or the tool conversation's own. An ``image`` block is let through when
+#: its source is inline (``base64``), within a ``tool_result`` too. A document (PDFs bill by the page, whatever their
+#: source), an image by URL or file, and a server tool's blocks are not.
+_ANTHROPIC_BLOCKS: frozenset[str] = frozenset({"text", "tool_use", "tool_result", "thinking", "redacted_thinking"})
+#: The media types an image given inline may name, in either wire's shape: the ones billed as an image. A PDF named an
+#: image is billed by the page.
+_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+#: The input tokens the budget check holds for an inline image besides its bytes: above what a hosted provider bills
+#: one at its largest (an image is billed by its pixels or tiles, which a small file can make many).
+IMAGE_TOKENS = 5_000
 #: A provider's name, as a run's declaration names it (a provider record's ``name``).
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _SANDBOX_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
@@ -161,47 +275,301 @@ class Call:
     model: str | None
     #: The request's size in tokens, estimated from its bytes: the input charged when no answer says it.
     input_estimate: int
-    #: The most output the request allows: its own limit, or :data:`DEFAULT_OUTPUT_CEILING`.
+    #: The most output the request allows: its own limit, or :data:`DEFAULT_OUTPUT_CEILING`, times the answers it
+    #: asks for.
     output_ceiling: int
     #: Whether the request named that limit itself (an estimate of its output is then capped by it).
     output_limited: bool
+    #: Why the proxy will not forward the request, when it will not: a body it cannot read as one request, the way
+    #: every server would read it, or content it cannot meter. None for a request it forwards.
+    refused: str | None = None
+    #: The error code a refusal answers with.
+    refusal_code: str = "unreadable_request"
+    #: The images the request carries inline, each held at :data:`IMAGE_TOKENS` besides its bytes.
+    images: int = 0
 
     def ceiling(self) -> Usage:
         """What the call is charged when its answer is lost."""
         return Usage(input_tokens=self.input_estimate, output_tokens=self.output_ceiling)
 
 
+def _stream_value(value: Any) -> bool | None:
+    """Whether a request's ``stream`` turns streaming on; None for a value a server could read either way."""
+    if value is None or value is False or (type(value) is int and value == 0):
+        return False
+    if value is True or (type(value) is int and value == 1):
+        return True
+    return None
+
+
 def read_call(wire: Wire, body: bytes) -> Call:
-    """The call ``body`` makes. A chat completions request that streams is given ``include_usage``."""
-    payload: Any = None
+    """The call ``body`` makes, and the body that goes upstream.
+
+    The proxy forwards only a request every server reads as the proxy does, so that what it meters is what the
+    server answers: a body that is not one JSON object, a top-level key named in two spellings that match once case is
+    folded (some servers match keys that way, the last one winning), or a ``stream`` that is neither on nor off, is
+    refused (:attr:`Call.refused`), and so is one carrying what the budget check cannot price (:func:`_unmetered`).
+    A key named twice exactly, in any object, goes as the proxy read it (each key once, its last value). A chat
+    completion that streams goes with ``stream`` true and ``stream_options`` exactly
+    ``include_usage``. The output limit is the larger the request names, ``max_tokens`` or (for chat completions)
+    ``max_completion_tokens``: a server may honour either. The ceiling is that limit (or
+    :data:`DEFAULT_OUTPUT_CEILING`), times, for a chat completion, the answers it asks for (:data:`_ANSWER_COUNTS`,
+    each a positive whole number), and a request whose ceiling is above :data:`MAX_OUTPUT_CEILING` is refused."""
+    tops: list[list[str]] = []
+
+    def keep(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        tops.append([key for key, _ in pairs])  # innermost first: the top level's last
+        return dict(pairs)
+
     try:
-        payload = json.loads(body) if body else None
+        payload: Any = json.loads(body, object_pairs_hook=keep)
     except (ValueError, RecursionError):  # see embry0.json_text; UnicodeDecodeError is a ValueError
         payload = None
-    model: str | None = None
-    limit: int | None = None
-    if isinstance(payload, dict):
-        model = _model_name(payload.get("model"))
-        keys = ("max_tokens",) if wire == "anthropic" else ("max_completion_tokens", "max_tokens")
-        for key in keys:
-            value = _count(payload.get(key))
-            if value:
-                limit = value
-                break
-        if wire == "openai_chat" and payload.get("stream") is True:
-            options = payload.get("stream_options")
-            options = dict(options) if isinstance(options, dict) else {}
-            if options.get("include_usage") is not True:
-                options["include_usage"] = True
-                payload["stream_options"] = options
-                body = json.dumps(payload).encode("utf-8")
+    if not isinstance(payload, dict):
+        return _refused(wire, body, "the request body is not one JSON object")
+    named = tops[-1]
+    folded: dict[str, set[str]] = {}
+    for key in named:
+        folded.setdefault(key.casefold(), set()).add(key)
+    clashing = sorted(key for spellings in folded.values() if len(spellings) > 1 for key in spellings)
+    if clashing:
+        return _refused(wire, body, f"the request names a key in more than one spelling: {', '.join(clashing)[:200]}")
+    streaming = _stream_value(payload.get("stream"))
+    if streaming is None:
+        return _refused(wire, body, "the request's stream is neither true nor false")
+    if wire == "openai_chat":
+        named_limits = _server_output_limits(payload)
+        if named_limits:
+            return _refused(wire, body, f"the request names an output limit the meter does not read: {named_limits}")
+    keys = ("max_tokens",) if wire == "anthropic" else ("max_completion_tokens", "max_tokens")
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and _count(value) is None:
+            # A server may read "1000000" or 1e6 as that many: the meter would read no limit, a lower ceiling.
+            return _refused(wire, body, f"the request's {key} is not a whole number of tokens")
+    limits = [value for key in keys if (value := _count(payload.get(key)))]
+    answers = 1
+    for key, value in payload.items() if wire == "openai_chat" else ():
+        if key.casefold() not in _ANSWER_COUNTS or value is None:
+            continue
+        count = _count(value)
+        if not count:
+            return _refused(wire, body, f"the request's {key} is not a positive whole number")
+        answers = max(answers, count)
+    ceiling = (max(limits) if limits else DEFAULT_OUTPUT_CEILING) * answers
+    if ceiling > MAX_OUTPUT_CEILING:
+        # Not the figure itself: a product of two long numbers may be too long to write out.
+        return _refused(
+            wire,
+            body,
+            f"the request's output ceiling (its limit times its answers) is above {MAX_OUTPUT_CEILING:,} tokens",
+        )
+    unmetered, images = _unmetered(wire, payload)
+    if unmetered:
+        return _refused(
+            wire, body, f"the request carries what a metered call may not: {unmetered}", "unmetered_content"
+        )
+    # A key named twice in any object goes once, as the proxy read it: what it checked is what the server reads.
+    rewrite = any(len(set(keys)) != len(keys) for keys in tops)
+    if wire == "openai_chat" and streaming:
+        # Exactly the final usage: another option (vLLM's continuous_usage_stats) would have a usage in every chunk,
+        # and a stream that broke after one would look read in full.
+        payload["stream"] = True
+        payload["stream_options"] = dict(_STREAM_OPTIONS)
+        rewrite = True
+    if rewrite:
+        body = json.dumps(payload).encode("utf-8")
     return Call(
         wire=wire,
         body=body,
-        model=model,
+        model=_model_name(payload.get("model")),
         input_estimate=math.ceil(len(body) / BYTES_PER_TOKEN),
-        output_ceiling=limit if limit is not None else DEFAULT_OUTPUT_CEILING,
-        output_limited=limit is not None,
+        output_ceiling=ceiling,
+        output_limited=bool(limits),
+        images=images,
+    )
+
+
+def _unmetered(wire: Wire, payload: dict[str, Any]) -> tuple[str, int]:
+    """What ``payload`` carries that a metered call may not (the list above), or ''; and the images it carries
+    inline. Each object read here is read as every server would read it: its keys are matched with case folded (some
+    servers match them so), and one naming a key in two spellings that match so is refused. A field in a shape a
+    server would not read as text or an inline image is refused, not passed over."""
+    found = _unmetered_fields(payload)
+    if wire == "openai_chat":
+        found += _unknown_objects(payload)
+    model = _field(payload, "model")
+    if isinstance(model, str) and model.casefold().endswith(_UNMETERED_MODEL_SUFFIXES):
+        found.append("a model id asking for web search")
+    system = _field(payload, "system")
+    if system is not None and not isinstance(system, str) and _text_blocks(system) is None:
+        found.append("a system prompt that is not text")
+    tools = _field(payload, "tools")
+    if tools is not None and not isinstance(tools, list):
+        found.append("tools that are not a list")
+    for tool in tools if isinstance(tools, list) else ():
+        kind = _field(tool, "type") if isinstance(tool, dict) else None
+        if not isinstance(tool, dict) or _clashing(tool) or kind not in _CLIENT_TOOL_TYPES[wire]:
+            found.append(f"a tool of type {str(kind)[:40]!r}")
+            break
+    messages = _field(payload, "messages")
+    if messages is not None and not isinstance(messages, list):
+        found.append("messages that are not a list")
+    images = 0
+    for message in messages if isinstance(messages, list) else ():
+        if not isinstance(message, dict) or _clashing(message):
+            found.append("a message that is not one object, each key in one spelling")
+            break
+        found += [f"a message's {key}" for key in _unmetered_fields(message)]
+        content = _field(message, "content")
+        inline = 0 if content is None or isinstance(content, str) else _parts_images(wire, content)
+        if inline is None:
+            found.append("a message's content that is not text or an image given inline")
+        else:
+            images += inline
+        if found:
+            break
+    return ", ".join(found)[:300], images
+
+
+def _unmetered_fields(entry: dict[str, Any]) -> list[str]:
+    """The fields of ``entry`` (a request or one of its messages) a metered call may not carry, as written."""
+    found = [key for key in entry if key.casefold() in _UNMETERED_FIELDS]
+    for key, value in entry.items():
+        folded = key.casefold()
+        if folded == "modalities" and (not isinstance(value, list) or any(m not in _METERED_MODALITIES for m in value)):
+            found.append(key)
+        elif folded == "service_tier" and value is not None and value not in _METERED_SERVICE_TIERS:
+            found.append(key)
+    return found
+
+
+def _unknown_objects(payload: dict[str, Any]) -> list[str]:
+    """The object-valued fields of a chat completion beyond :data:`_CHAT_OBJECT_FIELDS`, and an ``extra_body``
+    holding more than :data:`_EXTRA_BODY` lets through, as written."""
+    found = [
+        key
+        for key, value in payload.items()
+        if isinstance(value, dict)
+        and key.casefold() not in _CHAT_OBJECT_FIELDS
+        and key.casefold() not in _UNMETERED_FIELDS
+    ]
+    extra = _field(payload, "extra_body")
+    if extra is None:
+        return found
+    if not isinstance(extra, dict) or _clashing(extra):
+        return [*found, "extra_body"]
+    for vendor, settings in extra.items():
+        allowed = _EXTRA_BODY.get(vendor.casefold())
+        if allowed is None or not isinstance(settings, dict) or _clashing(settings):
+            found.append(f"extra_body.{vendor[:40]}")
+        else:
+            found += [f"extra_body.{vendor[:40]}.{key[:40]}" for key in settings if key.casefold() not in allowed]
+    return found
+
+
+def _field(entry: dict[str, Any], name: str) -> Any:
+    """The value of ``entry``'s key ``name``, matched with case folded; None when it names none."""
+    return next((value for key, value in entry.items() if key.casefold() == name), None)
+
+
+def _clashing(entry: dict[str, Any]) -> bool:
+    """Whether ``entry`` names a key in two spellings that match once case is folded: a server matching keys that way
+    may read the other one."""
+    return len({key.casefold() for key in entry}) != len(entry)
+
+
+def _text_blocks(blocks: Any) -> int | None:
+    """0 when ``blocks`` is a list of text blocks (a system prompt's), else None."""
+    if not isinstance(blocks, list):
+        return None
+    for block in blocks:
+        if not isinstance(block, dict) or _clashing(block) or _field(block, "type") != "text":
+            return None
+    return 0
+
+
+def _parts_images(wire: Wire, parts: Any) -> int | None:
+    """The images a message's content parts carry inline, or None when it is not a list of parts a metered call may
+    carry."""
+    if not isinstance(parts, list):
+        return None
+    images = 0
+    for part in parts:
+        inline = _inline_images(wire, part)
+        if inline is None:
+            return None
+        images += inline
+    return images
+
+
+def _inline_image(media_type: Any) -> int | None:
+    """1 for an image of a media type billed as one (:data:`_IMAGE_MEDIA_TYPES`), else None."""
+    ok = isinstance(media_type, str) and media_type.strip().casefold() in _IMAGE_MEDIA_TYPES
+    return 1 if ok else None
+
+
+def _inline_images(wire: Wire, part: Any) -> int | None:
+    """The images a content part carries inline, or None for a part a metered call may not carry."""
+    if not isinstance(part, dict) or _clashing(part):
+        return None
+    kind = _field(part, "type")
+    if wire == "openai_chat":
+        if kind in _CHAT_TEXT_PARTS:
+            return 0
+        image = _field(part, "image_url") if kind == "image_url" else None
+        if isinstance(image, dict) and _clashing(image):
+            return None
+        url = _field(image, "url") if isinstance(image, dict) else image
+        if not isinstance(url, str) or url[:5].casefold() != "data:":
+            return None
+        # data:<media type>[;<parameter>]...,<data>
+        return _inline_image(url[5:].split(",", 1)[0].split(";", 1)[0])
+    if kind == "image":
+        source = _field(part, "source")
+        if not isinstance(source, dict) or _clashing(source) or _field(source, "type") != "base64":
+            return None
+        return _inline_image(_field(source, "media_type"))
+    if kind not in _ANTHROPIC_BLOCKS:
+        return None
+    if kind != "tool_result":
+        return 0
+    inner = _field(part, "content")
+    if inner is None or isinstance(inner, str):
+        return 0
+    if not isinstance(inner, list):
+        return None
+    images = 0
+    for block in inner:
+        if not isinstance(block, dict) or _field(block, "type") not in ("text", "image"):
+            return None
+        one = _inline_images(wire, block)
+        if one is None:
+            return None
+        images += one
+    return images
+
+
+def _server_output_limits(payload: dict[str, Any]) -> str:
+    """The output limits of :data:`_SERVER_OUTPUT_LIMITS` ``payload`` names, at its top level or in its ``options``,
+    as written; '' for none."""
+    found = [key for key in payload if key.casefold() in _SERVER_OUTPUT_LIMITS]
+    for key, value in payload.items():
+        if key.casefold() == "options" and isinstance(value, dict):
+            found += [f"{key}.{inner}" for inner in value if str(inner).casefold() in _SERVER_OUTPUT_LIMITS]
+    return ", ".join(sorted(found))[:200]
+
+
+def _refused(wire: Wire, body: bytes, reason: str, code: str = "unreadable_request") -> Call:
+    return Call(
+        wire=wire,
+        body=body,
+        model=None,
+        input_estimate=math.ceil(len(body) / BYTES_PER_TOKEN),
+        output_ceiling=DEFAULT_OUTPUT_CEILING,
+        output_limited=False,
+        refused=reason,
+        refusal_code=code,
     )
 
 
@@ -475,19 +843,27 @@ class _AnthropicEvents(_EventReader):
 
 
 class _OpenAIEvents(_EventReader):
-    """OpenAI's stream: the usage arrives in a last chunk (``include_usage``), or in ``x_groq`` (Groq)."""
+    """OpenAI's stream: the usage arrives in a last chunk (``include_usage``), or in ``x_groq`` (Groq). A usage counts
+    as the answer's own only in a chunk with no choice still open (none, or every one finished): a server that sends a
+    running usage with each chunk has not said what the answer cost until it finishes."""
 
     def _event(self, payload: dict[str, Any]) -> bool:
         reading = self.reading
         reading.model = _model_name(payload.get("model")) or reading.model
         known = False
+        choices = payload.get("choices")
+        # No choice open: none named, none in the list, or every one finished.
+        finished = choices is None or (
+            isinstance(choices, list)
+            and all(isinstance(choice, dict) and choice.get("finish_reason") for choice in choices)
+        )
         groq = payload.get("x_groq")
         for raw in (payload.get("usage"), groq.get("usage") if isinstance(groq, dict) else None):
             usage = _openai_usage(raw) if raw is not None else None
             if usage is not None:
                 reading.usage.raise_to(usage)
-                reading.complete = known = True
-        choices = payload.get("choices")
+                known = True
+                reading.complete = reading.complete or finished
         if isinstance(choices, list):
             known = True
             for choice in choices:
@@ -523,6 +899,142 @@ def charge(call: Call, reading: Reading) -> tuple[Usage, bool]:
     return usage, True
 
 
+# --------------------------------------------------------------------------- budgets
+
+#: The limits a run's budget can come from, as a declaration names them, and as a refusal names each.
+BUDGET_LIMITS: dict[str, str] = {
+    "job": "the job's budget",
+    "daily": "the deployment's daily budget",
+    "monthly": "the deployment's monthly budget",
+}
+#: The bytes of request a token is taken to be when the budget check prices input it cannot price from the run's own
+#: calls: one. A byte-level tokenizer counts at most one token a byte, so no provider bills a request's text more.
+CHECK_BYTES_PER_TOKEN = 1
+#: How many of a run's calls in flight at once have their input priced at what the run's input has cost a byte: one,
+#: the run's conversation, which sends one call at a time. Its further calls at once (parallel subagents, mostly on
+#: small contexts) are priced uncached, so a purse can be passed by at most one call's input at that cost a byte
+#: against the uncached rate. Calls one after another correct the price as each is read.
+OBSERVED_PRICE_SLOTS = 1
+#: A purse's name: its job's (``job:<id>``), or the deployment's day's or month's.
+_PURSE_KEY_RE = re.compile(r"^(job:[A-Za-z0-9_.:-]{1,128}|daily|monthly)$")
+
+
+def _usd(value: Any) -> float:
+    """``value`` as a finite amount of at least 0. Raises ValueError when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
+        raise ValueError(f"not an amount: {value!r}")
+    return float(value)
+
+
+@dataclass(frozen=True)
+class Budget:
+    """The rates a run is priced at, and the purses it draws on: the orchestrator's word when it declared the run.
+
+    The rates are the run's provider record's, in USD per million tokens, with cached input at ``cache_read_factor``
+    of the input rate and cache writes at ``cache_write_factor``, as the orchestrator prices a run
+    (``ProviderRecord.price``): a run is held to one provider, priced at one rate set. ``purses`` names what it
+    draws on (:class:`PurseFigure`): its job's, and the deployment's day's and month's, where each has a cap."""
+
+    input_rate: float
+    output_rate: float
+    cache_read_factor: float
+    cache_write_factor: float
+    purses: tuple[str, ...]
+
+    def price(self, usage: Usage) -> float:
+        """What ``usage`` costs at these rates, in USD."""
+        per_mtok = (
+            usage.input_tokens * self.input_rate
+            + usage.output_tokens * self.output_rate
+            + usage.cache_read_tokens * self.input_rate * self.cache_read_factor
+            + usage.cache_creation_tokens * self.input_rate * self.cache_write_factor
+        )
+        return per_mtok / 1_000_000
+
+
+@dataclass(frozen=True)
+class PurseFigure:
+    """What the orchestrator says a purse has left at this proxy, and the runs here that draw on it.
+
+    ``remaining_usd`` is what its cap had left once every settled run was charged, less what the orchestrator
+    holds for its runs at other proxies; ``members`` are this proxy's runs not settled yet, whose charges, and calls
+    in flight, the proxy counts against it as they go."""
+
+    key: str
+    limit: str
+    remaining_usd: float
+    members: frozenset[str]
+
+
+def read_purses(value: Any) -> list[PurseFigure]:
+    """The purses ``value`` names: ``[{key, limit, remaining_usd, members}]``. Raises ValueError when it is not
+    that."""
+    if not isinstance(value, list) or len(value) > len(BUDGET_LIMITS):
+        raise ValueError("purses is a list of at most one purse a limit")
+    figures: list[PurseFigure] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ValueError("a purse is an object")
+        key, limit, members = raw.get("key"), raw.get("limit"), raw.get("members", [])
+        if not isinstance(key, str) or not _PURSE_KEY_RE.fullmatch(key) or limit not in BUDGET_LIMITS:
+            raise ValueError("a purse names its key and its limit")
+        if (limit == "job") != key.startswith("job:") or (limit != "job" and key != limit):
+            raise ValueError("a purse's key is its limit's")
+        if not isinstance(members, list) or len(members) > DEFAULT_MAX_TALLIES:
+            raise ValueError("a purse's members are a list of runs")
+        if any(not isinstance(m, str) or not _RUN_ID_RE.fullmatch(m) for m in members):
+            raise ValueError("a purse's members are runs")
+        figures.append(PurseFigure(key, str(limit), _usd(raw.get("remaining_usd")), frozenset(members)))
+    if len({f.limit for f in figures}) != len(figures):
+        raise ValueError("a run draws on one purse a limit")
+    return figures
+
+
+def read_budget(value: Any) -> tuple[Budget, list[PurseFigure]]:
+    """The budget a declaration names: ``{rates: {in, out}, cache: {read, write}, purses: [...]}``
+    (:func:`read_purses`). Raises ValueError when ``value`` is not one."""
+    if not isinstance(value, dict):
+        raise ValueError("a budget is an object")
+    rates, cache = value.get("rates"), value.get("cache")
+    if not isinstance(rates, dict) or not isinstance(cache, dict):
+        raise ValueError("a budget names its rates and its cache factors")
+    figures = read_purses(value.get("purses"))
+    if not figures:
+        raise ValueError("a budget names a purse")
+    budget = Budget(
+        input_rate=_usd(rates.get("in")),
+        output_rate=_usd(rates.get("out")),
+        cache_read_factor=_usd(cache.get("read")),
+        cache_write_factor=_usd(cache.get("write")),
+        purses=tuple(f.key for f in figures),
+    )
+    return budget, figures
+
+
+@dataclass
+class _Purse:
+    limit: str
+    remaining_usd: float
+    members: set[str]
+    #: The admin number of the figure it holds: an older one, arriving late, is not taken.
+    seq: int
+
+
+class BudgetExceededError(Exception):
+    """A call whose ceiling would take a purse its run draws on past what it has left."""
+
+    def __init__(self, limit: str, *, cost_usd: float, left_usd: float) -> None:
+        self.limit = limit
+        self.cost_usd = cost_usd
+        self.left_usd = left_usd
+        self.message = (
+            f"embry0 budget_exceeded: this call could cost up to ${cost_usd:,.2f} (its output limit at full price, "
+            f"its input as the run's calls have cost), and ${max(left_usd, 0.0):,.2f} is left of "
+            f"{BUDGET_LIMITS[limit]}, so it was not sent. A call asking for fewer output tokens may fit."
+        )
+        super().__init__(self.message)
+
+
 # --------------------------------------------------------------------------- tallies
 
 
@@ -536,8 +1048,14 @@ class _ModelTally:
 @dataclass
 class _Open:
     model: str | None
+    #: What the call is charged if it never answers in full: its output limit (times its answers), and its input at
+    #: the meter's estimate, no more than the budget check reserved for it.
     ceiling: Usage
     since: float
+    #: What the budget check reserved for the call's input when it let it through, in USD.
+    reserved_input_usd: float = 0.0
+    #: Whether its input was priced at what the run's input has cost a byte (:data:`OBSERVED_PRICE_SLOTS`).
+    observed_price: bool = False
 
 
 @dataclass
@@ -551,11 +1069,82 @@ class _Tally:
     ended: float | None = None
     #: The provider the run was declared on; None when its declaration named none (or the sandbox had no run).
     provider: str | None = None
+    #: The rates the run is priced at and the purses it draws on, when its declaration named a budget.
+    budget: Budget | None = None
     models: dict[str, _ModelTally] = field(default_factory=dict)
     errors: int = 0
+    #: Calls refused because their ceiling would have taken a purse the run draws on past what it had left, by the
+    #: purse's limit.
+    budget_refused: dict[str, int] = field(default_factory=dict)
     open: dict[int, _Open] = field(default_factory=dict)
+    #: The request bytes of the run's calls whose usage was read in full, their input as the answers counted it, and
+    #: the largest of those requests: what the budget check prices a call's input from.
+    observed_bytes: int = 0
+    observed_input: Usage = field(default_factory=Usage)
+    observed_largest: int = 0
+
+    def spent_usd(self) -> float:
+        """What the run has been charged at its rates, each call in flight at the meter's ceiling for it (the
+        request's size as input): what it could have cost, for a reader that loses this process."""
+        if self.budget is None:
+            return 0.0
+        total = Usage()
+        for counted in self.models.values():
+            total.add(counted.usage)
+        for call in self.open.values():
+            total.add(call.ceiling)
+        return self.budget.price(total)
+
+    def check_input_usd(self, size: int, *, observed_price: bool = True) -> float:
+        """What the budget check reserves for the input of a call of ``size`` request bytes. With ``observed_price``,
+        up to the largest request of the run read in full, at what the run's input has cost a request byte, cache
+        reads included; the rest, and all of a call without it, at the uncached rate and
+        :data:`CHECK_BYTES_PER_TOKEN`: bytes the run has never had counted could all be new to the provider's cache."""
+        budget = self.budget
+        if budget is None:
+            return 0.0
+        uncached = budget.input_rate / 1_000_000 / CHECK_BYTES_PER_TOKEN
+        if not observed_price or not self.observed_bytes:
+            return size * uncached
+        seen = min(size, self.observed_largest)
+        per_byte = budget.price(self.observed_input) / self.observed_bytes
+        return seen * per_byte + (size - seen) * uncached
+
+    def images_usd(self, images: int) -> float:
+        """What the budget check holds for ``images`` given inline, besides their bytes: :data:`IMAGE_TOKENS` each,
+        uncached."""
+        return images * IMAGE_TOKENS * self.budget.input_rate / 1_000_000 if self.budget is not None else 0.0
+
+    def observed_price_free(self) -> bool:
+        """Whether a call let through now may have its input priced at the run's cost a byte: fewer than
+        :data:`OBSERVED_PRICE_SLOTS` of its calls in flight are."""
+        return sum(1 for o in self.open.values() if o.observed_price) < OBSERVED_PRICE_SLOTS
+
+    def output_usd(self, output_ceiling: int) -> float:
+        """An output ceiling at full price: the part of a call left to hang that its request can inflate."""
+        return output_ceiling * self.budget.output_rate / 1_000_000 if self.budget is not None else 0.0
+
+    def committed_usd(self) -> float:
+        """What the budget check holds the run to have committed: its charges at its rates, and each call in flight
+        at what it reserved for it (:meth:`check_input_usd` and :meth:`output_usd`, when it let it through)."""
+        if self.budget is None:
+            return 0.0
+        total = Usage()
+        for counted in self.models.values():
+            total.add(counted.usage)
+        in_flight = sum(o.reserved_input_usd + self.output_usd(o.ceiling.output_tokens) for o in self.open.values())
+        return self.budget.price(total) + in_flight
 
     def snapshot(self) -> dict[str, Any]:
+        budget = (
+            {
+                "purses": list(self.budget.purses),
+                "spent_usd": self.spent_usd(),
+                "committed_usd": self.committed_usd(),
+            }
+            if self.budget is not None
+            else None
+        )
         return {
             "run_id": self.run_id,
             "sandbox_id": self.sandbox_id,
@@ -569,7 +1158,15 @@ class _Tally:
                 for model, t in sorted(self.models.items())
             },
             "errors": self.errors,
-            "open": [{"model": o.model, "since": o.since, **o.ceiling.to_dict()} for _, o in sorted(self.open.items())],
+            "budget": budget,
+            "budget_refused": sum(self.budget_refused.values()),
+            "budget_refused_by": dict(self.budget_refused),
+            # Each call in flight with its id (unique in this proxy process), so a reader can tell one from another
+            # across reads.
+            "open": [
+                {"id": request_id, "model": o.model, "since": o.since, **o.ceiling.to_dict()}
+                for request_id, o in sorted(self.open.items())
+            ],
         }
 
 
@@ -611,6 +1208,10 @@ class Meter:
         self._live_unattributed: dict[str, int] = {}
         self._next_request = 0
         self._next_unattributed = 0
+        # The purses runs draw on (PurseFigure), and the ended runs still counted in one until the orchestrator
+        # settles them.
+        self._purses: dict[str, _Purse] = {}
+        self._ended: dict[str, _Tally] = {}
 
     def __len__(self) -> int:
         return len(self._runs) + len(self._unattributed)
@@ -618,13 +1219,25 @@ class Meter:
     def _purge(self) -> None:
         cutoff = self._now() - self._retention
         for run_id in [r for r, t in self._runs.items() if t.ended is not None and t.ended <= cutoff]:
-            del self._runs[run_id]
+            tally = self._runs.pop(run_id)
+            if self._in_a_purse(run_id):
+                self._ended[run_id] = tally  # still counted until the orchestrator settles it
         for key in [k for k, t in self._unattributed.items() if t.ended is not None and t.ended <= cutoff]:
             del self._unattributed[key]
 
-    def declare(self, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None) -> None:
-        """Make ``run_id`` the run ``sandbox_id``'s calls count under, on ``provider`` when it names one. Declaring it
-        again changes nothing; declaring it again on another provider is refused."""
+    def declare(
+        self,
+        sandbox_id: str,
+        run_id: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        budget: Budget | None = None,
+        purses: list[PurseFigure] | None = None,
+        seq: int | None = None,
+    ) -> None:
+        """Make ``run_id`` the run ``sandbox_id``'s calls count under, on ``provider`` when it names one, held to
+        ``budget`` and drawing on ``purses`` (the figures of admin number ``seq``) when it names one. Declaring it
+        again changes nothing (its budget included); declaring it again on another provider is refused."""
         held = self._runs.get(run_id)
         if held is not None:
             if held.sandbox_id != sandbox_id or held.ended is not None or held.provider != provider:
@@ -635,9 +1248,46 @@ class Meter:
             raise TalliesFullError(f"the meter holds {self._max} tallies")
         self._end_current(sandbox_id)
         self._runs[run_id] = _Tally(
-            sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now(), provider=provider
+            sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now(), provider=provider, budget=budget
         )
         self._current[sandbox_id] = run_id
+        if purses:
+            self._apply_purses(purses, seq, joining=run_id)
+
+    def update_purses(self, purses: list[PurseFigure], seq: int | None) -> None:
+        """Take the orchestrator's figures for ``purses``: what each has left, and its members here (a run it
+        settled is left out, its charge now in what is left)."""
+        self._apply_purses(purses, seq)
+
+    def _apply_purses(self, figures: list[PurseFigure], seq: int | None, joining: str | None = None) -> None:
+        for figure in figures:
+            purse = self._purses.get(figure.key)
+            if purse is None:
+                purse = self._purses[figure.key] = _Purse(figure.limit, figure.remaining_usd, set(), -1)
+            number = seq if seq is not None else purse.seq + 1
+            if number > purse.seq:
+                # A member this proxy does not hold (ended and dropped, or never here) counts nothing.
+                purse.limit, purse.remaining_usd, purse.seq = figure.limit, figure.remaining_usd, number
+                purse.members = {m for m in figure.members if m in self._runs or m in self._ended}
+            if joining is not None:
+                purse.members.add(joining)
+        for key in [k for k, purse in self._purses.items() if not purse.members]:
+            del self._purses[key]
+        for run_id in [r for r in self._ended if not self._in_a_purse(r)]:
+            del self._ended[run_id]
+
+    def _in_a_purse(self, run_id: str) -> bool:
+        return any(run_id in purse.members for purse in self._purses.values())
+
+    def purse_left(self, key: str) -> float:
+        """What ``key``'s purse has left: what the orchestrator said, less what its members here have committed
+        (their charges, and their calls in flight at the check's price). Nothing for a purse this proxy does not
+        hold."""
+        purse = self._purses.get(key)
+        if purse is None:
+            return 0.0
+        members = (self._runs.get(m) or self._ended.get(m) for m in purse.members)
+        return purse.remaining_usd - sum(t.committed_usd() for t in members if t is not None)
 
     def has_run(self, sandbox_id: str) -> bool:
         """Whether the sandbox has a run in progress: declared, and not ended."""
@@ -669,6 +1319,8 @@ class Meter:
             del self._current[tally.sandbox_id]
         if tally.ended is None:
             tally.ended = self._now()
+        if self._in_a_purse(run_id):
+            self._ended[run_id] = tally  # its charge still counts until the orchestrator settles it
         return tally.snapshot()
 
     def sandbox_gone(self, sandbox_id: str) -> None:
@@ -683,11 +1335,22 @@ class Meter:
         """Every tally held, cumulative since it began, with the proxy's boot id."""
         self._purge()
         tallies = [t.snapshot() for t in self._runs.values()] + [t.snapshot() for t in self._unattributed.values()]
-        return {"boot_id": self.boot_id, "tallies": tallies}
+        purses = {
+            key: {
+                "limit": purse.limit,
+                "remaining_usd": purse.remaining_usd,
+                "members": sorted(purse.members),
+                "left_usd": self.purse_left(key),
+            }
+            for key, purse in sorted(self._purses.items())
+        }
+        return {"boot_id": self.boot_id, "tallies": tallies, "purses": purses}
 
     def open(self, sandbox_id: str, call: Call) -> Metered:
         """Start metering ``call`` from ``sandbox_id``. Raises :class:`NoRunError` when the sandbox has no run and
-        one is required."""
+        one is required, and :class:`BudgetExceededError` when the call, priced as the check prices it
+        (:meth:`_Tally.check_input_usd`, :meth:`_Tally.output_usd`), would take a purse its run draws on past what it
+        has left."""
         run_id = self._current.get(sandbox_id)
         tally = self._runs.get(run_id) if run_id is not None else None
         if tally is None:
@@ -703,17 +1366,41 @@ class Meter:
                 tally = _Tally(sandbox_id=sandbox_id, run_id=None, job_id=None, started=self._now())
                 self._unattributed[self._next_unattributed] = tally
                 self._live_unattributed[sandbox_id] = self._next_unattributed
+        budget = tally.budget
+        observed = tally.observed_price_free()
+        reserved_input = tally.check_input_usd(len(call.body), observed_price=observed) + tally.images_usd(call.images)
+        input_ceiling = call.input_estimate
+        if budget is not None:
+            cost = reserved_input + tally.output_usd(call.output_ceiling)
+            # Never charged more input than the check reserved for it: the purse bounds what is recorded too.
+            if budget.input_rate > 0:
+                input_ceiling = min(input_ceiling, math.ceil(reserved_input * 1_000_000 / budget.input_rate))
+            # The purse with the least left decides; one this proxy no longer holds has nothing left.
+            left, purse_key = min((self.purse_left(k), k) for k in budget.purses)
+            if cost > left:
+                limit = purse_key.split(":", 1)[0]  # job:<id>, daily, monthly
+                tally.budget_refused[limit] = tally.budget_refused.get(limit, 0) + 1
+                raise BudgetExceededError(limit, cost_usd=cost, left_usd=left)
         self._next_request += 1
         request_id = self._next_request
-        tally.open[request_id] = _Open(model=call.model, ceiling=call.ceiling(), since=self._now())
-        return Metered(tally, request_id, call)
+        tally.open[request_id] = _Open(
+            model=call.model,
+            ceiling=Usage(input_tokens=input_ceiling, output_tokens=call.output_ceiling),
+            since=self._now(),
+            reserved_input_usd=reserved_input,
+            observed_price=observed,
+        )
+        return Metered(tally, request_id, call, input_ceiling)
 
 
 class Metered:
     """One call on its way: the answer's status and bytes go in, and :meth:`close` adds it to its tally once."""
 
-    def __init__(self, tally: _Tally, request_id: int, call: Call) -> None:
+    def __init__(self, tally: _Tally, request_id: int, call: Call, input_ceiling: int | None = None) -> None:
         self.call = call
+        #: The most input it is charged when its answer never counts it: the estimate, held to what its run's
+        #: budget check reserved for it.
+        self._input_ceiling = call.input_estimate if input_ceiling is None else input_ceiling
         self._tally = tally
         self._request_id = request_id
         self._reader: _Reader | None = None
@@ -734,7 +1421,8 @@ class Metered:
 
     def lost(self) -> None:
         """No answer came back for a request that may have gone upstream (a timeout, a connect timeout included,
-        or a failure past the connect): it is charged its ceiling."""
+        or a failure past the connect), or its answer broke off (the upstream cut it, it could not be decoded, the
+        sandbox went away): it is charged its ceiling, unless its usage was already read in full."""
         self._lost = True
 
     def close(self) -> None:
@@ -750,9 +1438,28 @@ class Metered:
         if self._reader is not None:
             reading = self._reader.finish()
             usage, estimated = charge(self.call, reading)
+            if reading.complete:
+                # Its input as counted: what the budget check prices the run's next calls' input from.
+                tally.observed_largest = max(tally.observed_largest, len(self.call.body))
+                tally.observed_bytes += len(self.call.body)
+                tally.observed_input.add(
+                    Usage(
+                        input_tokens=usage.input_tokens,
+                        cache_read_tokens=usage.cache_read_tokens,
+                        cache_creation_tokens=usage.cache_creation_tokens,
+                    )
+                )
+            if self._lost and not reading.complete:
+                # Broken off before its usage: what the provider generated is not what was read. Its output is the
+                # most the request allowed; its input stays what the answer said, or the estimate ``charge`` made,
+                # no more than its run's budget check reserved for it.
+                usage.output_tokens = max(usage.output_tokens, self.call.output_ceiling)
+                if reading.usage.inputs() == 0:
+                    usage.input_tokens = min(usage.input_tokens, self._input_ceiling)
             model = reading.model or self.call.model
         elif self._lost:
-            usage, estimated, model = self.call.ceiling(), True, self.call.model
+            usage = Usage(input_tokens=self._input_ceiling, output_tokens=self.call.output_ceiling)
+            estimated, model = True, self.call.model
         else:
             return
         entry = tally.models.setdefault(model or "unknown", _ModelTally())
@@ -778,8 +1485,10 @@ METER = web.AppKey("meter", Meter)
 def register_meter_routes(app: web.Application, *, proxy_name: str, require_run: bool = False) -> Meter:
     """Give ``app`` a :class:`Meter` and its admin routes, behind the enrollment's admin gate:
 
-    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?}`` declares an enrolled sandbox's run, on
-      ``provider`` when it names one (the answer echoes it);
+    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?, budget?}`` declares an enrolled sandbox's run,
+      on ``provider`` when it names one, held to ``budget`` (:func:`read_budget`) when it names one (the answer
+      echoes each);
+    - ``PUT /admin/purses`` ``{purses, seq}`` takes the orchestrator's figures for purses (:func:`read_purses`);
     - ``DELETE /admin/runs/{run_id}`` ends it and answers its last snapshot;
     - ``GET /admin/meter`` answers every tally held.
 
@@ -809,6 +1518,10 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "bad_request"}, status=400)
         if job_id is not None and not isinstance(job_id, str):
             return web.json_response({"error": "bad_request"}, status=400)
+        try:
+            budget, purses = read_budget(body["budget"]) if body.get("budget") is not None else (None, [])
+        except ValueError:
+            return web.json_response({"error": "bad_request"}, status=400)
         seq = request_seq(body)
         if isinstance(seq, web.Response):
             return seq
@@ -818,7 +1531,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         if stale is not None:
             return stale
         try:
-            meter.declare(sandbox_id, run_id, job_id or None, provider)
+            meter.declare(sandbox_id, run_id, job_id or None, provider, budget, purses, seq)
         except TalliesFullError:
             logger.error(f"{proxy_name}_meter_full", sandbox_id=sandbox_id, run_id=run_id)
             return web.json_response({"error": "meter_full"}, status=429)
@@ -826,7 +1539,13 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "run_conflict"}, status=409)
         if seq is not None:
             request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
-        logger.info(f"{proxy_name}_run_declared", sandbox_id=sandbox_id, run_id=run_id, provider=provider)
+        logger.info(
+            f"{proxy_name}_run_declared",
+            sandbox_id=sandbox_id,
+            run_id=run_id,
+            provider=provider,
+            purses={f.key: f.remaining_usd for f in purses},
+        )
         # The number echoed says this proxy orders admin requests (an older image does not); the provider echoed, that
         # it holds the run to it.
         answer: dict[str, Any] = {"status": "declared", "boot_id": meter.boot_id}
@@ -834,7 +1553,28 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             answer["seq"] = seq
         if provider is not None:
             answer["provider"] = provider
+        if budget is not None:
+            # That this proxy holds the run to it (an older image does not).
+            answer["budget"] = {"purses": {key: meter.purse_left(key) for key in budget.purses}}
         return web.json_response(answer)
+
+    async def _purses(request: web.Request) -> web.Response:
+        denied = guard_admin(request, proxy_name)
+        if denied is not None:
+            return denied
+        body = await json_or_empty(request)
+        try:
+            if not isinstance(body, dict):
+                raise ValueError("not an object")
+            figures = read_purses(body.get("purses"))
+        except ValueError:
+            return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(body)
+        if isinstance(seq, web.Response):
+            return seq
+        meter.update_purses(figures, seq)
+        logger.info(f"{proxy_name}_purses_updated", purses={f.key: f.remaining_usd for f in figures})
+        return web.json_response({"purses": {f.key: meter.purse_left(f.key) for f in figures}, "seq": seq})
 
     async def _end(request: web.Request) -> web.Response:
         denied = guard_admin(request, proxy_name)
@@ -868,9 +1608,18 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         return web.json_response({**meter.snapshot(), "stale_refused": request.app[ADMIN_SEQUENCE].refused})
 
     app.router.add_post("/admin/runs", _declare)
+    app.router.add_put("/admin/purses", _purses)
     app.router.add_delete("/admin/runs/{run_id}", _end)
     app.router.add_get("/admin/meter", _meter)
     return meter
+
+
+def budget_answer(wire: Wire, refusal: BudgetExceededError) -> web.Response:
+    """The answer to a call refused for its run's budget (402, ``budget_exceeded``), in its wire's error shape: no
+    client retries it, and the agent reads why."""
+    if wire == "anthropic":
+        return anthropic_error("budget_exceeded", refusal.message, 402)
+    return openai_error("budget_exceeded", refusal.message, 402)
 
 
 def no_run_answer(wire: Wire) -> web.Response:

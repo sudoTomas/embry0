@@ -38,15 +38,23 @@ from embry0.execution.proxy.enrollment import (
 )
 from embry0.execution.proxy.metering import (
     METER,
+    BudgetExceededError,
     Metered,
     NoRunError,
     TalliesFullError,
     Wire,
+    budget_answer,
     no_run_answer,
     read_call,
     register_meter_routes,
 )
-from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES, read_body
+from embry0.execution.proxy.model_request import (
+    DEFAULT_MAX_REQUEST_BYTES,
+    anthropic_error,
+    openai_error,
+    read_body,
+    unreadable_encoding,
+)
 from embry0.safety.xai_denials import XaiDenial, classify_xai_denial
 
 logger = structlog.get_logger(__name__)
@@ -309,6 +317,10 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers.pop("x-api-key", None)
     headers.pop("X-Api-Key", None)
     headers["Authorization"] = f"Bearer {access_token}"
+    # Uncompressed: an encoding the image cannot decode would reach the sandbox unread by the meter.
+    for name in [name for name in headers if name.lower() == "accept-encoding"]:
+        del headers[name]
+    headers["Accept-Encoding"] = "identity"
 
     # EMB-54: xAI prompt caching depends on sticky per-server routing via the
     # x-grok-conv-id header (cache entries are per-server; without it,
@@ -330,12 +342,29 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     metered: Metered | None = None
     if wire is not None:
         call = read_call(wire, body)
+        if call.refused is not None:
+            logger.warning(
+                "xai_proxy_request_refused", sandbox_id=sandbox_id, code=call.refusal_code, reason=call.refused
+            )
+            if wire == "anthropic":
+                return anthropic_error("invalid_request_error", f"{call.refusal_code}: {call.refused}", 400)
+            return openai_error(call.refusal_code, call.refused, 400)
         body = call.body
         try:
             metered = request.app[METER].open(sandbox_id, call)
         except NoRunError:
             logger.warning("xai_proxy_call_without_run", sandbox_id=sandbox_id, path=route)
             return no_run_answer(wire)
+        except BudgetExceededError as refusal:
+            logger.warning(
+                "xai_proxy_call_over_budget",
+                sandbox_id=sandbox_id,
+                path=route,
+                limit=refusal.limit,
+                cost_usd=refusal.cost_usd,
+                left_usd=refusal.left_usd,
+            )
+            return budget_answer(wire, refusal)
         except TalliesFullError:
             logger.error("xai_proxy_meter_full", sandbox_id=sandbox_id)
             return web.json_response({"error": "meter_full"}, status=503)
@@ -366,7 +395,8 @@ async def _forward(
     """Send the call upstream and stream its answer back, through the meter when the call is metered.
 
     A call whose answer never came back after it was sent (a timeout, the handler cancelled, an error past the
-    connect) is charged its ceiling; one that never connected costs nothing.
+    connect), or whose answer broke off before its usage (the upstream cut it, it could not be decoded, the sandbox
+    went away), is charged its ceiling; one that never connected costs nothing.
     """
     try:
         async with client.stream(
@@ -375,6 +405,17 @@ async def _forward(
             headers=headers,
             content=body,
         ) as upstream_resp:
+            unreadable = unreadable_encoding(upstream_resp.headers.get("content-encoding", ""))
+            if unreadable is not None:
+                # Not decoded here, so the meter would read nothing of it: refused, never relayed. A completion was
+                # answered all the same, so it is charged its ceiling; an error answer, nothing.
+                if metered is not None:
+                    if 200 <= upstream_resp.status_code < 300:
+                        metered.lost()
+                    else:
+                        metered.answer(upstream_resp.status_code, upstream_resp.headers.get("content-type"))
+                logger.warning("xai_proxy_answer_encoding_refused", encoding=unreadable[:80])
+                return anthropic_error("api_error", "the upstream answered in an encoding the proxy does not read", 502)
             if metered is not None:
                 metered.answer(upstream_resp.status_code, upstream_resp.headers.get("content-type"))
             if credential_id and upstream_resp.status_code in (401, 429):
@@ -392,7 +433,11 @@ async def _forward(
                     if metered is not None:
                         metered.feed(chunk)
                     await response.write(chunk)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
+                # Broken off: the upstream cut it, or what came could not be decoded. Charged its ceiling unless its
+                # usage was read in full (``Metered.lost``).
+                if metered is not None:
+                    metered.lost()
                 logger.warning("xai_proxy_stream_truncated", error=str(exc))
             await response.write_eof()
             return response

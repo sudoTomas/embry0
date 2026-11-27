@@ -108,7 +108,8 @@ def _count(value: Any) -> int:
 def _account(proxy: str, tallies: list[BootTally], metering: RunMetering) -> dict[str, Any]:
     """One proxy's account of the run, every process of it summed, with each call left in flight at its ceiling."""
     models: dict[str, dict[str, int]] = {}
-    requests = estimated = errors = open_calls = 0
+    requests = estimated = errors = open_calls = budget_refused = 0
+    refused_by: dict[str, int] = {}
     for tally in tallies:
         snap = tally.snapshot
         raw_models = snap.get("models")
@@ -121,6 +122,10 @@ def _account(proxy: str, tallies: list[BootTally], metering: RunMetering) -> dic
             requests += _count(entry.get("requests"))
             estimated += _count(entry.get("estimated"))
         errors += _count(snap.get("errors"))
+        budget_refused += _count(snap.get("budget_refused"))
+        raw_by = snap.get("budget_refused_by")
+        for limit, n in raw_by.items() if isinstance(raw_by, Mapping) else ():
+            refused_by[str(limit)] = refused_by.get(str(limit), 0) + _count(n)
         raw_open = snap.get("open")
         for call in raw_open if isinstance(raw_open, list) else ():
             if not isinstance(call, Mapping):
@@ -151,8 +156,18 @@ def _account(proxy: str, tallies: list[BootTally], metering: RunMetering) -> dic
         "estimated": estimated,
         "errors": errors,
         "open_at_ceiling": open_calls,
+        "budget_refused": budget_refused,
+        "budget_refused_by": refused_by,
         "models": models,
     }
+
+
+def _summed(counts: Any) -> dict[str, int]:
+    total: dict[str, int] = {}
+    for by in counts:
+        for limit, n in by.items():
+            total[limit] = total.get(limit, 0) + n
+    return total
 
 
 def _totals(account: Mapping[str, Any]) -> dict[str, int]:
@@ -188,6 +203,10 @@ def charge_run(
         "disagreement": None,
         "unreached": list(metering.unreached) if metering is not None else [],
         "unordered": list(metering.unordered) if metering is not None else [],
+        # Calls a proxy refused because their ceiling would have taken the run past its budget: none was sent.
+        "budget_refused": sum(account["budget_refused"] for account in proxies.values()),
+        # And by the limit of the purse that refused each: the job's, or the deployment's day's or month's.
+        "budget_refused_by": _summed(account["budget_refused_by"] for account in proxies.values()),
         "proxies": proxies,
     }
 

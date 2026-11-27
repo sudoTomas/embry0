@@ -64,6 +64,19 @@ class RunMeterRepository:
         )
         return [dict(r) for r in rows]
 
+    async def for_runs(self, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """:meth:`for_run` for each of ``run_ids``, in one read: by run, each run's tallies oldest read first."""
+        rows = await self._db.fetch(
+            "SELECT run_id, proxy, boot_id, snapshot, final, read_at FROM run_meter"
+            " WHERE run_id = ANY($1::text[]) ORDER BY read_at, proxy",
+            list(run_ids),
+        )
+        kept: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            entry = dict(row)
+            kept.setdefault(str(entry.pop("run_id")), []).append(entry)
+        return kept
+
     async def prune(self, older_than: timedelta) -> int:
         """Drop tallies last read longer ago than ``older_than``. Returns how many."""
         status = await self._db.execute("DELETE FROM run_meter WHERE read_at < now() - $1::interval", older_than)

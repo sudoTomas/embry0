@@ -1,4 +1,7 @@
+from typing import Any
+
 import pytest
+import structlog.testing
 
 from embry0.storage.database import DatabasePool
 from embry0.storage.repositories.jobs import JobsRepository
@@ -444,3 +447,54 @@ async def test_a_close_adds_its_charge_to_the_job_in_the_same_transaction(db_wit
     kept = await jobs_repo.run_events("run-1", ("cost_update",))
     assert [(e["cost_usd"], e["job_id"]) for e in kept] == [(0.25, job_id)]
     assert await jobs_repo.run_events("run-2", ("cost_update",)) == []
+
+
+#: Counts past the BIGINT token columns: ten calls each charged 1e18 tokens, and further out in both directions.
+_PAST_THE_COLUMNS = {
+    "input_tokens": 5,
+    "output_tokens": 10 * 10**18,
+    "cache_read_tokens": 2**70,
+    "cache_creation_tokens": -(2**64),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write", ["create", "finish", "close_running"])
+async def test_a_count_past_its_column_is_held_to_it_and_the_trace_still_ends(
+    repos: tuple[JobsRepository, TracesRepository], write: str
+):
+    """A count the column cannot hold would fail the write that ends the trace, and every close from the same figures,
+    leaving it running with its charge unrecorded."""
+    jobs_repo, traces_repo = repos
+    job_id = await jobs_repo.create(repo="a/b", task="t")
+    ending: dict[str, Any] = {
+        "result": "error",
+        "cost_usd": 1.0,
+        "duration_ms": 1,
+        "result_summary": "",
+        "error_code": None,
+        "stderr_tail": None,
+        "metering": None,
+        "sandbox_cost_usd": 1.0,
+        **_PAST_THE_COLUMNS,
+    }
+    if write != "create":
+        await traces_repo.create(job_id=job_id, agent_type="developer", model="m", result="running", trace_id="run-1")
+    with structlog.testing.capture_logs() as logs:
+        try:
+            if write == "create":
+                await traces_repo.create(job_id=job_id, agent_type="developer", model="m", trace_id="run-1", **ending)
+            elif write == "finish":
+                await traces_repo.finish("run-1", tools_called=None, **ending)
+            else:
+                assert await traces_repo.close_running("run-1", **ending) is True
+        except AssertionError:
+            raise
+        except Exception as exc:
+            pytest.fail(f"{write}: a count past its column failed the write: {exc!r}")
+    row = await traces_repo.get("run-1")
+    assert row is not None and row["result"] == "error", f"{write}: the trace was left {row and row['result']}"
+    written = (row["input_tokens"], row["output_tokens"], row["cache_read_tokens"], row["cache_creation_tokens"])
+    assert written == (5, 2**63 - 1, 2**63 - 1, -(2**63)), f"{write}: wrote {written}"
+    held = sorted(e["column"] for e in logs if e["event"] == "trace_count_held_to_column")
+    assert held == ["cache_creation_tokens", "cache_read_tokens", "output_tokens"], f"{write}: logged {held}"

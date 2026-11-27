@@ -36,3 +36,17 @@ def test_error_code_catalogue_minimum():
     present = {c.name for c in ErrorCode}
     missing = required - present
     assert not missing, f"missing required codes: {missing}"
+
+
+def test_a_proxy_s_budget_refusal_reads_as_one_whatever_its_figures_say():
+    """Its dollar figures can contain "429"; the refusal is still a budget refusal, never a rate limit."""
+    from embry0.safety.error_codes import ERROR_CATEGORIES, ErrorCode, FailureCategory, classify_agent_error
+
+    code = getattr(ErrorCode, "BUDGET_CALL_REFUSED", None)
+    assert code is not None, "no code says a call was refused for its run's budget"
+    message = (
+        "xai answered HTTP 402: embry0 budget_exceeded: this call could cost up to $1,429.00 at its ceiling (its "
+        "output limit and its input), and the run has $3.10 left of the job's budget, so it was not sent."
+    )
+    assert classify_agent_error(message) is code, classify_agent_error(message)
+    assert ERROR_CATEGORIES[code] is FailureCategory.BUDGET

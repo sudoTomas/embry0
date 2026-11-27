@@ -184,8 +184,9 @@ keeps the outcome the agent reached, logging
 
 Each agent run carries its provider's record, resolved by the orchestrator from
 the deployment's catalogue when the run starts: the provider's runtime, the id
-its API knows the model by, the model's `request_extras` and, for a custom
-model, its `context_window`, the rates in force
+its API knows the model by, the model's `request_extras`, its
+`max_output_tokens` and, for a custom model, its `context_window`, the rates
+in force
 that day, the cache factors (a cached input token at 0.1 of the input rate, a
 cache write at 1.25), the provider's address and the sandbox variable of its
 key. The executors in the sandbox read the record, not a table of their own,
@@ -270,11 +271,147 @@ charged from it, and its trace stays `running` like that of a run a restart
 interrupts (#694).
 
 A call still in flight when a tally was last read is charged its ceiling, as
-the proxy reported it: the request's size as input and its output limit as
-output. A proxy process that went away mid-run leaves its last read in
-`run_meter` with its calls in flight, and the recreated proxy is given the run
-back after the sandbox's enrollment, under a new process (`boot_id`), so the
-run's calls are the two tallies summed and the charge is the larger figure.
+the proxy reported it: the request's size as input and its output limit, times
+the answers a chat completion asks for, as output. So is a call whose answer broke off before
+its usage was read: the upstream cut it, it could not be decoded, or the
+sandbox went away while it came. The provider may have generated all of it, so
+what was read is no measure: its output is that ceiling, and its input the
+counts the answer did give (the request's size when it gave none). An answer
+whose usage was read in full is charged that usage however it ended, and an error answer
+still costs nothing. A streamed chat completion goes upstream asking for
+exactly its final usage, which counts only from a chunk that finishes the
+answer. A completion request the proxy cannot read the way every server would
+is refused (400) and never forwarded: a body that is not one JSON object, a
+top-level key named in two spellings that match once case is folded (some
+servers match keys so, the last winning), or a `stream` neither true nor
+false. A key named twice exactly, anywhere in the body, goes upstream once, with
+the value the proxy read; the output limit is the larger of `max_tokens` and
+`max_completion_tokens`, since a server may honour either, and must be a whole
+number of tokens (`"1000000"` or `1e6` is refused: a server may read it as that
+many). The ceiling assumes the server honours those two: a chat completion that
+names another server's output limit, at its top level or in its `options`
+(llama.cpp's `n_predict`, Ollama's `num_predict`, `max_new_tokens`,
+`max_output_tokens`, `max_tokens_to_sample`, compared with case folded), is
+refused. A call that names neither is taken to produce at most 128,000 tokens an
+answer, which assumes the server stops by then: vLLM and llama.cpp, given no
+limit, generate up to the model's context, so with a longer context such a call
+can produce more than its ceiling. A chat completion asking for several
+answers (`n`, llama.cpp's `n_cmpl` or older vLLM's `best_of`, compared with
+case folded, each a positive whole number or refused) has its limit times the
+largest as its ceiling; no server of the Messages API reads them, so they do
+not count there. A call whose ceiling is above 10,000,000 tokens is refused on
+both wires, so that a call charged its ceiling is charged a figure a trace can
+hold.
+
+A completion request carrying what its bytes do not bound is refused too, budget
+or not (400, `unmetered_content`; on the Messages API an
+`invalid_request_error` whose message starts with that code): the budget check
+prices a call by its bytes and its output ceiling, and what a provider fetches
+or runs for the call, or bills at a price of its own, is neither. Media goes
+only as an image given inline, a chat completion's `image_url` part whose URL is
+a `data:` URL or a Messages API `image` block of a `base64` source (in a
+`tool_result` too), of a media type billed as an image (`image/png`,
+`image/jpeg`, `image/gif`, `image/webp`; a PDF named an image is refused), each
+held at 5,000 input tokens besides its bytes, more than a hosted provider bills
+one at its largest. Refused: an image by URL or file, an audio, file or video
+part, a document (PDFs bill by the page, inline too), OpenAI's
+`web_search_options`, OpenRouter's `plugins`, its `:online` model ids, its
+fallback `models`, its `provider` preferences and its `route` (another upstream,
+at its own prices), xAI's `search_parameters`, `audio` and any `modalities` but
+text, `prediction` (rejected prediction tokens bill as output), a `service_tier`
+billed above the standard rates, Anthropic's `mcp_servers` and `container`, and
+a tool the provider runs itself (a chat completion's tools are `function` or
+`custom`, a Messages API tool has no type or `custom`). A chat completion may
+carry no object-valued field beyond a known set that changes neither the model
+nor its prices: `response_format`, `tool_choice`, `stream_options`,
+`logit_bias`, `metadata`, `chat_template_kwargs` (vLLM's and SGLang's template
+arguments), `options` (Ollama's and llama.cpp's settings, an output limit among
+them refused) and an `extra_body` holding only Gemini's `thinking_config` (not
+its `cached_content`, a server-side cache billed as input). A system prompt that
+is not text, a message's content that is neither text nor a list of parts, and
+messages or tools that are not a list are refused rather than passed over, and
+so is a message, content part or tool naming a key in two spellings that match
+once case is folded. The list is in one place, `_unmetered` in
+`embry0/execution/proxy/metering.py`. A call is priced at its run's rates
+whatever model it names, until a call is held to its run's model.
+embry0's own agents send text, their tool conversation and screenshots inline,
+none of it refused; a Claude Code agent whose tool result is a document (a PDF
+it read) has the calls carrying it refused.
+A trace's token counts are held to their columns' range as it is written, and a
+count held is logged (`trace_count_held_to_column`): one past them would fail
+the write and leave the trace `running`. A run whose calls counted under the
+sandbox's calls under no run (it could not be declared) is given what those grew
+by, each call in flight at its end counted at its ceiling; a call in flight at
+its start is taken off only when the orchestrator charged an earlier run for it
+(it remembers which, by the id the proxy gives each call in flight), so a call
+is charged once across runs, and one that began between runs is charged to the
+run it ends in. Where it cannot tell (after a restart, or from a proxy that
+names no ids), the call is charged again: more, never less. A proxy process that
+went away mid-run leaves its last read in `run_meter` with its calls in flight,
+and the recreated proxy is given the run back after the sandbox's enrollment,
+under a new process (`boot_id`), so the run's calls are the two tallies summed
+and the charge is the larger figure.
+
+**A run is held to its budget.** The orchestrator declares a run with the scopes
+it draws on: its job's cap, and the deployment's daily and monthly caps, where
+each is set ([Budget Controls](architecture.md#budget-controls)), each with what
+it had left once every settled run (one whose trace holds its charge) was
+charged, and with the run's rates (`embry0/orchestration/run_budget.py`). The
+run meter keeps a ledger of the runs declared and not settled yet and turns each
+scope into a purse at the proxy that serves the run's provider: the runs there
+that draw on one share it as they go, the proxy counting each member's charges
+and its calls in flight, so runs at the same time (a QA fan-out's apps, jobs
+under one day's cap) never each spend what was left. A scope held at two proxies
+at once is split between them, and a deployment purse takes no more than the job
+purses at its proxy can spend, so one proxy never takes the whole day from
+another. A run settles once its trace holds its charge: it leaves its purses,
+and the proxy is given their figures worked out again; a run whose figures
+cannot be worked out again leaves its purses lowered by its charge. The proxy
+refuses a call that would take a purse past what it has left: 402,
+`budget_exceeded`, in the wire's error shape, with the figures in its message,
+and nothing is sent. The check prices a call's output ceiling (its limit times
+its answers) in full, the part a call left to hang can inflate, and its input,
+for one call of the run in flight at a time and up to the largest request of the
+run read in full, at what the run's input has cost a request byte so far, cache
+reads included; past that size, and for the run's other calls in flight at once,
+at the uncached rate and one byte a token, the most a byte-level tokenizer
+counts. One call at a time is the run's conversation; its parallel subagents,
+mostly on small contexts, hold little at the uncached rate, and a purse can be
+passed by no more than one call's input at its own cost a byte against that
+rate. A broken-off call whose answer counted no input, or a call in flight at
+the run's end, is charged no more input than the check held for it, so a purse
+bounds what is recorded as well as what is spent. So `{"stream": true, "n": 78}`
+naming no limit, about $60 of output at $6 per million, is refused while the job
+has $10 left; twenty calls in flight at $1.20 of output each are let through
+only as far as their ceilings fit; a Claude Code–style run, its conversation on
+a 600 KB context and then three subagents at once on 40 KB ones, on a $2 cap, is
+first refused past $1.30 charged; and calls hung up after a cached one, sixty at
+once whose answers count their input uncached, 8 MiB requests after one of 600
+KB, or large uncached requests after a small cached one, all stay within the
+purse. A refusal is routed as crossing its limit is: for the job's cap, by the
+job's overrun mode (`soft` pauses the job for a person, as a crossing does,
+saying a model call was refused, and a continue raises the cap; `hard` fails the
+job with `ERR_BUDGET_CALL_REFUSED`, its overrun 0, wherever a hard crossing
+would, a QA fan-out's apps included); for the day's or the month's, by failing
+the run with `ERR_BUDGET_CALL_REFUSED`, since crossing those caps stops no
+running job (the dispatch gate checks them only when a job starts), and the job
+goes on as after any failed run. A run that fails after a call of it was refused
+carries `ERR_BUDGET_CALL_REFUSED` (set by the orchestrator from the proxies'
+count, whatever the sandbox's image reads from the message), and its trace's
+`metering` counts the refusals (`budget_refused`, `budget_refused_by`). No call
+is checked for a free run (an unpriced model, or rates of 0), a run with no cap
+set, a declaration from an older orchestrator, a run whose declaration failed
+(its calls count under no run), or at a proxy image from before (the
+orchestrator logs `proxy_run_budget_not_held`). The deployment purses are given
+their figures again on every read of the proxies (every 5 seconds), so what
+background features spend reaches them. After an orchestrator restart the ledger
+starts empty, as the proxies do, and what the tallies kept of the runs the
+previous process left count them (the figures their close charges them from) is
+taken off a run's scopes until each is closed: nothing waits. A proxy recreated
+mid-run is given its purses back less what their members could have spent at the
+process that went away, their charges and their calls in flight at their
+ceilings as its last read said (every 5 seconds); a member never read there
+leaves its purses nothing more (fail closed).
 
 **Every admin request is ordered.** The orchestrator numbers each request it
 sends a proxy (an enrollment, its end, a change of push branches, a run
@@ -357,6 +494,38 @@ that came had already added, in the same transaction as the close: neither is
 ever written without the other. A run whose exec crashed is charged the same
 sandbox figure, not $0.
 
+**Each agent call names an output limit.** The chat-completions executor asks
+a model for at most its catalogue entry's `max_output_tokens` on every call
+(`max_tokens`, or OpenAI's `max_completion_tokens`, which its reasoning models
+require), 32,000 when the entry names none: room for a turn's answer and the
+reasoning a reasoning model counts as output at its default effort, within
+what the hosted models allow. A model whose provider allows less, or that needs
+more, names its own; a limit in its `request_extras` wins. A custom model whose
+entry names none names no limit in a run with no budget, so its server's default
+stands (vLLM's is the room the request leaves), and 32,000 in a run held to a
+budget, since a metering proxy holds a call naming none to 128,000 output
+tokens. Within a custom model's known context window, a call asks for no more
+than the room its request leaves by the executor's estimate, less a margin for
+the estimate's error (the estimate itself until the server has counted a
+request, an eighth of it after), when that is at least the room the fit keeps for
+the answer (an eighth of the window, 1,024 to 8,192 tokens): below that, the
+request may be nearer the window's end than estimated, and it names no limit, so
+the server answers in the room it truly leaves. A call whose limit the server
+refuses as past the window (`maximum context length`) goes again once naming
+none: naming a limit never fails a request that naming none would not. A call
+naming none is held at a metering proxy to 128,000 output tokens; the run of a
+free model, such as one on the operator's own hardware, is not checked. The check holds a
+call's whole limit, so with the 32,000 default a hosted model's calls on a $2
+cap are first refused at some 60 to 90% of it, the earlier the dearer its output
+(32,000 tokens at $15 a million hold $0.48); a smaller `max_output_tokens` lets
+a run spend closer to its cap. An answer that stops at its limit
+(`finish_reason` `length`, or the Messages API's `stop_reason` `max_tokens` on
+the direct xAI executor) fails the run with `ERR_AGENT_ANSWER_CUT` rather than
+end it as done: the answer, or a tool call in it, stopped part-way, and asking
+again would stop at the same limit. Raise the model's `max_output_tokens`. The
+executor runs in the sandbox: a sandbox image from before asks for no limit, its calls
+are held to the 128,000, and it takes a cut answer as done.
+
 ### Changing the catalogue
 
 The shipped catalogue moves with each release. A deployment's changes are an
@@ -421,7 +590,8 @@ without a price, prefixes of two providers that are on overlapping), a
 `request_extras` or `background_request_extras` value past 4,096 bytes as
 JSON, nested deeper than 32 or holding a number JSON cannot hold (`.inf`,
 `.nan`, `1e400`), a `context_window` on a model that is not a custom
-one (1,024 to 10,000,000 tokens), and any model a tier, the fallback order, an
+one (1,024 to 10,000,000 tokens), a `max_output_tokens` on a model of an
+Agent SDK provider (1 to 1,000,000 tokens), and any model a tier, the fallback order, an
 agent definition, a pipeline template's step (its `config.model`, or a legacy
 top-level `model`), a repository's review model (`pr_review.model`) or a
 `background_models` value names that the change would take out, leave

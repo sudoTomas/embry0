@@ -19,6 +19,33 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+#: The traces' token columns, all BIGINT, and that type's range.
+_TOKEN_COLUMNS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+_BIGINT_MIN, _BIGINT_MAX = -(2**63), 2**63 - 1
+
+
+def _counts_in_columns(trace_id: str, *counts: int) -> tuple[int, ...]:
+    """The run's four token counts (:data:`_TOKEN_COLUMNS`, in order), each held to its column's range.
+
+    A run's charge is written as its trace ends. A count past its column would fail that write, and every later
+    attempt to close the trace from the same figures, so the trace would stay ``running`` with its charge unrecorded.
+    A count held is logged: the proxies keep each call's ceiling far below the column (``MAX_OUTPUT_CEILING``), so
+    one this large was counted wrong somewhere."""
+    held: list[int] = []
+    for column, count in zip(_TOKEN_COLUMNS, counts, strict=True):
+        if isinstance(count, int) and not isinstance(count, bool) and not _BIGINT_MIN <= count <= _BIGINT_MAX:
+            written = min(max(count, _BIGINT_MIN), _BIGINT_MAX)
+            logger.error(
+                "trace_count_held_to_column",
+                trace_id=trace_id,
+                column=column,
+                counted_log10=round(math.log10(abs(count)), 1),  # the count itself may be too long to write out
+                written=written,
+            )
+            count = written
+        held.append(count)
+    return tuple(held)
+
 
 class TracesRepository:
     """CRUD operations for the traces table."""
@@ -73,6 +100,9 @@ class TracesRepository:
         ``sandbox_cost_usd`` what the sandbox reported (``embry0.agents.run_charge``).
         """
         trace_id = trace_id or f"trc-{uuid.uuid4().hex[:12]}"
+        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens = _counts_in_columns(
+            trace_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+        )
         await self._db.execute(
             """
             INSERT INTO traces (
@@ -133,6 +163,9 @@ class TracesRepository:
         The running row carries no cost, so spend is counted here, once. ``metering`` and ``sandbox_cost_usd`` as in
         :meth:`create`.
         """
+        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens = _counts_in_columns(
+            trace_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+        )
         await self._db.execute(
             """
             UPDATE traces SET result = $2, cost_usd = $3, duration_ms = $4, tools_called = $5, result_summary = $6,
@@ -200,6 +233,9 @@ class TracesRepository:
         it is kept in the job's log and added to ``jobs.total_cost_usd`` in the same transaction as the close, so a
         process that stops between them can neither lose the charge nor add it twice.
         """
+        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens = _counts_in_columns(
+            trace_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+        )
         async with self._db.transaction() as conn:
             row = await conn.fetchrow(
                 """

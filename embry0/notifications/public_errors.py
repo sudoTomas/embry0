@@ -22,6 +22,7 @@ _GENERIC = "the job stopped on an internal embry0 error"
 _BY_CODE: dict[str, str] = {
     ErrorCode.BUDGET_OVERRUN: "a spend or dispatch limit was reached before the job could finish",
     ErrorCode.BUDGET_REFUSED: "a spend or dispatch limit had already been reached, so the job was not started",
+    ErrorCode.BUDGET_CALL_REFUSED: "an agent's model call would have passed a spend limit, so it was not sent",
     ErrorCode.AGENT_TIMEOUT: "an agent ran out of its time allowance",
     ErrorCode.DOCKER_TIMEOUT: "the sandbox did not respond in time",
     ErrorCode.DOCKER_OUTPUT_TOO_LARGE: "a Docker command printed more output than embry0 reads, so it was stopped",
@@ -58,6 +59,7 @@ _BY_CODE: dict[str, str] = {
     # storage and transport faults) keeps the generic sentence on purpose: the
     # reader cannot act on it and the detail is on the dashboard.
     ErrorCode.AGENT_MAX_TURNS: "an agent used up its allowed number of steps before finishing",
+    ErrorCode.AGENT_ANSWER_CUT: "an agent's answer stopped at its output limit before it ended",
     ErrorCode.AGENT_PROCESS_FAILED: "an agent stopped unexpectedly",
     ErrorCode.AGENT_IDLE: "an agent stopped responding and was shut down",
     ErrorCode.ABANDONED: "the job was abandoned at the retry prompt",

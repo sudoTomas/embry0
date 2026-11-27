@@ -1415,8 +1415,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # job_finished carries its total with them; what the budget leaves is closed
     # in the background, each trace only while still running.
     interrupted_runs_task: asyncio.Task[Any] | None = None
+    interrupted_charges: Any = None
     try:
-        from embry0.services.interrupted_runs import STARTUP_BUDGET_SECONDS, close_interrupted_runs, close_runs
+        from embry0.services.interrupted_runs import (
+            STARTUP_BUDGET_SECONDS,
+            close_interrupted_runs,
+            close_runs,
+            kept_charges,
+        )
         from embry0.storage.repositories.run_meter import RunMeterRepository
         from embry0.storage.repositories.traces import TracesRepository as _BootTracesRepository
 
@@ -1428,7 +1434,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         sweep = await close_interrupted_runs(*boot_runs, boot_metrics_for_runs, budget_seconds=STARTUP_BUDGET_SECONDS)
         if sweep.left:
-            interrupted_runs_task = asyncio.create_task(close_runs(sweep.left, *boot_runs, boot_metrics_for_runs))
+            # What their kept tallies count them comes off a run's budget until each is closed (RunMeter).
+            interrupted_charges = await kept_charges(sweep.left, boot_runs[1])
+            interrupted_runs_task = asyncio.create_task(
+                close_runs(sweep.left, *boot_runs, boot_metrics_for_runs, on_closed=interrupted_charges.closed)
+            )
     except Exception:
         logger.exception("interrupted_runs_close_failed")
 
@@ -1654,6 +1664,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         metrics=loop_metrics if loop_metrics is not None else NULL_METRICS,
     )
     app.state.run_meter = run_meter
+    # The runs the previous process left are charged in their traces only once closed: until then what their kept
+    # tallies count them comes off a run's budget (RunMeter.interrupted_spend).
+    run_meter.hold_interrupted(interrupted_charges)
+
+    async def _deployment_left() -> dict[str, float]:
+        # What the deployment's caps have left, settled runs and background calls charged: the deployment purses are
+        # given it on every read of the proxies (RunMeter._refresh_deployment).
+        from embry0.storage.repositories.budget_spend import BudgetSpendRepository
+
+        settings = await app.state.budget_policy.settings()
+        rollup = await BudgetSpendRepository(db).spend_rollup()
+        pending = run_meter.interrupted_spend("")[1]
+        caps = {"daily": settings.daily_cap_usd, "monthly": settings.monthly_cap_usd}
+        return {key: max(0.0, cap - rollup[key] - pending) for key, cap in caps.items() if cap > 0}
+
+    run_meter.refresh_deployment_with(_deployment_left)
     agent_runner = AgentRunner(
         sandbox_mgr,
         docker,

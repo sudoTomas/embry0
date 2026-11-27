@@ -876,3 +876,57 @@ def test_an_overlay_sets_and_takes_out_a_context_window() -> None:
 def test_a_context_window_is_a_custom_model_s_and_a_count_of_tokens(overlay: Any, where: str, says: str) -> None:
     refused = _refused(overlay)
     assert any(loc == where and says in msg for loc, msg in refused), f"{where}: {refused}"
+
+
+def test_a_chat_model_s_output_limit_reaches_its_run_s_record(installed: None) -> None:
+    """#759: what the chat-completions executor asks the model for on each call, so a metering proxy holds the call
+    to it rather than to the 128,000 a call naming no limit is taken to produce."""
+    try:
+        built = _install(
+            {"providers": {"deepseek": {"enabled": True, "models": {"deepseek-flash": {"max_output_tokens": 8192}}}}}
+        )
+    except CatalogueInvalid as exc:
+        pytest.fail(f"a model's entry cannot name an output limit: {exc}")
+    [deepseek] = [p for p in built.providers if p.name == "deepseek"]
+    limits = getattr(deepseek, "output_limits", None)
+    assert limits is not None, "a model's entry cannot name an output limit"
+    assert dict(limits) == {"deepseek-flash": 8192}, limits
+    record = providers.provider_record("deepseek-flash")
+    assert getattr(record, "max_output_tokens", None) == 8192, "the limit never reached the run"
+    assert getattr(providers.provider_record("deepseek-v4-pro"), "max_output_tokens", 0) is None
+    again = type(record).from_config(record.to_config())
+    assert again is not None and again.max_output_tokens == 8192, "the sandbox reads the record without its limit"
+
+
+@pytest.mark.parametrize(
+    ("overlay", "where", "says"),
+    [
+        (
+            {"providers": {"xai": {"models": {"grok-4.7": {"max_output_tokens": 8192}}}}},
+            "providers.xai.models.grok-4.7.max_output_tokens",
+            "chat-completions executor",
+        ),
+        (
+            {"providers": {"openai": {"models": {"gpt-6-luna": {"max_output_tokens": 0}}}}},
+            "providers.openai.models.gpt-6-luna.max_output_tokens",
+            "greater than or equal to 1",
+        ),
+        (
+            {"providers": {"openai": {"models": {"gpt-6-luna": {"max_output_tokens": 1_000_001}}}}},
+            "providers.openai.models.gpt-6-luna.max_output_tokens",
+            "less than or equal to 1000000",
+        ),
+    ],
+)
+def test_an_output_limit_is_a_chat_model_s_and_a_count_of_tokens(overlay: Any, where: str, says: str) -> None:
+    try:
+        refused = _refused(overlay)
+    except pytest.fail.Exception:
+        pytest.fail(f"{where} was taken")
+    assert any(loc == where and says in msg for loc, msg in refused), f"{where}: {refused}"
+
+
+@pytest.mark.parametrize("value", [0, -1, 2.5, "8192", True])
+def test_a_record_with_an_output_limit_that_is_not_a_count_is_not_read(value: Any) -> None:
+    record = providers.provider_record("deepseek-flash")
+    assert type(record).from_config({**record.to_config(), "max_output_tokens": value}) is None

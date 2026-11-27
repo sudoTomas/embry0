@@ -75,6 +75,10 @@ class SubTaskResult:
     # job on it instead of reporting the app.
     error_code: str | None = None
     account_wait: dict[str, Any] | None = None
+    # The limit ("job", "daily", "monthly") a metering proxy held the app's QA
+    # agent run to when it refused a model call of it: the orchestrator routes
+    # a refusal for the job's cap as a crossing of the cap.
+    budget_refused: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

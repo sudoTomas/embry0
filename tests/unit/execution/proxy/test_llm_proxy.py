@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import aiohttp
@@ -524,7 +525,7 @@ async def test_each_sandbox_has_the_request_cap_it_was_enrolled_with(aiohttp_cli
     for sandbox, token, cap in (("sbx-1", _TOKEN_1, 1024), ("sbx-2", _TOKEN_2, 4096)):
         enrolled = await _enroll(client, sandbox, token, _server(upstream), max_request_bytes=cap)
         assert enrolled.status == 200, await enrolled.text()
-    body = b"x" * 2048
+    body = json.dumps({"model": "m", "messages": [], "padding": "x" * 2000}).encode()  # a request of 2 KiB
     small = await client.post(
         "/v1/chat/completions", data=body, headers={"Authorization": f"Bearer {_TOKEN_1}", "Content-Type": "text/plain"}
     )

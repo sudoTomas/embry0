@@ -13,6 +13,7 @@ they are closed under a time budget at start-up and the rest in the background, 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import structlog
 
 from embry0.agents.invocation import ProviderRecord
+from embry0.agents.run_charge import charge_run
 from embry0.agents.run_close import close_run, metering_from_kept, sandbox_figure
 
 if TYPE_CHECKING:
@@ -80,15 +82,68 @@ async def close_interrupted_runs(
 
 
 async def close_runs(
-    rows: list[dict[str, Any]], traces: TracesRepository, tallies: KeptTallies | None, jobs: RunEvents, metrics: Any
+    rows: list[dict[str, Any]],
+    traces: TracesRepository,
+    tallies: KeptTallies | None,
+    jobs: RunEvents,
+    metrics: Any,
+    *,
+    on_closed: Callable[[str], None] | None = None,
 ) -> int:
-    """Close ``rows`` (what a sweep left), each only while still ``running``. Never raises."""
+    """Close ``rows`` (what a sweep left), each only while still ``running``, telling ``on_closed`` of each run whose
+    trace no longer is (closed here, or before). Never raises."""
     closed = 0
     for row in rows:
-        closed += await _close_logged(row, traces, tallies, jobs, metrics)
+        try:
+            closed += await _close(row, traces, tallies, jobs, metrics)
+        except Exception:
+            logger.warning("interrupted_run_close_failed", trace_id=row.get("trace_id"), exc_info=True)
+            continue
+        if on_closed is not None:
+            on_closed(str(row["trace_id"]))
     if rows:
         logger.info("interrupted_runs_closed_after_start", found=len(rows), closed=closed)
     return closed
+
+
+@dataclass
+class InterruptedCharges:
+    """What the runs the previous process left, and the start-up sweep did not close, were counted at the metering
+    proxies, by run: ``run id -> (job id, USD)``. Until a run is closed its charge is not in its trace, so a run's
+    budget takes it off what its scopes have left (``RunMeter``), and nothing waits for the close."""
+
+    charges: dict[str, tuple[str, float]] = field(default_factory=dict)
+
+    def closed(self, run_id: str) -> None:
+        """``run_id``'s trace holds its charge now."""
+        self.charges.pop(run_id, None)
+
+    def spend(self, job_id: str) -> tuple[float, float]:
+        """What the runs not closed yet were counted: ``job_id``'s, and all of them."""
+        values = list(self.charges.values())
+        return sum(usd for job, usd in values if job == job_id), sum(usd for _, usd in values)
+
+
+async def kept_charges(rows: list[dict[str, Any]], tallies: KeptTallies | None) -> InterruptedCharges:
+    """What the tallies kept of ``rows`` (traces a sweep left) count each run at its rates: the proxies' figure the
+    close charges a run from (``embry0.agents.run_close``). A run with none kept counts nothing here. Read in one go when
+    ``tallies`` can."""
+    run_ids = [str(row["trace_id"]) for row in rows]
+    if tallies is None or not run_ids:
+        return InterruptedCharges()
+    bulk = getattr(tallies, "for_runs", None)
+    kept = await bulk(run_ids) if bulk is not None else {r: await tallies.for_run(r) for r in run_ids}
+    charges = InterruptedCharges()
+    for row in rows:
+        run_id = str(row["trace_id"])
+        metering = metering_from_kept(run_id, kept.get(run_id) or [])
+        if metering is None:
+            continue
+        record = ProviderRecord.from_trace_pricing(row.get("pricing"))
+        charge = charge_run(metering, record, sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+        if charge.cost_usd > 0:
+            charges.charges[run_id] = (str(row.get("job_id") or ""), charge.cost_usd)
+    return charges
 
 
 async def _close_logged(

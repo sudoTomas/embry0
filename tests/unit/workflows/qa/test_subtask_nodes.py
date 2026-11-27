@@ -1920,3 +1920,24 @@ async def test_the_boot_log_tail_survives_a_cut_inside_a_character() -> None:
     with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
         tail = await _read_boot_log_tail(docker=DockerClient(), sandbox_id="sandbox-1")
     assert "ready on http://localhost:3000" in tail, f"the boot log tail was lost: {tail!r}"
+
+
+@pytest.mark.asyncio
+async def test_emit_result_node_says_which_limit_refused_the_agent_s_call():
+    """#759: the orchestrator routes a refusal for the job's cap as a crossing of it."""
+    from embry0.workflows.qa.subtask_nodes import emit_result_node
+
+    state = {
+        "app_name": "hub",
+        "status": SubTaskStatus.QA_FAILURE,
+        "failure_summary": "the agent's call was refused",
+        "started_at": time.monotonic() - 1.0,
+        "completed_at": time.monotonic(),
+        "raw_result": {},
+        "agent_outputs": [
+            {"is_error": True, "error_code": "ERR_BUDGET_CALL_REFUSED", "budget_refused": "job"},
+        ],
+    }
+    out = await emit_result_node(state, {})
+    result = out["subtask_result"]
+    assert (result.error_code, getattr(result, "budget_refused", None)) == ("ERR_BUDGET_CALL_REFUSED", "job"), result

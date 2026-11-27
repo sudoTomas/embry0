@@ -311,3 +311,23 @@ def test_the_llm_proxy_carries_every_chat_completions_provider_of_the_catalogue(
     carried = getattr(run_charge, "CHAT_PROVIDERS", None)
     assert carried == {p.name for p in OPENAI_COMPATIBLE}, f"the llm-proxy carries {carried}"
     assert run_charge.PROXY_PROVIDERS["llm-proxy"] == carried
+
+
+def test_the_calls_a_proxy_refused_for_the_run_s_budget_are_counted_in_its_report() -> None:
+    """Across the run's proxy processes: a recreated proxy counts its own refusals."""
+    tallies = (
+        BootTally(
+            "xai-proxy",
+            "b1",
+            {"models": {"grok-4.7": _usage(i=10, o=5)}, "budget_refused": 2, "budget_refused_by": {"job": 2}},
+            final=False,
+        ),
+        BootTally(
+            "xai-proxy", "b2", {"models": {}, "budget_refused": 1, "budget_refused_by": {"daily": 1}}, final=True
+        ),
+    )
+    metering = RunMetering(run_id="run-1", targets=("xai-proxy",), declared={"xai-proxy": "b2"}, tallies=tallies)
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert charge.metering.get("budget_refused") == 3, charge.metering
+    assert charge.metering["proxies"]["xai-proxy"].get("budget_refused") == 3, charge.metering["proxies"]
+    assert charge.metering.get("budget_refused_by") == {"job": 2, "daily": 1}, charge.metering

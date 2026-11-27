@@ -70,10 +70,17 @@ class _Proxies:
             raise self.fail[(proxy, call)]
 
     async def declare_run(
-        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+        self,
+        proxy: str,
+        sandbox_id: str,
+        run_id: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        budget: dict[str, Any] | None = None,
     ) -> str:
         self._maybe_fail(proxy, "declare")
         self.declared_providers = {**getattr(self, "declared_providers", {}), (proxy, run_id): provider}
+        self.declared_budgets = {**getattr(self, "declared_budgets", {}), (proxy, run_id): budget}
         self.tallies[proxy][run_id] = {
             "run_id": run_id,
             "sandbox_id": sandbox_id,
@@ -83,6 +90,10 @@ class _Proxies:
             "open": [],
         }
         return self.boot[proxy]
+
+    async def update_purses(self, proxy: str, purses: list[dict[str, Any]]) -> None:
+        self._maybe_fail(proxy, "purses")
+        self.purse_updates = [*getattr(self, "purse_updates", []), (proxy, purses)]
 
     async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
         self.end_seqs = {**getattr(self, "end_seqs", {}), proxy: seq}
@@ -123,6 +134,176 @@ async def test_a_run_is_declared_where_its_sandbox_is_enrolled_and_ended_there()
     assert metering.tallies[0].snapshot["models"] == _calls(2)
     assert repo.rows[("xai-proxy", "b1", "run-1")]["final"] is True, "the final tally was not kept"
     assert ("llm-proxy", "declare") not in proxies.calls, "declared where the sandbox is not enrolled"
+
+
+def test_a_sandbox_is_metered_where_it_is_enrolled_with_a_metering_proxy() -> None:
+    """Only such a run's budget is read: the day's and month's spend is a rollup of every job's."""
+    meter, _ = _meter(_Proxies({"sbx": ["xai-proxy"], "none": []}), _Repo())
+    meters = getattr(meter, "meters", None)
+    assert meters is not None, "the meter cannot say which sandboxes it meters"
+    assert (meters("sbx"), meters("none")) == (True, False)
+
+
+def _request(job: float = 2.0, daily: float | None = None, job_key: str = "job:job-1") -> dict[str, Any]:
+    """A run's budget request (embry0.orchestration.run_budget): its rates, and what each scope has left settled."""
+    scopes = [{"key": job_key, "limit": "job", "remaining_usd": job}]
+    if daily is not None:
+        scopes.append({"key": "daily", "limit": "daily", "remaining_usd": daily})
+    return {"rates": {"in": 2.0, "out": 6.0}, "cache": {"read": 0.25, "write": 1.0}, "scopes": scopes}
+
+
+async def _begin(meter: RunMeter, run_id: str, budget: Any, sandbox: str = "sbx", provider: str = "xai") -> Any:
+    try:
+        return await meter.begin(sandbox, run_id, "job-1", provider=provider, budget=budget)  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared with its budget: {exc}")
+
+
+def _purses(proxies: _Proxies, proxy: str, run_id: str) -> dict[str, Any]:
+    budget = getattr(proxies, "declared_budgets", {}).get((proxy, run_id))
+    assert budget is not None, f"{run_id} was declared at {proxy} with no budget"
+    assert "purses" in budget, f"{run_id} was declared at {proxy} with no purses: {budget}"
+    return {p["key"]: p for p in budget["purses"]}
+
+
+async def test_a_run_is_declared_with_its_purses_at_the_proxy_serving_its_provider() -> None:
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-1", _request(job=0.5))
+    purses = _purses(proxies, "xai-proxy", "run-1")
+    assert purses == {"job:job-1": {"key": "job:job-1", "limit": "job", "remaining_usd": 0.5, "members": []}}
+    assert proxies.declared_budgets[("llm-proxy", "run-1")] is None, "a proxy not serving the run was given a budget"
+
+
+async def test_runs_of_one_job_at_one_proxy_share_its_purse_and_at_two_split_it() -> None:
+    """At one proxy the purse counts each member as it goes; across proxies the ledger splits what is left."""
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["xai-proxy"], "sbx-c": ["llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-a", _request(job=2.0), sandbox="sbx-a")
+    await _begin(meter, "run-b", _request(job=2.0), sandbox="sbx-b")
+    assert _purses(proxies, "xai-proxy", "run-b")["job:job-1"] == {
+        "key": "job:job-1",
+        "limit": "job",
+        "remaining_usd": 2.0,
+        "members": ["run-a"],
+    }, "the second run was not told it shares the purse with the first"
+    await _begin(meter, "run-c", _request(job=2.0), sandbox="sbx-c", provider="openai")
+    assert _purses(proxies, "llm-proxy", "run-c")["job:job-1"]["remaining_usd"] == 0.0, (
+        "the job's purse at a second proxy was given what the first already holds"
+    )
+
+
+async def test_a_deployment_purse_takes_no_more_than_the_job_purses_at_its_proxy() -> None:
+    """So jobs at one proxy never take the whole day from jobs at another."""
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-a", _request(job=10.0, daily=100.0, job_key="job:a"), sandbox="sbx-a")
+    assert _purses(proxies, "xai-proxy", "run-a")["daily"]["remaining_usd"] == 10.0
+    await _begin(meter, "run-b", _request(job=10.0, daily=100.0, job_key="job:b"), sandbox="sbx-b", provider="openai")
+    assert _purses(proxies, "llm-proxy", "run-b")["daily"]["remaining_usd"] == 10.0, "the day went to the first proxy"
+    await _begin(meter, "run-c", _request(job=10.0, daily=15.0, job_key="job:c"), sandbox="sbx-a")
+    assert _purses(proxies, "xai-proxy", "run-c")["daily"]["remaining_usd"] == 5.0, (
+        "near the day's cap, what the other proxy holds was not taken off"
+    )
+
+
+async def test_a_settled_run_leaves_its_purses_which_are_worked_out_again() -> None:
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    window = await _begin(meter, "run-a", _request(job=2.0), sandbox="sbx-a")
+    await _begin(meter, "run-b", _request(job=2.0), sandbox="sbx-b")
+    settle = getattr(meter, "settle", None)
+    assert settle is not None, "the meter cannot settle a run"
+    await settle(window, _request(job=1.6))  # run-a was charged $0.40, now in its trace
+    (proxy, figures), *_ = proxies.purse_updates
+    assert (proxy, figures) == (
+        "xai-proxy",
+        [{"key": "job:job-1", "limit": "job", "remaining_usd": 1.6, "members": ["run-b"]}],
+    ), proxies.purse_updates
+
+
+async def test_a_run_whose_figures_cannot_be_worked_out_again_leaves_its_purse_less_its_charge() -> None:
+    """Its trace holds its charge, so later declarations count it there: the purse must not count it too."""
+    proxies = _Proxies({"sbx": ["xai-proxy"], "sbx-2": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    window = await _begin(meter, "run-1", _request(job=2.0))
+    await _begin(meter, "run-2", _request(job=2.0), sandbox="sbx-2")
+    settle = getattr(meter, "settle", None)
+    assert settle is not None, "the meter cannot settle a run"
+    try:
+        await settle(window, None, 0.5)
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be settled with its charge alone: {exc}")
+    updates = getattr(proxies, "purse_updates", [])
+    assert updates == [
+        ("xai-proxy", [{"key": "job:job-1", "limit": "job", "remaining_usd": 1.5, "members": ["run-2"]}])
+    ], f"the run stayed in its purse, or left it whole: {updates}"
+
+
+async def test_a_run_whose_declaration_failed_draws_on_no_purse() -> None:
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["xai-proxy"]})
+    proxies.fail[("xai-proxy", "declare")] = RuntimeError("proxy away")
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-a", _request(job=2.0), sandbox="sbx-a")
+    del proxies.fail[("xai-proxy", "declare")]
+    await _begin(meter, "run-b", _request(job=2.0), sandbox="sbx-b")
+    assert _purses(proxies, "xai-proxy", "run-b")["job:job-1"]["members"] == []
+
+
+def test_the_last_process_s_runs_count_until_each_is_closed() -> None:
+    try:
+        from embry0.services.interrupted_runs import InterruptedCharges
+    except ImportError as exc:
+        pytest.fail(f"the runs the last process left count nothing against a budget: {exc}")
+
+    meter, _ = _meter(_Proxies({}), _Repo())
+    hold = getattr(meter, "hold_interrupted", None)
+    assert hold is not None, "the meter takes nothing off for the runs the last process left"
+    charges = InterruptedCharges({"run-a": ("job-1", 0.5), "run-b": ("job-2", 2.0)})
+    hold(charges)
+    assert meter.interrupted_spend("job-1") == (0.5, 2.5)
+    charges.closed("run-a")
+    assert meter.interrupted_spend("job-1") == (0.0, 2.0)
+
+
+async def test_the_deployment_purses_are_given_their_figures_again_on_each_read() -> None:
+    """What background features spent since a run joined or settled reaches them."""
+    proxies = _Proxies({"sbx": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-1", _request(job=10.0, daily=100.0))
+    refresh = getattr(meter, "refresh_deployment_with", None)
+    assert refresh is not None, "the deployment purses are never given their figures again"
+    left = {"daily": 4.0}
+
+    async def _left() -> dict[str, float]:
+        return dict(left)
+
+    refresh(_left)
+    await meter.poll_once()
+    updates = getattr(proxies, "purse_updates", [])
+    assert updates == [
+        ("xai-proxy", [{"key": "daily", "limit": "daily", "remaining_usd": 4.0, "members": ["run-1"]}])
+    ], updates
+    await meter.poll_once()
+    assert len(proxies.purse_updates) == 1, "an unchanged figure was sent again"
+
+
+async def test_a_refresh_read_while_a_run_joined_is_not_sent() -> None:
+    """Its figures were read before the run's own, which are newer."""
+    proxies = _Proxies({"sbx": ["xai-proxy"], "sbx-2": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    # Job purses large enough that the day's purse is not held to them: only the order decides.
+    await _begin(meter, "run-1", _request(job=500.0, daily=100.0))
+
+    async def _left() -> dict[str, float]:
+        await _begin(meter, "run-2", _request(job=500.0, daily=50.0), sandbox="sbx-2")
+        return {"daily": 90.0}
+
+    refresh = getattr(meter, "refresh_deployment_with", None)
+    assert refresh is not None, "the deployment purses are never given their figures again"
+    refresh(_left)
+    await meter.poll_once()
+    assert getattr(proxies, "purse_updates", []) == [], "a refresh older than a declaration was sent over it"
 
 
 async def test_a_run_is_declared_on_its_provider_at_every_proxy_it_is_enrolled_with() -> None:
@@ -372,11 +553,11 @@ async def test_a_run_not_declared_is_charged_what_the_proxy_counted_under_no_run
     metering = await meter.end(window)
 
     counted = [t.snapshot["models"] for t in metering.tallies if t.proxy == "llm-proxy"]
-    assert counted == [{"grok-4.7": {"input_tokens": 300, "output_tokens": 30, "requests": 3, "estimated": 0}}], (
-        f"the run was not given what the proxy counted under no run during it: {counted}"
-    )
+    # Three calls answered in the run, and the one in flight at its ceiling.
+    expected = {"grok-4.7": {"input_tokens": 300 + 50, "output_tokens": 30 + 500, "requests": 4, "estimated": 1}}
+    assert counted == [expected], f"the run was not given what the proxy counted under no run during it: {counted}"
     (grown,) = [t.snapshot for t in metering.tallies if t.proxy == "llm-proxy"]
-    assert (grown["errors"], grown["open"]) == (2, [in_flight]), "the run's errors or its call in flight were lost"
+    assert (grown["errors"], grown["open"]) == (2, []), "the run's errors were lost, or its call in flight kept apart"
     charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
     assert charge.source == "proxy_gap", f"an undeclared run ignored the proxy's count: {charge.source}"
     assert charge.cost_usd == ((300 + 50) * 2.0 + (30 + 500) * 6.0) / 1e6, "not the calls answered and in flight"
@@ -410,3 +591,155 @@ async def test_a_declared_run_is_not_given_the_sandbox_s_calls_under_no_run() ->
     metering = await meter.end(window)
     counted = [t.snapshot["models"]["grok-4.7"]["requests"] for t in metering.tallies]
     assert counted == [2], f"a declared run was given more than its own calls: {counted}"
+
+
+async def test_two_undeclared_runs_in_a_row_count_a_call_in_flight_between_them_once() -> None:
+    """A call still in flight when one run ends is charged there at its ceiling: the next run is not given it again,
+    whether it is still in flight at that run's end or ended during it."""
+    from embry0.agents.run_charge import charge_run
+
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    key = "unattributed:sbx:1.0"
+    proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    in_flight = {"id": 7, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+
+    first = await meter.begin("sbx", "run-1", "job-1")
+    proxies.tallies["llm-proxy"][key].update(models=_calls(1, output=10), open=[in_flight])
+    ended_first = await meter.end(first)
+
+    second = await meter.begin("sbx", "run-2", "job-1")  # the call is still in flight here
+    proxies.tallies["llm-proxy"][key]["models"] = {
+        "grok-4.7": {"input_tokens": 100 + 50 + 200, "output_tokens": 10 + 500 + 20, "requests": 3, "estimated": 1}
+    }  # the call ended at its ceiling during the second run, which made one call of its own
+    proxies.tallies["llm-proxy"][key]["open"] = []
+    ended_second = await meter.end(second)
+
+    def output(metering: Any) -> int:
+        return charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0)).output_tokens
+
+    assert output(ended_first) == 10 + 500, "the first run was not charged its call in flight at its ceiling"
+    assert output(ended_second) == 20, f"the second run was given the first run's call again: {output(ended_second)}"
+
+
+async def test_a_call_in_flight_across_two_undeclared_runs_is_not_given_to_the_second() -> None:
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    key = "unattributed:sbx:1.0"
+    in_flight = {"id": 7, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    first = await meter.begin("sbx", "run-1", "job-1")
+    proxies.tallies["llm-proxy"][key]["open"] = [in_flight]
+    await meter.end(first)
+    second = await meter.begin("sbx", "run-2", "job-1")
+    metering = await meter.end(second)  # still in flight
+    from embry0.agents.run_charge import charge_run
+
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert (charge.input_tokens, charge.output_tokens) == (0, 0), (
+        f"the second run was given a call that was in flight before it began: {charge.metering['proxies']}"
+    )
+
+
+def _output(metering: Any) -> tuple[int, int]:
+    from embry0.agents.run_charge import charge_run
+
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    return charge.input_tokens, charge.output_tokens
+
+
+async def _undeclared(proxies: _Proxies, meter: RunMeter, run_id: str, between: Any) -> Any:
+    """Run ``run_id`` undeclared on the llm-proxy, ``between(tally)`` changing the sandbox's calls under no run during
+    it; its metering."""
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    window = await meter.begin("sbx", run_id, "job-1")
+    between(proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"])
+    return await meter.end(window)
+
+
+@pytest.mark.parametrize("renamed", [True, False], ids=["its-model-makes-another-call", "its-model-makes-none"])
+async def test_a_call_in_flight_that_ends_under_another_model_s_name_is_counted_once(renamed: bool) -> None:
+    """The proxy keeps a call in flight under the model it was asked for, and its end under the one its answer named:
+    the run after is given the totals' rise, so the call is not counted again under the new name, whether or not its
+    first model makes another call in that run."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    in_flight = {"id": 3, "model": "qwen", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    await _undeclared(proxies, meter, "run-1", lambda tally: tally.update(open=[in_flight]))
+    own = {"input_tokens": 200, "output_tokens": 20, "requests": 1, "estimated": 0}
+
+    def ended(tally: dict[str, Any]) -> None:
+        tally["models"] = {
+            "deployed-model-id": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1},
+            ("qwen" if renamed else "another-model"): dict(own),
+        }  # the call ended at its ceiling, named after the answer's model; the run made one call of its own
+        tally["open"] = []
+
+    metering = await _undeclared(proxies, meter, "run-2", ended)
+    assert _output(metering) == (200, 20), f"the call was counted again under its answer's model: {metering.tallies}"
+
+
+async def test_a_call_that_began_between_runs_is_charged_to_the_run_it_ends_in() -> None:
+    """Charged by no run when it began (it began outside one), so the run it ends in is charged it, whatever its
+    ceiling: a call held open between runs and ended short is not left to no one."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    first = await meter.begin("sbx", "run-1", "job-1")  # declared: its calls are its own tally's
+    await meter.end(first)
+    key = "unattributed:sbx:1.0"
+    held = {"id": 9, "model": "grok-4.7", "since": 3.0, "input_tokens": 40, "output_tokens": 128_000}
+    proxies.tallies["llm-proxy"][key] = {**_unattributed("sbx", {}), "open": [held]}  # opened outside any run
+
+    def during(tally: dict[str, Any]) -> None:
+        tally["models"] = {"grok-4.7": {"input_tokens": 2000 + 30, "output_tokens": 3000 + 10, "requests": 2}}
+        tally["open"] = []  # the run's own calls, and the held one, ended short
+
+    metering = await _undeclared(proxies, meter, "run-2", during)
+    assert _output(metering) == (2030, 3010), (
+        f"the call held open between runs was charged to no one: {_output(metering)}"
+    )
+
+
+@pytest.mark.parametrize("lost", ["the meter restarted", "the proxy names no ids"])
+async def test_a_call_in_flight_not_known_to_be_charged_is_charged_again(lost: str) -> None:
+    """Where the meter cannot tell that the run before was charged a call at its ceiling, the run it ends in is
+    charged it too: more, never less."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    in_flight = {"id": 5, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    if lost == "the proxy names no ids":
+        del in_flight["id"]
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    first = await _undeclared(proxies, meter, "run-1", lambda tally: tally.update(open=[in_flight]))
+    assert _output(first) == (50, 500)
+    if lost == "the meter restarted":
+        meter, _ = _meter(proxies, _Repo())
+
+    def ended(tally: dict[str, Any]) -> None:
+        tally["models"] = {"grok-4.7": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1}}
+        tally["open"] = []
+
+    assert _output(await _undeclared(proxies, meter, "run-2", ended)) == (50, 500), f"{lost}: not charged again"
+
+
+async def test_a_proxy_restarted_between_runs_reusing_a_key_and_an_id_has_its_call_charged() -> None:
+    """A recreated proxy numbers its calls from the start again, and a tally may come back under the same key: a call
+    of the new process that carries an id a run was charged in the old one is not that call, and is charged."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    key = "unattributed:sbx:1.0"
+    in_flight = {"id": 1, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    await _undeclared(proxies, meter, "run-1", lambda tally: tally.update(open=[dict(in_flight)]))
+    proxies.boot["llm-proxy"] = "l2"  # recreated: its tallies start again, the same key and the same first id
+    proxies.tallies["llm-proxy"][key] = {**_unattributed("sbx", {}), "open": [dict(in_flight)]}  # began between runs
+
+    def ended(tally: dict[str, Any]) -> None:
+        tally["models"] = {"grok-4.7": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1}}
+        tally["open"] = []
+
+    metering = await _undeclared(proxies, meter, "run-2", ended)
+    assert _output(metering) == (50, 500), f"the new process's call was taken for the one charged: {_output(metering)}"

@@ -16,7 +16,9 @@ the same shape:
   tool_result/error/cost_update/agent_completed), so AgentRunner is unchanged;
 - cost from token usage times the catalog price (these APIs report no run cost);
 - the text-only conversation capture the resume fallback replays;
-- ask_user recovery from Bash output, and the turn cap reported as ERR_AGENT_MAX_TURNS.
+- ask_user recovery from Bash output, and the turn cap reported as ERR_AGENT_MAX_TURNS;
+- an answer cut at its output limit (the wire's ``Turn.cut_short``) failing the run as
+  ERR_AGENT_ANSWER_CUT, never taken as the end of its turn.
 
 A wire owns only what differs between the APIs: the tool schema shape, one
 request/response round trip, how tool results are sent back, and how a failed
@@ -80,6 +82,13 @@ are blocked. When the task is complete, stop and summarize what you did. Do not 
 confirmation on reversible actions that follow from the task."""
 
 
+#: Why a run whose answer stopped at its output limit failed.
+_CUT_MESSAGE = (
+    "the model's answer stopped at its output limit, or its context window's end, before it ended: raise the "
+    "model's max_output_tokens in the provider catalogue, or give it a larger window"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ToolCall:
     """One tool the model asked for, in the wire-neutral shape the loop dispatches."""
@@ -121,6 +130,9 @@ class Turn:
     usage: Usage | None
     assistant_message: dict[str, Any]
     """The assistant turn as the next request must carry it."""
+    cut_short: bool = False
+    """The answer stopped at its output limit (``finish_reason`` ``length``, ``stop_reason`` ``max_tokens``): not
+    an end of turn, and any tool call in it may be half-written."""
 
 
 class Wire(Protocol):
@@ -320,6 +332,7 @@ async def run_tool_loop(
     error_code: str | None = None
     # Set when the loop runs out of turns while the model is still calling tools.
     capped = False
+    cut = False
 
     wire = make_wire()
     tools = wire.tool_defs(defs)
@@ -328,7 +341,7 @@ async def run_tool_loop(
     writer(events.agent_started(model=invocation.model, max_turns=invocation.max_turns, skill_sources=None, **ids))
 
     async def execute() -> None:
-        nonlocal capped
+        nonlocal capped, cut
         turn_number = 0
         while turn_number < invocation.max_turns:
             turn_number += 1
@@ -377,8 +390,14 @@ async def run_tool_loop(
             # #329: one entry per message; joined with a blank line at the end.
             final_text.add_message(assistant_text)
 
+            if turn.cut_short:
+                # Not done: the answer, or a tool call in it, stopped part-way. Sending a half-written tool call back
+                # is refused by some servers, and asking again repeats the cut, so the run fails, saying why.
+                cut = True
+                writer(events.error(message=_CUT_MESSAGE, code=ErrorCode.AGENT_ANSWER_CUT.value, **ids))
+                return
             if not turn.wants_tools or not turn.tool_calls:
-                return  # end of turn / output cap / no tools requested → done
+                return  # end of turn / no tools requested → done
 
             # Execute each requested tool, gating first; collect the results.
             results: list[ToolResult] = []
@@ -468,6 +487,10 @@ async def run_tool_loop(
         is_error = True
         error_message = f"reached max_turns ({invocation.max_turns})"
         error_code = ErrorCode.AGENT_MAX_TURNS.value
+    if cut and not is_error:
+        is_error = True
+        error_message = _CUT_MESSAGE
+        error_code = ErrorCode.AGENT_ANSWER_CUT.value
 
     elapsed_ms = int((time.time() - started) * 1000)
     # None when the model has no price entry (#219): the price table is the only

@@ -19,7 +19,7 @@ import embry0.workflows.issue_to_pr.nodes as _nodes
 from embry0.execution import events
 from embry0.orchestration.budget import allowance_to_continue, continue_adds, resolve_job_cap
 from embry0.orchestration.nodes.agent import load_budget_settings, retry_rounds_cap
-from embry0.orchestration.routing.conditions import check_budget
+from embry0.orchestration.routing.conditions import check_budget, refused_at_cap
 
 logger = structlog.get_logger(__name__)
 
@@ -236,7 +236,14 @@ async def max_retries_node(state: dict[str, Any], config: RunnableConfig) -> dic
             pause_cap = resolve_job_cap(
                 state, ceiling=pause.max_budget_per_job_usd, may_exceed_ceiling=pause.continue_may_exceed_ceiling
             )
-            message = f"The job reached its budget (${float(state.get('total_cost_usd') or 0):.2f} of ${pause_cap:.2f})"
+            spent = float(state.get("total_cost_usd") or 0)
+            message = f"The job reached its budget (${spent:.2f} of ${pause_cap:.2f})"
+            if refused_at_cap(state):
+                # Short of the cap: the run's next call could have taken it past, so a metering proxy refused it.
+                message = (
+                    f"A model call was refused: it could have taken the job past its budget "
+                    f"(${spent:.2f} of ${pause_cap:.2f} spent)"
+                )
         elif retry_count:
             message = f"Review failed after {retry_count} attempts"
         else:

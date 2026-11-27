@@ -27,7 +27,7 @@ from langgraph.config import get_stream_writer
 from embry0.cache.lockfile_hash import LOCKFILE_MAX_BYTES
 from embry0.cache.trusted_run import DefaultHead, forge_default_head, trusted_per_repo_volume
 from embry0.execution import events
-from embry0.orchestration.budget import BudgetOverrunError, resolve_job_cap
+from embry0.orchestration.budget import BudgetCallRefusedError, BudgetOverrunError, resolve_job_cap
 from embry0.orchestration.nodes.agent import evaluate_job_cap
 from embry0.safety.error_codes import ACCOUNT_FAILURE_CODES, ErrorCode
 from embry0.services.account_waits import AccountWait, AccountWaitInterrupt
@@ -1316,6 +1316,13 @@ async def _qa_orchestrator_node_impl(
             overrun_mode=cap_check.mode,
             job_id=state.get("job_id"),
         )
+    # An app's run whose call a metering proxy refused because it could have taken the job past its cap: routed as a
+    # crossing of the cap, here as in the agent node (soft pauses the job, hard fails it). A refusal for the day's or
+    # the month's cap failed that app's run, and nothing more.
+    job_refused = any(r.budget_refused == "job" for r in per_app_results)
+    update["budget_refused_cap_usd"] = cap_check.cap if job_refused else None
     if not cap_check.decision.allowed:
         raise BudgetOverrunError(cap_check.total, cap_check.cap)
+    if job_refused and cap_check.mode == "hard":
+        raise BudgetCallRefusedError(cap_check.total, cap_check.cap)
     return update

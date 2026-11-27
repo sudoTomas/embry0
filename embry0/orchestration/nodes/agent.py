@@ -34,12 +34,14 @@ from embry0.execution.auth_provider import AuthConfigError
 from embry0.execution.run_meter import RunMeter
 from embry0.execution.skill_actions import count_action
 from embry0.orchestration.budget import (
+    BudgetCallRefusedError,
     BudgetCheckResult,
     BudgetOverrunError,
     check_budget,
     effective_overrun_mode,
     resolve_job_cap,
 )
+from embry0.orchestration.run_budget import Limit, run_budget
 from embry0.orchestration.state import AgentOutputEntry
 from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
@@ -443,6 +445,73 @@ async def evaluate_job_cap(state: dict[str, Any], config: Any, state_total: floa
         may_exceed_ceiling=settings.continue_may_exceed_ceiling,
     )
     return JobCapCheck(total=total, cap=cap, mode=overrun_mode, decision=check_budget(total, cap, overrun_mode))
+
+
+async def declared_budget(
+    state: dict[str, Any], config: Any, record: Any, *, run_id: str = "", run_meter: Any = None
+) -> dict[str, Any] | None:
+    """The budget request a run is declared, or settled, with at the metering proxies
+    (:func:`embry0.orchestration.run_budget.run_budget`): what the job has left under its cap (:func:`evaluate_job_cap`),
+    and the deployment under its daily and monthly caps where they are set, each once its settled runs are charged.
+    None, so no call is checked, for a free run, or when the job's cap cannot be read: the run goes ahead, checked
+    after its turn as before. The day's and month's spend are left out when they cannot be read, as the dispatch gate
+    allows a dispatch then.
+
+    With ``run_meter``, what the runs the previous process left, not closed yet, were counted at the proxies is taken
+    off too (``RunMeter.interrupted_spend``): their charges are not in their traces until they are."""
+    if record is None or record.rates is None or not any(rate > 0 for rate in record.rates):
+        return None
+    try:
+        job = await evaluate_job_cap(state, config, float(state.get("total_cost_usd") or 0.0))
+        settings = await load_budget_settings(config)
+    except Exception:  # noqa: BLE001 — the run goes ahead unchecked at the proxies, as before
+        logger.warning("run_budget_unread", exc_info=True)
+        return None
+    job_id = str(_graph_configurable(config).get("job_id") or state.get("job_id") or run_id)
+    pending_job, pending_all = run_meter.interrupted_spend(job_id) if run_meter is not None else (0.0, 0.0)
+    limits = [Limit("job", job.cap, job.total + pending_job)]
+    if settings.daily_cap_usd > 0 or settings.monthly_cap_usd > 0:
+        rollup = await _spend_rollup(config)
+        if rollup is not None:
+            limits += [
+                Limit("daily", settings.daily_cap_usd, rollup["daily"] + pending_all),
+                Limit("monthly", settings.monthly_cap_usd, rollup["monthly"] + pending_all),
+            ]
+    return run_budget(record, limits, f"job:{job_id}")
+
+
+async def _spend_rollup(config: Any) -> dict[str, float] | None:
+    """The deployment's spend today and this month (``BudgetSpendRepository.spend_rollup``); None without a database
+    or when it cannot be read."""
+    from embry0.storage.repositories.budget_spend import BudgetSpendRepository
+
+    configurable = _graph_configurable(config)
+    policy = configurable.get("budget_policy")
+    db = policy.store.db if policy is not None else configurable.get("db")
+    if db is None:
+        return None
+    try:
+        return await BudgetSpendRepository(db).spend_rollup()
+    except Exception:  # noqa: BLE001 — the job's own cap still holds
+        logger.warning("run_budget_spend_unread", exc_info=True)
+        return None
+
+
+#: How a refusal's message names each limit.
+_LIMIT_NAMES = {
+    "job": "the job's budget",
+    "daily": "the deployment's daily budget",
+    "monthly": "the deployment's monthly budget",
+}
+
+
+def _budget_refused(metering: Any) -> dict[str, int]:
+    """How many of a run's calls the metering proxies refused for its budget, by the limit that refused each, as its
+    charge's report says."""
+    by = metering.get("budget_refused_by") if isinstance(metering, dict) else None
+    if not isinstance(by, dict):
+        return {}
+    return {str(limit): n for limit, n in by.items() if isinstance(n, int) and not isinstance(n, bool) and n > 0}
 
 
 def _graph_configurable(config: Any) -> dict[str, Any]:
@@ -1308,6 +1377,7 @@ async def run_agent_node(
                 if running_row_written:
                     # Shielded: a cancel while the run's own figures are written must not leave the row running.
                     await _shielded(traces_repo.finish(run_id, **fields))
+                    written["trace"] = True
                 else:
                     # The start write failed, so there is no row to UPDATE; create
                     # it now with the final fields under the same run id, so the
@@ -1320,8 +1390,32 @@ async def run_agent_node(
                         **trace_extra,
                         **fields,
                     )
+                    written["trace"] = True
             except Exception:
                 logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)
+            if written.get("trace"):
+                await _settle_budget(fields.get("cost_usd"))
+
+        # Whether the run's trace was written with its charge: only then does it leave its budget purses.
+        written: dict[str, bool] = {}
+
+        async def _settle_budget(charged: Any) -> None:
+            """The run's charge (``charged``) is in its trace: it leaves its purses at the metering proxies, worked out
+            again (embry0.execution.run_meter's ledger), or lowered by the charge where they cannot be."""
+            if run_meter is None or meter_window is None or declared is None:
+                return
+            usd = float(charged) if isinstance(charged, int | float) and not isinstance(charged, bool) else 0.0
+            try:
+                again = await declared_budget(
+                    state, config, invocation.provider_record, run_id=run_id, run_meter=run_meter
+                )
+            except Exception:  # noqa: BLE001 — settled with the charge alone
+                logger.warning("run_budget_unread_at_settle", run_id=run_id, exc_info=True)
+                again = None
+            try:
+                await run_meter.settle(meter_window, again, usd)
+            except Exception:  # noqa: BLE001 — the run stays counted in its purses
+                logger.warning("run_budget_settle_failed", run_id=run_id, exc_info=True)
 
         # Progression (spec 2026-10-24): each tool call this run makes, by the
         # skill it trains, counted from the events as they stream past.
@@ -1353,13 +1447,29 @@ async def run_agent_node(
             run_meter = None  # a runner without a meter, or a test double whose every attribute is a mock
         meter_window: Any = None
         metering: Any = None
+        # The budget the run was declared with at the metering proxies: which limit leaves it, when one refuses a call.
+        declared: dict[str, Any] | None = None
         if run_meter is not None and container:
             try:
                 # Held to its provider: the llm-proxy refuses the sandbox's calls to any other while the run is current.
+                # And to its budget: a call whose ceiling would take the run past what is left is refused.
                 record = invocation.provider_record
-                meter_window = await run_meter.begin(
-                    container, run_id, trace_job_id or None, provider=record.name if record is not None else None
+                # Read only for a run a proxy meters: the day's and month's spend is a rollup of every job's.
+                declared = (
+                    await declared_budget(state, config, record, run_id=run_id, run_meter=run_meter)
+                    if run_meter.meters(container)
+                    else None
                 )
+                meter_window = await run_meter.begin(
+                    container,
+                    run_id,
+                    trace_job_id or None,
+                    provider=record.name if record is not None else None,
+                    budget=declared,
+                )
+                if declared is not None and isinstance(serialized.get("provider_record"), dict):
+                    # A custom model's calls name an output limit only for a run held to a budget.
+                    serialized["provider_record"]["budgeted"] = True
             except Exception:  # noqa: BLE001 — the run goes ahead, charged its sandbox's figure
                 logger.warning("run_meter_begin_failed", run_id=run_id, exc_info=True)
 
@@ -1420,6 +1530,7 @@ async def run_agent_node(
                 # total, so neither is ever written without the other.
                 if not await traces_repo.close_running(run_id, **fields, cost_update=update):
                     return  # the run's own finish, or an earlier close, reached it first
+                await _settle_budget(fields.get("cost_usd"))
             else:
                 await traces_repo.create(
                     job_id=trace_job_id,
@@ -1429,6 +1540,7 @@ async def run_agent_node(
                     **trace_extra,
                     **fields,
                 )
+                await _settle_budget(fields.get("cost_usd"))
                 jobs_repo = configurable.get("jobs_repo")
                 if update is not None and jobs_repo is not None:
                     from embry0.services.job_events import broadcast_job_event
@@ -1491,6 +1603,10 @@ async def run_agent_node(
 
     result = _priced_from_the_catalog(result, invocation, agent_type)
     charged_fields: dict[str, Any] = {}
+    # The limit a metering proxy held the run to when it refused a call of it ("job", "daily", "monthly"); None when
+    # it refused none. Routed as crossing that limit is: the job's cap by its overrun mode (below), the day's and the
+    # month's by failing the run, since crossing them stops no running job.
+    refused_limit: str | None = None
     if run_meter is not None:
         charge = _charge(
             run_meter,
@@ -1508,6 +1624,35 @@ async def run_agent_node(
             cache_read_tokens=charge.cache_read_tokens,
             cache_creation_tokens=charge.cache_creation_tokens,
         )
+        refused_by = _budget_refused(charge.metering)
+        if refused_by:
+            # A refusal for the job's cap is routed by its overrun mode; one for the day's or the month's fails the run.
+            refused_limit = "job" if "job" in refused_by else sorted(refused_by)[0]
+            refused = sum(refused_by.values())
+            logger.warning(
+                "agent_calls_refused_for_budget",
+                agent_type=agent_type,
+                run_id=run_id,
+                refused=refused_by,
+                is_error=result.is_error,
+            )
+            failing = sorted(set(refused_by) - {"job"} or {refused_limit})[0]
+            if result.is_error or set(refused_by) - {"job"}:
+                # The run failed on it (or fails on it: a day's or month's cap stops no running job, so its refusal
+                # fails the run): that is its code, whatever its sandbox read from the refusal's text (an image that
+                # predates the code reads "$1,429.00" in it as a rate limit, and the job would wait for one).
+                said = result.error_message or ""
+                result = replace(
+                    result,
+                    is_error=True,
+                    error_code=ErrorCode.BUDGET_CALL_REFUSED.value,
+                    error_message=said
+                    if "budget_exceeded" in said
+                    else (
+                        f"{refused} model call(s) refused (budget_exceeded): each could have cost more than the run "
+                        f"had left of {_LIMIT_NAMES.get(failing, 'its budget')}. {said}"
+                    ).strip(),
+                )
 
     output_entry = AgentOutputEntry(
         agent_type=result.agent_type,
@@ -1525,6 +1670,9 @@ async def run_agent_node(
     )
     if getattr(result, "error_code", None):
         output_entry["error_code"] = result.error_code
+    if refused_limit is not None:
+        # For a pipeline that reads its runs' outputs (a QA sub-task's result): which limit refused the run's call.
+        output_entry["budget_refused"] = refused_limit
     resets_at = getattr(result, "provider_resets_at", None)
     if isinstance(resets_at, datetime):
         output_entry["provider_resets_at"] = resets_at.isoformat()
@@ -1642,6 +1790,9 @@ async def run_agent_node(
     # decides on these, not on the cap triage picked plus an allowance (#283).
     updates["budget_cap_usd"] = cap_check.cap
     updates["budget_spent_usd"] = cap_check.total
+    # A call refused because it could have taken the job past this cap is routed as a crossing of it: soft mode
+    # pauses the job (check_budget), hard mode fails it (below). Cleared by a run that had none refused.
+    updates["budget_refused_cap_usd"] = cap_check.cap if refused_limit == "job" else None
     if decision.overrun > 0:
         updates["budget_overrun_usd"] = decision.overrun
         logger.warning(
@@ -1655,6 +1806,8 @@ async def run_agent_node(
         )
     if not decision.allowed:
         raise BudgetOverrunError(cap_check.total, cap_check.cap)
+    if refused_limit == "job" and cap_check.mode == "hard":
+        raise BudgetCallRefusedError(cap_check.total, cap_check.cap)
 
     logger.info(
         "agent_node_complete",

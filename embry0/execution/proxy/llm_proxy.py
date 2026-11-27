@@ -67,14 +67,16 @@ from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, register_admin_routes
 from embry0.execution.proxy.metering import (
     METER,
+    BudgetExceededError,
     Metered,
     NoRunError,
     TalliesFullError,
+    budget_answer,
     no_run_answer,
     read_call,
     register_meter_routes,
 )
-from embry0.execution.proxy.model_request import openai_error, read_body
+from embry0.execution.proxy.model_request import openai_error, read_body, unreadable_encoding
 from embry0.execution.proxy.pinned_client import pinned, pinning_client
 from embry0.execution.proxy.server_address import refused_address, refused_server_host
 from embry0.safety.redaction import REDACTED
@@ -99,9 +101,6 @@ _FORWARDED_REQUEST_HEADERS = ("content-type", "accept")
 _FORWARDED_RESPONSE_HEADERS = ("content-type",)
 #: The shortest key scrubbed from an answer: a shorter one (a placeholder) would replace ordinary words.
 _MIN_SCRUBBED_KEY = 8
-#: The answer encodings the proxy reads (httpx decodes them, so the scrub sees the text). A server is asked for
-#: ``identity``; an answer in any other encoding is refused, since its bytes cannot be scrubbed.
-_READABLE_ENCODINGS = frozenset({"identity", "gzip", "deflate"})
 # path under /v1 -> the one method allowed on it
 _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
@@ -392,12 +391,6 @@ def _upstream_headers(request: web.Request, server: Upstream) -> dict[str, str]:
     return headers
 
 
-def _unreadable_encoding(header: str) -> str | None:
-    """The answer's ``Content-Encoding`` when it names an encoding the proxy does not decode, else None."""
-    named = [part.strip().lower() for part in header.split(",") if part.strip()]
-    return header.strip() if any(part not in _READABLE_ENCODINGS for part in named) else None
-
-
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     """``/v1/...``: the custom server's path for the images that read its root from their env."""
     return await _serve(request, CUSTOM_PROVIDER, path_per_provider=False)
@@ -473,12 +466,26 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     metered: Metered | None = None
     if method == "POST":
         call = read_call("openai_chat", body)
+        if call.refused is not None:
+            logger.warning(
+                "llm_proxy_request_refused", sandbox_id=sandbox_id, code=call.refusal_code, reason=call.refused
+            )
+            return openai_error(call.refusal_code, call.refused, 400)
         body = call.body
         try:
             metered = request.app[METER].open(sandbox_id, call)
         except NoRunError:
             logger.warning("llm_proxy_call_without_run", sandbox_id=sandbox_id)
             return no_run_answer("openai_chat")
+        except BudgetExceededError as refusal:
+            logger.warning(
+                "llm_proxy_call_over_budget",
+                sandbox_id=sandbox_id,
+                limit=refusal.limit,
+                cost_usd=refusal.cost_usd,
+                left_usd=refusal.left_usd,
+            )
+            return budget_answer("openai_chat", refusal)
         except TalliesFullError:
             logger.error("llm_proxy_meter_full", sandbox_id=sandbox_id)
             return web.json_response({"error": "meter_full"}, status=503)
@@ -528,8 +535,8 @@ async def _forward(
 ) -> web.StreamResponse:
     """Send the call upstream and stream its answer back through the meter, with every key the proxy holds scrubbed
     from it, an error answer and a streamed one alike (:class:`_Scrubber` finds a key however the chunks split it). A
-    call whose answer never came back after it was sent is charged its ceiling; one that never connected costs
-    nothing."""
+    call whose answer never came back after it was sent, or broke off before its usage (the upstream cut it, it could
+    not be decoded, the sandbox went away), is charged its ceiling; one that never connected costs nothing."""
     try:
         async with client.stream(
             method,
@@ -538,7 +545,7 @@ async def _forward(
             content=body or None,
             timeout=httpx.Timeout(limits.timeout_seconds, connect=_CONNECT_SECONDS),
         ) as upstream:
-            unreadable = _unreadable_encoding(upstream.headers.get("content-encoding", ""))
+            unreadable = unreadable_encoding(upstream.headers.get("content-encoding", ""))
             if unreadable is not None:
                 # Its bytes cannot be scrubbed, so they never go back. A completion was answered all the same: it is
                 # charged its ceiling, as one whose usage cannot be read.
@@ -565,7 +572,11 @@ async def _forward(
                     out = scrubber.feed(chunk)
                     if out:
                         await response.write(out)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
+                # Broken off: the upstream cut it, or what came could not be decoded. Charged its ceiling unless its
+                # usage was read in full (``Metered.lost``).
+                if metered is not None:
+                    metered.lost()
                 logger.warning("llm_proxy_stream_truncated", sandbox_id=sandbox_id, error=str(exc))
             rest = scrubber.finish()
             if rest:

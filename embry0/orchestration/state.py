@@ -140,6 +140,9 @@ class AgentOutputEntry(TypedDict, total=False):
     # Spent account waits: the wait (AccountWait.record()) a run in a pipeline
     # that parks at a point of its own leaves for that point to raise.
     account_wait: dict[str, Any]
+    # The limit ("job", "daily", "monthly") a metering proxy held this run to
+    # when it refused a model call of it (embry0.orchestration.run_budget).
+    budget_refused: str
     # Plan C: post-run conversation state forwarded by run_agent_node so
     # workflow nodes (developer/triage/review) can persist via
     # AgentSessionsRepository. ``messages`` for api_key mode;
@@ -446,6 +449,11 @@ class JobState(TypedDict, total=False):
     # (over budget, so a continue would grant an allowance the release
     # before did not). Routing trusts the cap only once one is recorded.
     budget_cap_usd: Annotated[float | None, last_value]
+    # The cap in force when the agent node's last check found a model call of
+    # its run refused at a metering proxy, because the call could have taken
+    # the job past that cap; None when it found none. Soft-mode routing reads
+    # it as a crossing of the cap until a continue raises the cap past it.
+    budget_refused_cap_usd: Annotated[float | None, last_value]
     budget_spent_usd: Annotated[float | None, max_value]
     branch_name: Annotated[str | None, FoldingLastValue]
     # base_branch is the repo's integration branch: the ref the clone fetches,

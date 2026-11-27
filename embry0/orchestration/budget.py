@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from embry0.safety.error_codes import ErrorCode
+
 # Fallback per-job cap for state that carries neither a job-create override
 # nor a triage-resolved ``pipeline_config.budget_usd``. Mirrors
 # ``PipelineConfig.budget_usd``'s own default.
@@ -28,6 +30,28 @@ class BudgetOverrunError(RuntimeError):
     def __init__(self, current_cost: float, max_budget: float) -> None:
         super().__init__(
             f"Job budget exhausted: ${current_cost:.2f} spent against a ${max_budget:.2f} cap (overrun_mode=hard)"
+        )
+        self.current_cost = current_cost
+        self.max_budget = max_budget
+
+
+class BudgetCallRefusedError(BudgetOverrunError):
+    """A metering proxy refused a model call of the run because it could have taken the job past its per-job cap,
+    while ``overrun_mode`` is ``hard``: routed as a crossing of the cap is (``embry0.orchestration.run_budget``).
+
+    A :class:`BudgetOverrunError`, so every path that ends a job, or a QA sub-task, at a hard crossing ends it here
+    too, under its own code. The job spent no more than its cap: its overrun is 0.
+    """
+
+    #: The class's own code (``classify_failure`` reads it), and the limit the refusal held the run to.
+    error_code = ErrorCode.BUDGET_CALL_REFUSED
+    budget_limit = "job"
+
+    def __init__(self, current_cost: float, max_budget: float) -> None:
+        RuntimeError.__init__(
+            self,
+            f"A model call was refused (budget_exceeded): it could have taken the job past its budget "
+            f"(${current_cost:.2f} spent against a ${max_budget:.2f} cap, overrun_mode=hard)",
         )
         self.current_cost = current_cost
         self.max_budget = max_budget
