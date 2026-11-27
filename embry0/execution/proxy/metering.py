@@ -9,8 +9,15 @@ proxy that carries several providers' calls (the llm-proxy) then refuses the
 sandbox's calls to any other while the run is current, so a run's tally holds
 its own provider's calls alone, and the tally says which provider that is. The
 orchestrator reads the tallies (``GET /admin/meter``, cumulative, so a lost
-read counts nothing twice) and prices them at the run's rates; this module
-knows tokens, not prices.
+read counts nothing twice) and prices them at the run's rates.
+
+A declaration may carry the run's budget too: what the run may still spend
+(the least of what its job, and the deployment's day and month, have left
+when it is declared) and the run's rates. The proxy then refuses a call
+(``budget_exceeded``) whose ceiling, priced at those rates, would take what
+the run has been charged, its calls in flight at their ceilings included,
+past that, and forwards none of it. A declaration without one (no cap, a free
+model, an older orchestrator) is checked against nothing.
 
 Everything here fails toward counting more, never less:
 
@@ -69,10 +76,12 @@ from embry0.execution.proxy.enrollment import (
     request_seq,
     stale_request,
 )
-from embry0.execution.proxy.model_request import anthropic_error
+from embry0.execution.proxy.model_request import anthropic_error, openai_error
 
 __all__ = [
     "METER",
+    "Budget",
+    "BudgetExceededError",
     "Call",
     "Meter",
     "Metered",
@@ -80,6 +89,7 @@ __all__ = [
     "Reading",
     "Usage",
     "Wire",
+    "budget_answer",
     "read_call",
     "reader_for",
     "register_meter_routes",
@@ -123,10 +133,11 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _SERVER_OUTPUT_LIMITS: frozenset[str] = frozenset(
     {"n_predict", "num_predict", "max_new_tokens", "max_output_tokens", "maxoutputtokens", "max_tokens_to_sample"}
 )
-#: The keys a request names how many answers it wants with, compared with case folded: OpenAI's and vLLM's ``n``,
-#: llama.cpp's ``n_cmpl`` and older vLLM's ``best_of`` (that many generated, ``n`` of them returned). Each answer may
-#: run to the output limit, so the ceiling is the limit times the largest. A server that matches keys with case folded
-#: reads ``N`` as ``n``, so the meter does too: it can only charge more.
+#: The keys a chat completion names how many answers it wants with, compared with case folded: OpenAI's and vLLM's
+#: ``n``, llama.cpp's ``n_cmpl`` and older vLLM's ``best_of`` (that many generated, ``n`` of them returned). Each
+#: answer may run to the output limit, so the ceiling is the limit times the largest. A server that matches keys with
+#: case folded reads ``N`` as ``n``, so the meter does too: it can only charge more. No server of the Messages API
+#: reads them, so the Anthropic wire's ceiling is its limit alone.
 _ANSWER_COUNTS: frozenset[str] = frozenset({"n", "n_cmpl", "best_of"})
 #: The ``stream_options`` a streamed chat completion goes upstream with, whatever the sandbox asked for.
 _STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
@@ -225,8 +236,8 @@ def read_call(wire: Wire, body: bytes) -> Call:
     value). A chat completion that streams goes with ``stream`` true and ``stream_options`` exactly
     ``include_usage``. The output limit is the larger the request names, ``max_tokens`` or (for chat completions)
     ``max_completion_tokens``: a server may honour either. The ceiling is that limit (or
-    :data:`DEFAULT_OUTPUT_CEILING`) times the answers the request asks for (:data:`_ANSWER_COUNTS`, each a positive
-    whole number), and a request whose ceiling is above :data:`MAX_OUTPUT_CEILING` is refused."""
+    :data:`DEFAULT_OUTPUT_CEILING`), times, for a chat completion, the answers it asks for (:data:`_ANSWER_COUNTS`,
+    each a positive whole number), and a request whose ceiling is above :data:`MAX_OUTPUT_CEILING` is refused."""
     tops: list[list[str]] = []
 
     def keep(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -261,7 +272,7 @@ def read_call(wire: Wire, body: bytes) -> Call:
             return _refused(wire, body, f"the request's {key} is not a whole number of tokens")
     limits = [value for key in keys if (value := _count(payload.get(key)))]
     answers = 1
-    for key, value in payload.items():
+    for key, value in payload.items() if wire == "openai_chat" else ():
         if key.casefold() not in _ANSWER_COUNTS or value is None:
             continue
         count = _count(value)
@@ -643,6 +654,82 @@ def charge(call: Call, reading: Reading) -> tuple[Usage, bool]:
     return usage, True
 
 
+# --------------------------------------------------------------------------- budgets
+
+#: The limits a run's budget can come from, as a declaration names them, and as a refusal names each.
+BUDGET_LIMITS: dict[str, str] = {
+    "job": "the job's budget",
+    "daily": "the deployment's daily budget",
+    "monthly": "the deployment's monthly budget",
+}
+
+
+def _usd(value: Any) -> float:
+    """``value`` as a finite amount of at least 0. Raises ValueError when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
+        raise ValueError(f"not an amount: {value!r}")
+    return float(value)
+
+
+@dataclass(frozen=True)
+class Budget:
+    """What a run may still spend, and the rates it is priced at: the orchestrator's word when it declared the run.
+
+    ``remaining_usd`` is the least its job, and the deployment's day and month, had left then (``limit`` names
+    which). The rates are the run's provider record's, in USD per million tokens, with cached input at
+    ``cache_read_factor`` of the input rate and cache writes at ``cache_write_factor``, as the orchestrator prices a
+    run (``ProviderRecord.price``): a run is held to one provider, priced at one rate set."""
+
+    remaining_usd: float
+    limit: str
+    input_rate: float
+    output_rate: float
+    cache_read_factor: float
+    cache_write_factor: float
+
+    @classmethod
+    def read(cls, value: Any) -> Budget:
+        """The budget a declaration names: ``{remaining_usd, limit, rates: {in, out}, cache: {read, write}}``.
+        Raises ValueError when ``value`` is not one."""
+        if not isinstance(value, dict):
+            raise ValueError("a budget is an object")
+        rates, cache, limit = value.get("rates"), value.get("cache"), value.get("limit")
+        if not isinstance(rates, dict) or not isinstance(cache, dict) or limit not in BUDGET_LIMITS:
+            raise ValueError("a budget names its limit, its rates and its cache factors")
+        return cls(
+            remaining_usd=_usd(value.get("remaining_usd")),
+            limit=str(limit),
+            input_rate=_usd(rates.get("in")),
+            output_rate=_usd(rates.get("out")),
+            cache_read_factor=_usd(cache.get("read")),
+            cache_write_factor=_usd(cache.get("write")),
+        )
+
+    def price(self, usage: Usage) -> float:
+        """What ``usage`` costs at these rates, in USD."""
+        per_mtok = (
+            usage.input_tokens * self.input_rate
+            + usage.output_tokens * self.output_rate
+            + usage.cache_read_tokens * self.input_rate * self.cache_read_factor
+            + usage.cache_creation_tokens * self.input_rate * self.cache_write_factor
+        )
+        return per_mtok / 1_000_000
+
+
+class BudgetExceededError(Exception):
+    """A call whose ceiling would take its run past what the run may still spend."""
+
+    def __init__(self, budget: Budget, *, cost_usd: float, left_usd: float) -> None:
+        self.cost_usd = cost_usd
+        self.left_usd = left_usd
+        self.message = (
+            f"embry0 budget_exceeded: this call could cost up to ${cost_usd:,.2f} at its ceiling (its output limit "
+            f"and its input), and the run has ${max(left_usd, 0.0):,.2f} left of {BUDGET_LIMITS[budget.limit]}, so "
+            "it was not sent. A call asking for fewer output tokens may fit."
+        )
+        super().__init__(self.message)
+
+
 # --------------------------------------------------------------------------- tallies
 
 
@@ -671,11 +758,33 @@ class _Tally:
     ended: float | None = None
     #: The provider the run was declared on; None when its declaration named none (or the sandbox had no run).
     provider: str | None = None
+    #: What the run may spend, when its declaration named a budget.
+    budget: Budget | None = None
     models: dict[str, _ModelTally] = field(default_factory=dict)
     errors: int = 0
+    #: Calls refused because their ceiling would have taken the run past its budget.
+    budget_refused: int = 0
     open: dict[int, _Open] = field(default_factory=dict)
 
+    def spent_usd(self, budget: Budget) -> float:
+        """What the run has been charged at ``budget``'s rates, each call in flight at its ceiling."""
+        total = Usage()
+        for counted in self.models.values():
+            total.add(counted.usage)
+        for call in self.open.values():
+            total.add(call.ceiling)
+        return budget.price(total)
+
     def snapshot(self) -> dict[str, Any]:
+        budget = (
+            {
+                "remaining_usd": self.budget.remaining_usd,
+                "limit": self.budget.limit,
+                "spent_usd": self.spent_usd(self.budget),
+            }
+            if self.budget is not None
+            else None
+        )
         return {
             "run_id": self.run_id,
             "sandbox_id": self.sandbox_id,
@@ -689,6 +798,8 @@ class _Tally:
                 for model, t in sorted(self.models.items())
             },
             "errors": self.errors,
+            "budget": budget,
+            "budget_refused": self.budget_refused,
             # Each call in flight with its id (unique in this proxy process), so a reader can tell one from another
             # across reads.
             "open": [
@@ -747,9 +858,17 @@ class Meter:
         for key in [k for k, t in self._unattributed.items() if t.ended is not None and t.ended <= cutoff]:
             del self._unattributed[key]
 
-    def declare(self, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None) -> None:
-        """Make ``run_id`` the run ``sandbox_id``'s calls count under, on ``provider`` when it names one. Declaring it
-        again changes nothing; declaring it again on another provider is refused."""
+    def declare(
+        self,
+        sandbox_id: str,
+        run_id: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        budget: Budget | None = None,
+    ) -> None:
+        """Make ``run_id`` the run ``sandbox_id``'s calls count under, on ``provider`` when it names one, held to
+        ``budget`` when it names one. Declaring it again changes nothing (its budget included); declaring it again on
+        another provider is refused."""
         held = self._runs.get(run_id)
         if held is not None:
             if held.sandbox_id != sandbox_id or held.ended is not None or held.provider != provider:
@@ -760,7 +879,7 @@ class Meter:
             raise TalliesFullError(f"the meter holds {self._max} tallies")
         self._end_current(sandbox_id)
         self._runs[run_id] = _Tally(
-            sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now(), provider=provider
+            sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now(), provider=provider, budget=budget
         )
         self._current[sandbox_id] = run_id
 
@@ -812,7 +931,8 @@ class Meter:
 
     def open(self, sandbox_id: str, call: Call) -> Metered:
         """Start metering ``call`` from ``sandbox_id``. Raises :class:`NoRunError` when the sandbox has no run and
-        one is required."""
+        one is required, and :class:`BudgetExceededError` when the call's ceiling, priced at its run's rates, would
+        take what the run has been charged (its calls in flight at their ceilings) past the run's budget."""
         run_id = self._current.get(sandbox_id)
         tally = self._runs.get(run_id) if run_id is not None else None
         if tally is None:
@@ -828,6 +948,13 @@ class Meter:
                 tally = _Tally(sandbox_id=sandbox_id, run_id=None, job_id=None, started=self._now())
                 self._unattributed[self._next_unattributed] = tally
                 self._live_unattributed[sandbox_id] = self._next_unattributed
+        budget = tally.budget
+        if budget is not None:
+            cost = budget.price(call.ceiling())
+            left = budget.remaining_usd - tally.spent_usd(budget)
+            if cost > left:
+                tally.budget_refused += 1
+                raise BudgetExceededError(budget, cost_usd=cost, left_usd=left)
         self._next_request += 1
         request_id = self._next_request
         tally.open[request_id] = _Open(model=call.model, ceiling=call.ceiling(), since=self._now())
@@ -908,8 +1035,9 @@ METER = web.AppKey("meter", Meter)
 def register_meter_routes(app: web.Application, *, proxy_name: str, require_run: bool = False) -> Meter:
     """Give ``app`` a :class:`Meter` and its admin routes, behind the enrollment's admin gate:
 
-    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?}`` declares an enrolled sandbox's run, on
-      ``provider`` when it names one (the answer echoes it);
+    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?, budget?}`` declares an enrolled sandbox's run,
+      on ``provider`` when it names one, held to ``budget`` (:meth:`Budget.read`) when it names one (the answer
+      echoes each);
     - ``DELETE /admin/runs/{run_id}`` ends it and answers its last snapshot;
     - ``GET /admin/meter`` answers every tally held.
 
@@ -939,6 +1067,10 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "bad_request"}, status=400)
         if job_id is not None and not isinstance(job_id, str):
             return web.json_response({"error": "bad_request"}, status=400)
+        try:
+            budget = Budget.read(body["budget"]) if body.get("budget") is not None else None
+        except ValueError:
+            return web.json_response({"error": "bad_request"}, status=400)
         seq = request_seq(body)
         if isinstance(seq, web.Response):
             return seq
@@ -948,7 +1080,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         if stale is not None:
             return stale
         try:
-            meter.declare(sandbox_id, run_id, job_id or None, provider)
+            meter.declare(sandbox_id, run_id, job_id or None, provider, budget)
         except TalliesFullError:
             logger.error(f"{proxy_name}_meter_full", sandbox_id=sandbox_id, run_id=run_id)
             return web.json_response({"error": "meter_full"}, status=429)
@@ -956,7 +1088,13 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "run_conflict"}, status=409)
         if seq is not None:
             request.app[ADMIN_SEQUENCE].take(f"sandbox:{sandbox_id}", seq)
-        logger.info(f"{proxy_name}_run_declared", sandbox_id=sandbox_id, run_id=run_id, provider=provider)
+        logger.info(
+            f"{proxy_name}_run_declared",
+            sandbox_id=sandbox_id,
+            run_id=run_id,
+            provider=provider,
+            budget_usd=budget.remaining_usd if budget is not None else None,
+        )
         # The number echoed says this proxy orders admin requests (an older image does not); the provider echoed, that
         # it holds the run to it.
         answer: dict[str, Any] = {"status": "declared", "boot_id": meter.boot_id}
@@ -964,6 +1102,9 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             answer["seq"] = seq
         if provider is not None:
             answer["provider"] = provider
+        if budget is not None:
+            # That this proxy holds the run to it (an older image does not).
+            answer["budget"] = {"remaining_usd": budget.remaining_usd, "limit": budget.limit}
         return web.json_response(answer)
 
     async def _end(request: web.Request) -> web.Response:
@@ -1001,6 +1142,14 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
     app.router.add_delete("/admin/runs/{run_id}", _end)
     app.router.add_get("/admin/meter", _meter)
     return meter
+
+
+def budget_answer(wire: Wire, refusal: BudgetExceededError) -> web.Response:
+    """The answer to a call refused for its run's budget (402, ``budget_exceeded``), in its wire's error shape: no
+    client retries it, and the agent reads why."""
+    if wire == "anthropic":
+        return anthropic_error("budget_exceeded", refusal.message, 402)
+    return openai_error("budget_exceeded", refusal.message, 402)
 
 
 def no_run_answer(wire: Wire) -> web.Response:

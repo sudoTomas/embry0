@@ -38,10 +38,12 @@ from embry0.execution.proxy.enrollment import (
 )
 from embry0.execution.proxy.metering import (
     METER,
+    BudgetExceededError,
     Metered,
     NoRunError,
     TalliesFullError,
     Wire,
+    budget_answer,
     no_run_answer,
     read_call,
     register_meter_routes,
@@ -351,6 +353,15 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         except NoRunError:
             logger.warning("xai_proxy_call_without_run", sandbox_id=sandbox_id, path=route)
             return no_run_answer(wire)
+        except BudgetExceededError as refusal:
+            logger.warning(
+                "xai_proxy_call_over_budget",
+                sandbox_id=sandbox_id,
+                path=route,
+                cost_usd=refusal.cost_usd,
+                left_usd=refusal.left_usd,
+            )
+            return budget_answer(wire, refusal)
         except TalliesFullError:
             logger.error("xai_proxy_meter_full", sandbox_id=sandbox_id)
             return web.json_response({"error": "meter_full"}, status=503)

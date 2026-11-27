@@ -30,6 +30,7 @@ embry0/workflows/_validation.py).
 from __future__ import annotations
 
 import asyncio
+import math
 import secrets
 import socket
 import time
@@ -249,6 +250,10 @@ class ProxyManager:
         # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
         # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
         self._unordered_runs: set[tuple[str, str]] = set()
+        # (proxy, run id) -> boot id -> what the run had spent at that proxy process, by its budget's rates, as the
+        # last read of it said. A recreated proxy given a run back counts it from nothing, so the budget it is given
+        # is what was declared less this.
+        self._run_spent: dict[tuple[str, str], dict[str, float]] = {}
         # The proxies whose last replay was given up at a timeout, each with the entries it did not send: they are sent
         # in the background once the proxy answers again (a request of the given-up replay that still lands is older
         # than anything sent since, so the proxy refuses it).
@@ -1283,12 +1288,19 @@ class ProxyManager:
         ]
 
     async def declare_run(
-        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+        self,
+        proxy: str,
+        sandbox_id: str,
+        run_id: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        budget: Mapping[str, Any] | None = None,
     ) -> str:
         """Declare ``run_id`` as ``sandbox_id``'s run on ``proxy``, so the calls it forwards count under it, on
         ``provider`` (the run's provider record's name) when given: the llm-proxy then refuses the sandbox's calls to
-        any other provider while the run is current. Returns the proxy's boot id. Raises RuntimeError when the proxy
-        refuses or cannot be reached."""
+        any other provider while the run is current. With ``budget`` (``embry0.orchestration.run_budget``) the proxy
+        refuses a call whose ceiling would take the run past it. Returns the proxy's boot id. Raises RuntimeError when
+        the proxy refuses or cannot be reached."""
         port = METERED_PROXIES[proxy][0]
         seq = self._next_seq()
         body: dict[str, Any] = {"sandbox_id": sandbox_id, "run_id": run_id, "seq": seq}
@@ -1296,6 +1308,8 @@ class ProxyManager:
             body["job_id"] = job_id
         if provider:
             body["provider"] = provider
+        if budget:
+            body["budget"] = dict(budget)
         # A sandbox runs one run at a time: whatever run it held before is over, so a recreated proxy must never
         # be given it back (its calls would count under the old run).
         held = self._admin_state.get(proxy, {})
@@ -1315,6 +1329,10 @@ class ProxyManager:
             # Nor the provider: its image predates runs held to their provider, so the sandbox's calls to another one
             # count under this run too, at this run's rates. Its tally there is not taken as whole either.
             self._unordered_runs.add((proxy, run_id))
+        if budget and not isinstance(response.get("budget"), dict):
+            # Nor the budget: its image predates budgets, so the run's calls are checked against nothing there. What
+            # they cost is still counted, and checked after the run's turn as before.
+            logger.warning("proxy_run_budget_not_held", proxy=proxy, run_id=run_id)
         return str(response.get("boot_id") or "")
 
     async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
@@ -1355,7 +1373,38 @@ class ProxyManager:
         )
         if not isinstance(response.get("boot_id"), str) or not isinstance(response.get("tallies"), list):
             raise RuntimeError(f"{proxy} answered its meter without a boot id or tallies")
+        self._note_run_spend(proxy, response)
         return response
+
+    def _note_run_spend(self, proxy: str, meter: Mapping[str, Any]) -> None:
+        """Keep what each run held for ``proxy`` had spent there by its budget, as ``meter`` (a read) says, for a
+        replay to take off the budget a recreated proxy is given (:meth:`_budget_left`)."""
+        held = self._admin_state.get(proxy, {})
+        boot_id = str(meter["boot_id"])
+        for tally in meter["tallies"]:
+            if not isinstance(tally, Mapping):
+                continue
+            run_id, budget = tally.get("run_id"), tally.get("budget")
+            if not isinstance(run_id, str) or f"run:{run_id}" not in held or not isinstance(budget, Mapping):
+                continue
+            spent = budget.get("spent_usd")
+            if isinstance(spent, int | float) and not isinstance(spent, bool) and math.isfinite(spent) and spent > 0:
+                boots = self._run_spent.setdefault((proxy, run_id), {})
+                boots[boot_id] = max(boots.get(boot_id, 0.0), float(spent))
+        for key in [k for k in self._run_spent if k[0] == proxy and f"run:{k[1]}" not in held]:
+            del self._run_spent[key]
+
+    def _budget_left(self, proxy: str, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """A run's declaration ``body`` as a recreated ``proxy`` is given it back: its budget less what the run spent
+        at the processes before (as their last reads said), since the new process counts the run from nothing."""
+        budget = body.get("budget")
+        spent = sum(self._run_spent.get((proxy, run_id), {}).values())
+        if not isinstance(budget, Mapping) or spent <= 0:
+            return body
+        remaining = budget.get("remaining_usd")
+        if isinstance(remaining, bool) or not isinstance(remaining, int | float):
+            return body
+        return {**body, "budget": {**budget, "remaining_usd": max(0.0, float(remaining) - spent)}}
 
     async def _after_replay(self, proxy: str) -> bool:
         """Wait until no replay of ``proxy``'s state is under way, so a run is declared or ended on a proxy that holds
@@ -1553,6 +1602,8 @@ class ProxyManager:
             replay = dict(body)
             if key.startswith("enroll:"):
                 replay["ttl_seconds"] = max(1, int(expires - now))
+            elif key.startswith("run:"):
+                replay = self._budget_left(name, key.removeprefix("run:"), replay)
             try:
                 await self._exec_admin_once(
                     container=name, method="POST", path=path, port=port, body=replay, accept_404=False

@@ -108,7 +108,7 @@ def _count(value: Any) -> int:
 def _account(proxy: str, tallies: list[BootTally], metering: RunMetering) -> dict[str, Any]:
     """One proxy's account of the run, every process of it summed, with each call left in flight at its ceiling."""
     models: dict[str, dict[str, int]] = {}
-    requests = estimated = errors = open_calls = 0
+    requests = estimated = errors = open_calls = budget_refused = 0
     for tally in tallies:
         snap = tally.snapshot
         raw_models = snap.get("models")
@@ -121,6 +121,7 @@ def _account(proxy: str, tallies: list[BootTally], metering: RunMetering) -> dic
             requests += _count(entry.get("requests"))
             estimated += _count(entry.get("estimated"))
         errors += _count(snap.get("errors"))
+        budget_refused += _count(snap.get("budget_refused"))
         raw_open = snap.get("open")
         for call in raw_open if isinstance(raw_open, list) else ():
             if not isinstance(call, Mapping):
@@ -151,6 +152,7 @@ def _account(proxy: str, tallies: list[BootTally], metering: RunMetering) -> dic
         "estimated": estimated,
         "errors": errors,
         "open_at_ceiling": open_calls,
+        "budget_refused": budget_refused,
         "models": models,
     }
 
@@ -188,6 +190,8 @@ def charge_run(
         "disagreement": None,
         "unreached": list(metering.unreached) if metering is not None else [],
         "unordered": list(metering.unordered) if metering is not None else [],
+        # Calls a proxy refused because their ceiling would have taken the run past its budget: none was sent.
+        "budget_refused": sum(account["budget_refused"] for account in proxies.values()),
         "proxies": proxies,
     }
 

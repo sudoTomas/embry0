@@ -22,6 +22,7 @@ _GENERIC = "the job stopped on an internal embry0 error"
 _BY_CODE: dict[str, str] = {
     ErrorCode.BUDGET_OVERRUN: "a spend or dispatch limit was reached before the job could finish",
     ErrorCode.BUDGET_REFUSED: "a spend or dispatch limit had already been reached, so the job was not started",
+    ErrorCode.BUDGET_CALL_REFUSED: "an agent's model call would have passed a spend limit, so it was not sent",
     ErrorCode.AGENT_TIMEOUT: "an agent ran out of its time allowance",
     ErrorCode.DOCKER_TIMEOUT: "the sandbox did not respond in time",
     ErrorCode.DOCKER_OUTPUT_TOO_LARGE: "a Docker command printed more output than embry0 reads, so it was stopped",

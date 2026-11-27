@@ -24,6 +24,7 @@ class ErrorCode(StrEnum):
     NO_RESULT = "ERR_NO_RESULT"  # Sandbox infrastructure returned no ResultMessage (pre-executor-refactor path). On the new AgentExecutor path, use AGENT_NO_RESULT instead.
     BUDGET_OVERRUN = "ERR_BUDGET_OVERRUN"  # Hard budget cap hit
     BUDGET_REFUSED = "ERR_BUDGET_REFUSED"  # the dispatch gate refused the job before any agent ran (daily/monthly cap or per-actor rate limit, #331) — distinct from BUDGET_OVERRUN, where the job ran, spent money and was hard-stopped in-run; only a refusal is exempt from rate-limit and attempt counts (embry0/storage/repositories/gate_refusal.py)
+    BUDGET_CALL_REFUSED = "ERR_BUDGET_CALL_REFUSED"  # a metering proxy refused a model call of the run (budget_exceeded): its ceiling, priced at the run's rates, would have taken the run past what its job, or the deployment's day or month, had left when the run was declared (embry0.orchestration.run_budget). Nothing of it was sent or charged
     MAX_RETRIES = "ERR_MAX_RETRIES"  # Reviewer rejected past max_feedback_loops
     TRIAGE_MALFORMED = "ERR_TRIAGE_MALFORMED"  # Triage output unusable after one repair retry (#455)
     ORPHANED = "ERR_ORPHANED"  # Orchestrator restart with in-flight job
@@ -180,6 +181,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     # a person reading /stats wants "a limit stopped it"; which limit, and
     # whether the job had already spent money, is the code's own job to say.
     ErrorCode.BUDGET_REFUSED: _C.BUDGET,
+    ErrorCode.BUDGET_CALL_REFUSED: _C.BUDGET,
     ErrorCode.MAX_RETRIES: _C.VERIFICATION,
     ErrorCode.TRIAGE_MALFORMED: _C.AGENT,
     ErrorCode.ORPHANED: _C.INFRA,
@@ -472,6 +474,9 @@ def _fold_case(message: str) -> str:
 # explicitly (AgentRunner's no-final-result return), because a traceback
 # that merely mentions a turn cap would otherwise be read as one.
 _TEXT_CODES: tuple[tuple[str, ErrorCode], ...] = (
+    # A metering proxy's refusal of a call over its run's budget. First: the
+    # dollar figures in it can contain "429".
+    ("budget_exceeded", ErrorCode.BUDGET_CALL_REFUSED),
     # A server refusing a request over its model's window (vLLM and OpenAI say
     # "maximum context length", llama.cpp "exceeds the available context size").
     # First: the token counts in that message can contain "429".

@@ -795,14 +795,24 @@ def test_a_limit_that_is_a_whole_number_or_null_is_read(value: Any) -> None:
     ],
     ids=["n", "n_cmpl", "n_cmpl-larger", "n-larger", "best_of", "case-folded", "one", "null"],
 )
-@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
-def test_a_call_asking_for_several_answers_has_its_limit_times_them_as_its_ceiling(
-    wire: Any, extra: dict[str, Any], answers: int
+def test_a_chat_completion_asking_for_several_answers_has_its_limit_times_them_as_its_ceiling(
+    extra: dict[str, Any], answers: int
 ) -> None:
     """Each answer may run to the limit: {"max_tokens": 1000, "n": 8} can generate 8,000."""
-    call = read_call(wire, json.dumps({"model": "m", "max_tokens": 1000, **extra}).encode())
+    call = read_call("openai_chat", json.dumps({"model": "m", "max_tokens": 1000, **extra}).encode())
     assert call.refused is None, call.refused
     assert call.output_ceiling == 1000 * answers, f"{extra}: a ceiling of {call.output_ceiling}"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"n": 78}, {"n_cmpl": 3}, {"best_of": 4}, {"N": 6}, {"n": 0}, {"n": "8"}, {"n": 1.5}],
+    ids=str,
+)
+def test_the_messages_api_s_ceiling_is_its_limit_whatever_it_names_of_answers(extra: dict[str, Any]) -> None:
+    """No server of the Messages API reads n: {"max_tokens": 128000, "n": 78} generates 128,000 at most."""
+    call = read_call("anthropic", json.dumps({"model": "m", "max_tokens": 128_000, **extra}).encode())
+    assert (call.refused, call.output_ceiling) == (None, 128_000), f"{extra}: {call.refused!r}, {call.output_ceiling}"
 
 
 def test_a_call_naming_no_limit_has_the_default_times_its_answers_as_its_ceiling() -> None:
@@ -812,23 +822,23 @@ def test_a_call_naming_no_limit_has_the_default_times_its_answers_as_its_ceiling
 
 @pytest.mark.parametrize("value", [0, -1, 1.5, 2.0, "8", True, [2], {"n": 2}], ids=str)
 @pytest.mark.parametrize("key", ["n", "n_cmpl", "best_of", "N"])
-@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
-def test_an_answer_count_that_is_not_a_positive_whole_number_is_refused(wire: Any, key: str, value: Any) -> None:
+def test_an_answer_count_that_is_not_a_positive_whole_number_is_refused(key: str, value: Any) -> None:
     raw = json.dumps({"model": "m", "max_tokens": 10, key: value}).encode()
-    assert read_call(wire, raw).refused, f"forwarded {raw!r}"
+    assert read_call("openai_chat", raw).refused, f"forwarded {raw!r}"
 
 
 @pytest.mark.parametrize(
     ("extra", "refused"),
     [
-        ({"max_tokens": 10_000_000}, False),
-        ({"max_tokens": 10_000_001}, True),
-        ({"max_tokens": 10**18}, True),
-        ({"max_tokens": 2_000_000, "n": 5}, False),
-        ({"max_tokens": 2_000_000, "n": 6}, True),
-        ({"n": 78}, False),  # 128,000 x 78 = 9,984,000
-        ({"n": 79}, True),  # 10,112,000
-        ({"max_tokens": 10**4000, "n": 10**4000}, True),  # a product too long to write out
+        ({"max_tokens": 10_000_000}, {"openai_chat": False, "anthropic": False}),
+        ({"max_tokens": 10_000_001}, {"openai_chat": True, "anthropic": True}),
+        ({"max_tokens": 10**18}, {"openai_chat": True, "anthropic": True}),
+        ({"max_tokens": 2_000_000, "n": 5}, {"openai_chat": False, "anthropic": False}),
+        # The Messages API's ceiling is its limit alone.
+        ({"max_tokens": 2_000_000, "n": 6}, {"openai_chat": True, "anthropic": False}),
+        ({"n": 78}, {"openai_chat": False, "anthropic": False}),  # 128,000 x 78 = 9,984,000
+        ({"n": 79}, {"openai_chat": True, "anthropic": False}),  # 10,112,000
+        ({"max_tokens": 10**4000, "n": 10**4000}, {"openai_chat": True, "anthropic": True}),  # too long to write out
     ],
     ids=[
         "at-the-most",
@@ -843,8 +853,149 @@ def test_an_answer_count_that_is_not_a_positive_whole_number_is_refused(wire: An
 )
 @pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
 def test_a_call_whose_ceiling_is_above_ten_million_tokens_is_refused(
-    wire: Any, extra: dict[str, Any], refused: bool
+    wire: Any, extra: dict[str, Any], refused: dict[str, bool]
 ) -> None:
     """A call charged its ceiling is charged a figure the traces can hold: max_tokens 1e18 would be 1e18."""
     call = read_call(wire, json.dumps({"model": "m", **extra}).encode())
-    assert bool(call.refused) is refused, f"{extra}: refused {call.refused!r}, a ceiling of {call.output_ceiling}"
+    assert bool(call.refused) is refused[wire], f"{extra}: refused {call.refused!r}, a ceiling of {call.output_ceiling}"
+
+
+# --------------------------------------------------------------------------- a run's budget
+
+#: A run's budget as the orchestrator declares it: $10 left of the job's, at $2 / $6 per million tokens.
+BUDGET = {
+    "remaining_usd": 10.0,
+    "limit": "job",
+    "rates": {"in": 2.0, "out": 6.0},
+    "cache": {"read": 0.25, "write": 1.25},
+}
+
+
+def _budget(**over: Any) -> Any:
+    """The meter's budget for ``BUDGET`` with ``over`` laid on it; the test fails, saying so, on a meter without."""
+    try:
+        from embry0.execution.proxy.metering import Budget
+    except ImportError as exc:
+        pytest.fail(f"the meter holds no run to a budget: {exc}")
+    return Budget.read({**BUDGET, **over})
+
+
+def _held(meter: Meter, budget: Any, run_id: str = "run-1") -> None:
+    try:
+        meter.declare("sbx", run_id, "job-1", budget=budget)  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared with a budget: {exc}")
+
+
+def _open_or_refused(meter: Meter, body: dict[str, Any]) -> Any:
+    """The call ``body`` makes, opened; None when the meter refused it for the run's budget."""
+    try:
+        return meter.open("sbx", read_call("openai_chat", json.dumps(body).encode()))
+    except Exception as exc:
+        if type(exc).__name__ == "BudgetExceededError":
+            return None
+        raise
+
+
+def _only_tally(meter: Meter) -> dict[str, Any]:
+    (tally,) = meter.snapshot()["tallies"]
+    return tally
+
+
+def test_a_budget_prices_usage_as_the_orchestrator_does() -> None:
+    """ProviderRecord.price: cached input at its factor of the input rate, cache writes at theirs."""
+    usage = Usage(input_tokens=10**6, output_tokens=10**6, cache_read_tokens=10**6, cache_creation_tokens=10**6)
+    assert _budget().price(usage) == pytest.approx(2.0 + 6.0 + 0.5 + 2.5)
+
+
+def test_a_call_that_could_take_its_run_past_its_budget_is_refused_and_counted() -> None:
+    """{"stream": true, "n": 78} naming no limit: 9,984,000 output tokens at $6 a million, about $60, with $10 left."""
+    meter = Meter()
+    _held(meter, _budget())
+    opened = _open_or_refused(meter, {"model": "m", "messages": [], "stream": True, "n": 78})
+    assert opened is None, "a call whose ceiling costs about $60 was let through with $10 left"
+    tally = _only_tally(meter)
+    assert (tally.get("budget_refused"), tally["open"], tally["models"]) == (1, [], {}), tally
+    with pytest.raises(Exception) as refused:
+        meter.open("sbx", read_call("openai_chat", b'{"model": "m", "n": 78}'))
+    message = str(refused.value)
+    assert "budget_exceeded" in message and "$59.9" in message and "the job's budget" in message, message
+
+
+def test_twenty_calls_in_flight_are_let_through_only_as_far_as_the_budget_covers_their_ceilings() -> None:
+    """Each at its ceiling ($1.20 of output): eight fit in $10; the run's charge, all of them hung up, stays in it."""
+    meter = Meter()
+    _held(meter, _budget())
+    body = {"model": "m", "messages": [], "stream": True, "max_tokens": 200_000}
+    calls = [_open_or_refused(meter, body) for _ in range(20)]
+    opened = [c for c in calls if c is not None]
+    assert (len(opened), _only_tally(meter).get("budget_refused")) == (8, 12), f"{len(opened)} of 20 let through"
+    assert _only_tally(meter)["budget"]["spent_usd"] <= 10.0, _only_tally(meter)["budget"]
+    for call in opened:
+        call.lost()  # the sandbox hung up on every one: each is charged its ceiling
+        call.close()
+    (counted,) = _only_tally(meter)["models"].values()
+    assert _budget().price(Usage(input_tokens=counted["input_tokens"], output_tokens=counted["output_tokens"])) <= 10.0
+
+
+def test_a_call_within_its_budget_goes_and_what_its_answer_did_not_use_is_free_again() -> None:
+    meter = Meter()
+    _held(meter, _budget(remaining_usd=2.0))
+    body = {"model": "m", "messages": [], "max_tokens": 200_000}
+    first = _open_or_refused(meter, body)
+    assert first is not None, "a call costing $1.20 at its ceiling was refused with $2 left"
+    assert _open_or_refused(meter, body) is None, "two calls of $1.20 each were let through with $2 left"
+    first.answer(200, "application/json")
+    first.feed((ANSWERS / "openai-chat.json").read_bytes())
+    first.close()
+    assert _open_or_refused(meter, body) is not None, "the ceiling of an answered call was still held against the run"
+    assert _only_tally(meter)["budget"] == {
+        "remaining_usd": 2.0,
+        "limit": "job",
+        "spent_usd": pytest.approx(
+            (1000 * 2 + 80 * 6 + 200 * 2 * 0.25) / 1e6
+            + _budget().price(read_call("openai_chat", json.dumps(body).encode()).ceiling())
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("over", "refused"),
+    [
+        ({"rates": {"in": 0.0, "out": 0.0}, "remaining_usd": 0.0}, False),
+        ({"remaining_usd": 0.0}, True),
+    ],
+    ids=["free", "nothing-left"],
+)
+def test_a_free_run_is_never_refused_and_a_run_with_nothing_left_always_is(over: dict[str, Any], refused: bool) -> None:
+    meter = Meter()
+    _held(meter, _budget(**over))
+    opened = _open_or_refused(meter, {"model": "m", "messages": [], "max_tokens": 10})
+    assert (opened is None) is refused, f"{over}: refused {opened is None}"
+
+
+def test_a_run_declared_without_a_budget_is_checked_against_nothing() -> None:
+    meter = Meter()
+    meter.declare("sbx", "run-1", "job-1")
+    assert _open_or_refused(meter, {"model": "m", "messages": [], "stream": True, "n": 78}) is not None
+    assert _only_tally(meter).get("budget") is None
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"remaining_usd": -1},
+        {"remaining_usd": float("nan")},
+        {"remaining_usd": True},
+        {"remaining_usd": "10"},
+        {"limit": "weekly"},
+        {"rates": {"in": 2.0}},
+        {"rates": [2.0, 6.0]},
+        {"cache": {"read": 0.25}},
+        {"rates": {"in": 2.0, "out": float("inf")}},
+    ],
+    ids=str,
+)
+def test_a_budget_that_is_not_one_is_refused(over: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        _budget(**over)

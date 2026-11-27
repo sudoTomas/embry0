@@ -47,18 +47,28 @@ class _Traces:
 class _Meter(RunMeter):
     """The orchestrator's meter: the run's calls as the xai-proxy counted them."""
 
-    def __init__(self, models: dict[str, Any]) -> None:
+    def __init__(self, models: dict[str, Any], budget_refused: int = 0) -> None:
         self.models = models
+        self.budget_refused = budget_refused
         self.begun: list[tuple[str, str, str | None]] = []
         self.providers: list[str | None] = []
+        self.budgets: list[Any] = []
         self.ended: list[str] = []
         self.charges: list[Any] = []
 
-    async def begin(self, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None) -> Any:
+    async def begin(
+        self,
+        sandbox_id: str,
+        run_id: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        budget: Any = None,
+    ) -> Any:
         from embry0.execution.run_meter import RunWindow
 
         self.begun.append((sandbox_id, run_id, job_id))
         self.providers.append(provider)
+        self.budgets.append(budget)
         return RunWindow(sandbox_id, run_id, ("xai-proxy",), {"xai-proxy": "b1"})
 
     async def end(self, window: Any) -> Any:
@@ -68,7 +78,13 @@ class _Meter(RunMeter):
 
         self.ended.append(window.run_id)
         self.end_numbers = (dict(getattr(window, "end_seqs", {})), next_admin_seq())
-        snapshot = {"run_id": window.run_id, "models": self.models, "errors": 0, "open": []}
+        snapshot = {
+            "run_id": window.run_id,
+            "models": self.models,
+            "errors": 0,
+            "open": [],
+            "budget_refused": self.budget_refused,
+        }
         return RunMetering(
             run_id=window.run_id,
             targets=("xai-proxy",),
@@ -79,12 +95,15 @@ class _Meter(RunMeter):
     def charged(self, charge: Any, *, run_id: str) -> None:
         self.charges.append(charge)
 
+    def meters(self, sandbox_id: str) -> bool:
+        return True
+
 
 PROXY_COUNT = {"grok-4.7": {"input_tokens": 50_000, "output_tokens": 4_000, "requests": 3, "estimated": 0}}
 PROXY_COST = (50_000 * 2.0 + 4_000 * 6.0) / 1e6
 
 
-async def _run(runner: Any, traces: _Traces, state: dict[str, Any] | None = None) -> dict[str, Any]:
+async def _run(runner: Any, traces: _Traces, state: dict[str, Any] | None = None, db: Any = None) -> dict[str, Any]:
     return await run_agent_node(
         state={"sandbox_container_id": "c1", "total_cost_usd": 0.0, "job_id": "job-1", **(state or {})},
         agent_runner=runner,
@@ -94,7 +113,7 @@ async def _run(runner: Any, traces: _Traces, state: dict[str, Any] | None = None
         credentials={"api_key": "", "oauth_token": "oauth-xyz"},
         config={
             "configurable": {
-                "db": _Db(),
+                "db": db if db is not None else _Db(),
                 "traces_repo": traces,
                 "job_id": "job-1",
                 "llm_providers": ("anthropic", "xai"),
@@ -240,3 +259,56 @@ async def test_a_runner_whose_every_attribute_is_a_mock_has_no_meter() -> None:
     assert traces.finished[0]["cost_usd"] == pytest.approx(0.002)
     assert "metering" not in traces.finished[0]
     runner.run_meter.begin.assert_not_called()
+
+
+def _done(**kwargs: Any) -> Any:
+    async def run(**_kw: Any) -> AgentOutput:
+        return AgentOutput(agent_type="developer", output="done", cost_usd=0.001, **kwargs)
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_a_run_near_its_job_s_cap_is_declared_with_what_the_job_has_left() -> None:
+    """$9.90 of the $10 cap spent: the run may spend $0.10, at its record's rates."""
+    meter, traces = _Meter(PROXY_COUNT), _Traces()
+    await _run(_runner(meter, _done()), traces, state={"total_cost_usd": 9.9})
+    (budget,) = meter.budgets
+    assert budget is not None, "the run was declared with no budget"
+    assert (budget["remaining_usd"], budget["limit"]) == (pytest.approx(0.1), "job"), budget
+    assert budget["rates"] == {"in": 2.0, "out": 6.0}, budget
+
+
+@pytest.mark.asyncio
+async def test_a_run_is_held_to_the_deployment_s_day_when_that_leaves_less() -> None:
+    class _Spent(_Db):
+        async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+            if "date_trunc('day'" in sql:
+                return {"daily": 99.95, "monthly": 120.0}
+            return await super().fetchrow(sql, *args)
+
+    meter, traces = _Meter(PROXY_COUNT), _Traces()
+    await _run(_runner(meter, _done()), traces, db=_Spent())
+    (budget,) = meter.budgets
+    assert budget is not None, "the run was declared with no budget"
+    assert (budget["remaining_usd"], budget["limit"]) == (pytest.approx(0.05), "daily"), budget
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_failed_on_a_budget_refusal_says_so_whatever_its_sandbox_read() -> None:
+    """An image that predates the code reads the refusal's "$1,429.00" as a rate limit: the job must not wait for one."""
+    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    said = "xai answered HTTP 402: embry0 budget_exceeded: this call could cost up to $1,429.00 at its ceiling"
+
+    async def run(**_kw: Any) -> AgentOutput:
+        return AgentOutput(
+            agent_type="developer", is_error=True, error_message=said, error_code="ERR_PROVIDER_RATE_LIMITED"
+        )
+
+    updates = await _run(_runner(meter, run), traces)
+    finished = traces.finished[0]
+    assert finished["error_code"] == "ERR_BUDGET_CALL_REFUSED", f"the run's trace says {finished['error_code']}"
+    assert finished["metering"].get("budget_refused") == 1, finished["metering"]
+    assert len(meter.begun) == 1, "the run was moved to another model as though its account were spent"
+    assert [o.get("error_code") for o in updates["agent_outputs"]] == ["ERR_BUDGET_CALL_REFUSED"]
+    assert any("budget_exceeded" in e for e in updates["errors"]), updates["errors"]

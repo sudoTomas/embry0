@@ -1010,3 +1010,53 @@ async def test_a_proxy_that_does_not_echo_the_provider_leaves_the_run_not_whole(
     except TypeError as exc:
         pytest.fail(f"a run cannot be declared on its provider: {exc}")
     assert proxy.mgr.declared_unordered("xai-proxy", "run-1"), "a run its proxy did not hold to its provider is whole"
+
+
+_BUDGET = {
+    "remaining_usd": 10.0,
+    "limit": "job",
+    "rates": {"in": 2.0, "out": 6.0},
+    "cache": {"read": 0.25, "write": 1.5},
+}
+
+
+async def _declared_with_budget(mgr: Any) -> None:
+    try:
+        await mgr.declare_run("xai-proxy", "sbx-1", "run-1", "job-1", provider="xai", budget=_BUDGET)
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared with its budget: {exc}")
+
+
+def _run_tally(server: Any) -> dict[str, Any]:
+    (tally,) = [t for t in server.app[METER].snapshot()["tallies"] if t["run_id"] == "run-1"]
+    return tally
+
+
+async def test_a_run_is_declared_at_the_proxy_with_its_budget(proxy: Any) -> None:
+    await _declared_with_budget(proxy.mgr)
+    budget = _run_tally(proxy).get("budget")
+    assert budget is not None and (budget["remaining_usd"], budget["limit"]) == (10.0, "job"), budget
+
+
+async def test_a_recreated_proxy_is_given_a_run_back_with_its_budget_less_what_the_run_spent_before(
+    proxy: Any, aiohttp_server: Any, monkeypatch: Any
+) -> None:
+    """The new process counts the run from nothing: given back its whole budget, the run could spend it twice."""
+    from embry0.execution.proxy.metering import read_call
+
+    mgr = proxy.mgr
+    await _declared_with_budget(mgr)
+    # A call in flight at the old process: 1,000,000 output tokens at its ceiling, $6 at $6 a million.
+    body = b'{"model": "grok-4.7", "max_tokens": 1000000, "stream": true, "messages": []}'
+    proxy.app[METER].open("sbx-1", read_call("anthropic", body))
+    await mgr.read_meter("xai-proxy")  # the orchestrator's read every 5 seconds
+    spent = _run_tally(proxy)["budget"]["spent_usd"]
+    assert spent == pytest.approx(6.0, abs=0.01), spent
+    new = await _recreated(aiohttp_server, proxy, monkeypatch)
+    restored, failed = await mgr._replay("xai-proxy")
+    assert failed == 0
+    budget = _run_tally(new).get("budget")
+    assert budget is not None, "the recreated proxy was given the run back without its budget"
+    assert budget["remaining_usd"] == pytest.approx(10.0 - spent), (
+        f"the recreated proxy holds the run to ${budget['remaining_usd']:.2f}, though it spent ${spent:.2f} before"
+    )

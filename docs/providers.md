@@ -271,7 +271,7 @@ interrupts (#694).
 
 A call still in flight when a tally was last read is charged its ceiling, as
 the proxy reported it: the request's size as input and its output limit, times
-the answers it asks for, as output. So is a call whose answer broke off before
+the answers a chat completion asks for, as output. So is a call whose answer broke off before
 its usage was read: the upstream cut it, it could not be decoded, or the
 sandbox went away while it came. The provider may have generated all of it, so
 what was read is no measure: its output is that ceiling, and its input the
@@ -294,11 +294,13 @@ names another server's output limit, at its top level or in its `options`
 refused. A call that names neither is taken to produce at most 128,000 tokens an
 answer, which assumes the server stops by then: vLLM and llama.cpp, given no
 limit, generate up to the model's context, so with a longer context such a call
-can produce more than its ceiling. A call asking for several answers (`n`,
-llama.cpp's `n_cmpl` or older vLLM's `best_of`, compared with case folded, each
-a positive whole number or refused) has its limit times the largest as its
-ceiling, and one whose ceiling is above 10,000,000 tokens is refused on both
-wires, so that a call charged its ceiling is charged a figure a trace can hold.
+can produce more than its ceiling. A chat completion asking for several
+answers (`n`, llama.cpp's `n_cmpl` or older vLLM's `best_of`, compared with
+case folded, each a positive whole number or refused) has its limit times the
+largest as its ceiling; no server of the Messages API reads them, so they do
+not count there. A call whose ceiling is above 10,000,000 tokens is refused on
+both wires, so that a call charged its ceiling is charged a figure a trace can
+hold.
 A trace's token counts are held to their columns' range as it is written, and a
 count held is logged (`trace_count_held_to_column`): one past them would fail
 the write and leave the trace `running`. A run whose calls counted under the
@@ -313,6 +315,34 @@ went away mid-run leaves its last read in `run_meter` with its calls in flight,
 and the recreated proxy is given the run back after the sandbox's enrollment,
 under a new process (`boot_id`), so the run's calls are the two tallies summed
 and the charge is the larger figure.
+
+**A run is held to its budget.** The orchestrator declares a run with what it
+may still spend: the least of what its job has left under the cap in force and
+what the deployment has left today and this month under `budget.daily_cap_usd`
+and `budget.monthly_cap_usd`, where each is set ([Budget
+Controls](architecture.md#budget-controls)), with the run's rates
+(`embry0/orchestration/run_budget.py`). The proxy refuses a call whose ceiling,
+its output ceiling and its input estimate at those rates, would take what the
+run has been charged, its calls in flight at their ceilings included, past that:
+402, `budget_exceeded`, in the wire's error shape, with the figures in its
+message, and nothing is sent. So a call left to hang no longer takes a job past
+its cap: `{"stream": true, "n": 78}` naming no limit has a ceiling of 9,984,000
+output tokens, about $60 at $6 per million, and is refused while the run has
+less than that left; twenty calls in flight at a run's end are let through only
+as far as the budget covers their ceilings. This holds in every overrun mode: it
+refuses a call and stops no run. A run that fails after a call of it was refused
+carries `ERR_BUDGET_CALL_REFUSED` (set by the orchestrator from the proxies'
+count, whatever the sandbox's image reads from the message), and its trace's
+`metering` counts the refusals (`budget_refused`). No call is checked for a free
+run (an unpriced model, or rates of 0), a run with no cap set, a declaration
+from an older orchestrator, a run whose declaration failed (its calls count
+under no run), or at a proxy image from before (the orchestrator logs
+`proxy_run_budget_not_held`). Each run is held to what was left when it was
+declared: runs at the same time (a QA fan-out, other jobs under the day's cap)
+are each held to that amount, not to one shared between them. A proxy recreated
+mid-run is given the run back with its budget less what the run had spent there,
+as its last read said (every 5 seconds), since the new process counts the run
+from nothing.
 
 **Every admin request is ordered.** The orchestrator numbers each request it
 sends a proxy (an enrollment, its end, a change of push branches, a run

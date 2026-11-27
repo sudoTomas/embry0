@@ -67,9 +67,11 @@ from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, register_admin_routes
 from embry0.execution.proxy.metering import (
     METER,
+    BudgetExceededError,
     Metered,
     NoRunError,
     TalliesFullError,
+    budget_answer,
     no_run_answer,
     read_call,
     register_meter_routes,
@@ -473,6 +475,14 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
         except NoRunError:
             logger.warning("llm_proxy_call_without_run", sandbox_id=sandbox_id)
             return no_run_answer("openai_chat")
+        except BudgetExceededError as refusal:
+            logger.warning(
+                "llm_proxy_call_over_budget",
+                sandbox_id=sandbox_id,
+                cost_usd=refusal.cost_usd,
+                left_usd=refusal.left_usd,
+            )
+            return budget_answer("openai_chat", refusal)
         except TalliesFullError:
             logger.error("llm_proxy_meter_full", sandbox_id=sandbox_id)
             return web.json_response({"error": "meter_full"}, status=503)

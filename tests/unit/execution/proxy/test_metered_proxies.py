@@ -103,9 +103,11 @@ async def _xai(aiohttp_client: Any, upstream: _Upstream, **kw: Any) -> TestClien
     return client
 
 
-async def _declare(client: TestClient, run_id: str = "run-1", sandbox_id: str = "sbx-1") -> Any:
+async def _declare(client: TestClient, run_id: str = "run-1", sandbox_id: str = "sbx-1", **extra: Any) -> Any:
     return await client.post(
-        "/admin/runs", json={"sandbox_id": sandbox_id, "run_id": run_id, "job_id": "job-1"}, headers=_ADMIN_HEADERS
+        "/admin/runs",
+        json={"sandbox_id": sandbox_id, "run_id": run_id, "job_id": "job-1", **extra},
+        headers=_ADMIN_HEADERS,
     )
 
 
@@ -413,14 +415,17 @@ _ROUTES = {
 }
 
 
-async def _metered(aiohttp_client: Any, model_server: Any, route: str, upstream: _Upstream) -> TestClient:
-    """A metering proxy with sbx-1 enrolled and a run declared, its upstream calls answered by ``upstream``."""
+async def _metered(
+    aiohttp_client: Any, model_server: Any, route: str, upstream: _Upstream, **declared: Any
+) -> TestClient:
+    """A metering proxy with sbx-1 enrolled and a run declared (with ``declared`` in its declaration), its upstream
+    calls answered by ``upstream``."""
     if route == "xai-proxy":
         client = await _xai(aiohttp_client, upstream)
     else:
         client = await _local(aiohttp_client, model_server, providers=True)
         route_upstream(client.app, upstream)
-    assert (await _declare(client)).status == 200
+    assert (await _declare(client, **declared)).status == 200
     return client
 
 
@@ -672,9 +677,6 @@ _COMPLETION_ROUTES = {
         b'{"model": "m", "max_tokens": "1000000"}',
         b'{"model": "m", "max_tokens": 1e6}',
         b'{"model": "m", "max_tokens": 1000000000000000000}',
-        b'{"model": "m", "max_tokens": 2000000, "n": 6}',
-        b'{"model": "m", "max_tokens": 10, "n": 0}',
-        b'{"model": "m", "max_tokens": 10, "n_cmpl": 1.5}',
     ],
     ids=[
         "case-folded-twin",
@@ -685,9 +687,6 @@ _COMPLETION_ROUTES = {
         "limit-as-text",
         "limit-1e6",
         "ceiling-1e18",
-        "limit-times-answers-past-the-most",
-        "no-answers",
-        "answers-as-fraction",
     ],
 )
 async def test_a_completion_body_the_meter_cannot_read_as_every_server_would_is_refused(
@@ -756,3 +755,146 @@ async def test_a_chat_completion_naming_another_server_s_limit_is_refused_on_eac
     resp = await client.post(path, json=body, headers=_AUTH)
     assert resp.status == 400, f"{route} answered {resp.status} to {body}"
     assert upstream.calls == [], f"{route} forwarded {body}"
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"model": "m", "max_tokens": 2000000, "n": 6}',
+        b'{"model": "m", "max_tokens": 10, "n": 0}',
+        b'{"model": "m", "max_tokens": 10, "n_cmpl": 1.5}',
+    ],
+    ids=["limit-times-answers-past-the-most", "no-answers", "answers-as-fraction"],
+)
+async def test_a_chat_completion_whose_answers_the_meter_cannot_count_is_refused(
+    aiohttp_client, model_server, route, raw
+):
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream)
+    resp = await client.post(path, data=raw, headers={**_AUTH, "Content-Type": "application/json"})
+    assert resp.status == 400, f"{route} answered {resp.status} to {raw!r}"
+    assert upstream.calls == [], f"{route} forwarded {raw!r}"
+
+
+# --------------------------------------------------------------------------- a run's budget
+
+#: A run's budget as the orchestrator declares it: $10 left of the job's, at $2 / $6 per million tokens.
+BUDGET = {
+    "remaining_usd": 10.0,
+    "limit": "job",
+    "rates": {"in": 2.0, "out": 6.0},
+    "cache": {"read": 0.25, "write": 1.25},
+}
+
+
+def _completion(route: str, **body: Any) -> dict[str, Any]:
+    """A completion body for ``route``'s wire."""
+    if route == "xai-proxy messages":
+        return _messages(**body)
+    return {"model": "qwen", "messages": [], **body}
+
+
+def _refusal_code(route: str, answer: dict[str, Any]) -> Any:
+    if route == "xai-proxy messages":
+        return answer.get("type"), answer.get("error", {}).get("type")
+    return "error", answer.get("error", {}).get("code")
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+async def test_a_call_past_its_run_s_budget_is_refused_and_never_sent(aiohttp_client, model_server, route):
+    """A job near its cap: $0.001 left, and a call that could cost $0.006 at its ceiling."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget={**BUDGET, "remaining_usd": 0.001})
+    resp = await client.post(path, json=_completion(route, max_tokens=1000), headers=_AUTH)
+    assert resp.status == 402, f"{route} answered {resp.status} to a call past the run's budget: {await resp.text()}"
+    answer = await resp.json(content_type=None)
+    assert _refusal_code(route, answer) == ("error", "budget_exceeded"), f"{route} refused it as {answer}"
+    assert "the job's budget" in json.dumps(answer), answer
+    assert upstream.calls == [], f"{route} forwarded a call past the run's budget"
+    tally = await _run(client)
+    assert (tally.get("budget_refused"), tally["models"]) == (1, {}), tally
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
+async def test_a_completion_asking_for_78_answers_and_no_limit_is_refused_with_10_dollars_left(
+    aiohttp_client, model_server, route
+):
+    """9,984,000 output tokens at its ceiling, about $60 at $6 a million: one hang-up would charge it all."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET)
+    resp = await client.post(path, json=_completion(route, stream=True, n=78), headers=_AUTH)
+    assert resp.status == 402, f"{route} answered {resp.status} to n=78 with $10 left"
+    assert upstream.calls == [], f"{route} forwarded n=78 with $10 left"
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+async def test_twenty_calls_in_flight_at_a_run_s_end_stay_within_its_budget(aiohttp_client, model_server, route):
+    """Each could cost $1.20 at its ceiling: eight go, the other twelve are refused, and all eight hung up stay in $10."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    raw = (
+        ANSWERS / ("anthropic-stream.sse" if route == "xai-proxy messages" else "openai-chat-stream.sse")
+    ).read_bytes()
+    upstream = _Upstream()
+    gate = asyncio.Event()
+    upstream.answers.extend(_Answer(raw, content_type=_SSE, chunk=300, gate=gate) for _ in range(20))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET)
+    held = []
+    for _ in range(20):
+        resp = await client.post(path, json=_completion(route, stream=True, max_tokens=200_000), headers=_AUTH)
+        held.append(resp)
+    statuses = sorted(r.status for r in held)
+    assert statuses == [200] * 8 + [402] * 12, f"{route}: {statuses}"
+    for resp in held:
+        resp.close()  # the sandbox hangs up on every one
+    gate.set()
+    tally = await _settled(client)
+    (counted,) = tally["models"].values()
+    charged = (counted["input_tokens"] * 2.0 + counted["output_tokens"] * 6.0) / 1e6
+    assert charged <= 10.0, f"{route}: the run was charged ${charged:.2f} of $10"
+    assert counted["output_tokens"] == 8 * 200_000, counted
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+async def test_a_call_within_its_run_s_budget_goes_and_is_charged(aiohttp_client, model_server, route):
+    proxy, path = _COMPLETION_ROUTES[route]
+    name = "anthropic-message.json" if route == "xai-proxy messages" else "openai-chat.json"
+    upstream = _Upstream()
+    upstream.answers.append(_Answer((ANSWERS / name).read_bytes()))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET)
+    resp = await client.post(path, json=_completion(route, stream=False, max_tokens=4096), headers=_AUTH)
+    assert resp.status == 200, f"{route} answered {resp.status} to a call within the run's budget"
+    await resp.read()
+    tally = await _settled(client)
+    assert (tally.get("budget_refused"), sum(m["requests"] for m in tally["models"].values())) == (0, 1), tally
+    assert 0 < tally["budget"]["spent_usd"] < 10.0, tally["budget"]
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
+async def test_a_run_declared_without_a_budget_is_checked_against_nothing(aiohttp_client, model_server, route):
+    """An older orchestrator's declaration, a free run or one with no cap set: n=78 goes, as before."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    upstream.answers.append(_Answer((ANSWERS / "openai-chat.json").read_bytes()))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream)
+    resp = await client.post(path, json=_completion(route, n=78), headers=_AUTH)
+    assert resp.status == 200, f"{route} answered {resp.status} with no budget declared"
+    assert len(upstream.calls) == 1
+
+
+@pytest.mark.parametrize("proxy", ["xai-proxy", "llm-proxy /v1"])
+async def test_a_declaration_s_budget_is_echoed_and_one_that_is_not_a_budget_is_refused(
+    aiohttp_client, model_server, proxy
+):
+    upstream = _Upstream()
+    client = (
+        await _xai(aiohttp_client, upstream) if proxy == "xai-proxy" else await _local(aiohttp_client, model_server)
+    )
+    held = await _declare(client, budget=BUDGET)
+    assert held.status == 200
+    assert (await held.json()).get("budget") == {"remaining_usd": 10.0, "limit": "job"}, "the budget was not echoed"
+    refused = await _declare(client, run_id="run-2", budget={**BUDGET, "remaining_usd": -1})
+    assert refused.status == 400, f"a budget of -$1 was taken (HTTP {refused.status})"

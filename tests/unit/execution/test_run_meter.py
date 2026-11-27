@@ -70,10 +70,17 @@ class _Proxies:
             raise self.fail[(proxy, call)]
 
     async def declare_run(
-        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+        self,
+        proxy: str,
+        sandbox_id: str,
+        run_id: str,
+        job_id: str | None = None,
+        provider: str | None = None,
+        budget: dict[str, Any] | None = None,
     ) -> str:
         self._maybe_fail(proxy, "declare")
         self.declared_providers = {**getattr(self, "declared_providers", {}), (proxy, run_id): provider}
+        self.declared_budgets = {**getattr(self, "declared_budgets", {}), (proxy, run_id): budget}
         self.tallies[proxy][run_id] = {
             "run_id": run_id,
             "sandbox_id": sandbox_id,
@@ -123,6 +130,33 @@ async def test_a_run_is_declared_where_its_sandbox_is_enrolled_and_ended_there()
     assert metering.tallies[0].snapshot["models"] == _calls(2)
     assert repo.rows[("xai-proxy", "b1", "run-1")]["final"] is True, "the final tally was not kept"
     assert ("llm-proxy", "declare") not in proxies.calls, "declared where the sandbox is not enrolled"
+
+
+def test_a_sandbox_is_metered_where_it_is_enrolled_with_a_metering_proxy() -> None:
+    """Only such a run's budget is read: the day's and month's spend is a rollup of every job's."""
+    meter, _ = _meter(_Proxies({"sbx": ["xai-proxy"], "none": []}), _Repo())
+    meters = getattr(meter, "meters", None)
+    assert meters is not None, "the meter cannot say which sandboxes it meters"
+    assert (meters("sbx"), meters("none")) == (True, False)
+
+
+async def test_a_run_is_declared_with_its_budget_at_every_proxy_it_is_enrolled_with() -> None:
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    budget = {
+        "remaining_usd": 0.5,
+        "limit": "job",
+        "rates": {"in": 2.0, "out": 6.0},
+        "cache": {"read": 0.25, "write": 1.0},
+    }
+    try:
+        await meter.begin("sbx", "run-1", "job-1", provider="xai", budget=budget)  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared with its budget: {exc}")
+    assert getattr(proxies, "declared_budgets", {}) == {
+        ("xai-proxy", "run-1"): budget,
+        ("llm-proxy", "run-1"): budget,
+    }, "the run was not declared with its budget"
 
 
 async def test_a_run_is_declared_on_its_provider_at_every_proxy_it_is_enrolled_with() -> None:
