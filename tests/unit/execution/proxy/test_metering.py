@@ -719,7 +719,10 @@ _BASE64_PDF = {"type": "base64", "media_type": "application/pdf", "data": "JVBER
         ("anthropic", _anthropic_blocks(_tool_result({"type": "document", "source": _BASE64_PDF}))),
         ("anthropic", _anthropic_blocks(_tool_result({"type": "tool_use", "id": "tu2", "name": "Read", "input": {}}))),
         ("anthropic", {"MESSAGES": [{"ROLE": "user", "CONTENT": [{"TYPE": "image", "SOURCE": _BY_URL}]}]}),
-        ("openai_chat", {"Messages": [{"role": "user", "Content": [{"Type": "image_url", "Image_URL": {"URL": _URL}}]}]}),
+        (
+            "openai_chat",
+            {"Messages": [{"role": "user", "Content": [{"Type": "image_url", "Image_URL": {"URL": _URL}}]}]},
+        ),
         ("openai_chat", {"Tools": [{"Type": "web_search"}]}),
         ("anthropic", _anthropic_blocks({"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {}})),
         ("anthropic", {"tools": [{"type": "web_search_20250305", "name": "web_search"}]}),
