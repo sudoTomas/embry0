@@ -419,7 +419,8 @@ error, an alias, a key written twice), past 256 KiB (413), an overlay field
 it may not set, a catalogue it makes that cannot be (a chat-completions model
 without a price, prefixes of two providers that are on overlapping), a
 `request_extras` or `background_request_extras` value past 4,096 bytes as
-JSON or nested deeper than 32, a `context_window` on a model that is not a custom
+JSON, nested deeper than 32 or holding a number JSON cannot hold (`.inf`,
+`.nan`, `1e400`), a `context_window` on a model that is not a custom
 one (1,024 to 10,000,000 tokens), and any model a tier, the fallback order, an
 agent definition, a pipeline template's step (its `config.model`, or a legacy
 top-level `model`), a repository's review model (`pr_review.model`) or a
@@ -431,7 +432,11 @@ never pass each other.
 
 A number may be typed in exponent form: `1e-7` and `5E-1` are numbers, as YAML
 1.2 and JSON read them (YAML 1.1 read them as text, #756). A value meant as
-text that looks like one goes in quotes.
+text that looks like one goes in quotes. An overlay stored before that is read
+again from its text when it is installed, at the start and after each write:
+the values it reads to now are in force (`provider_catalogue_read_again` in the
+log), unless the text does not read or reads to an overlay the release takes
+less of, when the stored values stay (`provider_catalogue_text_not_read_again`).
 
 **Everything in the document is readable by every key**, a key with a
 repository allowlist included: the YAML as written with its comments, each

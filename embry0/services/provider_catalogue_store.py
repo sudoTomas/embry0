@@ -49,7 +49,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -494,7 +494,21 @@ class CatalogueStore:
         and a warning is logged; :meth:`_take` audits them. Models kept as the
         deployment's own are :attr:`notes`, logged.
         """
-        candidate, read = built(stored)
+        stored, how = read_again(stored)
+        if how != "same":
+            # Once a generation: a process installs each generation once (at its start, or after a write).
+            logger.warning(
+                "provider_catalogue_read_again" if how == "read_again" else "provider_catalogue_text_not_read_again",
+                generation=stored.generation,
+                msg=(
+                    "the stored overlay's text reads otherwise with this release's loader: the values read from it "
+                    "now are in force, and a save of the text stores them"
+                    if how == "read_again"
+                    else "the stored overlay's text does not read again with this release's loader, or reads to an "
+                    "overlay it takes less of: the values stored with it stay in force"
+                ),
+            )
+        candidate, read = _built(stored)
         refused = read.refused
         if not refused or self._installed_generation is None:
             install(candidate)
@@ -754,9 +768,41 @@ async def _held_row(conn: Any, lock: str) -> _Row:
 
 def built(stored: _Row) -> tuple[Catalogue, StoredRead]:
     """The catalogue a stored overlay makes with this release's seed: every part of it that applies, its models
-    whose price is left out unpriced, and why (``catalogue.merge_stored``)."""
+    whose price is left out unpriced, and why (``catalogue.merge_stored``). Its values are read again from its text
+    first (:func:`read_again`)."""
+    return _built(read_again(stored)[0])
+
+
+def _built(stored: _Row) -> tuple[Catalogue, StoredRead]:
     read = merge_stored(seed().document, dict(stored.data) or None, stored.shipped)
     return Catalogue.build(read.document, withheld=read.withheld), read
+
+
+ReadAgain = Literal["same", "read_again", "kept"]
+
+
+def read_again(stored: _Row) -> tuple[_Row, ReadAgain]:
+    """``stored`` with its values read again from its text by this release's loader, and how that went.
+
+    The values a row holds were read when the text was written, by that release's loader: an overlay stored before
+    the loader read ``1e-7`` as a number (#756) holds the string, and a save of the same text records nothing. So
+    the text is read again, and its values are in force (``read_again``) when they differ. The stored values stand
+    (``kept``) when the text cannot be read, or reads to an overlay this release takes less of, so a deployment
+    never loses its catalogue to a new reading; ``same`` when nothing differs (an empty text keeps its values)."""
+    if not stored.yaml_text.strip():
+        return stored, "same"
+    try:
+        data = stored_form(load_text(stored.yaml_text))
+    except (CatalogueInvalid, CatalogueTooLarge):
+        return stored, "kept"
+    if data == stored.data:
+        return stored, "same"
+    again = replace(stored, data=data)
+    refused_before = {problem.loc for problem in _built(stored)[1].refused}
+    refused_after = {problem.loc for problem in _built(again)[1].refused}
+    if not refused_after <= refused_before:
+        return stored, "kept"
+    return again, "read_again"
 
 
 async def held_catalogue(conn: Any) -> Catalogue:

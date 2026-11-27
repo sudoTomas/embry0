@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 import pytest
+import yaml
 from structlog.testing import capture_logs
 
 from embry0.agents import catalogue, providers
@@ -450,10 +451,13 @@ def _refused_parts(metrics: Any) -> float | None:
 
 
 async def _store_directly(db: DatabasePool, data: dict[str, Any]) -> int:
-    """``data`` stored as another release, or a hand at the database, would: no check."""
+    """``data`` stored as another release would: no check, its text with it, which installing reads again (#756)."""
     return int(
         await db.fetchval(
-            "UPDATE provider_catalogue SET data = $1::jsonb, generation = generation + 1 RETURNING generation", data
+            "UPDATE provider_catalogue SET data = $1::jsonb, yaml_text = $2, generation = generation + 1 "
+            "RETURNING generation",
+            data,
+            yaml.safe_dump(data, sort_keys=False),
         )
     )
 

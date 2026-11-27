@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -333,6 +334,18 @@ def _cut(loc: tuple[str | int, ...]) -> tuple[str | int, ...]:
     return loc if len(loc) <= MAX_LOC_PARTS else (*loc[: MAX_LOC_PARTS - 1], LOC_CUT)
 
 
+def _finite(value: Any) -> bool:
+    """Whether every number ``value`` holds, at any depth (bounded by :data:`MAX_EXTRA_DEPTH`), is one JSON can
+    hold: no infinity and no NaN."""
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, dict):
+        return all(_finite(item) for item in value.values())
+    if isinstance(value, list):
+        return all(_finite(item) for item in value)
+    return True
+
+
 def _depth(value: Any, limit: int) -> int:
     """How deep ``value`` nests, counting no further than ``limit + 1``."""
     if limit < 0 or not isinstance(value, dict | list):
@@ -545,6 +558,16 @@ def _model_problems(where: tuple[str | int, ...], model: str, spec: ModelEntry, 
                 continue
             if _depth(value, MAX_EXTRA_DEPTH) > MAX_EXTRA_DEPTH:
                 problems.append(Problem((*where, name, key), "too_deep", f"nests deeper than {MAX_EXTRA_DEPTH} levels"))
+            elif not _finite(value):
+                # JSON has no such number: the stored overlay (jsonb) refused it at the save, after a dry run passed.
+                problems.append(
+                    Problem(
+                        (*where, name, key),
+                        "finite_number",
+                        "holds a number JSON cannot hold: an infinity or not a number (.inf, .nan, or one as large "
+                        "as 1e400)",
+                    )
+                )
             elif len(json.dumps(value, separators=(",", ":"))) > MAX_EXTRA_BYTES:
                 problems.append(
                     Problem((*where, name, key), "too_large", f"larger than {MAX_EXTRA_BYTES} bytes as JSON")
@@ -567,7 +590,8 @@ class CatalogueLoader(yaml.SafeLoader):
     hand-typed ``temperature: 1e-7`` reached the provider as ``"1e-7"`` (#756). Only that form changes: what YAML 1.1
     reads as a number still is, and a scalar that does not start with a digit, a sign or a point never becomes one,
     so no provider name, model id (each starts with its provider's prefix) or extras key can. The shipped catalogue
-    and every stored overlay are read with it (``provider_catalogue_store.load_text``)."""
+    is read with it, an overlay when it is written (``provider_catalogue_store.load_text``), and a stored overlay's
+    text again when it is installed, so one stored before this rule reads by it too (``provider_catalogue_store``)."""
 
 
 # Added on the subclass, which PyYAML gives a copy of the resolvers: the safe loader every other reader uses is left

@@ -592,3 +592,37 @@ async def test_a_write_and_its_undo_are_audited_to_the_database_and_the_file(
     assert [action for action, _ in await _audits(client)] == expected
     lines = Path(path).read_text().splitlines()
     assert [json.loads(line)["action"] for line in lines] == expected
+
+
+# ---- a number JSON cannot hold (#756 review) ----
+
+_LOCAL = (
+    "providers:\n  custom:\n    models:\n      custom/local:\n        free: true\n        request_extras: {extras}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("extras", "key"),
+    [
+        ("{temperature: .inf}", "temperature"),
+        ("{temperature: -.inf}", "temperature"),
+        ("{temperature: .nan}", "temperature"),
+        ("{temperature: 1e400}", "temperature"),
+        ("{chat_template_kwargs: {min_p: .inf}}", "chat_template_kwargs"),
+        ("{chat_template_kwargs: {weights: [1, .nan]}}", "chat_template_kwargs"),
+    ],
+    ids=["inf", "minus-inf", "nan", "1e400", "nested-object", "nested-list"],
+)
+@pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "save"])
+async def test_a_request_extra_with_a_number_json_cannot_hold_is_refused(
+    client: AsyncClient, extras: str, key: str, dry_run: bool
+) -> None:
+    """The overlay is stored as JSON (jsonb), which holds no infinity and no NaN: the dry run said fine and the save
+    then failed in Postgres. Both refuse it, naming the extra, and nothing is stored."""
+    generation = (await client.get(CATALOG)).json()["generation"]
+    params = {"dry_run": True} if dry_run else {}
+    resp = await client.put(CATALOG, content=_LOCAL.format(extras=extras).encode(), headers=YAML, params=params)
+    assert resp.status_code == 422, f"{extras}: {resp.status_code} {resp.text}"
+    named = [p for p in resp.json()["detail"] if p.get("type") == "finite_number"]
+    assert named and named[0]["loc"][-1] == key, f"the refusal names {key}: {resp.text}"
+    assert (await client.get(CATALOG)).json()["generation"] == generation, "something was stored"
