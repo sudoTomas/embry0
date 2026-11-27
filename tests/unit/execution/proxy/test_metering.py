@@ -664,3 +664,57 @@ def test_each_call_in_flight_carries_an_id_of_its_own() -> None:
     assert all(isinstance(i, int) for i in ids) and len(set(ids)) == 2, f"the calls in flight: {ids}"
     first.close()
     second.close()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"model": "m", "max_tokens": 10, "MAX_TOKENS": 100000}',
+        b'{"model": "m", "max_tokens": 10, "max_toKens": 100000}',
+        '{"model": "m", "max_tokens": 10, "max_tokenſ": 100000}'.encode(),
+        b'{"model": "m", "stream": false, "Stream": true}',
+    ],
+    ids=["upper", "mixed", "long-s", "stream"],
+)
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_a_body_naming_a_key_in_two_spellings_is_refused(wire: Any, raw: bytes) -> None:
+    """Some servers match keys with case folded, the last one winning: the meter would read one limit, they another."""
+    assert read_call(wire, raw).refused, f"forwarded {raw!r}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [b'{"model": "m"} and more', b'{"model": "m\xff"}', b"[]", b"", b'"text"'],
+    ids=["trailing-garbage", "not-utf-8", "an-array", "empty", "a-string"],
+)
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_a_body_that_is_not_one_json_object_is_refused(wire: Any, raw: bytes) -> None:
+    """A server may read what the meter cannot (a body with garbage after it, say), and answer what was not metered."""
+    assert read_call(wire, raw).refused, f"forwarded {raw!r}"
+
+
+@pytest.mark.parametrize(
+    "value", ["false", "true", 2, 1.0, [], {}], ids=["str-false", "str-true", "two", "float", "list", "dict"]
+)
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_a_stream_neither_on_nor_off_is_refused(wire: Any, value: Any) -> None:
+    raw = json.dumps({"model": "m", "stream": value}).encode()
+    assert read_call(wire, raw).refused, f"forwarded a stream of {value!r}"
+
+
+@pytest.mark.parametrize("value", [False, 0, None])
+def test_a_stream_turned_off_goes_as_written(value: Any) -> None:
+    raw = json.dumps({"model": "m", "stream": value}).encode()
+    call = read_call("openai_chat", raw)
+    assert (call.refused, call.body) == (None, raw)
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [{"max_completion_tokens": 10, "max_tokens": 100_000}, {"max_completion_tokens": 100_000, "max_tokens": 10}],
+    ids=["completion-lower", "completion-higher"],
+)
+def test_a_chat_completion_s_ceiling_is_the_larger_limit_it_names(limits: dict[str, int]) -> None:
+    """A server may honour either: one that knows only max_tokens (Ollama) generates up to it."""
+    call = read_call("openai_chat", json.dumps({"model": "m", **limits}).encode())
+    assert (call.refused, call.output_ceiling) == (None, 100_000), f"the ceiling read: {call.output_ceiling}"

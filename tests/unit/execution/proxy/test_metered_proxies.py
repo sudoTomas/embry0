@@ -649,3 +649,53 @@ async def test_the_xai_proxy_asks_for_plain_answers_and_refuses_one_it_cannot_re
     assert sent.get("accept-encoding") == "identity", f"the upstream was asked for: {sent.get('accept-encoding')}"
     (counted,) = (await _settled(client))["models"].values()
     assert (counted["requests"], counted["output_tokens"]) == (1, 900), f"a refused completion was charged {counted}"
+
+
+#: Each metered completion route, and the wire its body is read in.
+_COMPLETION_ROUTES = {
+    "xai-proxy messages": ("xai-proxy", "/v1/messages"),
+    "xai-proxy chat": ("xai-proxy", "/v1/chat/completions"),
+    "llm-proxy /v1": ("llm-proxy /v1", "/v1/chat/completions"),
+    "llm-proxy /p/openai": ("llm-proxy /p/openai", "/p/openai/v1/chat/completions"),
+}
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"model": "m", "max_tokens": 10, "MAX_TOKENS": 100000}',
+        '{"model": "m", "max_tokens": 10, "max_tokenſ": 100000}'.encode(),
+        b'{"model": "m", "max_tokens": 10} trailing',
+        b'{"model": "m\xff", "max_tokens": 10}',
+        b'{"model": "m", "max_tokens": 10, "stream": "false"}',
+    ],
+    ids=["case-folded-twin", "long-s-twin", "trailing-garbage", "not-utf-8", "stream-as-text"],
+)
+async def test_a_completion_body_the_meter_cannot_read_as_every_server_would_is_refused(
+    aiohttp_client, model_server, route, raw
+):
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream)
+    resp = await client.post(path, data=raw, headers={**_AUTH, "Content-Type": "application/json"})
+    assert resp.status == 400, f"{route} answered {resp.status} to {raw!r}"
+    assert upstream.calls == [], f"{route} forwarded {raw!r}"
+    assert (await _run(client))["models"] == {}, "a refused request was counted"
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
+async def test_a_completion_naming_both_limits_is_charged_the_larger(aiohttp_client, model_server, route):
+    """{"max_completion_tokens": 10, "max_tokens": 100000}: a server that knows only max_tokens generates up to it."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    raw = (ANSWERS / "openai-chat-stream.sse").read_bytes()
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=300, fail=httpx.ReadError("cut"), fail_after=1))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream)
+    body = {"model": "qwen", "messages": [], "stream": True, "max_completion_tokens": 10, "max_tokens": 100_000}
+    try:
+        await (await client.post(path, json=body, headers=_AUTH)).read()
+    except aiohttp.ClientPayloadError:
+        pass
+    (counted,) = (await _settled(client))["models"].values()
+    assert counted["output_tokens"] == 100_000, f"{route} read the lower limit: {counted}"

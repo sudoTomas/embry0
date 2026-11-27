@@ -542,3 +542,23 @@ async def test_a_call_in_flight_not_known_to_be_charged_is_charged_again(lost: s
         tally["open"] = []
 
     assert _output(await _undeclared(proxies, meter, "run-2", ended)) == (50, 500), f"{lost}: not charged again"
+
+
+async def test_a_proxy_restarted_between_runs_reusing_a_key_and_an_id_has_its_call_charged() -> None:
+    """A recreated proxy numbers its calls from the start again, and a tally may come back under the same key: a call
+    of the new process that carries an id a run was charged in the old one is not that call, and is charged."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    key = "unattributed:sbx:1.0"
+    in_flight = {"id": 1, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    await _undeclared(proxies, meter, "run-1", lambda tally: tally.update(open=[dict(in_flight)]))
+    proxies.boot["llm-proxy"] = "l2"  # recreated: its tallies start again, the same key and the same first id
+    proxies.tallies["llm-proxy"][key] = {**_unattributed("sbx", {}), "open": [dict(in_flight)]}  # began between runs
+
+    def ended(tally: dict[str, Any]) -> None:
+        tally["models"] = {"grok-4.7": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1}}
+        tally["open"] = []
+
+    metering = await _undeclared(proxies, meter, "run-2", ended)
+    assert _output(metering) == (50, 500), f"the new process's call was taken for the one charged: {_output(metering)}"

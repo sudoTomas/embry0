@@ -49,6 +49,7 @@ from embry0.execution.proxy.metering import (
 from embry0.execution.proxy.model_request import (
     DEFAULT_MAX_REQUEST_BYTES,
     anthropic_error,
+    openai_error,
     read_body,
     unreadable_encoding,
 )
@@ -339,6 +340,11 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     metered: Metered | None = None
     if wire is not None:
         call = read_call(wire, body)
+        if call.refused is not None:
+            logger.warning("xai_proxy_request_refused", sandbox_id=sandbox_id, reason=call.refused)
+            if wire == "anthropic":
+                return anthropic_error("invalid_request_error", call.refused, 400)
+            return openai_error("unreadable_request", call.refused, 400)
         body = call.body
         try:
             metered = request.app[METER].open(sandbox_id, call)

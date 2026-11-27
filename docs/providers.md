@@ -279,7 +279,13 @@ answer did give (the request's size when it gave none). An answer whose usage
 was read in full is charged that usage however it ended, and an error answer
 still costs nothing. A streamed chat completion goes upstream asking for
 exactly its final usage, which counts only from a chunk that finishes the
-answer. A run whose calls counted under the sandbox's calls under no run (it
+answer. A completion request the proxy cannot read the way every server would
+is refused (400) and never forwarded: a body that is not one JSON object, a
+top-level key named in two spellings that match once case is folded (some
+servers match keys so, the last winning), or a `stream` neither true nor
+false. A key named twice exactly goes upstream once, with the value the proxy
+read; the output limit is the larger of `max_tokens` and
+`max_completion_tokens`, since a server may honour either. A run whose calls counted under the sandbox's calls under no run (it
 could not be declared) is given what those grew by, each call in flight at its
 end counted at its ceiling; a call in flight at its start is taken off only
 when the orchestrator charged an earlier run for it (it remembers which, by the

@@ -72,13 +72,13 @@ async def test_two_sandboxes_forward_their_own_bearer(xai_client: TestClient) ->
     await _push(xai_client, "cred-b", "access-b")
     captured = _capture(xai_client.app)
 
-    resp_a = await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_A}"})
+    resp_a = await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_A}"})
     assert resp_a.status == 200
     assert captured["headers"]["Authorization"] == "Bearer access-a", (
         f"sandbox sb-a must forward cred-a's bearer, got {captured['headers'].get('Authorization')!r}"
     )
 
-    resp_b = await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_B}"})
+    resp_b = await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_B}"})
     assert resp_b.status == 200
     assert captured["headers"]["Authorization"] == "Bearer access-b", (
         f"sandbox sb-b must forward cred-b's bearer, got {captured['headers'].get('Authorization')!r}"
@@ -93,12 +93,12 @@ async def test_refreshed_token_is_used_without_reenrolling(xai_client: TestClien
     await _push(xai_client, "cred-a", "access-a2")
     captured = _capture(xai_client.app)
 
-    resp_b = await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_B}"})
+    resp_b = await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_B}"})
     assert resp_b.status == 200
     assert captured["headers"]["Authorization"] == "Bearer access-b", (
         f"refreshing cred-a must not replace cred-b, got {captured['headers'].get('Authorization')!r}"
     )
-    resp_a = await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_A}"})
+    resp_a = await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_A}"})
     assert resp_a.status == 200
     assert captured["headers"]["Authorization"] == "Bearer access-a2", (
         f"a refreshed token must apply without re-enrolling, got {captured['headers'].get('Authorization')!r}"
@@ -109,7 +109,7 @@ async def test_missing_credential_token_is_503(xai_client: TestClient) -> None:
     await _enroll(xai_client, "sb-a", _TOKEN_A, "cred-a")
     # A global token must not satisfy a sandbox bound to a credential that has none.
     await xai_client.post("/admin/token", json={"access_token": "global-token"}, headers={"X-Admin-Token": _ADMIN})
-    resp = await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_A}"})
+    resp = await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_A}"})
     body = await resp.json()
     assert resp.status == 503, f"a credential with no token must be 503, got {resp.status} {body}"
     assert body.get("error") == "credential_token_missing", (
@@ -122,9 +122,9 @@ async def test_admin_health_counts_upstream_and_resets(xai_client: TestClient) -
     await _push(xai_client, "cred-a", "access-a")
     captured = _capture(xai_client.app)
     captured["_status"] = 429
-    await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_A}"})
+    await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_A}"})
     captured["_status"] = 401
-    await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_A}"})
+    await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_A}"})
 
     first = await xai_client.get("/admin/health", headers={"X-Admin-Token": _ADMIN})
     assert first.status == 200, await first.text()
@@ -145,7 +145,7 @@ async def test_enroll_without_credential_id_keeps_the_global_token(xai_client: T
     )
     assert pushed.status == 200
     captured = _capture(xai_client.app)
-    resp = await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_A}"})
+    resp = await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_A}"})
     assert resp.status == 200
     assert captured["headers"]["Authorization"] == "Bearer global-token"
 
@@ -191,7 +191,7 @@ async def test_a_stale_token_403_is_counted_and_passed_through(xai_client: TestC
     await _push(xai_client, "cred-a", "access-a")
     _capture_403(xai_client.app, body)
 
-    resp = await xai_client.post("/v1/messages", headers={"Authorization": f"Bearer {_TOKEN_A}"})
+    resp = await xai_client.post("/v1/messages", json={}, headers={"Authorization": f"Bearer {_TOKEN_A}"})
     assert resp.status == 403
     assert await resp.read() == body, "the 403 body must reach the sandbox unchanged"
 

@@ -464,6 +464,9 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
     metered: Metered | None = None
     if method == "POST":
         call = read_call("openai_chat", body)
+        if call.refused is not None:
+            logger.warning("llm_proxy_request_refused", sandbox_id=sandbox_id, reason=call.refused)
+            return openai_error("unreadable_request", call.refused, 400)
         body = call.body
         try:
             metered = request.app[METER].open(sandbox_id, call)

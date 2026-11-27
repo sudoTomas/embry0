@@ -178,58 +178,86 @@ class Call:
     output_ceiling: int
     #: Whether the request named that limit itself (an estimate of its output is then capped by it).
     output_limited: bool
+    #: Why the proxy will not forward the request, when it will not: a body it cannot read as one request, the way
+    #: every server would read it. None for a request it forwards.
+    refused: str | None = None
 
     def ceiling(self) -> Usage:
         """What the call is charged when its answer is lost."""
         return Usage(input_tokens=self.input_estimate, output_tokens=self.output_ceiling)
 
 
-def _last_object_repeats(pairs: list[tuple[str, Any]], seen: list[bool]) -> dict[str, Any]:
-    """``json.loads``'s hook for each object, innermost first: notes whether the last one (the top level, once parsing
-    ends) named a key twice."""
-    seen.append(len({key for key, _ in pairs}) != len(pairs))
-    return dict(pairs)
+def _stream_value(value: Any) -> bool | None:
+    """Whether a request's ``stream`` turns streaming on; None for a value a server could read either way."""
+    if value is None or value is False or (type(value) is int and value == 0):
+        return False
+    if value is True or (type(value) is int and value == 1):
+        return True
+    return None
 
 
 def read_call(wire: Wire, body: bytes) -> Call:
-    """The call ``body`` makes, and the body that goes upstream. A chat completions request that streams goes with
-    ``stream`` true and ``stream_options`` exactly ``include_usage``. A body naming a top-level key twice goes as the
-    proxy read it (each key's last value): an upstream that read the first would answer a request other than the one
-    metered (another output limit, another stream option)."""
-    payload: Any = None
-    repeats: list[bool] = []
+    """The call ``body`` makes, and the body that goes upstream.
+
+    The proxy forwards only a request every server reads as the proxy does, so that what it meters is what the
+    server answers: a body that is not one JSON object, a top-level key named in two spellings that match once case is
+    folded (some servers match keys that way, the last one winning), or a ``stream`` that is neither on nor off, is
+    refused (:attr:`Call.refused`). A key named twice exactly goes as the proxy read it (each key once, its last
+    value). A chat completion that streams goes with ``stream`` true and ``stream_options`` exactly
+    ``include_usage``. The output limit is the larger the request names, ``max_tokens`` or (for chat completions)
+    ``max_completion_tokens``: a server may honour either."""
+    tops: list[list[str]] = []
+
+    def keep(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        tops.append([key for key, _ in pairs])  # innermost first: the top level's last
+        return dict(pairs)
+
     try:
-        payload = (
-            json.loads(body, object_pairs_hook=lambda pairs: _last_object_repeats(pairs, repeats)) if body else None
-        )
+        payload: Any = json.loads(body, object_pairs_hook=keep)
     except (ValueError, RecursionError):  # see embry0.json_text; UnicodeDecodeError is a ValueError
         payload = None
-    model: str | None = None
-    limit: int | None = None
-    if isinstance(payload, dict):
-        model = _model_name(payload.get("model"))
-        keys = ("max_tokens",) if wire == "anthropic" else ("max_completion_tokens", "max_tokens")
-        for key in keys:
-            value = _count(payload.get(key))
-            if value:
-                limit = value
-                break
-        rewrite = bool(repeats and repeats[-1])
-        if wire == "openai_chat" and payload.get("stream"):
-            # Exactly the final usage: another option (vLLM's continuous_usage_stats) would have a usage in every chunk,
-            # and a stream that broke after one would look read in full.
-            payload["stream"] = True
-            payload["stream_options"] = dict(_STREAM_OPTIONS)
-            rewrite = True
-        if rewrite:
-            body = json.dumps(payload).encode("utf-8")
+    if not isinstance(payload, dict):
+        return _refused(wire, body, "the request body is not one JSON object")
+    named = tops[-1]
+    folded: dict[str, set[str]] = {}
+    for key in named:
+        folded.setdefault(key.casefold(), set()).add(key)
+    clashing = sorted(key for spellings in folded.values() if len(spellings) > 1 for key in spellings)
+    if clashing:
+        return _refused(wire, body, f"the request names a key in more than one spelling: {', '.join(clashing)[:200]}")
+    streaming = _stream_value(payload.get("stream"))
+    if streaming is None:
+        return _refused(wire, body, "the request's stream is neither true nor false")
+    keys = ("max_tokens",) if wire == "anthropic" else ("max_completion_tokens", "max_tokens")
+    limits = [value for key in keys if (value := _count(payload.get(key)))]
+    rewrite = len(set(named)) != len(named)
+    if wire == "openai_chat" and streaming:
+        # Exactly the final usage: another option (vLLM's continuous_usage_stats) would have a usage in every chunk,
+        # and a stream that broke after one would look read in full.
+        payload["stream"] = True
+        payload["stream_options"] = dict(_STREAM_OPTIONS)
+        rewrite = True
+    if rewrite:
+        body = json.dumps(payload).encode("utf-8")
     return Call(
         wire=wire,
         body=body,
-        model=model,
+        model=_model_name(payload.get("model")),
         input_estimate=math.ceil(len(body) / BYTES_PER_TOKEN),
-        output_ceiling=limit if limit is not None else DEFAULT_OUTPUT_CEILING,
-        output_limited=limit is not None,
+        output_ceiling=max(limits) if limits else DEFAULT_OUTPUT_CEILING,
+        output_limited=bool(limits),
+    )
+
+
+def _refused(wire: Wire, body: bytes, reason: str) -> Call:
+    return Call(
+        wire=wire,
+        body=body,
+        model=None,
+        input_estimate=math.ceil(len(body) / BYTES_PER_TOKEN),
+        output_ceiling=DEFAULT_OUTPUT_CEILING,
+        output_limited=False,
+        refused=reason,
     )
 
 
