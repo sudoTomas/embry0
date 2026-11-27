@@ -25,8 +25,12 @@ Everything here fails toward counting more, never less:
 - so is one whose answer broke off before its usage was read: the upstream cut
   it, it could not be decoded, or the sandbox went away while it came. The
   provider may have generated all of it, and what was read is no measure of
-  that. What it did say (an input count) is kept where it is larger. An
-  answer whose usage was read in full is charged that usage, however it ended;
+  that, so its output is the most the request allowed; the input counts the
+  answer did give stand (its input is the request's size only when it gave
+  none). An answer whose usage was read in full is charged that usage, however
+  it ended. One limit: an answer whose end is the connection closing (no
+  length, not chunked) that is cut short looks like one that ended whole, and
+  keeps the estimate: the two cannot be told apart;
 - a call still in flight shows in every snapshot with that ceiling, so a reader
   that loses the proxy (a restart) can charge it;
 - an error answer (no 2xx) is counted as an error and charged nothing: the
@@ -37,8 +41,10 @@ Everything here fails toward counting more, never less:
 Two wire formats are read: Anthropic's Messages API (``anthropic``, which
 xAI's compat endpoint also speaks) and OpenAI's chat completions
 (``openai_chat``), each as plain JSON or as server-sent events. A chat
-completions request that streams is sent upstream with
-``stream_options.include_usage``, without which its answer carries no usage.
+completions request that streams is sent upstream with ``stream_options``
+exactly ``{"include_usage": true}``, without which its answer carries no
+usage: another option (a usage in every chunk) is dropped, and a stream's usage
+counts as the answer's only in a chunk with no choice still open.
 """
 
 from __future__ import annotations
@@ -104,6 +110,8 @@ DEFAULT_MAX_TALLIES = 1000
 MAX_MODEL_CHARS = 200
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+#: The ``stream_options`` a streamed chat completion goes upstream with, whatever the sandbox asked for.
+_STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
 #: A provider's name, as a run's declaration names it (a provider record's ``name``).
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _SANDBOX_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
@@ -177,7 +185,7 @@ class Call:
 
 
 def read_call(wire: Wire, body: bytes) -> Call:
-    """The call ``body`` makes. A chat completions request that streams is given ``include_usage``."""
+    """The call ``body`` makes. A chat completions request that streams is sent exactly ``include_usage``."""
     payload: Any = None
     try:
         payload = json.loads(body) if body else None
@@ -193,13 +201,11 @@ def read_call(wire: Wire, body: bytes) -> Call:
             if value:
                 limit = value
                 break
-        if wire == "openai_chat" and payload.get("stream") is True:
-            options = payload.get("stream_options")
-            options = dict(options) if isinstance(options, dict) else {}
-            if options.get("include_usage") is not True:
-                options["include_usage"] = True
-                payload["stream_options"] = options
-                body = json.dumps(payload).encode("utf-8")
+        if wire == "openai_chat" and payload.get("stream") is True and payload.get("stream_options") != _STREAM_OPTIONS:
+            # Exactly the final usage: another option (vLLM's continuous_usage_stats) would have a usage in every chunk,
+            # and a stream that broke after one would look read in full.
+            payload["stream_options"] = dict(_STREAM_OPTIONS)
+            body = json.dumps(payload).encode("utf-8")
     return Call(
         wire=wire,
         body=body,
@@ -480,19 +486,27 @@ class _AnthropicEvents(_EventReader):
 
 
 class _OpenAIEvents(_EventReader):
-    """OpenAI's stream: the usage arrives in a last chunk (``include_usage``), or in ``x_groq`` (Groq)."""
+    """OpenAI's stream: the usage arrives in a last chunk (``include_usage``), or in ``x_groq`` (Groq). A usage counts
+    as the answer's own only in a chunk with no choice still open (none, or every one finished): a server that sends a
+    running usage with each chunk has not said what the answer cost until it finishes."""
 
     def _event(self, payload: dict[str, Any]) -> bool:
         reading = self.reading
         reading.model = _model_name(payload.get("model")) or reading.model
         known = False
+        choices = payload.get("choices")
+        # No choice open: none named, none in the list, or every one finished.
+        finished = choices is None or (
+            isinstance(choices, list)
+            and all(isinstance(choice, dict) and choice.get("finish_reason") for choice in choices)
+        )
         groq = payload.get("x_groq")
         for raw in (payload.get("usage"), groq.get("usage") if isinstance(groq, dict) else None):
             usage = _openai_usage(raw) if raw is not None else None
             if usage is not None:
                 reading.usage.raise_to(usage)
-                reading.complete = known = True
-        choices = payload.get("choices")
+                known = True
+                reading.complete = reading.complete or finished
         if isinstance(choices, list):
             known = True
             for choice in choices:
@@ -757,8 +771,9 @@ class Metered:
             reading = self._reader.finish()
             usage, estimated = charge(self.call, reading)
             if self._lost and not reading.complete:
-                # Broken off before its usage: what the provider generated is not what was read.
-                usage.raise_to(self.call.ceiling())
+                # Broken off before its usage: what the provider generated is not what was read. Its output is the
+                # most the request allowed; its input stays what the answer said, or the estimate ``charge`` made.
+                usage.output_tokens = max(usage.output_tokens, self.call.output_ceiling)
             model = reading.model or self.call.model
         elif self._lost:
             usage, estimated, model = self.call.ceiling(), True, self.call.model

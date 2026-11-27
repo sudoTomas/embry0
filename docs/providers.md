@@ -274,9 +274,15 @@ the proxy reported it: the request's size as input and its output limit as
 output. So is a call whose answer broke off before its usage was read: the
 upstream cut it, it could not be decoded, or the sandbox went away while it
 came. The provider may have generated all of it, so what was read is no
-measure; a count the answer did give (an input count) is kept where larger. An
-answer whose usage was read in full is charged that usage however it ended,
-and an error answer still costs nothing. A proxy process that went away mid-run leaves its last read in
+measure: its output is the request's limit, and its input the counts the
+answer did give (the request's size when it gave none). An answer whose usage
+was read in full is charged that usage however it ended, and an error answer
+still costs nothing. A streamed chat completion goes upstream asking for
+exactly its final usage, which counts only from a chunk that finishes the
+answer. A run whose calls counted under the sandbox's calls under no run (it
+could not be declared) is given what those grew by with calls in flight at
+their ceiling at both ends, so a call in flight between two such runs is
+charged once. A proxy process that went away mid-run leaves its last read in
 `run_meter` with its calls in flight, and the recreated proxy is given the run
 back after the sandbox's enrollment, under a new process (`boot_id`), so the
 run's calls are the two tallies summed and the charge is the larger figure.

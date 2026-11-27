@@ -218,11 +218,18 @@ def test_a_stream_whose_last_event_has_no_blank_line_is_still_read() -> None:
 # --------------------------------------------------------------------------- requests
 
 
-def test_a_streaming_chat_request_is_sent_with_include_usage() -> None:
-    body = json.dumps({"model": "m", "stream": True, "stream_options": {"include_obfuscation": False}}).encode()
-    call = read_call("openai_chat", body)
+@pytest.mark.parametrize(
+    "options",
+    [None, {"include_obfuscation": False}, {"continuous_usage_stats": True}, {"include_usage": False}, "yes"],
+    ids=["none", "another-option", "a-usage-per-chunk", "usage-off", "not-an-object"],
+)
+def test_a_streaming_chat_request_is_sent_with_exactly_include_usage(options: Any) -> None:
+    """Exactly the final usage: a running usage in every chunk would make a stream broken after one look read in full."""
+    body = json.dumps({"model": "m", "stream": True, **({"stream_options": options} if options is not None else {})})
+    call = read_call("openai_chat", body.encode())
     sent = json.loads(call.body)
-    assert sent["stream_options"] == {"include_obfuscation": False, "include_usage": True}
+    assert sent["stream_options"] == {"include_usage": True}, f"sent upstream: {sent['stream_options']}"
+    body = json.dumps({"model": "m", "stream": True, "stream_options": {"include_obfuscation": False}}).encode()
     assert read_call("openai_chat", json.dumps({"model": "m"}).encode()).body == json.dumps({"model": "m"}).encode()
     assert read_call("anthropic", body).body == body, "an Anthropic request was changed"
 
@@ -565,3 +572,36 @@ def test_a_model_name_is_kept_no_longer_than_the_catalogue_allows() -> None:
     metered.lost()
     metered.close()
     assert len(json.dumps(meter.snapshot())) < 10_000
+
+
+@pytest.mark.parametrize(
+    ("choices", "complete"),
+    [
+        ([], True),
+        (None, True),
+        ([{"index": 0, "delta": {}, "finish_reason": "stop"}], True),
+        (
+            [{"index": 0, "delta": {}, "finish_reason": "stop"}, {"index": 1, "delta": {}, "finish_reason": "length"}],
+            True,
+        ),
+        ([{"index": 0, "delta": {"content": "a"}, "finish_reason": None}], False),
+        (
+            [
+                {"index": 0, "delta": {}, "finish_reason": "stop"},
+                {"index": 1, "delta": {"content": "a"}, "finish_reason": None},
+            ],
+            False,
+        ),
+        ("not a list", False),
+    ],
+    ids=["no-choice", "no-choices-field", "finished", "all-finished", "open", "one-of-two-open", "not-a-list"],
+)
+def test_a_stream_s_usage_is_the_answer_s_only_in_a_chunk_with_no_choice_open(choices: Any, complete: bool) -> None:
+    chunk: dict[str, Any] = {"model": "m", "usage": {"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12}}
+    if choices is not None:
+        chunk["choices"] = choices
+    reader = reader_for("openai_chat", "text/event-stream")
+    reader.feed(b"data: " + json.dumps(chunk).encode() + b"\n\n")
+    reading = reader.finish()
+    assert reading.complete is complete, f"a usage beside choices {choices!r} was taken as complete={reading.complete}"
+    assert (reading.usage.input_tokens, reading.usage.output_tokens) == (5, 7), "the counts it gave were not kept"

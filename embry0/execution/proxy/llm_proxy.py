@@ -74,7 +74,7 @@ from embry0.execution.proxy.metering import (
     read_call,
     register_meter_routes,
 )
-from embry0.execution.proxy.model_request import openai_error, read_body
+from embry0.execution.proxy.model_request import openai_error, read_body, unreadable_encoding
 from embry0.execution.proxy.pinned_client import pinned, pinning_client
 from embry0.execution.proxy.server_address import refused_address, refused_server_host
 from embry0.safety.redaction import REDACTED
@@ -99,9 +99,6 @@ _FORWARDED_REQUEST_HEADERS = ("content-type", "accept")
 _FORWARDED_RESPONSE_HEADERS = ("content-type",)
 #: The shortest key scrubbed from an answer: a shorter one (a placeholder) would replace ordinary words.
 _MIN_SCRUBBED_KEY = 8
-#: The answer encodings the proxy reads (httpx decodes them, so the scrub sees the text). A server is asked for
-#: ``identity``; an answer in any other encoding is refused, since its bytes cannot be scrubbed.
-_READABLE_ENCODINGS = frozenset({"identity", "gzip", "deflate"})
 # path under /v1 -> the one method allowed on it
 _ROUTES: dict[str, str] = {"chat/completions": "POST", "models": "GET"}
 
@@ -392,12 +389,6 @@ def _upstream_headers(request: web.Request, server: Upstream) -> dict[str, str]:
     return headers
 
 
-def _unreadable_encoding(header: str) -> str | None:
-    """The answer's ``Content-Encoding`` when it names an encoding the proxy does not decode, else None."""
-    named = [part.strip().lower() for part in header.split(",") if part.strip()]
-    return header.strip() if any(part not in _READABLE_ENCODINGS for part in named) else None
-
-
 async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     """``/v1/...``: the custom server's path for the images that read its root from their env."""
     return await _serve(request, CUSTOM_PROVIDER, path_per_provider=False)
@@ -538,7 +529,7 @@ async def _forward(
             content=body or None,
             timeout=httpx.Timeout(limits.timeout_seconds, connect=_CONNECT_SECONDS),
         ) as upstream:
-            unreadable = _unreadable_encoding(upstream.headers.get("content-encoding", ""))
+            unreadable = unreadable_encoding(upstream.headers.get("content-encoding", ""))
             if unreadable is not None:
                 # Its bytes cannot be scrubbed, so they never go back. A completion was answered all the same: it is
                 # charged its ceiling, as one whose usage cannot be read.

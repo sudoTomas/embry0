@@ -46,7 +46,12 @@ from embry0.execution.proxy.metering import (
     read_call,
     register_meter_routes,
 )
-from embry0.execution.proxy.model_request import DEFAULT_MAX_REQUEST_BYTES, read_body
+from embry0.execution.proxy.model_request import (
+    DEFAULT_MAX_REQUEST_BYTES,
+    anthropic_error,
+    read_body,
+    unreadable_encoding,
+)
 from embry0.safety.xai_denials import XaiDenial, classify_xai_denial
 
 logger = structlog.get_logger(__name__)
@@ -309,6 +314,10 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     headers.pop("x-api-key", None)
     headers.pop("X-Api-Key", None)
     headers["Authorization"] = f"Bearer {access_token}"
+    # Uncompressed: an encoding the image cannot decode would reach the sandbox unread by the meter.
+    for name in [name for name in headers if name.lower() == "accept-encoding"]:
+        del headers[name]
+    headers["Accept-Encoding"] = "identity"
 
     # EMB-54: xAI prompt caching depends on sticky per-server routing via the
     # x-grok-conv-id header (cache entries are per-server; without it,
@@ -376,6 +385,17 @@ async def _forward(
             headers=headers,
             content=body,
         ) as upstream_resp:
+            unreadable = unreadable_encoding(upstream_resp.headers.get("content-encoding", ""))
+            if unreadable is not None:
+                # Not decoded here, so the meter would read nothing of it: refused, never relayed. A completion was
+                # answered all the same, so it is charged its ceiling; an error answer, nothing.
+                if metered is not None:
+                    if 200 <= upstream_resp.status_code < 300:
+                        metered.lost()
+                    else:
+                        metered.answer(upstream_resp.status_code, upstream_resp.headers.get("content-type"))
+                logger.warning("xai_proxy_answer_encoding_refused", encoding=unreadable[:80])
+                return anthropic_error("api_error", "the upstream answered in an encoding the proxy does not read", 502)
             if metered is not None:
                 metered.answer(upstream_resp.status_code, upstream_resp.headers.get("content-type"))
             if credential_id and upstream_resp.status_code in (401, 429):

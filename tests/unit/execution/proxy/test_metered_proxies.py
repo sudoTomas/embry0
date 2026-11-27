@@ -50,9 +50,12 @@ class _Answer:
         fail: BaseException | None = None,
         fail_after: int | None = None,
         gate: asyncio.Event | None = None,
+        encoding: str | None = None,
     ) -> None:
         self.status_code = status
         self.headers = {"content-type": content_type}
+        if encoding is not None:
+            self.headers["content-encoding"] = encoding
         self._chunks = [body[i : i + chunk] for i in range(0, len(body), chunk)] or [b""]
         self._fail = fail
         self._fail_after = fail_after
@@ -549,3 +552,100 @@ async def test_an_answer_that_ends_whole_without_its_usage_is_charged_an_estimat
     assert (counted["estimated"], counted["output_tokens"]) == (1, -(-len(body) // 2)), (
         f"a whole answer was charged {counted['output_tokens']}, not an estimate of its bytes (ceiling {ceiling})"
     )
+
+
+def _sse(*events: dict[str, Any]) -> bytes:
+    return b"".join(b"data: " + json.dumps(event).encode() + b"\n\n" for event in events)
+
+
+async def test_a_broken_stream_s_ceiling_raises_its_output_and_leaves_its_input_counts(aiohttp_client):
+    """A large request whose stream broke after its input counts: those counts stand (its input is not raised to the
+    request's size besides them), and its output is the most the request allowed."""
+    start = {
+        "type": "message_start",
+        "message": {
+            "id": "m",
+            "model": "grok-4.7",
+            "usage": {
+                "input_tokens": 10,
+                "cache_read_input_tokens": 100_000,
+                "cache_creation_input_tokens": 2000,
+                "output_tokens": 1,
+            },
+        },
+    }
+    delta = {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Reading"}}
+    raw = _sse(start, delta)
+    upstream = _Upstream()
+    upstream.answers.append(
+        _Answer(raw, content_type=_SSE, chunk=len(raw) // 2 + 1, fail=httpx.ReadError("cut"), fail_after=2)
+    )
+    client = await _metered(aiohttp_client, None, "xai-proxy", upstream)
+    body = _messages(max_tokens=900, messages=[{"role": "user", "content": "x" * 400_000}])
+    await (await client.post("/v1/messages", json=body, headers=_AUTH)).read()
+    (counted,) = (await _settled(client))["models"].values()
+    said = (counted["input_tokens"], counted["cache_read_tokens"], counted["cache_creation_tokens"])
+    assert said == (10, 100_000, 2000), f"the input counts the answer gave were not what it was charged: {counted}"
+    assert counted["output_tokens"] == 900
+
+
+@pytest.mark.parametrize("route", ["llm-proxy /v1", "llm-proxy /p/openai"])
+async def test_a_running_usage_in_each_chunk_does_not_make_a_broken_stream_whole(aiohttp_client, model_server, route):
+    """A server that sends a running usage with every chunk (vLLM's continuous_usage_stats) has not said what the answer
+    cost until a chunk finishes it."""
+    path, _answer, ceiling = _ROUTES[route]
+
+    def chunk(text: str, done: int) -> dict[str, Any]:
+        usage = {"prompt_tokens": 20, "completion_tokens": done, "total_tokens": 20 + done}
+        choice = {"index": 0, "delta": {"content": text}, "finish_reason": None}
+        return {"id": "c", "model": "qwen", "choices": [choice], "usage": usage}
+
+    raw = _sse(chunk("Read", 1), chunk("ing the file", 4), chunk(" now", 5))
+    upstream = _Upstream()
+    first = raw.index(b"\n\n") + 2
+    upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=first, fail=httpx.ReadError("cut"), fail_after=1))
+    client = await _metered(aiohttp_client, model_server, route, upstream)
+    await (await client.post(path, json=_call(route), headers=_AUTH)).read()
+    (counted,) = (await _settled(client))["models"].values()
+    assert counted["output_tokens"] == ceiling, f"a running usage was taken for the answer's: {counted}"
+
+
+@pytest.mark.parametrize("route", ["llm-proxy /v1", "llm-proxy /p/openai"])
+async def test_an_early_usage_alone_leaves_a_whole_stream_estimated(aiohttp_client, model_server, route):
+    """A usage in a chunk whose choice is still open is not the answer's: one that never finishes with another is
+    charged an estimate of what it carried, not that early usage's output."""
+    path, _answer, _ceiling = _ROUTES[route]
+    early = {
+        "id": "c",
+        "model": "qwen",
+        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 0, "total_tokens": 20},
+    }
+    text = {
+        "id": "c",
+        "model": "qwen",
+        "choices": [{"index": 0, "delta": {"content": "y" * 300}, "finish_reason": None}],
+    }
+    raw = _sse(early, text) + b"data: [DONE]\n\n"
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=200))
+    client = await _metered(aiohttp_client, model_server, route, upstream)
+    await (await client.post(path, json=_call(route), headers=_AUTH)).read()
+    (counted,) = (await _settled(client))["models"].values()
+    assert (counted["estimated"], counted["output_tokens"]) == (1, 150), f"charged {counted}"
+
+
+async def test_the_xai_proxy_asks_for_plain_answers_and_refuses_one_it_cannot_read(aiohttp_client):
+    """An answer in an encoding the proxy does not decode would reach the sandbox unread by the meter."""
+    upstream = _Upstream()
+    raw = (ANSWERS / "anthropic-stream.sse").read_bytes()
+    upstream.answers.append(_Answer(raw, content_type=_SSE, encoding="br"))
+    client = await _metered(aiohttp_client, None, "xai-proxy", upstream)
+    headers = {**_AUTH, "Accept-Encoding": "br, zstd"}
+    resp = await client.post("/v1/messages", json=_messages(max_tokens=900), headers=headers)
+    body = await resp.read()
+    assert resp.status == 502, f"an answer in br went back: {resp.status} {body[:120]!r}"
+    sent = {name.lower(): value for name, value in upstream.calls[0]["headers"].items()}
+    assert sent.get("accept-encoding") == "identity", f"the upstream was asked for: {sent.get('accept-encoding')}"
+    (counted,) = (await _settled(client))["models"].values()
+    assert (counted["requests"], counted["output_tokens"]) == (1, 900), f"a refused completion was charged {counted}"

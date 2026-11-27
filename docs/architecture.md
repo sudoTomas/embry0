@@ -768,8 +768,9 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > each answer's usage as it streams through (`execution/proxy/metering.py`):
 > Anthropic's Messages format, which xAI's compat endpoint also speaks, and
 > OpenAI's chat completions, as JSON or as server-sent events. A chat
-> completion that streams goes upstream with `stream_options.include_usage`,
-> without which its answer carries no usage. The tokens count under the run
+> completion that streams goes upstream with `stream_options` exactly
+> `{"include_usage": true}`, without which its answer carries no usage; a
+> stream's usage counts as the answer's only in a chunk that finishes it. The tokens count under the run
 > the orchestrator declared for the sandbox (`POST /admin/runs`, ended by
 > `DELETE /admin/runs/{run_id}`, which answers its tally); a sandbox never
 > names its own run. The declaration names the run's provider, and the
@@ -786,8 +787,12 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > past the connect) is charged its ceiling (the request's size as input, its
 > output limit as output), and so is one whose answer broke off before its
 > usage was read (the upstream cut it, it could not be decoded, the sandbox
-> went away mid-answer), keeping any larger count it did say; a count reported
-> again lower never lowers it, and only an error answer is charged nothing. The xai-proxy forwards
+> went away mid-answer): its output is its limit, its input what the answer
+> said (else the request's size); a count reported again lower never lowers
+> it, and only an error answer is charged nothing. Both proxies ask the
+> upstream for uncompressed answers and refuse one in an encoding they do not
+> decode (anything but gzip or deflate), charging a completion so refused its
+> ceiling. The xai-proxy forwards
 > no billed call it cannot meter: anything but a read, `/v1/messages`,
 > `/v1/messages/count_tokens` and `/v1/chat/completions` is refused (404,
 > `xai_proxy_path_refused`). The orchestrator declares each run to the metering proxies its sandbox is

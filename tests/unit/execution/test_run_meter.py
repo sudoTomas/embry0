@@ -372,11 +372,11 @@ async def test_a_run_not_declared_is_charged_what_the_proxy_counted_under_no_run
     metering = await meter.end(window)
 
     counted = [t.snapshot["models"] for t in metering.tallies if t.proxy == "llm-proxy"]
-    assert counted == [{"grok-4.7": {"input_tokens": 300, "output_tokens": 30, "requests": 3, "estimated": 0}}], (
-        f"the run was not given what the proxy counted under no run during it: {counted}"
-    )
+    # Three calls answered in the run, and the one in flight at its ceiling.
+    expected = {"grok-4.7": {"input_tokens": 300 + 50, "output_tokens": 30 + 500, "requests": 4, "estimated": 1}}
+    assert counted == [expected], f"the run was not given what the proxy counted under no run during it: {counted}"
     (grown,) = [t.snapshot for t in metering.tallies if t.proxy == "llm-proxy"]
-    assert (grown["errors"], grown["open"]) == (2, [in_flight]), "the run's errors or its call in flight were lost"
+    assert (grown["errors"], grown["open"]) == (2, []), "the run's errors were lost, or its call in flight kept apart"
     charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
     assert charge.source == "proxy_gap", f"an undeclared run ignored the proxy's count: {charge.source}"
     assert charge.cost_usd == ((300 + 50) * 2.0 + (30 + 500) * 6.0) / 1e6, "not the calls answered and in flight"
@@ -410,3 +410,79 @@ async def test_a_declared_run_is_not_given_the_sandbox_s_calls_under_no_run() ->
     metering = await meter.end(window)
     counted = [t.snapshot["models"]["grok-4.7"]["requests"] for t in metering.tallies]
     assert counted == [2], f"a declared run was given more than its own calls: {counted}"
+
+
+async def test_two_undeclared_runs_in_a_row_count_a_call_in_flight_between_them_once() -> None:
+    """A call still in flight when one run ends is charged there at its ceiling: the next run is not given it again,
+    whether it is still in flight at that run's end or ended during it."""
+    from embry0.agents.run_charge import charge_run
+
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    key = "unattributed:sbx:1.0"
+    proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    in_flight = {"model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+
+    first = await meter.begin("sbx", "run-1", "job-1")
+    proxies.tallies["llm-proxy"][key].update(models=_calls(1, output=10), open=[in_flight])
+    ended_first = await meter.end(first)
+
+    second = await meter.begin("sbx", "run-2", "job-1")  # the call is still in flight here
+    proxies.tallies["llm-proxy"][key]["models"] = {
+        "grok-4.7": {"input_tokens": 100 + 50 + 200, "output_tokens": 10 + 500 + 20, "requests": 3, "estimated": 1}
+    }  # the call ended at its ceiling during the second run, which made one call of its own
+    proxies.tallies["llm-proxy"][key]["open"] = []
+    ended_second = await meter.end(second)
+
+    def output(metering: Any) -> int:
+        return charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0)).output_tokens
+
+    assert output(ended_first) == 10 + 500, "the first run was not charged its call in flight at its ceiling"
+    assert output(ended_second) == 20, f"the second run was given the first run's call again: {output(ended_second)}"
+
+
+async def test_a_call_in_flight_across_two_undeclared_runs_is_not_given_to_the_second() -> None:
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    key = "unattributed:sbx:1.0"
+    in_flight = {"model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    first = await meter.begin("sbx", "run-1", "job-1")
+    proxies.tallies["llm-proxy"][key]["open"] = [in_flight]
+    await meter.end(first)
+    second = await meter.begin("sbx", "run-2", "job-1")
+    metering = await meter.end(second)  # still in flight
+    from embry0.agents.run_charge import charge_run
+
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert (charge.input_tokens, charge.output_tokens) == (0, 0), (
+        f"the second run was given a call that was in flight before it began: {charge.metering['proxies']}"
+    )
+
+
+async def test_a_call_in_flight_that_ends_under_another_model_s_name_is_counted_once() -> None:
+    """The proxy keeps a call in flight under the model it was asked for, and its end under the one its answer named:
+    the run after is given the totals' rise, so the call is not counted again under the new name."""
+    from embry0.agents.run_charge import charge_run
+
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    key = "unattributed:sbx:1.0"
+    in_flight = {"model": "qwen", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"][key] = {**_unattributed("sbx", {}), "open": [in_flight]}
+    meter, _ = _meter(proxies, _Repo())
+    window = await meter.begin("sbx", "run-2", "job-1")  # an earlier run was charged the call at its ceiling
+    proxies.tallies["llm-proxy"][key].update(
+        models={
+            "deployed-model-id": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1},
+            "qwen": {"input_tokens": 200, "output_tokens": 20, "requests": 1, "estimated": 0},
+        },
+        open=[],
+    )  # the call ended at its ceiling, named after the answer's model; the run made one call of its own
+    metering = await meter.end(window)
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert (charge.input_tokens, charge.output_tokens) == (200, 20), (
+        f"the call was counted again under its answer's model: {charge.metering['proxies']}"
+    )

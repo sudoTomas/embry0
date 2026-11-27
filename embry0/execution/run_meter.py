@@ -84,29 +84,57 @@ def _counted(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def _grown(window: RunWindow, now: Mapping[str, Any], before: Mapping[str, Any] | None) -> dict[str, Any]:
-    """What a sandbox's tally of calls under no run grew by from ``before`` to ``now``, as a tally of the run: each
-    model's counts by how much they rose, its errors the same, and every call in flight now at its ceiling."""
-    earlier = before.get("models") if isinstance(before, Mapping) else None
-    earlier = earlier if isinstance(earlier, Mapping) else {}
-    models: dict[str, dict[str, int]] = {}
-    raw = now.get("models")
+def _counts(tally: Mapping[str, Any] | None) -> dict[str, dict[str, int]]:
+    """A tally's counts by model, each call still in flight in it counted at its ceiling (one request, estimated)."""
+    counts: dict[str, dict[str, int]] = {}
+    raw = tally.get("models") if isinstance(tally, Mapping) else None
     for model, entry in raw.items() if isinstance(raw, Mapping) else ():
-        if not isinstance(entry, Mapping):
+        if isinstance(entry, Mapping):
+            counts[str(model)] = {str(name): _counted(value) for name, value in entry.items()}
+    calls = tally.get("open") if isinstance(tally, Mapping) else None
+    for call in calls if isinstance(calls, list) else ():
+        if not isinstance(call, Mapping):
             continue
-        prior = earlier.get(model)
-        prior = prior if isinstance(prior, Mapping) else {}
-        # A tally's counts only rise (the proxy keeps each one's largest), so the difference is what the run added.
-        models[str(model)] = {name: _counted(entry.get(name)) - _counted(prior.get(name)) for name in entry}
+        into = counts.setdefault(str(call.get("model") or "unknown"), {})
+        for name, value in call.items():
+            if name not in ("model", "since"):
+                into[str(name)] = into.get(str(name), 0) + _counted(value)
+        into["requests"] = into.get("requests", 0) + 1
+        into["estimated"] = into.get("estimated", 0) + 1
+    return counts
+
+
+def _grown(window: RunWindow, now: Mapping[str, Any], before: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What a sandbox's tally of calls under no run grew by from ``before`` to ``now``, as a tally of the run.
+
+    Calls in flight are counted at their ceiling at both ends, so a call already in flight at the run's start (an
+    earlier run's, charged there at its ceiling when that run ended) is not this run's, whether it is still in flight
+    now or ended during it; a call that began during the run counts here, at its ceiling if still in flight. Read so,
+    two runs in a row count each call once. Each model's counts are what they rose by; where one fell (an earlier
+    call that ended for less than its ceiling, or under another model's name than it was asked by), the run is given
+    the totals' rise instead, under the model with the most requests."""
+    after, earlier = _counts(now), _counts(before)
+    rises = {
+        model: {name: value - earlier.get(model, {}).get(name, 0) for name, value in entry.items()}
+        for model, entry in after.items()
+    }
+    if any(value < 0 for entry in rises.values() for value in entry.values()) or set(earlier) - set(after):
+        names = {name for entry in (*after.values(), *earlier.values()) for name in entry}
+        total = {
+            name: max(0, sum(e.get(name, 0) for e in after.values()) - sum(e.get(name, 0) for e in earlier.values()))
+            for name in names
+        }
+        lead = max(after, key=lambda model: (after[model].get("requests", 0), model), default="unknown")
+        rises = {lead: total}
     errors = _counted(now.get("errors")) - (_counted(before.get("errors")) if isinstance(before, Mapping) else 0)
     return {
         "run_id": window.run_id,
         "sandbox_id": window.sandbox_id,
         "attributed": False,
         "provider": None,
-        "models": models,
-        "errors": errors,
-        "open": list(now.get("open") or []),
+        "models": {model: entry for model, entry in rises.items() if any(entry.values())},
+        "errors": max(0, errors),
+        "open": [],
     }
 
 

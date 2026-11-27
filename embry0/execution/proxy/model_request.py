@@ -64,6 +64,17 @@ async def read_body(
         return anthropic_error("request_too_large", message, 413)
 
 
+#: The answer encodings a model proxy reads (httpx decodes them, so the meter and a scrub see the text). A proxy asks
+#: its upstream for ``identity``; an answer in any other encoding is refused, never relayed.
+READABLE_ENCODINGS = frozenset({"identity", "gzip", "deflate"})
+
+
+def unreadable_encoding(header: str) -> str | None:
+    """An answer's ``Content-Encoding`` when it names an encoding the proxy does not decode, else None."""
+    named = [part.strip().lower() for part in header.split(",") if part.strip()]
+    return header.strip() if any(part not in READABLE_ENCODINGS for part in named) else None
+
+
 def anthropic_error(error_type: str, message: str, status: int) -> web.Response:
     """An answer in the Anthropic API's error shape, which the agent SDK and the CLI read."""
     return web.json_response({"type": "error", "error": {"type": error_type, "message": message}}, status=status)
