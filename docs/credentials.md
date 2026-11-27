@@ -72,7 +72,8 @@ What the sandbox receives:
 | anthropic | `llm_api_key` | `ANTHROPIC_API_KEY`, and the OAuth token is unset |
 | xai | `llm_api_key` | `XAI_API_KEY` |
 | xai | `llm_oauth` | nothing in env; the xai-proxy serves that credential id |
-| openai, openrouter, google, groq, deepseek, custom | `llm_api_key` | `EMBRY0_LLM_<PROVIDER>_API_KEY`, and for custom `EMBRY0_LLM_CUSTOM_BASE_URL` |
+| openai, openrouter, google, groq, deepseek | `llm_api_key` | nothing in env; the llm-proxy holds the key, and the run reaches the provider there with the sandbox's bearer ([ADR 0033](adr/0033-chat-providers-through-the-llm-proxy.md)) |
+| custom | `llm_api_key` | `EMBRY0_LLM_CUSTOM_BASE_URL`, the llm-proxy's; the proxy holds the key and the server's address ([ADR 0032](adr/0032-custom-provider-through-the-local-llm-proxy.md)) |
 
 `auth_mode=oauth` needs an anthropic `llm_oauth` account. `auth_mode=api_key` needs an anthropic `llm_api_key` account, from the registry or the env step below. A mismatch raises the existing `ERR_MISSING_OAUTH_TOKEN` or `ERR_MISSING_API_KEY`. A grok model does not take the Anthropic check.
 

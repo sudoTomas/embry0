@@ -47,6 +47,10 @@ class ProviderRecord:
     provider's endpoint (the CLI's ``ANTHROPIC_BASE_URL``), ``api_root`` a chat-completions provider's; ``key_env`` is
     the sandbox variable holding the provider's key, ``base_url_env`` the one holding an operator-given API root (the
     custom provider). Anthropic's record carries no address and no key variable: the CLI's own serve it.
+
+    ``via_proxy``: the provider is reached through the llm-proxy (ADR 0033): ``api_root`` is the provider's path
+    there, and the run authenticates with the sandbox's bearer file, never a key of its own. The orchestrator sets it
+    on the record it hands a run (``embry0.execution.agent_runner``), not here.
     """
 
     name: str
@@ -63,6 +67,7 @@ class ProviderRecord:
     #: The model's context window in tokens, where the catalogue says one (a custom model); None asks its server.
     context_window: int | None = None
     resolved_at: str = ""
+    via_proxy: bool = False
 
     @property
     def charged_from(self) -> Literal["cli", "catalogue"]:
@@ -97,6 +102,7 @@ class ProviderRecord:
             "request_extras": dict(self.request_extras),
             "context_window": self.context_window,
             "resolved_at": self.resolved_at,
+            "via_proxy": self.via_proxy,
         }
 
     @classmethod
@@ -122,6 +128,9 @@ class ProviderRecord:
         window = value.get("context_window")
         if window is not None and (isinstance(window, bool) or not isinstance(window, int) or window <= 0):
             return None
+        via_proxy = value.get("via_proxy", False)
+        if not isinstance(via_proxy, bool):
+            return None
         return cls(
             name=str(value["name"]),
             runtime=value["runtime"],
@@ -136,6 +145,7 @@ class ProviderRecord:
             request_extras=dict(extras),
             context_window=window,
             resolved_at=str(value.get("resolved_at") or ""),
+            via_proxy=via_proxy,
         )
 
     @classmethod

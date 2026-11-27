@@ -50,13 +50,15 @@ class _Meter(RunMeter):
     def __init__(self, models: dict[str, Any]) -> None:
         self.models = models
         self.begun: list[tuple[str, str, str | None]] = []
+        self.providers: list[str | None] = []
         self.ended: list[str] = []
         self.charges: list[Any] = []
 
-    async def begin(self, sandbox_id: str, run_id: str, job_id: str | None = None) -> Any:
+    async def begin(self, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None) -> Any:
         from embry0.execution.run_meter import RunWindow
 
         self.begun.append((sandbox_id, run_id, job_id))
+        self.providers.append(provider)
         return RunWindow(sandbox_id, run_id, ("xai-proxy",), {"xai-proxy": "b1"})
 
     async def end(self, window: Any) -> Any:
@@ -122,6 +124,7 @@ async def test_a_grok_run_is_charged_what_its_proxy_counted_and_its_trace_says_h
     updates = await _run(_runner(meter, run), traces)
     (sandbox, run_id, job) = meter.begun[0]
     assert (sandbox, job) == ("c1", "job-1") and meter.ended == [run_id]
+    assert meter.providers == ["xai"], f"the run was not declared on its record's provider: {meter.providers}"
     finished = traces.finished[0]
     assert finished["cost_usd"] == pytest.approx(PROXY_COST), "not the proxy's count"
     assert (finished["input_tokens"], finished["output_tokens"]) == (50_000, 4_000)

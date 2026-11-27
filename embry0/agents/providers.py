@@ -114,6 +114,16 @@ def provider_named(name: str | None) -> ModelProvider | None:
     return current().named(name)
 
 
+def proxied_chat_provider(name: str | None) -> ModelProvider | None:
+    """The chat-completions provider ``name`` other than custom, enabled or not: the one a sandbox reaches through
+    the llm-proxy's path for it, its key held there (ADR 0033). None for any other provider. Custom is reached through
+    the proxy too, by the root its sandbox's env names (ADR 0032)."""
+    provider = provider_named(name)
+    if provider is None or provider.name == "custom" or provider.runtime != "chat_completions":
+        return None
+    return provider
+
+
 def provider_for_model(model: str, catalogue: Catalogue | None = None) -> ModelProvider | None:
     """The non-Anthropic provider serving ``model``, or None for Anthropic."""
     for provider in routed_providers(catalogue):

@@ -1,16 +1,18 @@
 """What an agent run is charged, from the metering proxies' tallies and the sandbox's own figure.
 
-A run whose provider's calls all pass a metering proxy (an xAI run through the xai-proxy, a local model's through
-the llm-proxy) is charged what that proxy counted, at the rates its provider record carried from the run's
-start; the sandbox's figure is kept beside it, and compared. Any other run is charged what its sandbox reported, as
-before. Counting fails toward more, never less:
+A run whose provider's calls all pass a metering proxy (an xAI run through the xai-proxy, a chat-completions
+provider's through the llm-proxy, ADR 0033) is charged what that proxy counted, at the rates its provider record
+carried from the run's start; the sandbox's figure is kept beside it, and compared. Any other run is charged what its
+sandbox reported, as before. Counting fails toward more, never less:
 
 - a call in flight when its tally was last read (at the run's end, or before its proxy process went away) is
   charged its ceiling, as the proxy reported it;
 - a run whose proxy's tally is not whole (the proxy process changed during the run, the run's end could not be
   read, the run was never declared on it, or it was declared there out of order) is charged the larger of the
   proxy's count and the sandbox's figure. A run that is not whole only because it was declared out of order is
-  charged ``proxy_unordered`` / ``sandbox_unordered``, so it can be told from a run whose tally was lost.
+  charged ``proxy_unordered`` / ``sandbox_unordered``, so it can be told from a run whose tally was lost;
+- at a proxy that carries several providers' calls, a tally is whole only when it names the run's provider: the
+  proxy held the run to it, so it counted that provider's calls alone, and they are priced at that provider's rates.
 
 Pure: :class:`RunMetering` is what ``embry0.execution.run_meter`` gathered; nothing here reads or writes.
 """
@@ -26,6 +28,7 @@ from embry0.agents.invocation import ProviderRecord
 __all__ = [
     "DISAGREEMENT_FLOOR_USD",
     "DISAGREEMENT_SHARE",
+    "CHAT_PROVIDERS",
     "PROXY_PROVIDERS",
     "BootTally",
     "Charge",
@@ -33,9 +36,15 @@ __all__ = [
     "charge_run",
 ]
 
-#: The provider each metering proxy carries the calls of (a provider record's ``name``). ``local-llm-proxy`` is
-#: the llm-proxy's name before its rename, which tallies kept then (``run_meter``) still carry.
-PROXY_PROVIDERS: dict[str, str] = {"xai-proxy": "xai", "llm-proxy": "custom", "local-llm-proxy": "custom"}
+#: The chat-completions providers (a provider record's ``name``): the llm-proxy carries every one's calls (ADR 0033).
+CHAT_PROVIDERS: frozenset[str] = frozenset({"custom", "openai", "openrouter", "google", "groq", "deepseek"})
+#: The providers each metering proxy carries the calls of. ``local-llm-proxy`` is the llm-proxy's name before its
+#: rename, which tallies kept then (``run_meter``) still carry: custom's alone, then.
+PROXY_PROVIDERS: dict[str, frozenset[str]] = {
+    "xai-proxy": frozenset({"xai"}),
+    "llm-proxy": CHAT_PROVIDERS,
+    "local-llm-proxy": frozenset({"custom"}),
+}
 #: The two figures disagree when they differ by more than this share of the larger one, and by more than
 #: :data:`DISAGREEMENT_FLOOR_USD`.
 DISAGREEMENT_SHARE = 0.10
@@ -169,7 +178,7 @@ def charge_run(
     if metering is not None:
         for proxy in sorted(set(targets) | {t.proxy for t in metering.tallies} | set(metering.declared)):
             proxies[proxy] = _account(proxy, [t for t in metering.tallies if t.proxy == proxy], metering)
-    serving = [p for p in targets if record is not None and PROXY_PROVIDERS.get(p) == record.name]
+    serving = [p for p in targets if record is not None and record.name in PROXY_PROVIDERS.get(p, ())]
     report: dict[str, Any] = {
         "source": "sandbox",
         "expected": bool(serving),
@@ -204,9 +213,16 @@ def charge_run(
     )
     if proxy_cost is None:
         return _sandbox("sandbox_unpriced")
-    gap = not account["whole"]
+    held = True
+    if len(PROXY_PROVIDERS[serving[0]]) > 1:
+        # The proxy carries several providers' calls: only a tally held to the run's provider counted its calls
+        # alone. One that names another, or none (a proxy that predates it), may hold another provider's calls.
+        named = {t.snapshot.get("provider") for t in metering.tallies if t.proxy == serving[0]} if metering else set()
+        account["providers"] = sorted(str(p) for p in named)
+        held = named == {record.name}
+    gap = not (account["whole"] and held)
     # Not whole only because of the order it was declared in: its own source, apart from a lost tally.
-    reason = "unordered" if gap and account["complete"] else "gap"
+    reason = "unordered" if gap and account["complete"] and held else "gap"
     report["proxy_cost_usd"] = proxy_cost
     report["gap"] = gap
     difference = sandbox_cost - proxy_cost

@@ -48,6 +48,22 @@ def test_startup_names_the_retired_variables() -> None:
 def test_a_resume_enrolls_a_custom_job_s_sandbox_with_its_credential_again() -> None:
     [reenroll] = _calls(executor_run, "reenroll")
     passed = [ast.unparse(kw.value) for kw in reenroll.keywords if kw.arg is None]
-    assert passed == ["{'custom_credential_id': llm_ids['custom']} if 'custom' in llm_ids else {}"], (
+    assert "{'custom_credential_id': llm_ids['custom']} if 'custom' in llm_ids else {}" in passed, (
         f"the resume must hand reenroll the custom credential it resolved: {passed}"
     )
+
+
+def test_a_resume_enrolls_a_hosted_provider_s_sandbox_with_its_credentials_again() -> None:
+    """ADR 0033: every other chat-completions provider is reached through the llm-proxy too."""
+    [reenroll] = _calls(executor_run, "reenroll")
+    passed = [ast.unparse(kw.value) for kw in reenroll.keywords if kw.arg is None]
+    assert "{'provider_credential_ids': proxied} if (proxied := _proxied_credential_ids(llm_ids)) else {}" in passed, (
+        f"the resume must hand reenroll the hosted providers' credentials it resolved: {passed}"
+    )
+
+
+def test_the_credentials_handed_back_are_the_hosted_chat_providers_alone() -> None:
+    ids = {"anthropic": "c-a", "xai": "c-x", "custom": "c-c", "openai": "c-o", "groq": "c-g", "deepseek": "c-d"}
+    proxied = getattr(executor_run, "_proxied_credential_ids", None)
+    assert proxied is not None, "the resume has no way to name the hosted providers' credentials"
+    assert proxied(ids) == {"openai": "c-o", "groq": "c-g", "deepseek": "c-d"}

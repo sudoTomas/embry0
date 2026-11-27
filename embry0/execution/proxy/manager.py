@@ -60,6 +60,7 @@ from embry0.execution.proxy.llm_proxy import (
     Limits,
     Upstream,
 )
+from embry0.sandbox.local_llm_token import LLM_PROXY_URL
 
 logger = structlog.get_logger(__name__)
 
@@ -513,7 +514,7 @@ class ProxyManager:
         raised."""
         await self._launch(name="llm-proxy", env=self._llm_proxy_env, attach_internet=True)
         self.llm_proxy_held = ""
-        self.llm_proxy_url = "http://llm-proxy:9108"
+        self.llm_proxy_url = LLM_PROXY_URL
         logger.info("llm_proxy_started")
 
     def _hold_llm_proxy(self, reason: str) -> None:
@@ -1281,14 +1282,20 @@ class ProxyManager:
             if (entry := held.get(name, {}).get(f"enroll:{sandbox_id}")) is not None and entry[3] > now
         ]
 
-    async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str:
-        """Declare ``run_id`` as ``sandbox_id``'s run on ``proxy``, so the calls it forwards count under it.
-        Returns the proxy's boot id. Raises RuntimeError when the proxy refuses or cannot be reached."""
+    async def declare_run(
+        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+    ) -> str:
+        """Declare ``run_id`` as ``sandbox_id``'s run on ``proxy``, so the calls it forwards count under it, on
+        ``provider`` (the run's provider record's name) when given: the llm-proxy then refuses the sandbox's calls to
+        any other provider while the run is current. Returns the proxy's boot id. Raises RuntimeError when the proxy
+        refuses or cannot be reached."""
         port = METERED_PROXIES[proxy][0]
         seq = self._next_seq()
         body: dict[str, Any] = {"sandbox_id": sandbox_id, "run_id": run_id, "seq": seq}
         if job_id:
             body["job_id"] = job_id
+        if provider:
+            body["provider"] = provider
         # A sandbox runs one run at a time: whatever run it held before is over, so a recreated proxy must never
         # be given it back (its calls would count under the old run).
         held = self._admin_state.get(proxy, {})
@@ -1303,6 +1310,10 @@ class ProxyManager:
         if response.get("seq") != seq:
             # The proxy did not echo the number: its image predates ordered admin requests, so a late or replayed
             # older request could take the sandbox from this run. Its tally there is not taken as whole.
+            self._unordered_runs.add((proxy, run_id))
+        elif provider and response.get("provider") != provider:
+            # Nor the provider: its image predates runs held to their provider, so the sandbox's calls to another one
+            # count under this run too, at this run's rates. Its tally there is not taken as whole either.
             self._unordered_runs.add((proxy, run_id))
         return str(response.get("boot_id") or "")
 

@@ -231,8 +231,9 @@ rebuilt (`docs/ops/deploy.md`).
 
 A run whose provider's calls all pass a model proxy is charged what that proxy
 counted, not what its sandbox reported: an xAI run through the `xai-proxy`
-(the SuperGrok account, or an API key the proxy holds) and a local model's run
-through the `llm-proxy`. Each proxy reads the usage of every answer it
+(the SuperGrok account, or an API key the proxy holds) and every
+chat-completions provider's run (OpenAI, OpenRouter, Google, Groq, DeepSeek,
+custom) through the `llm-proxy` (ADR 0033). Each proxy reads the usage of every answer it
 forwards (`embry0/execution/proxy/metering.py`); the orchestrator declares each
 run to the proxies its sandbox is enrolled with just before the run starts and
 ends it there after, so the calls count under the run, never under a run the
@@ -245,10 +246,23 @@ proxy's count (`embry0/agents/run_charge.py`):
 | The proxy's tally of the run | Charged |
 |---|---|
 | whole: declared, its end read, one proxy process all along | the proxy's count (`source: proxy`) |
-| not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
+| not whole: the proxy process changed during the run, the run's end could not be read, or the run was never declared there (its calls then counted under the sandbox's calls under no run: what those grew by during the run is the proxy's count, all of them when where they stood at its start could not be read) | the larger of the proxy's count and the sandbox's figure (`proxy_gap` or `sandbox_gap`) |
 | complete, but declared on a proxy image that does not order requests (see below) | the larger of the two (`proxy_unordered` or `sandbox_unordered`) |
-| the run's provider is carried by no metering proxy (Anthropic, a chat-completions provider) | the sandbox's figure, as above (`sandbox`) |
+| at the llm-proxy, a tally that names another provider than the run's, or none (a proxy image from before) | the larger of the two (`proxy_gap` or `sandbox_gap`) |
+| the run's provider is carried by no metering proxy (Anthropic) | the sandbox's figure, as above (`sandbox`) |
 | the record has no rates | the sandbox's figure (`sandbox_unpriced`) |
+
+**A run is held to its provider.** A provider's path at the llm-proxy takes no
+call outside a run: before a sandbox's first run is declared, and after its run
+ends, `/p/<provider>/v1` is refused (403, `run_not_declared`), so every call
+there is some run's (the custom provider's `/v1` still forwards outside a run,
+counted as the sandbox's calls under no run). The declaration names the run's
+provider (its record's), and the proxy echoes it. While the run is current, the llm-proxy
+refuses the sandbox's calls on any other provider's path, `/v1` included
+(403, `provider_not_declared`), so a run's tally there holds its own
+provider's calls, says which provider that is, and is priced at the run's
+rates. A proxy that does not echo the provider (an image from before) is not
+taken as whole for the run.
 
 A cancelled run is ended on the proxies in the background, so its declaration
 does not linger; what they counted is kept in `run_meter`, but the run is not
@@ -573,16 +587,30 @@ the catalogue no longer lists, so neither is hidden. It counts the other
 enabled providers in one line and names the ones that are not enabled.
 Until the provider catalogue answers it shows none.
 
-The sandbox receives the key as `EMBRY0_LLM_<PROVIDER>_API_KEY`
-(`EMBRY0_LLM_OPENAI_API_KEY`, …), not under the usual names: a repository
-that sets its own `OPENAI_API_KEY` for its app keeps it. The custom provider is
-the exception: its key and its server's address never enter a sandbox, which
-gets the llm-proxy as `EMBRY0_LLM_CUSTOM_BASE_URL` instead
-([Local models](#local-models)). The `EMBRY0_LLM_`
-namespace is reserved, since a repository value there could swap the account
-an agent bills or send its conversation to another server. Like every LLM
-credential in a sandbox (ADR 0008), any code the job runs can read it: use a
-key with a spending limit.
+No chat-completions provider's key enters a sandbox (ADR 0033). The sandbox is
+enrolled at the llm-proxy with each provider its job resolved: the
+credential's id, the provider's API root above, its key, and the address the
+root's host resolves to on the orchestrator, checked and pinned as a custom
+server's is ([Local models](#local-models)). The run's provider record points
+at the provider's path there, `http://llm-proxy:9108/p/<provider>/v1`, and the
+run authenticates with the sandbox's bearer file. The proxy forwards it to that
+provider with its key, and only to the providers the sandbox was enrolled
+for. The custom provider's root is the proxy's `/v1`, which the sandbox gets as
+`EMBRY0_LLM_CUSTOM_BASE_URL`. The `EMBRY0_LLM_` namespace stays reserved (the
+names `EMBRY0_LLM_<PROVIDER>_API_KEY` a release before this put the keys under
+among them), since a repository value there could swap the account an agent
+bills or send its conversation to another server; a repository that sets its
+own `OPENAI_API_KEY` for its app keeps it.
+
+A job on one of these providers does not start without the llm-proxy, or when
+a provider's root resolves to nothing, or to this machine or link-local. A
+resumed job's sandbox is enrolled again with the credentials the job resolves
+then. A paused job whose sandbox an older release created with a provider's
+key in its env is not resumed: its egress is closed and the resume fails with
+`ERR_SANDBOX_ROUTE_RETIRED`; dispatch it again. A run on a sandbox image
+whose runner predates the route is refused before any call, with
+`ERR_SANDBOX_IMAGE_STALE`: rebuild the image. The orchestrator's own calls to
+these providers (background calls, probes) still use their keys directly.
 
 ### What tool calling requires
 
@@ -964,13 +992,22 @@ first. While one cannot be removed, the llm-proxy is not started (the log
 says `llm_proxy_held`, and a custom job is refused saying why); it starts
 within a minute of that container's removal. It enrolls each sandbox whose
 job resolved the custom provider with that credential's id, API root and key,
-and forwards that sandbox to that server and nowhere else:
+and forwards that sandbox to that server and nowhere else (each other
+chat-completions provider's the same way, at `/p/<provider>/v1`, ADR 0033):
 
 - only `POST /v1/chat/completions` and `GET /v1/models`; any other path is
   404 and never reaches a server;
 - only for a sandbox enrolled with it. Its bearer is checked and dropped
   there, and the server's key is added by the proxy, so neither the key nor
-  the server's address is in the sandbox. A host name in the root is sent as
+  the server's address is in the sandbox. An answer that names a key the proxy
+  holds (an error message may quote the key it was sent) has it replaced with
+  `***REDACTED***` on its way back, however the stream splits it. Each key is
+  matched as written, not in an escaped or encoded form (a JSON `\u` escape,
+  base64), and a key shorter than 8 characters (a placeholder) is not
+  scrubbed. A server is asked for uncompressed answers (`Accept-Encoding:
+  identity`); one that answers in an encoding the proxy does not decode
+  (anything but gzip or deflate) is refused with 502, `unreadable_answer`, and
+  none of it goes back. A host name in the root is sent as
   the address it resolves to on the orchestrator, since DinD resolves none;
   an https root keeps its name, for the certificate;
 - a request over `local_models.max_request_bytes` (8 MiB) is refused with

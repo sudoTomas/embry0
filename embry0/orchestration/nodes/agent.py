@@ -1355,7 +1355,11 @@ async def run_agent_node(
         metering: Any = None
         if run_meter is not None and container:
             try:
-                meter_window = await run_meter.begin(container, run_id, trace_job_id or None)
+                # Held to its provider: the llm-proxy refuses the sandbox's calls to any other while the run is current.
+                record = invocation.provider_record
+                meter_window = await run_meter.begin(
+                    container, run_id, trace_job_id or None, provider=record.name if record is not None else None
+                )
             except Exception:  # noqa: BLE001 — the run goes ahead, charged its sandbox's figure
                 logger.warning("run_meter_begin_failed", run_id=run_id, exc_info=True)
 

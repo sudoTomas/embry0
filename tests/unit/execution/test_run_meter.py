@@ -7,6 +7,7 @@ import asyncio
 from datetime import timedelta
 from typing import Any
 
+import pytest
 from prometheus_client import CollectorRegistry
 
 from embry0.execution.run_meter import RunMeter
@@ -68,8 +69,11 @@ class _Proxies:
         if (proxy, call) in self.fail:
             raise self.fail[(proxy, call)]
 
-    async def declare_run(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None) -> str:
+    async def declare_run(
+        self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None = None, provider: str | None = None
+    ) -> str:
         self._maybe_fail(proxy, "declare")
+        self.declared_providers = {**getattr(self, "declared_providers", {}), (proxy, run_id): provider}
         self.tallies[proxy][run_id] = {
             "run_id": run_id,
             "sandbox_id": sandbox_id,
@@ -119,6 +123,19 @@ async def test_a_run_is_declared_where_its_sandbox_is_enrolled_and_ended_there()
     assert metering.tallies[0].snapshot["models"] == _calls(2)
     assert repo.rows[("xai-proxy", "b1", "run-1")]["final"] is True, "the final tally was not kept"
     assert ("llm-proxy", "declare") not in proxies.calls, "declared where the sandbox is not enrolled"
+
+
+async def test_a_run_is_declared_on_its_provider_at_every_proxy_it_is_enrolled_with() -> None:
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    try:
+        await meter.begin("sbx", "run-1", "job-1", provider="openai")  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared on its provider: {exc}")
+    assert getattr(proxies, "declared_providers", {}) == {
+        ("xai-proxy", "run-1"): "openai",
+        ("llm-proxy", "run-1"): "openai",
+    }, "the run was not declared on its provider"
 
 
 async def test_a_declare_that_fails_leaves_the_proxy_out_and_counts() -> None:
@@ -315,3 +332,81 @@ async def test_a_run_s_ends_are_numbered_when_it_ends_on_every_proxy() -> None:
     assert all(isinstance(n, int) and n < meanwhile[0] for n in ends.values()), (
         f"an end was numbered after the next run's declaration: {ends} vs {meanwhile}"
     )
+
+
+def _unattributed(sandbox_id: str, models: dict[str, Any]) -> dict[str, Any]:
+    """A proxy's tally of a sandbox's calls under no run."""
+    return {"run_id": None, "sandbox_id": sandbox_id, "started": 1.0, "models": models, "errors": 0, "open": []}
+
+
+def _record(name: str = "grok-4.7") -> Any:
+    from embry0.agents.invocation import ProviderRecord
+
+    return ProviderRecord(
+        name="openai",
+        runtime="chat_completions",
+        upstream_model=name,
+        rates=(2.0, 6.0),
+        cache_read_factor=0.25,
+        cache_write_factor=1.5,
+    )
+
+
+async def test_a_run_not_declared_is_charged_what_the_proxy_counted_under_no_run_during_it() -> None:
+    """Its calls went through the proxy under the sandbox's calls under no run: what those grew by during the run is
+    the proxy's count of it, and the run is charged the larger of that and its sandbox's figure."""
+    from embry0.agents.run_charge import charge_run
+
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"] = {**_unattributed("sbx", _calls(1)), "errors": 1}
+    proxies.tallies["llm-proxy"]["unattributed:other:1.0"] = _unattributed("other", _calls(9))  # another sandbox
+    meter, _ = _meter(proxies, _Repo())
+    window = await meter.begin("sbx", "run-1", "job-1", provider="openai")
+    assert window.declared == {}, window.declared
+    in_flight = {"model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"].update(
+        models=_calls(4, output=40), errors=3, open=[in_flight]
+    )  # three calls answered in the run, two errors, one in flight
+
+    metering = await meter.end(window)
+
+    counted = [t.snapshot["models"] for t in metering.tallies if t.proxy == "llm-proxy"]
+    assert counted == [{"grok-4.7": {"input_tokens": 300, "output_tokens": 30, "requests": 3, "estimated": 0}}], (
+        f"the run was not given what the proxy counted under no run during it: {counted}"
+    )
+    (grown,) = [t.snapshot for t in metering.tallies if t.proxy == "llm-proxy"]
+    assert (grown["errors"], grown["open"]) == (2, [in_flight]), "the run's errors or its call in flight were lost"
+    charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
+    assert charge.source == "proxy_gap", f"an undeclared run ignored the proxy's count: {charge.source}"
+    assert charge.cost_usd == ((300 + 50) * 2.0 + (30 + 500) * 6.0) / 1e6, "not the calls answered and in flight"
+    higher = charge_run(metering, _record(), sandbox_cost_usd=1.0, sandbox_tokens=(1, 1, 0, 0))
+    assert higher.source == "sandbox_gap", "the larger figure was not charged"
+
+
+async def test_a_run_not_declared_whose_start_was_not_read_is_charged_every_call_under_no_run() -> None:
+    """Where the sandbox's calls under no run stood at the run's start is not known: all of them count (more, never
+    less)."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("unreachable")
+    proxies.fail[("llm-proxy", "read")] = RuntimeError("unreachable")
+    meter, _ = _meter(proxies, _Repo())
+    window = await meter.begin("sbx", "run-1", "job-1")
+    del proxies.fail[("llm-proxy", "read")]
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"] = _unattributed("sbx", _calls(2))
+    metering = await meter.end(window)
+    counted = [t.snapshot["models"]["grok-4.7"]["requests"] for t in metering.tallies if t.proxy == "llm-proxy"]
+    assert counted == [2], f"the sandbox's calls under no run were not all counted: {counted}"
+
+
+async def test_a_declared_run_is_not_given_the_sandbox_s_calls_under_no_run() -> None:
+    """Its calls count under it: the sandbox's calls under no run (before it, or outside any run) are not its."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"] = _unattributed("sbx", _calls(5))
+    meter, _ = _meter(proxies, _Repo())
+    window = await meter.begin("sbx", "run-1", "job-1", provider="openai")
+    assert set(window.declared) == {"llm-proxy"}
+    proxies.tallies["llm-proxy"]["run-1"]["models"] = _calls(2)
+    metering = await meter.end(window)
+    counted = [t.snapshot["models"]["grok-4.7"]["requests"] for t in metering.tallies]
+    assert counted == [2], f"a declared run was given more than its own calls: {counted}"

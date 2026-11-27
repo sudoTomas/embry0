@@ -15,6 +15,10 @@ from pathlib import Path
 # Home-relative so writer (root docker exec) and reader (agent user) agree.
 LOCAL_LLM_PROXY_TOKEN_REL = ".embry0/local_llm_proxy_token"
 
+#: Where a sandbox reaches the llm-proxy (sandbox-restricted's name for it). A chat-completions provider's root
+#: there is ``<root>/p/<provider>/v1`` (ADR 0033); the custom provider's is also ``<root>/v1``.
+LLM_PROXY_URL = "http://llm-proxy:9108"
+
 # Sandbox env, under the reserved EMBRY0_LLM_ prefix so a repository cannot set
 # it. The flag says the custom provider's base URL is the llm-proxy, so
 # the executor authenticates with the bearer file instead of a key. (A custom

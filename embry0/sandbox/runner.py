@@ -234,6 +234,11 @@ def _read_config(argv: list[str] | None = None) -> tuple[dict[str, Any], str | N
         action="store_true",
         help=f"The config carries {RESULT_NONCE_KEY}: write it on the final_result, which the orchestrator takes by it",
     )
+    parser.add_argument(
+        "--llm-proxy",
+        action="store_true",
+        help="The run's provider is reached through the llm-proxy: its record's via_proxy and API root say how",
+    )
     args = parser.parse_args(argv)
 
     config = json.loads(sys.stdin.read() if args.config_stdin else args.config)

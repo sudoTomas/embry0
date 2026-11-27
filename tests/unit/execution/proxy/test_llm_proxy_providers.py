@@ -51,10 +51,15 @@ async def _enroll(client: TestClient, **fields: Any) -> Any:
     return await client.post("/admin/enroll", json=body, headers=_H)
 
 
-async def _proxy(aiohttp_client: Any, **fields: Any) -> TestClient:
+async def _proxy(aiohttp_client: Any, *, run: bool = True, **fields: Any) -> TestClient:
+    """The proxy with sbx-1 enrolled with ``fields``, and a run of it in progress unless ``run`` is False: a provider's
+    path takes no call outside one."""
     client = await aiohttp_client(create_llm_proxy_app(_ADMIN))
     enrolled = await _enroll(client, **fields)
     assert enrolled.status == 200, await enrolled.text()
+    if run:
+        declared = await client.post("/admin/runs", json={"sandbox_id": "sbx-1", "run_id": "run-0"}, headers=_H)
+        assert declared.status == 200, await declared.text()
     return client
 
 
@@ -172,6 +177,7 @@ async def test_an_enrollment_again_replaces_the_providers(aiohttp_client, upstre
     openai, groq, local = await upstreams("openai"), await upstreams("groq"), await upstreams("local")
     client = await _proxy(aiohttp_client, provider_servers={"openai": _server(openai, "k", "cred-o")})
     assert (await _enroll(client, provider_servers={"groq": _server(groq, "k", "cred-g")})).status == 200
+    assert (await _declare(client)).status == 200  # an enrollment again ends the sandbox's run
     gone = await client.post("/p/openai/v1/chat/completions", json={}, headers=_BEARER)
     assert gone.status == 403, "a provider the newer enrollment does not name was kept"
     assert (await client.post("/p/groq/v1/chat/completions", json={}, headers=_BEARER)).status == 200
@@ -220,6 +226,7 @@ async def test_a_request_over_the_size_limit_is_refused_on_a_provider_path(aioht
     servers = {"openai": _server(openai, "k", "cred-o")}
     # The sandbox's cap, at the ceiling this proxy started with (#174).
     assert (await _enroll(client, provider_servers=servers, limits={**LIMITS, "max_request_bytes": 1024})).status == 200
+    assert (await _declare(client)).status == 200
     answer = await client.post("/p/openai/v1/chat/completions", data=b"x" * 2048, headers=_BEARER)
     assert answer.status == 413 and openai.seen == []
 
@@ -346,3 +353,276 @@ async def test_an_enrollment_for_providers_alone_still_names_its_limits(aiohttp_
     resp = await client.post("/admin/enroll", json=body, headers=_H)
     assert resp.status == 400 and "limits" in await resp.text(), f"enrolled with limits {limits!r}: {await resp.text()}"
     assert "sbx-1" not in client.server.app[llm_proxy.SERVERS_BY_SANDBOX]
+
+
+# --- a run held to its provider (ADR 0033) ---------------------------------------------------------------------------
+
+
+async def _declare(client: TestClient, run_id: str = "run-1", **fields: Any) -> Any:
+    return await client.post("/admin/runs", json={"sandbox_id": "sbx-1", "run_id": run_id, **fields}, headers=_H)
+
+
+async def test_while_a_run_is_current_only_its_provider_is_reached(aiohttp_client, upstreams):
+    openai, groq, local = await upstreams("openai"), await upstreams("groq"), await upstreams("local")
+    client = await _proxy(
+        aiohttp_client,
+        provider_servers={
+            "openai": _server(openai, "key-openai", "cred-o"),
+            "groq": _server(groq, "key-groq", "cred-g"),
+        },
+        local_llm=_server(local, "key-local", "cred-l"),
+    )
+    declared = await _declare(client, provider="openai")
+    assert declared.status == 200 and (await declared.json()).get("provider") == "openai", await declared.text()
+    chat = {"model": "gpt-x", "messages": []}
+
+    assert (await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+    for path in ("/p/groq/v1/chat/completions", "/v1/chat/completions", "/p/custom/v1/chat/completions"):
+        refused = await client.post(path, json=chat, headers=_BEARER)
+        assert refused.status == 403, f"{path} was answered {refused.status} during a run on openai"
+        assert (await refused.json())["error"]["code"] == "provider_not_declared"
+    assert (await client.get("/p/groq/v1/models", headers=_BEARER)).status == 403
+    assert groq.seen == [] and local.seen == [], "a call to another provider reached its server during the run"
+
+    meter = await (await client.get("/admin/meter", headers=_H)).json()
+    tally = next(t for t in meter["tallies"] if t.get("run_id") == "run-1")
+    assert tally["provider"] == "openai", f"the tally does not say whose calls it holds: {tally}"
+
+    ended = await client.delete("/admin/runs/run-1", json={}, headers=_H)
+    assert ended.status == 200
+    after = await client.post("/p/groq/v1/chat/completions", json=chat, headers=_BEARER)
+    assert after.status == 403, f"after the run ended, a provider's path was answered {after.status}"
+    assert (await after.json())["error"]["code"] == "run_not_declared"
+    assert (await _declare(client, "run-2", provider="groq")).status == 200
+    groq_run = await client.post("/p/groq/v1/chat/completions", json=chat, headers=_BEARER)
+    assert groq_run.status == 200, "the sandbox's next run, on its other provider, was refused"
+
+
+async def test_a_run_declared_on_no_provider_holds_the_sandbox_to_none(aiohttp_client, upstreams):
+    openai, groq = await upstreams("openai"), await upstreams("groq")
+    client = await _proxy(
+        aiohttp_client,
+        provider_servers={"openai": _server(openai, "k-o", "cred-o"), "groq": _server(groq, "k-g", "cred-g")},
+    )
+    declared = await _declare(client)
+    assert declared.status == 200 and "provider" not in await declared.json()
+    chat = {"model": "gpt-x", "messages": []}
+    assert (await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+    assert (await client.post("/p/groq/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+
+
+@pytest.mark.parametrize(
+    "provider", ["", "OpenAI", "open ai", 7, "x" * 40], ids=["empty", "upper", "space", "int", "long"]
+)
+async def test_a_declaration_naming_a_provider_that_is_not_one_is_refused(aiohttp_client, upstreams, provider):
+    openai = await upstreams("openai")
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(openai, "k-o", "cred-o")})
+    resp = await _declare(client, provider=provider)
+    assert resp.status == 400, f"a declaration on {provider!r} was taken: {resp.status}"
+
+
+async def test_a_run_declared_again_on_another_provider_is_refused(aiohttp_client, upstreams):
+    openai = await upstreams("openai")
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(openai, "k-o", "cred-o")})
+    assert (await _declare(client, provider="openai")).status == 200
+    assert (await _declare(client, provider="openai")).status == 200, "the same declaration again was refused"
+    again = await _declare(client, provider="groq")
+    assert again.status == 409, f"the run moved to another provider: {again.status}"
+
+
+# --- what goes back to the sandbox names no key ----------------------------------------------------------------------
+
+_KEY = "sk-proj-key-the-sandbox-never-holds-0123456789"
+
+
+async def _echoing(aiohttp_server: Any, answer: Any) -> Any:
+    """A provider's server answering every chat completion with ``answer(request)``."""
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", answer)
+    return await aiohttp_server(app)
+
+
+async def test_an_error_answer_quoting_the_key_reaches_the_sandbox_without_it(aiohttp_client, aiohttp_server):
+    async def refuse(request: web.Request) -> web.Response:
+        quoted = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        message = f"Incorrect API key provided: {quoted}. You can find your API key at the provider's site."
+        return web.json_response({"error": {"message": message, "code": "invalid_api_key"}}, status=401)
+
+    upstream = await _echoing(aiohttp_server, refuse)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    body = await resp.read()
+    assert resp.status == 401
+    assert _KEY.encode() not in body, f"the provider's key reached the sandbox: {body!r}"
+    assert b"Incorrect API key provided: ***REDACTED***" in body, f"the rest of the answer was lost: {body!r}"
+
+
+@pytest.mark.parametrize("split", [1, 9, len(_KEY) - 1], ids=["first-byte", "middle", "last-byte"])
+async def test_a_key_split_across_streamed_chunks_is_still_scrubbed(aiohttp_client, aiohttp_server, split):
+    async def stream(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(status=200, headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        key = request.headers.get("Authorization", "").removeprefix("Bearer ").encode()
+        for part in (b'data: {"said": "' + key[:split], key[split:] + b'"}\n\n', b"data: [DONE]\n\n"):
+            await response.write(part)  # one chunk each: the write waits for it to go
+        await response.write_eof()
+        return response
+
+    upstream = await _echoing(aiohttp_server, stream)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    chat = {"model": "gpt-x", "messages": [], "stream": True}
+    resp = await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)
+    body = await resp.read()
+    assert _KEY.encode() not in body, f"a key split across the stream's chunks reached the sandbox: {body!r}"
+    assert body == b'data: {"said": "***REDACTED***"}\n\ndata: [DONE]\n\n', body
+
+
+async def test_another_sandbox_s_key_is_scrubbed_too(aiohttp_client, aiohttp_server):
+    """A server two credentials share could answer one sandbox with the other's key."""
+    other = "sk-another-credential-s-key-9876543210"
+
+    async def leak(request: web.Request) -> web.Response:
+        return web.json_response({"choices": [{"message": {"content": f"the last key I saw: {other}"}}]})
+
+    upstream = await _echoing(aiohttp_server, leak)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    second = {
+        "sandbox_id": "sbx-2",
+        "sandbox_token": "another-sandbox-bearer-token-0123456789-abcdef",
+        "limits": LIMITS,
+        "provider_servers": {"openai": _server(upstream, other, "cred-other")},
+    }
+    assert (await client.post("/admin/enroll", json=second, headers=_H)).status == 200
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    body = await resp.read()
+    assert other.encode() not in body, f"another sandbox's key reached this one: {body!r}"
+
+
+def test_the_scrubber_finds_a_key_split_at_any_byte_of_any_chunking() -> None:
+    """The chunks an answer arrives in are the network's: a key may be split at any byte, over several chunks."""
+    scrubber_type = getattr(llm_proxy, "_Scrubber", None)
+    assert scrubber_type is not None, "nothing scrubs a key from what goes back to the sandbox"
+    text = b'data: {"said": "' + _KEY.encode() + b'", "and again": "' + _KEY.encode() + b'", "a short": 1}\n\n'
+    expected = text.replace(_KEY.encode(), b"***REDACTED***")
+    for size in (1, 2, 7, len(_KEY) - 1, len(_KEY), len(_KEY) + 1, len(text)):
+        # A key that is the start of another (two credentials' keys) is replaced inside the longer one too.
+        scrubber = scrubber_type([_KEY[:20], _KEY, "short"])
+        out = b"".join(scrubber.feed(text[i : i + size]) for i in range(0, len(text), size)) + scrubber.finish()
+        assert out == expected, f"chunks of {size} bytes went back as {out!r}"
+
+
+async def test_the_meter_reads_the_answer_as_the_provider_sent_it(aiohttp_client, aiohttp_server):
+    """The scrub holds the last bytes of each chunk back, and replaces a key: the usage is read from the provider's
+    own bytes, whole, all the same."""
+    recorded = (ANSWERS / "openai-chat.json").read_bytes()
+
+    async def answer(request: web.Request) -> web.Response:
+        return web.Response(body=recorded, content_type="application/json")
+
+    upstream = await _echoing(aiohttp_server, answer)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    assert (await _declare(client, provider="openai")).status == 200
+    call = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    assert call.status == 200 and await call.read() == recorded, "the answer did not go back as it came"
+    meter = await (await client.get("/admin/meter", headers=_H)).json()
+    tally = next(t for t in meter["tallies"] if t.get("run_id") == "run-1")
+    counted = next(iter(tally["models"].values()))
+    assert (
+        counted["input_tokens"] + counted.get("cache_read_tokens", 0),
+        counted["output_tokens"],
+        counted["estimated"],
+    ) == (
+        1200,
+        80,
+        0,
+    ), f"the usage was not read from the answer whole: {tally}"
+
+
+async def test_a_provider_path_takes_no_call_outside_a_run(aiohttp_client, upstreams):
+    """Every call on a provider's path is some run's: before the sandbox's first run is declared, and after its run
+    ends, it is refused and reaches no server. The custom provider's /v1, which older images call, is not."""
+    openai, local = await upstreams("openai"), await upstreams("local")
+    client = await _proxy(
+        aiohttp_client,
+        run=False,
+        provider_servers={"openai": _server(openai, "key-openai", "cred-o")},
+        local_llm=_server(local, "key-local", "cred-l"),
+    )
+    chat = {"model": "gpt-x", "messages": []}
+
+    def refused(resp: Any, body: Any, when: str) -> None:
+        assert resp.status == 403, f"{when}, a provider's path was answered {resp.status}"
+        assert body["error"]["code"] == "run_not_declared", body
+
+    for path in ("/p/openai/v1/chat/completions", "/p/custom/v1/chat/completions"):
+        resp = await client.post(path, json=chat, headers=_BEARER)
+        refused(resp, await resp.json(), f"before the first run ({path})")
+    resp = await client.get("/p/openai/v1/models", headers=_BEARER)
+    refused(resp, await resp.json(), "before the first run (models)")
+    assert openai.seen == [], "a call outside a run reached the provider"
+    outside = await client.post("/v1/chat/completions", json=chat, headers=_BEARER)
+    assert outside.status == 200, f"the custom provider's /v1 outside a run was answered {outside.status}"
+
+    assert (await _declare(client, provider="openai")).status == 200
+    during = await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)
+    assert during.status == 200, f"a call during the run was answered {during.status}"
+
+    assert (await client.delete("/admin/runs/run-1", json={}, headers=_H)).status == 200
+    after = await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)
+    refused(after, await after.json(), "after the run ended")
+    assert len(openai.seen) == 1, "only the call during the run reached the provider"
+    assert (await client.post("/v1/chat/completions", json=chat, headers=_BEARER)).status == 200
+
+
+@pytest.mark.parametrize("encoding", ["br", "x-made-up", "gzip, br"], ids=["br", "made-up", "gzip-then-br"])
+@pytest.mark.parametrize("status", [200, 401])
+async def test_an_answer_the_proxy_cannot_decode_is_refused_not_relayed(
+    aiohttp_client, aiohttp_server, encoding, status
+):
+    """Bytes in an encoding the proxy does not decode cannot be scrubbed: they never go back to the sandbox."""
+    asked: list[str] = []
+
+    async def answer(request: web.Request) -> web.Response:
+        asked.append(request.headers.get("Accept-Encoding", ""))
+        quoted = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        body = f'{{"error": {{"message": "Incorrect API key provided: {quoted}"}}}}'.encode()
+        return web.Response(
+            body=body, status=status, headers={"Content-Type": "application/json", "Content-Encoding": encoding}
+        )
+
+    upstream = await _echoing(aiohttp_server, answer)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    body = await resp.read()
+    assert _KEY.encode() not in body, f"an answer in {encoding!r} reached the sandbox: {body!r}"
+    assert resp.status == 502 and b"unreadable_answer" in body, f"an answer in {encoding!r}: {resp.status} {body!r}"
+    assert asked == ["identity"], f"the server was not asked for an uncompressed answer: {asked}"
+    meter = await (await client.get("/admin/meter", headers=_H)).json()
+    tally = next(t for t in meter["tallies"] if t.get("run_id") == "run-0")
+    if status == 200:
+        # The completion was answered, its usage unread: charged its ceiling, never nothing.
+        from embry0.execution.proxy.metering import DEFAULT_OUTPUT_CEILING
+
+        counted = next(iter(tally["models"].values()), {})
+        assert (counted.get("requests"), counted.get("output_tokens")) == (1, DEFAULT_OUTPUT_CEILING), (
+            f"not charged its ceiling: {tally}"
+        )
+    else:
+        assert (tally["models"], tally["errors"]) == ({}, 1), f"an error answer was charged: {tally}"
+
+
+async def test_a_gzip_answer_is_read_and_scrubbed(aiohttp_client, aiohttp_server):
+    import gzip
+
+    async def answer(request: web.Request) -> web.Response:
+        quoted = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        body = gzip.compress(f'{{"error": {{"message": "Incorrect API key provided: {quoted}"}}}}'.encode())
+        return web.Response(
+            body=body, status=401, headers={"Content-Type": "application/json", "Content-Encoding": "gzip"}
+        )
+
+    upstream = await _echoing(aiohttp_server, answer)
+    client = await _proxy(aiohttp_client, provider_servers={"openai": _server(upstream, _KEY, "cred-o")})
+    resp = await client.post("/p/openai/v1/chat/completions", json={"model": "gpt-x", "messages": []}, headers=_BEARER)
+    assert resp.status == 401
+    assert await resp.json() == {"error": {"message": "Incorrect API key provided: ***REDACTED***"}}

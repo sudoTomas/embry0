@@ -1409,7 +1409,17 @@ async def _reenroll_paused_sandbox(
         prefs_repo=getattr(self, "_repo_prefs", None),
         # A job on the custom provider reaches its credential's server through the llm-proxy again (ADR 0032).
         **({"custom_credential_id": llm_ids["custom"]} if "custom" in llm_ids else {}),
+        # And on any other chat-completions provider, its credential's (ADR 0033).
+        **({"provider_credential_ids": proxied} if (proxied := _proxied_credential_ids(llm_ids)) else {}),
     )
+
+
+def _proxied_credential_ids(llm_ids: Mapping[str, str]) -> dict[str, str]:
+    """The credential id of each chat-completions provider other than custom in ``llm_ids``: the providers a sandbox
+    reaches through the llm-proxy's path for each (ADR 0033)."""
+    from embry0.agents.providers import proxied_chat_provider
+
+    return {provider: cred_id for provider, cred_id in llm_ids.items() if proxied_chat_provider(provider) is not None}
 
 
 async def _reclaim_sandbox_after_restart(

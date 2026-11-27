@@ -772,7 +772,9 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > without which its answer carries no usage. The tokens count under the run
 > the orchestrator declared for the sandbox (`POST /admin/runs`, ended by
 > `DELETE /admin/runs/{run_id}`, which answers its tally); a sandbox never
-> names its own run. `GET /admin/meter` answers every tally the proxy holds,
+> names its own run. The declaration names the run's provider, and the
+> llm-proxy, which carries every chat-completions provider's calls (ADR 0033),
+> refuses the sandbox's calls to any other provider while the run is current. `GET /admin/meter` answers every tally the proxy holds,
 > cumulative, with the proxy's boot id and each call still in flight at its
 > ceiling, so a reader that loses the proxy can still charge those. With
 > `METER_REQUIRE_RUN` a call from a sandbox with no declared run is refused
@@ -1512,8 +1514,8 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_QA_FAILURES_UNRESOLVED` | QA failure rounds hit the cap without a passing run. |
 | `ERR_VERIFY_NEW_TEST_FAILURES` | The orchestrator-run test gate found a test (or a whole test target) that passes on the base commit and fails on the job's head, also when re-run. Failures that are red on base too, or pass on a re-run, never produce it. See `docs/verification.md`. |
 | `ERR_TRIAGE_QA_ACTION_INVALID` | After a QA failure, triage's `qa_failure_action` failed schema validation twice (original answer + the one repair retry). |
-| `ERR_SANDBOX_IMAGE_STALE` | The sandbox image was built before what this release runs agents with, which the error names: the runner's execute-only interpreter, its result mark (`--result-nonce`), or its config on stdin (`--config-stdin`). No agent ran. Rebuild the image named in the error (prebaked QA / profile images are not rebuilt by the standard deploy recipe). |
-| `ERR_SANDBOX_ROUTE_RETIRED` | A paused job's sandbox was created with the custom provider's key or a model server's address in its env, the direct route [ADR 0032](adr/0032-custom-provider-through-the-local-llm-proxy.md) retired. A container's env cannot change, so it is not resumed: its egress is closed to every private address and the resume fails. Dispatch the job again. |
+| `ERR_SANDBOX_IMAGE_STALE` | The sandbox image was built before what this release runs agents with, which the error names: the runner's execute-only interpreter, its result mark (`--result-nonce`), the chat-completions providers' route through the llm-proxy (`--llm-proxy`, ADR 0033), or its config on stdin (`--config-stdin`). No agent ran. Rebuild the image named in the error (prebaked QA / profile images are not rebuilt by the standard deploy recipe). |
+| `ERR_SANDBOX_ROUTE_RETIRED` | A paused job's sandbox was created with the custom provider's key or a model server's address in its env, the direct route [ADR 0032](adr/0032-custom-provider-through-the-local-llm-proxy.md) retired, or with another chat-completions provider's key, which [ADR 0033](adr/0033-chat-providers-through-the-llm-proxy.md) retired. A container's env cannot change, so it is not resumed: its egress is closed to every private address and the resume fails. Dispatch the job again. |
 | `ERR_SANDBOX_RESULT_REFUSED` | The run's result was not taken: its runner's output held more than one final result, or one without the per-run mark the orchestrator handed the runner on stdin. The run is failed rather than either result trusted (spec 2026-11-23, an agent run's own result). |
 | `ERR_SANDBOX_EXEC_STALLED` | `docker exec` never read the agent config from stdin; the exec was killed before any agent work. |
 | `ERR_DISPATCH_FAILED` | **API responses only, never `jobs.error_code`.** `POST /issues` (with `auto_triage`) or `POST /issues/{id}/triage` asked for a job and `execute()` raised before a job row existed. Returned as `dispatch_error_code` beside a fixed safe `dispatch_error`; the exception is only logged (#284). |

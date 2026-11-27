@@ -43,6 +43,9 @@ async def test_a_provider_on_another_s_address_never_rides_its_verified_connecti
         },
     )
     assert enrolled.status == 200, await enrolled.text()
+    # A provider's path takes calls during a run alone (ADR 0033).
+    declared = await client.post("/admin/runs", json={"sandbox_id": "sbx-1", "run_id": "run-1"}, headers=_H)
+    assert declared.status == 200, await declared.text()
     chat = {"messages": []}
     right = await client.post("/p/openai/v1/chat/completions", json=chat, headers=_BEARER)
     assert right.status == 200, f"the provider whose name the certificate holds was refused: {await right.text()}"
