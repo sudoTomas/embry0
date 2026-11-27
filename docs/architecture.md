@@ -1651,9 +1651,10 @@ meter's ledger turns each scope into a purse at the proxy serving the run, which
 every run there drawing on it shares as it goes, and splits a scope between
 proxies; a run settles, and leaves its purses, once its trace holds its charge.
 The proxy refuses a call that would take a purse past what it has left, its
-output ceiling priced in full and its input as the run's calls have cost it
-(uncached past the largest request read in full); a broken-off call is charged
-no more input than was held for it: 402, `budget_exceeded`, in the wire's error
+output ceiling priced in full and its input as the run's calls have cost it for
+one call in flight at a time (uncached, a token a byte, past the largest request
+read in full and for its other calls at once); a broken-off call is charged no
+more input than was held for it: 402, `budget_exceeded`, in the wire's error
 shape, and nothing is sent. A refusal is routed as crossing its limit is: for
 the job's cap, by the job's overrun mode (`soft` pauses the job for a person, as
 a crossing does, saying a model call was refused, and a continue raises the cap;

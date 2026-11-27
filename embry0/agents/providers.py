@@ -260,6 +260,7 @@ def provider_record(model: str, catalogue: Catalogue | None = None, *, at: datet
         base_url_env=provider.sandbox_base_url_env if chat else "",
         request_extras=dict(provider.request_extras.get(model, {})),
         context_window=provider.context_windows.get(model),
+        max_output_tokens=provider.output_limits.get(model),
         resolved_at=moment.isoformat(),
     )
 

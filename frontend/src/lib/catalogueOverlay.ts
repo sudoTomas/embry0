@@ -28,6 +28,8 @@ export interface CatalogueModel {
   structured_output?: string | null;
   /** A custom model's context window in tokens (#174); a whole number. */
   context_window?: number | null;
+  /** The most output tokens an agent's call asks a chat-completions model for; a whole number. Unset: 32,000. */
+  max_output_tokens?: number | null;
 }
 
 /** A provider as the catalogue in force has it. */
@@ -200,7 +202,7 @@ export function plainDecimal(value: number): string {
  * The overlay's fields the schema types as whole numbers, written as integers: a float there is refused. The shared
  * fixture's `whole_number_keys` pins this list, and the backend checks that list against the overlay's schema.
  */
-export const WHOLE_NUMBER_KEYS: ReadonlySet<string> = new Set(["version", "context_window"]);
+export const WHOLE_NUMBER_KEYS: ReadonlySet<string> = new Set(["version", "context_window", "max_output_tokens"]);
 /**
  * A model's fields of extra request body: JSON, which YAML reads as written, so their numbers stay as they are, a bare
  * value's too. The shared fixture's `json_keys` pins this list, and the backend checks it against the schema's

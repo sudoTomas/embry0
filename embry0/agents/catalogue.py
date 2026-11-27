@@ -133,6 +133,8 @@ class ModelProvider:
     call sends its own schema to these, and to no other."""
     context_windows: Mapping[str, int] = field(default_factory=dict)
     """model -> its context window in tokens, where the catalogue says one (the custom provider's models)."""
+    output_limits: Mapping[str, int] = field(default_factory=dict)
+    """model -> the most output tokens an agent's call asks it for, where the catalogue says (``max_output_tokens``)."""
     default_pricing_usd_per_mtok: tuple[float, float] | None = None
     """Rates for a routed model with no entry of its own; None refuses such a model (#219)."""
     probe_path: str = "/models"
@@ -185,6 +187,12 @@ Factor = Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)]
 RefreshHours = Annotated[float, Field(ge=0, le=720, allow_inf_nan=False)]
 #: A model's context window, in tokens.
 ContextWindow = Annotated[int, Field(ge=1024, le=10_000_000)]
+#: The most output tokens an agent's call to a chat-completions model asks for: within what a metering proxy forwards.
+OutputLimit = Annotated[int, Field(ge=1, le=1_000_000)]
+#: What an agent's call asks for when its model's entry names no ``max_output_tokens``: room for a turn's answer and
+#: the reasoning a reasoning model counts as output at its default effort, within what the hosted models allow, and
+#: far below the 128,000 a call naming no limit is held to at a metering proxy.
+DEFAULT_OUTPUT_LIMIT: Final = 32_000
 
 
 class _Model(BaseModel):
@@ -240,6 +248,14 @@ class ModelEntry(_Model):
             "operator's server is asked (its /models)"
         ),
     )
+    max_output_tokens: OutputLimit | None = Field(
+        default=None,
+        description=(
+            "the most output tokens an agent's call asks a chat-completions model for (max_tokens, or OpenAI's "
+            "max_completion_tokens); unset, 32000. A request_extras limit wins. A metering proxy holds a call to "
+            "this ceiling"
+        ),
+    )
 
 
 class ProviderEntry(_Model):
@@ -283,6 +299,7 @@ class ModelOverlay(_Model):
     background_request_extras: dict[str, JsonValue] | None = Field(default=None, max_length=16)
     structured_output: Literal["json_schema"] | None = None
     context_window: ContextWindow | None = None
+    max_output_tokens: OutputLimit | None = None
 
 
 class ProviderOverlay(_Model):
@@ -473,6 +490,9 @@ def _provider(name: str, entry: ProviderEntry, day: date, withheld: frozenset[st
         context_windows={
             model: spec.context_window for model, spec in entry.models.items() if spec.context_window is not None
         },
+        output_limits={
+            model: spec.max_output_tokens for model, spec in entry.models.items() if spec.max_output_tokens is not None
+        },
         default_pricing_usd_per_mtok=entry.default_price.pair if entry.default_price is not None else None,
         probe_path=entry.probe_path,
     )
@@ -519,6 +539,15 @@ def _coherence_problems(document: CatalogueDocument) -> list[Problem]:
                         "not_custom",
                         "a context window is the operator's to say for a model on their own server (the custom "
                         "provider's); a provider's own models report theirs",
+                    )
+                )
+            if spec.max_output_tokens is not None and entry.runtime != "chat_completions":
+                problems.append(
+                    Problem(
+                        (*where, "models", model, "max_output_tokens"),
+                        "not_chat_completions",
+                        "an output limit is what the chat-completions executor asks a model for; an sdk provider's "
+                        "runs set their own",
                     )
                 )
     prefixes = [(prefix, name) for name, entry in document.providers.items() for prefix in entry.model_prefixes]

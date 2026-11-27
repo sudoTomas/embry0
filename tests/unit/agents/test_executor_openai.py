@@ -335,3 +335,96 @@ def test_select_executor_routes_the_family_to_this_executor() -> None:
     for name, model in [("openai", "gpt-6-luna"), ("groq", "groq/openai/gpt-oss-20b"), ("custom", "custom/x")]:
         assert isinstance(select_executor(_invocation(provider=name, model=model)), OpenAICompatibleExecutor)
     assert isinstance(select_executor(_invocation(provider=None, model="claude-sonnet-5")), SdkAgentExecutor)
+
+
+# ---------------------------------------------------------------------------
+# The output limit every call names (#759): a metering proxy holds a call naming none to 128,000 output tokens.
+
+
+def _body_of_first_call(server: Any) -> dict[str, Any]:
+    return server.chat_requests()[0]["json"]
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "field_name"),
+    [("deepseek", "deepseek-flash", "max_tokens"), ("openai", "gpt-6-luna", "max_completion_tokens")],
+)
+def test_every_call_names_an_output_limit(catalog_endpoint, server, monkeypatch, provider, model, field_name) -> None:
+    """32,000 unless the catalogue says otherwise; OpenAI's reasoning models read it as max_completion_tokens."""
+    monkeypatch.setenv(f"EMBRY0_LLM_{provider.upper()}_API_KEY", _KEY)
+    server.answer(completion(content="ok"))
+    _run(_invocation(provider=provider, model=model))
+    body = _body_of_first_call(server)
+    assert body.get(field_name) == 32_000, f"{model} was called with no output limit: {sorted(body)}"
+
+
+def test_a_model_s_catalogue_entry_names_its_own_output_limit(catalog_endpoint, server, monkeypatch) -> None:
+    monkeypatch.setenv("EMBRY0_LLM_DEEPSEEK_API_KEY", _KEY)
+    routed = eo.provider_named("deepseek")
+    assert routed is not None
+    try:
+        limited = dataclasses.replace(routed, output_limits={"deepseek-flash": 8_192})
+    except TypeError as exc:
+        pytest.fail(f"a model's entry cannot name an output limit: {exc}")
+    monkeypatch.setattr(eo, "provider_named", lambda name: limited if name == "deepseek" else routed)
+    server.answer(completion(content="ok"))
+    _run(_invocation(provider="deepseek", model="deepseek-flash"))
+    assert _body_of_first_call(server).get("max_tokens") == 8_192
+
+
+def test_a_limit_the_model_s_request_extras_name_is_the_one_sent(catalog_endpoint, server, monkeypatch) -> None:
+    monkeypatch.setenv("EMBRY0_LLM_DEEPSEEK_API_KEY", _KEY)
+    routed = eo.provider_named("deepseek")
+    assert routed is not None
+    with_extras = dataclasses.replace(routed, request_extras={"deepseek-flash": {"max_tokens": 4_000}})
+    monkeypatch.setattr(eo, "provider_named", lambda name: with_extras if name == "deepseek" else routed)
+    server.answer(completion(content="ok"))
+    _run(_invocation(provider="deepseek", model="deepseek-flash"))
+    body = _body_of_first_call(server)
+    assert (body.get("max_tokens"), "max_completion_tokens" in body) == (4_000, False), body
+
+
+def test_a_custom_model_of_known_window_asks_no_more_than_the_room_left_for_its_answer(custom, monkeypatch) -> None:
+    """A server refuses a request whose limit and conversation pass its window: the fit leaves an eighth of it."""
+
+    async def _window(*_a: Any, **_k: Any) -> int:
+        return 16_384
+
+    monkeypatch.setattr(eo, "_context_window", _window)
+    custom.answer(completion(content="ok"))
+    _run(_invocation())
+    assert _body_of_first_call(custom).get("max_tokens") == 2_048
+
+
+def test_a_custom_model_of_unknown_window_naming_no_limit_keeps_its_server_s_default(custom, monkeypatch) -> None:
+    async def _window(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(eo, "_context_window", _window)
+    custom.answer(completion(content="ok"))
+    _run(_invocation())
+    body = _body_of_first_call(custom)
+    assert "max_tokens" not in body and "max_completion_tokens" not in body, body
+
+
+def test_the_run_s_record_carries_the_model_s_output_limit_to_the_sandbox(server, workspace, monkeypatch) -> None:
+    from embry0.agents.invocation import ProviderRecord
+
+    monkeypatch.setenv("EMBRY0_LLM_DEEPSEEK_API_KEY", _KEY)
+    try:
+        record = ProviderRecord(
+            name="deepseek",
+            runtime="chat_completions",
+            upstream_model="deepseek-flash",
+            rates=(0.3, 1.2),
+            cache_read_factor=0.1,
+            cache_write_factor=1.0,
+            api_root=server.url,
+            key_env="EMBRY0_LLM_DEEPSEEK_API_KEY",
+            max_output_tokens=6_000,  # type: ignore[call-arg]
+        )
+    except TypeError as exc:
+        pytest.fail(f"a record cannot carry a model's output limit: {exc}")
+    server.answer(completion(content="ok"))
+    _run(_invocation(provider="deepseek", model="deepseek-flash", provider_record=record))
+    assert _body_of_first_call(server).get("max_tokens") == 6_000

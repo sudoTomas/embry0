@@ -662,6 +662,14 @@ BUDGET_LIMITS: dict[str, str] = {
     "daily": "the deployment's daily budget",
     "monthly": "the deployment's monthly budget",
 }
+#: The bytes of request a token is taken to be when the budget check prices input it cannot price from the run's own
+#: calls: one. A byte-level tokenizer counts at most one token a byte, so no provider bills a request's text more.
+CHECK_BYTES_PER_TOKEN = 1
+#: How many of a run's calls in flight at once have their input priced at what the run's input has cost a byte: one,
+#: the run's conversation, which sends one call at a time. Its further calls at once (parallel subagents, mostly on
+#: small contexts) are priced uncached, so a purse can be passed by at most one call's input at that cost a byte
+#: against the uncached rate. Calls one after another correct the price as each is read.
+OBSERVED_PRICE_SLOTS = 1
 #: A purse's name: its job's (``job:<id>``), or the deployment's day's or month's.
 _PURSE_KEY_RE = re.compile(r"^(job:[A-Za-z0-9_.:-]{1,128}|daily|monthly)$")
 
@@ -801,6 +809,8 @@ class _Open:
     since: float
     #: What the budget check reserved for the call's input when it let it through, in USD.
     reserved_input_usd: float = 0.0
+    #: Whether its input was priced at what the run's input has cost a byte (:data:`OBSERVED_PRICE_SLOTS`).
+    observed_price: bool = False
 
 
 @dataclass
@@ -840,18 +850,25 @@ class _Tally:
             total.add(call.ceiling)
         return self.budget.price(total)
 
-    def check_input_usd(self, size: int) -> float:
-        """What the budget check reserves for the input of a call of ``size`` request bytes. Up to the largest request
-        of the run read in full, at what the run's input has cost a request byte, cache reads included; past it, at
-        the uncached rate and :data:`BYTES_PER_TOKEN`, as the meter estimates input: bytes the run has never had
-        counted could all be new to the provider's cache."""
+    def check_input_usd(self, size: int, *, observed_price: bool = True) -> float:
+        """What the budget check reserves for the input of a call of ``size`` request bytes. With ``observed_price``,
+        up to the largest request of the run read in full, at what the run's input has cost a request byte, cache
+        reads included; the rest, and all of a call without it, at the uncached rate and
+        :data:`CHECK_BYTES_PER_TOKEN`: bytes the run has never had counted could all be new to the provider's cache."""
         budget = self.budget
         if budget is None:
             return 0.0
-        uncached = budget.input_rate / 1_000_000 / BYTES_PER_TOKEN
+        uncached = budget.input_rate / 1_000_000 / CHECK_BYTES_PER_TOKEN
+        if not observed_price or not self.observed_bytes:
+            return size * uncached
         seen = min(size, self.observed_largest)
-        per_byte = budget.price(self.observed_input) / self.observed_bytes if self.observed_bytes else uncached
+        per_byte = budget.price(self.observed_input) / self.observed_bytes
         return seen * per_byte + (size - seen) * uncached
+
+    def observed_price_free(self) -> bool:
+        """Whether a call let through now may have its input priced at the run's cost a byte: fewer than
+        :data:`OBSERVED_PRICE_SLOTS` of its calls in flight are."""
+        return sum(1 for o in self.open.values() if o.observed_price) < OBSERVED_PRICE_SLOTS
 
     def output_usd(self, output_ceiling: int) -> float:
         """An output ceiling at full price: the part of a call left to hang that its request can inflate."""
@@ -1100,7 +1117,8 @@ class Meter:
                 self._unattributed[self._next_unattributed] = tally
                 self._live_unattributed[sandbox_id] = self._next_unattributed
         budget = tally.budget
-        reserved_input = tally.check_input_usd(len(call.body))
+        observed = tally.observed_price_free()
+        reserved_input = tally.check_input_usd(len(call.body), observed_price=observed)
         input_ceiling = call.input_estimate
         if budget is not None:
             cost = reserved_input + tally.output_usd(call.output_ceiling)
@@ -1120,6 +1138,7 @@ class Meter:
             ceiling=Usage(input_tokens=input_ceiling, output_tokens=call.output_ceiling),
             since=self._now(),
             reserved_input_usd=reserved_input,
+            observed_price=observed,
         )
         return Metered(tally, request_id, call, input_ceiling)
 

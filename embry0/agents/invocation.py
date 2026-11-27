@@ -68,6 +68,9 @@ class ProviderRecord:
     context_window: int | None = None
     resolved_at: str = ""
     via_proxy: bool = False
+    #: The most output tokens a chat-completions call asks the model for, where the catalogue says
+    #: (``max_output_tokens``); None: the executor's default.
+    max_output_tokens: int | None = None
 
     @property
     def charged_from(self) -> Literal["cli", "catalogue"]:
@@ -101,6 +104,7 @@ class ProviderRecord:
             "base_url_env": self.base_url_env,
             "request_extras": dict(self.request_extras),
             "context_window": self.context_window,
+            "max_output_tokens": self.max_output_tokens,
             "resolved_at": self.resolved_at,
             "via_proxy": self.via_proxy,
         }
@@ -126,6 +130,9 @@ class ProviderRecord:
         if value.get("rates") is not None and rates is None:
             return None
         window = value.get("context_window")
+        output = value.get("max_output_tokens")
+        if output is not None and (isinstance(output, bool) or not isinstance(output, int) or output <= 0):
+            return None
         if window is not None and (isinstance(window, bool) or not isinstance(window, int) or window <= 0):
             return None
         via_proxy = value.get("via_proxy", False)
@@ -144,6 +151,7 @@ class ProviderRecord:
             base_url_env=str(value.get("base_url_env") or ""),
             request_extras=dict(extras),
             context_window=window,
+            max_output_tokens=output,
             resolved_at=str(value.get("resolved_at") or ""),
             via_proxy=via_proxy,
         )

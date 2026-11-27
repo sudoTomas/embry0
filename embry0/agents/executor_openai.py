@@ -44,10 +44,11 @@ from embry0.agents._tool_loop import (
     price_run,
     run_tool_loop,
 )
-from embry0.agents.catalogue import EXECUTOR_FIELDS
+from embry0.agents.catalogue import DEFAULT_OUTPUT_LIMIT, EXECUTOR_FIELDS
 from embry0.agents.context_fit import (
     DEFAULT_TOKENS_PER_CHAR,
     ContextWindowExceeded,
+    answer_reserve,
     calibrated_ratio,
     fit_messages,
     request_chars,
@@ -158,6 +159,7 @@ class _ChatCompletionsWire:
         model: str,
         extras: dict[str, Any] | None = None,
         window: int | None = None,
+        output_limit: tuple[str, int] | None = None,
     ) -> None:
         self._client = client
         self._provider = provider
@@ -167,6 +169,8 @@ class _ChatCompletionsWire:
         self._extras = {key: value for key, value in (extras or {}).items() if key not in EXECUTOR_FIELDS}
         # The model's context window when known; each request is fitted to it.
         self._window = window
+        # The output limit every call names (_output_limit), as (field, tokens); None when the extras name one.
+        self._output_limit = output_limit
         self._tokens_per_char = DEFAULT_TOKENS_PER_CHAR
 
     def tool_defs(self, defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -218,6 +222,9 @@ class _ChatCompletionsWire:
         }
         if tools:
             body["tools"] = tools
+        if self._output_limit is not None:
+            field_name, tokens = self._output_limit
+            body[field_name] = tokens
         data = await self._post(body)
         # Some gateways answer 200 with an error object instead of a completion.
         if isinstance(data.get("error"), dict):
@@ -343,6 +350,8 @@ class _Target:
     context_window: int | None = None
     #: Reached through the llm-proxy at ``api_root``, with the sandbox's bearer (ADR 0033).
     via_proxy: bool = False
+    #: The catalogue's ``max_output_tokens`` for the model; None: :data:`DEFAULT_OUTPUT_LIMIT`.
+    max_output_tokens: int | None = None
 
     @property
     def endpoint(self) -> str:
@@ -367,6 +376,7 @@ def _target(invocation: AgentInvocation) -> _Target | str:
             dict(record.request_extras),
             record.context_window,
             record.via_proxy,
+            record.max_output_tokens,
         )
     provider = provider_named(invocation.provider)
     if provider is None or provider.runtime != "chat_completions":
@@ -378,7 +388,32 @@ def _target(invocation: AgentInvocation) -> _Target | str:
         provider.sandbox_key_env,
         upstream_model(provider, invocation.model),
         dict(provider.request_extras.get(invocation.model, {})),
+        max_output_tokens=provider.output_limits.get(invocation.model),
     )
+
+
+#: The body field each provider reads an output limit from, where it is not ``max_tokens``: OpenAI's reasoning
+#: models refuse ``max_tokens``.
+_OUTPUT_LIMIT_FIELDS = {"openai": "max_completion_tokens"}
+
+
+def _output_limit(provider: _Target, window: int | None) -> tuple[str, int] | None:
+    """The output limit every call of the run names, as (body field, tokens): the model's ``max_output_tokens``,
+    else :data:`DEFAULT_OUTPUT_LIMIT`, so a metering proxy holds the call to it rather than to the 128,000 a call
+    naming none is taken to produce. Within a known context window, no more than the room the conversation is fitted
+    to leave for the answer (``answer_reserve``): a server refuses a request whose limit would not fit. None when the
+    model's ``request_extras`` name a limit of their own, and for a model on the operator's own server whose window
+    is not known and whose entry names none: its server's own default stands."""
+    if "max_tokens" in provider.request_extras or "max_completion_tokens" in provider.request_extras:
+        return None
+    limit = provider.max_output_tokens
+    if limit is None:
+        if provider.name == "custom" and window is None:
+            return None
+        limit = DEFAULT_OUTPUT_LIMIT
+    if window:
+        limit = min(limit, answer_reserve(window))
+    return _OUTPUT_LIMIT_FIELDS.get(provider.name, "max_tokens"), limit
 
 
 class OpenAICompatibleExecutor:
@@ -429,7 +464,12 @@ class OpenAICompatibleExecutor:
             invocation,
             config,
             make_wire=lambda: _ChatCompletionsWire(
-                _make_client(base_url, api_key), provider=provider.name, model=model, extras=extras, window=window
+                _make_client(base_url, api_key),
+                provider=provider.name,
+                model=model,
+                extras=extras,
+                window=window,
+                output_limit=_output_limit(provider, window),
             ),
             execute_builtin=execute_tool,
             make_mcp_client=_make_mcp_client,

@@ -1018,30 +1018,31 @@ def test_a_run_whose_purse_this_proxy_no_longer_holds_is_given_nothing() -> None
     )
 
 
-def test_a_claude_code_sized_workload_on_a_2_dollar_cap_is_not_refused_until_near_it() -> None:
-    """600 KB requests asking 32,000 tokens, each costing about $0.04 (mostly cache reads): the first alone, then three
-    in flight. Priced at two bytes a token uncached, each held $0.79 and the third was refused at $0.08 spent. Past the
-    first, a request no larger than one read in full is priced at what the run's input has cost a byte, and the first
-    refusal comes only once the charges and the output ceilings of the calls in flight fill the cap: past $1.30."""
+def test_a_claude_code_style_run_with_parallel_subagents_is_not_refused_until_near_its_2_dollar_cap() -> None:
+    """Its conversation on a 600 KB context, one call at a time, each costing about $0.04 (mostly cache reads); then
+    three subagents at once on 40 KB contexts. The conversation's calls are priced at what its input has cost a byte;
+    the subagents' alongside the first, uncached, which on small contexts holds little. The first refusal comes only
+    once the charges and the calls in flight fill the cap: past $1.30."""
     meter = Meter()
     _held(meter, _budget([_purse(2.0)], cache={"read": 0.1, "write": 1.25}))
-    body = {"model": "grok-4.7", "messages": [{"role": "user", "content": "x" * 600_000}], "max_tokens": 32_000}
-    first = _open_or_refused(meter, body)
-    assert first is not None, "the first call of a $2 job was refused"
-    _answer(first, cached=149_000, uncached=1_000, output=1_500)
-    in_flight = [c for c in (_open_or_refused(meter, body) for _ in range(3)) if c is not None]
-    assert len(in_flight) == 3, "three calls in flight were refused with $1.96 left"
+    main = {"model": "grok-4.7", "messages": [{"role": "user", "content": "x" * 600_000}], "max_tokens": 32_000}
+    for _ in range(3):
+        call = _open_or_refused(meter, main)
+        assert call is not None, "the conversation's call was refused with the cap nowhere near"
+        _answer(call, cached=149_000, uncached=1_000, output=1_500)
+    sub = {"model": "grok-4.7", "messages": [{"role": "user", "content": "y" * 40_000}], "max_tokens": 32_000}
     for _ in range(200):
-        _answer(in_flight.pop(0), cached=149_000, uncached=1_000, output=1_500)
-        nxt = _open_or_refused(meter, body)
-        if nxt is None:
+        calls = [_open_or_refused(meter, sub) for _ in range(3)]
+        for call in calls:
+            if call is not None:
+                _answer(call, cached=0, uncached=10_000, output=500)
+        if any(call is None for call in calls):
             break
-        in_flight.append(nxt)
     else:
         pytest.fail("the workload was never held to its cap")
     charged = _priced(meter)
-    assert charged >= 1.3, f"refused at ${charged:.2f} charged of a $2 cap"
-    assert meter.purse_left("job:job-1") < 0.23, "refused with room left for the call"
+    assert charged >= 1.3, f"parallel subagents were refused at ${charged:.2f} charged of a $2 cap"
+    assert charged <= 2.0
 
 
 def _priced(meter: Meter, cache_read: float = 0.1) -> float:
@@ -1149,3 +1150,20 @@ def test_a_run_declared_without_a_budget_is_checked_against_nothing() -> None:
 def test_a_budget_that_is_not_one_is_refused(over: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         _budget(**over)
+
+
+def _uncached_answer(tokens: int) -> Any:
+    return lambda call: _answer(call, cached=0, uncached=tokens, output=1_500)
+
+
+@pytest.mark.parametrize("tokens", [150_000, 600_000], ids=["four-bytes-a-token", "a-token-a-byte"])
+def test_sixty_calls_at_once_after_a_cached_one_whose_answers_count_their_input_uncached_stay_in_the_purse(
+    tokens: int,
+) -> None:
+    """Each was held at the run's cached cost a byte ($0.03) and its answer counted it uncached: 44 let through came
+    to $13.64 at four bytes a token, and to $53.24 at a token a byte, on a $10 purse. One call in flight at a time is
+    priced at the run's cost a byte; the others at the uncached rate and a token a byte, the most a byte-level
+    tokenizer counts."""
+    let_through, charged = _shape(600_000, 60, 600_000, 32_000, _uncached_answer(tokens))
+    assert let_through < 60, "not the case under test: every call was let through"
+    assert charged <= 10.0, f"{let_through} calls whose answers counted their input uncached came to ${charged:.2f}"

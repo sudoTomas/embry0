@@ -184,8 +184,9 @@ keeps the outcome the agent reached, logging
 
 Each agent run carries its provider's record, resolved by the orchestrator from
 the deployment's catalogue when the run starts: the provider's runtime, the id
-its API knows the model by, the model's `request_extras` and, for a custom
-model, its `context_window`, the rates in force
+its API knows the model by, the model's `request_extras`, its
+`max_output_tokens` and, for a custom model, its `context_window`, the rates
+in force
 that day, the cache factors (a cached input token at 0.1 of the input rate, a
 cache write at 1.25), the provider's address and the sandbox variable of its
 key. The executors in the sandbox read the record, not a table of their own,
@@ -335,17 +336,22 @@ refuses a call that would take a purse past what it has left: 402,
 `budget_exceeded`, in the wire's error shape, with the figures in its message,
 and nothing is sent. The check prices a call's output ceiling (its limit times
 its answers) in full, the part a call left to hang can inflate, and its input,
-up to the largest request of the run read in full, at what the run's input has
-cost a request byte so far, cache reads included, and past it at the uncached
-rate and two bytes a token, as the meter estimates input. A broken-off call
-whose answer counted no input, or a call in flight at the run's end, is charged
-no more input than the check held for it, so a purse bounds what is recorded as
-well as what is spent. So `{"stream": true, "n": 78}` naming no limit, about $60
-of output at $6 per million, is refused while the job has $10 left; twenty calls
-in flight at $1.20 of output each are let through only as far as their ceilings
-fit; a Claude Code–sized run, 600 KB requests asking 32,000 tokens, the first
-alone and then three in flight, on a $2 cap, is first refused past $1.30
-charged; and calls hung up after a cached one, 8 MiB requests after one of 600
+for one call of the run in flight at a time and up to the largest request of the
+run read in full, at what the run's input has cost a request byte so far, cache
+reads included; past that size, and for the run's other calls in flight at once,
+at the uncached rate and one byte a token, the most a byte-level tokenizer
+counts. One call at a time is the run's conversation; its parallel subagents,
+mostly on small contexts, hold little at the uncached rate, and a purse can be
+passed by no more than one call's input at its own cost a byte against that
+rate. A broken-off call whose answer counted no input, or a call in flight at
+the run's end, is charged no more input than the check held for it, so a purse
+bounds what is recorded as well as what is spent. So `{"stream": true, "n": 78}`
+naming no limit, about $60 of output at $6 per million, is refused while the job
+has $10 left; twenty calls in flight at $1.20 of output each are let through
+only as far as their ceilings fit; a Claude Code–style run, its conversation on
+a 600 KB context and then three subagents at once on 40 KB ones, on a $2 cap, is
+first refused past $1.30 charged; and calls hung up after a cached one, sixty at
+once whose answers count their input uncached, 8 MiB requests after one of 600
 KB, or large uncached requests after a small cached one, all stay within the
 purse. A refusal is routed as crossing its limit is: for the job's cap, by the
 job's overrun mode (`soft` pauses the job for a person, as a crossing does,
@@ -453,6 +459,19 @@ that came had already added, in the same transaction as the close: neither is
 ever written without the other. A run whose exec crashed is charged the same
 sandbox figure, not $0.
 
+**Each agent call names an output limit.** The chat-completions executor asks
+a model for at most its catalogue entry's `max_output_tokens` on every call
+(`max_tokens`, or OpenAI's `max_completion_tokens`, which its reasoning models
+require), 32,000 when the entry names none: room for a turn's answer and the
+reasoning a reasoning model counts as output at its default effort, within
+what the hosted models allow. A model whose provider allows less, or that needs
+more, names its own; a limit in its `request_extras` wins. A custom model of
+known context window asks for no more than the room the conversation is fitted
+to leave for the answer, and one of unknown window naming none keeps its
+server's default. A metering proxy holds a call to the limit it names, and a
+call naming none to 128,000 output tokens. The executor runs in the sandbox: an
+image from before asks for no limit, and its calls are held to the 128,000.
+
 ### Changing the catalogue
 
 The shipped catalogue moves with each release. A deployment's changes are an
@@ -517,7 +536,8 @@ without a price, prefixes of two providers that are on overlapping), a
 `request_extras` or `background_request_extras` value past 4,096 bytes as
 JSON, nested deeper than 32 or holding a number JSON cannot hold (`.inf`,
 `.nan`, `1e400`), a `context_window` on a model that is not a custom
-one (1,024 to 10,000,000 tokens), and any model a tier, the fallback order, an
+one (1,024 to 10,000,000 tokens), a `max_output_tokens` on a model of an
+Agent SDK provider (1 to 1,000,000 tokens), and any model a tier, the fallback order, an
 agent definition, a pipeline template's step (its `config.model`, or a legacy
 top-level `model`), a repository's review model (`pr_review.model`) or a
 `background_models` value names that the change would take out, leave
