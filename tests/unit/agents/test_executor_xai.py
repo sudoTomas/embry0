@@ -742,3 +742,27 @@ async def test_xai_executor_scrubs_text_and_tool_results(env, monkeypatch) -> No
     await DirectXaiExecutor().run(_invocation(), config={"configurable": {}, "_test_writer": events_out.append})
     assert all(secret not in e.get("text", "") for e in events_out if e["type"] == "text")
     assert all(secret not in e.get("content", "") for e in events_out if e["type"] == "tool_result")
+
+
+# ---- an answer cut at its output limit (#759) ------------------------------
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param([_Block("text", text='the verdict is {"appro')], id="a text answer"),
+        pytest.param(
+            [_Block("tool_use", id="tu1", name="Write", input={"file_path": "out.txt", "content": "x"})],
+            id="a tool call",
+        ),
+    ],
+)
+def test_an_answer_stopped_at_max_tokens_fails_the_run(env, monkeypatch, content):
+    """stop_reason max_tokens is not an end of turn: the run fails, saying so, and runs no tool of the cut answer."""
+    client = _install(monkeypatch, [_Resp(content, "max_tokens", _Usage(50, 10))])
+    events = []
+    out = _run(_invocation(), events)
+    assert (out.is_error, out.error_code) == (True, "ERR_AGENT_ANSWER_CUT"), (out.is_error, out.error_code)
+    assert len(client.messages.calls) == 1, "the run went on past a cut answer"
+    assert not (env / "out.txt").exists(), "a tool call of a cut answer was run"
+    assert out.input_tokens == 50 and out.output_tokens == 10, "the cut turn is still counted"

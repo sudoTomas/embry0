@@ -429,3 +429,24 @@ async def test_a_run_declared_before_the_last_process_s_runs_are_closed_has_thei
     left = {scope["key"]: scope["remaining_usd"] for scope in budget["scopes"]}
     assert left.get("job:job-1") == pytest.approx(10.0 - 1.0 - 0.5), budget
     assert left.get("daily") == pytest.approx(100.0 - 10.0 - 40.0), budget
+
+
+@pytest.mark.asyncio
+async def test_the_sandbox_is_told_whether_its_run_is_held_to_a_budget() -> None:
+    """#759: a custom model's calls name an output limit only in a run held to a budget; its record says which."""
+    records: list[Any] = []
+
+    async def run(**kwargs: Any) -> AgentOutput:
+        records.append(kwargs["config"].get("provider_record"))
+        return AgentOutput(agent_type="developer", output="done", cost_usd=0.001)
+
+    class _Unmetered(_Meter):
+        def meters(self, sandbox_id: str) -> bool:
+            return False  # no proxy meters the run: it is declared with no budget
+
+    budgeted, unmetered = _Meter(PROXY_COUNT), _Unmetered(PROXY_COUNT)
+    await _run(_runner(budgeted, run), _Traces())
+    await _run(_runner(unmetered, run), _Traces())
+    assert budgeted.budgets[0] is not None and unmetered.budgets == [None], (budgeted.budgets, unmetered.budgets)
+    marks = [record.get("budgeted") if isinstance(record, dict) else record for record in records]
+    assert marks == [True, False], f"the sandbox was told its run's budget as {marks}"

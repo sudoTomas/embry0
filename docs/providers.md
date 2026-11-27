@@ -284,8 +284,8 @@ answer. A completion request the proxy cannot read the way every server would
 is refused (400) and never forwarded: a body that is not one JSON object, a
 top-level key named in two spellings that match once case is folded (some
 servers match keys so, the last winning), or a `stream` neither true nor
-false. A key named twice exactly goes upstream once, with the value the proxy
-read; the output limit is the larger of `max_tokens` and
+false. A key named twice exactly, anywhere in the body, goes upstream once, with
+the value the proxy read; the output limit is the larger of `max_tokens` and
 `max_completion_tokens`, since a server may honour either, and must be a whole
 number of tokens (`"1000000"` or `1e6` is refused: a server may read it as that
 many). The ceiling assumes the server honours those two: a chat completion that
@@ -302,6 +302,28 @@ largest as its ceiling; no server of the Messages API reads them, so they do
 not count there. A call whose ceiling is above 10,000,000 tokens is refused on
 both wires, so that a call charged its ceiling is charged a figure a trace can
 hold.
+
+A completion request carrying what its bytes do not bound is refused too, budget
+or not (400, `unmetered_content`; on the Messages API an
+`invalid_request_error` whose message starts with that code): the budget check
+prices a call by its bytes and its output ceiling, and what a provider fetches
+or runs for the call, or bills by anything else, is neither. Media goes only as
+an image given inline, a chat completion's `image_url` part whose URL is a
+`data:` URL or a Messages API `image` block of a `base64` source (in a
+`tool_result` too), each held at 5,000 input tokens besides its bytes, more than
+a hosted provider bills one at its largest. Refused: an image by URL or file, an
+audio, file or video part, a document (PDFs bill by the page, inline too),
+OpenAI's `web_search_options`, OpenRouter's `plugins` and its `:online` model
+ids, xAI's `search_parameters`, `audio` and any `modalities` but text,
+`prediction` (rejected prediction tokens bill as output), a `service_tier`
+billed above the standard rates, Anthropic's `mcp_servers` and `container`, and
+a tool the provider runs itself (a chat completion's tools are `function` or
+`custom`, a Messages API tool has no type or `custom`). So is a message, content
+part or tool naming a key in two spellings that match once case is folded. The
+list is in one place, `_unmetered` in `embry0/execution/proxy/metering.py`.
+embry0's own agents send text, their tool conversation and screenshots inline,
+none of it refused; a Claude Code agent whose tool result is a document (a PDF
+it read) has the calls carrying it refused.
 A trace's token counts are held to their columns' range as it is written, and a
 count held is logged (`trace_count_held_to_column`): one past them would fail
 the write and leave the trace `running`. A run whose calls counted under the
@@ -465,12 +487,25 @@ a model for at most its catalogue entry's `max_output_tokens` on every call
 require), 32,000 when the entry names none: room for a turn's answer and the
 reasoning a reasoning model counts as output at its default effort, within
 what the hosted models allow. A model whose provider allows less, or that needs
-more, names its own; a limit in its `request_extras` wins. A custom model of
-known context window asks for no more than the room the conversation is fitted
-to leave for the answer, and one of unknown window naming none keeps its
-server's default. A metering proxy holds a call to the limit it names, and a
-call naming none to 128,000 output tokens. The executor runs in the sandbox: an
-image from before asks for no limit, and its calls are held to the 128,000.
+more, names its own; a limit in its `request_extras` wins. A custom model whose
+entry names none names no limit in a run with no budget, so its server's default
+stands (vLLM's is the room the request leaves), and 32,000 in a run held to a
+budget, since a metering proxy holds a call naming none to 128,000 output
+tokens. Within a custom model's known context window, a call asks for no more
+than the room its request leaves by the executor's estimate, less a margin for
+the estimate's error (the estimate itself until the server has counted a
+request, an eighth of it after), and never less than the room the fit keeps for
+the answer (an eighth of the window, 1,024 to 8,192 tokens). The check holds a
+call's whole limit, so with the 32,000 default a hosted model's calls on a $2
+cap are first refused at some 60 to 90% of it, the earlier the dearer its output
+(32,000 tokens at $15 a million hold $0.48); a smaller `max_output_tokens` lets
+a run spend closer to its cap. An answer that stops at its limit
+(`finish_reason` `length`, or the Messages API's `stop_reason` `max_tokens` on
+the direct xAI executor) fails the run with `ERR_AGENT_ANSWER_CUT` rather than
+end it as done: the answer, or a tool call in it, stopped part-way, and asking
+again would stop at the same limit. Raise the model's `max_output_tokens`. The
+executor runs in the sandbox: a sandbox image from before asks for no limit, its calls
+are held to the 128,000, and it takes a cut answer as done.
 
 ### Changing the catalogue
 

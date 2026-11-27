@@ -141,6 +141,38 @@ _SERVER_OUTPUT_LIMITS: frozenset[str] = frozenset(
 _ANSWER_COUNTS: frozenset[str] = frozenset({"n", "n_cmpl", "best_of"})
 #: The ``stream_options`` a streamed chat completion goes upstream with, whatever the sandbox asked for.
 _STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
+# What a metered call may carry, in this one place (``_unmetered``). The budget check prices a call by its bytes (at
+# most a token a byte, which bounds text) and its output ceiling. What a provider fetches or runs for the call, or bills
+# by anything else, is bounded by neither, so a request carrying it is refused, 400 ``unmetered_content``, whether or
+# not its run has a budget. Media goes only as an image given inline, which the check holds at IMAGE_TOKENS.
+#: Fields, at the top level or on a message, that have the provider spend on the call's behalf: OpenAI's web search,
+#: OpenRouter's plugins (web search, file parsing), xAI's live search (retrieved content and a fee a source), audio
+#: (billed at audio rates), predicted output (rejected prediction tokens bill as output), Anthropic's MCP servers
+#: and code execution container (billed by the hour). Compared with case folded.
+_UNMETERED_FIELDS: frozenset[str] = frozenset(
+    {"web_search_options", "plugins", "search_parameters", "audio", "prediction", "mcp_servers", "container"}
+)
+#: The ``modalities`` a request may ask for: text alone (``audio`` bills at audio rates).
+_METERED_MODALITIES: frozenset[str] = frozenset({"text"})
+#: The ``service_tier`` values a request may name: the ones billed at the standard rates or below.
+_METERED_SERVICE_TIERS: frozenset[str] = frozenset({"auto", "default", "flex", "standard_only"})
+#: A model id suffix a router reads as a web search with every call (OpenRouter's ``:online``).
+_UNMETERED_MODEL_SUFFIXES: tuple[str, ...] = (":online",)
+#: The tool types a request may define, which the client runs: none of a provider's own (web search, web fetch, code
+#: execution, a model id of its own).
+_CLIENT_TOOL_TYPES: dict[str, frozenset[str | None]] = {
+    "openai_chat": frozenset({"function", "custom"}),
+    "anthropic": frozenset({None, "custom"}),
+}
+#: Chat-completions content parts that are text. An ``image_url`` part is let through when its URL is inline data.
+_CHAT_TEXT_PARTS: frozenset[str] = frozenset({"text", "refusal"})
+#: Messages-API content blocks that are text or the tool conversation's own. An ``image`` block is let through when
+#: its source is inline (``base64``), within a ``tool_result`` too. A document (PDFs bill by the page, whatever their
+#: source), an image by URL or file, and a server tool's blocks are not.
+_ANTHROPIC_BLOCKS: frozenset[str] = frozenset({"text", "tool_use", "tool_result", "thinking", "redacted_thinking"})
+#: The input tokens the budget check holds for an inline image besides its bytes: above what a hosted provider bills
+#: one at its largest (an image is billed by its pixels or tiles, which a small file can make many).
+IMAGE_TOKENS = 5_000
 #: A provider's name, as a run's declaration names it (a provider record's ``name``).
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _SANDBOX_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
@@ -209,8 +241,12 @@ class Call:
     #: Whether the request named that limit itself (an estimate of its output is then capped by it).
     output_limited: bool
     #: Why the proxy will not forward the request, when it will not: a body it cannot read as one request, the way
-    #: every server would read it. None for a request it forwards.
+    #: every server would read it, or content it cannot meter. None for a request it forwards.
     refused: str | None = None
+    #: The error code a refusal answers with.
+    refusal_code: str = "unreadable_request"
+    #: The images the request carries inline, each held at :data:`IMAGE_TOKENS` besides its bytes.
+    images: int = 0
 
     def ceiling(self) -> Usage:
         """What the call is charged when its answer is lost."""
@@ -232,8 +268,9 @@ def read_call(wire: Wire, body: bytes) -> Call:
     The proxy forwards only a request every server reads as the proxy does, so that what it meters is what the
     server answers: a body that is not one JSON object, a top-level key named in two spellings that match once case is
     folded (some servers match keys that way, the last one winning), or a ``stream`` that is neither on nor off, is
-    refused (:attr:`Call.refused`). A key named twice exactly goes as the proxy read it (each key once, its last
-    value). A chat completion that streams goes with ``stream`` true and ``stream_options`` exactly
+    refused (:attr:`Call.refused`), and so is one carrying what the budget check cannot price (:func:`_unmetered`).
+    A key named twice exactly, in any object, goes as the proxy read it (each key once, its last value). A chat
+    completion that streams goes with ``stream`` true and ``stream_options`` exactly
     ``include_usage``. The output limit is the larger the request names, ``max_tokens`` or (for chat completions)
     ``max_completion_tokens``: a server may honour either. The ceiling is that limit (or
     :data:`DEFAULT_OUTPUT_CEILING`), times, for a chat completion, the answers it asks for (:data:`_ANSWER_COUNTS`,
@@ -287,7 +324,13 @@ def read_call(wire: Wire, body: bytes) -> Call:
             body,
             f"the request's output ceiling (its limit times its answers) is above {MAX_OUTPUT_CEILING:,} tokens",
         )
-    rewrite = len(set(named)) != len(named)
+    unmetered, images = _unmetered(wire, payload)
+    if unmetered:
+        return _refused(
+            wire, body, f"the request carries what a metered call may not: {unmetered}", "unmetered_content"
+        )
+    # A key named twice in any object goes once, as the proxy read it: what it checked is what the server reads.
+    rewrite = any(len(set(keys)) != len(keys) for keys in tops)
     if wire == "openai_chat" and streaming:
         # Exactly the final usage: another option (vLLM's continuous_usage_stats) would have a usage in every chunk,
         # and a stream that broke after one would look read in full.
@@ -303,7 +346,100 @@ def read_call(wire: Wire, body: bytes) -> Call:
         input_estimate=math.ceil(len(body) / BYTES_PER_TOKEN),
         output_ceiling=ceiling,
         output_limited=bool(limits),
+        images=images,
     )
+
+
+def _unmetered(wire: Wire, payload: dict[str, Any]) -> tuple[str, int]:
+    """What ``payload`` carries that a metered call may not (the list above), or ''; and the images it carries
+    inline. Each object read here is read as every server would read it: its keys are matched with case folded (some
+    servers match them so), and one naming a key in two spellings that match so is refused."""
+    found = _unmetered_fields(payload)
+    model = _field(payload, "model")
+    if isinstance(model, str) and model.casefold().endswith(_UNMETERED_MODEL_SUFFIXES):
+        found.append("a model id asking for web search")
+    tools = _field(payload, "tools")
+    for tool in tools if isinstance(tools, list) else ():
+        kind = _field(tool, "type") if isinstance(tool, dict) else None
+        if not isinstance(tool, dict) or _clashing(tool) or kind not in _CLIENT_TOOL_TYPES[wire]:
+            found.append(f"a tool of type {str(kind)[:40]!r}")
+            break
+    images = 0
+    messages = _field(payload, "messages")
+    for message in messages if isinstance(messages, list) else ():
+        if not isinstance(message, dict):
+            continue
+        if _clashing(message):
+            found.append("a message naming a key in more than one spelling")
+            break
+        found += [f"a message's {key}" for key in _unmetered_fields(message)]
+        content = _field(message, "content")
+        for part in content if isinstance(content, list) else ():
+            inline = _inline_images(wire, part)
+            if inline is None:
+                kind = _field(part, "type") if isinstance(part, dict) else type(part).__name__
+                found.append(f"a content part of type {str(kind)[:40]!r}, not text or an image given inline")
+                break
+            images += inline
+        if found:
+            break
+    return ", ".join(found)[:300], images
+
+
+def _unmetered_fields(entry: dict[str, Any]) -> list[str]:
+    """The fields of ``entry`` (a request or one of its messages) a metered call may not carry, as written."""
+    found = [key for key in entry if key.casefold() in _UNMETERED_FIELDS]
+    for key, value in entry.items():
+        folded = key.casefold()
+        if folded == "modalities" and (not isinstance(value, list) or any(m not in _METERED_MODALITIES for m in value)):
+            found.append(key)
+        elif folded == "service_tier" and value is not None and value not in _METERED_SERVICE_TIERS:
+            found.append(key)
+    return found
+
+
+def _field(entry: dict[str, Any], name: str) -> Any:
+    """The value of ``entry``'s key ``name``, matched with case folded; None when it names none."""
+    return next((value for key, value in entry.items() if key.casefold() == name), None)
+
+
+def _clashing(entry: dict[str, Any]) -> bool:
+    """Whether ``entry`` names a key in two spellings that match once case is folded: a server matching keys that way
+    may read the other one."""
+    return len({key.casefold() for key in entry}) != len(entry)
+
+
+def _inline_images(wire: Wire, part: Any) -> int | None:
+    """The images a content part carries inline, or None for a part a metered call may not carry."""
+    if not isinstance(part, dict) or _clashing(part):
+        return None
+    kind = _field(part, "type")
+    if wire == "openai_chat":
+        if kind in _CHAT_TEXT_PARTS:
+            return 0
+        image = _field(part, "image_url") if kind == "image_url" else None
+        if isinstance(image, dict) and _clashing(image):
+            return None
+        url = _field(image, "url") if isinstance(image, dict) else image
+        return 1 if isinstance(url, str) and url[:5].casefold() == "data:" else None
+    if kind == "image":
+        source = _field(part, "source")
+        ok = isinstance(source, dict) and not _clashing(source) and _field(source, "type") == "base64"
+        return 1 if ok else None
+    if kind not in _ANTHROPIC_BLOCKS:
+        return None
+    inner = _field(part, "content") if kind == "tool_result" else None
+    images = 0
+    for block in inner if isinstance(inner, list) else ():
+        one = (
+            _inline_images(wire, block)
+            if isinstance(block, dict) and _field(block, "type") in ("text", "image")
+            else None
+        )
+        if one is None:
+            return None
+        images += one
+    return images
 
 
 def _server_output_limits(payload: dict[str, Any]) -> str:
@@ -316,7 +452,7 @@ def _server_output_limits(payload: dict[str, Any]) -> str:
     return ", ".join(sorted(found))[:200]
 
 
-def _refused(wire: Wire, body: bytes, reason: str) -> Call:
+def _refused(wire: Wire, body: bytes, reason: str, code: str = "unreadable_request") -> Call:
     return Call(
         wire=wire,
         body=body,
@@ -325,6 +461,7 @@ def _refused(wire: Wire, body: bytes, reason: str) -> Call:
         output_ceiling=DEFAULT_OUTPUT_CEILING,
         output_limited=False,
         refused=reason,
+        refusal_code=code,
     )
 
 
@@ -865,6 +1002,11 @@ class _Tally:
         per_byte = budget.price(self.observed_input) / self.observed_bytes
         return seen * per_byte + (size - seen) * uncached
 
+    def images_usd(self, images: int) -> float:
+        """What the budget check holds for ``images`` given inline, besides their bytes: :data:`IMAGE_TOKENS` each,
+        uncached."""
+        return images * IMAGE_TOKENS * self.budget.input_rate / 1_000_000 if self.budget is not None else 0.0
+
     def observed_price_free(self) -> bool:
         """Whether a call let through now may have its input priced at the run's cost a byte: fewer than
         :data:`OBSERVED_PRICE_SLOTS` of its calls in flight are."""
@@ -1118,7 +1260,7 @@ class Meter:
                 self._live_unattributed[sandbox_id] = self._next_unattributed
         budget = tally.budget
         observed = tally.observed_price_free()
-        reserved_input = tally.check_input_usd(len(call.body), observed_price=observed)
+        reserved_input = tally.check_input_usd(len(call.body), observed_price=observed) + tally.images_usd(call.images)
         input_ceiling = call.input_estimate
         if budget is not None:
             cost = reserved_input + tally.output_usd(call.output_ceiling)

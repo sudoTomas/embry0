@@ -647,9 +647,151 @@ def test_a_body_goes_upstream_as_the_proxy_read_it(wire: Any, raw: bytes, sent: 
 
 
 def test_a_body_with_nothing_to_change_goes_upstream_as_written() -> None:
-    raw = b'{"model": "m",   "max_tokens": 9, "messages": [{"role": "user", "content": "a", "content": "b"}]}'
-    assert read_call("openai_chat", raw).body == raw, "a body with no repeated top-level key was written again"
+    raw = b'{"model": "m",   "max_tokens": 9, "messages": [{"role": "user", "content": "a"}]}'
+    assert read_call("openai_chat", raw).body == raw, "a body with no repeated key was written again"
     assert read_call("anthropic", raw).body == raw
+
+
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_a_key_named_twice_inside_the_body_goes_upstream_as_the_proxy_read_it(wire: Any) -> None:
+    """A server reading a message's first content would read media the proxy never saw."""
+    raw = (
+        b'{"model": "m", "max_tokens": 9, "messages": [{"role": "user",'
+        b' "content": [{"type": "image_url", "image_url": {"url": "https://example.test/a.png"}}], "content": "b"}]}'
+    )
+    call = read_call(wire, raw)
+    assert call.refused is None, call.refused
+    assert json.loads(call.body)["messages"] == [{"role": "user", "content": "b"}], f"went upstream as {call.body!r}"
+    assert b"example.test" not in call.body, f"went upstream as {call.body!r}"
+
+
+# --------------------------------------------------------------------------- what a metered call may carry
+
+_URL = "https://example.test/a.png"
+_INLINE = "data:image/png;base64,iVBORw0KGgo="
+
+
+def _chat_parts(*parts: Any) -> dict[str, Any]:
+    return {"messages": [{"role": "user", "content": [{"type": "text", "text": "look"}, *parts]}]}
+
+
+def _anthropic_blocks(*blocks: Any) -> dict[str, Any]:
+    return {"messages": [{"role": "user", "content": [{"type": "text", "text": "look"}, *blocks]}]}
+
+
+def _tool_result(*blocks: Any) -> dict[str, Any]:
+    return {"type": "tool_result", "tool_use_id": "tu1", "content": [{"type": "text", "text": "shot"}, *blocks]}
+
+
+_BY_URL = {"type": "url", "url": _URL}
+_BASE64_PDF = {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0xLjQK"}
+
+
+@pytest.mark.parametrize(
+    ("wire", "body"),
+    [
+        ("openai_chat", _chat_parts({"type": "image_url", "image_url": {"url": _URL}})),
+        ("openai_chat", _chat_parts({"type": "image_url", "image_url": {"url": "HTTP://example.test/a.png"}})),
+        ("openai_chat", _chat_parts({"type": "image_url", "image_url": _URL})),
+        ("openai_chat", _chat_parts({"type": "image_url", "image_url": {"url": _INLINE, "URL": _URL}})),
+        ("openai_chat", _chat_parts({"type": "text", "text": "x", "Type": "image_url", "image_url": {"url": _URL}})),
+        ("openai_chat", _chat_parts({"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}})),
+        ("openai_chat", _chat_parts({"type": "file", "file": {"file_id": "file-1"}})),
+        ("openai_chat", _chat_parts({"type": "video_url", "video_url": {"url": _URL}})),
+        ("openai_chat", {"web_search_options": {}}),
+        ("openai_chat", {"plugins": [{"id": "web"}]}),
+        ("openai_chat", {"search_parameters": {"mode": "on"}}),
+        ("openai_chat", {"modalities": ["text", "audio"], "audio": {"voice": "alloy", "format": "wav"}}),
+        ("openai_chat", {"modalities": ["audio"]}),
+        ("openai_chat", {"Audio": {"voice": "alloy"}}),
+        ("openai_chat", {"prediction": {"type": "content", "content": "x" * 10}}),
+        ("openai_chat", {"service_tier": "priority"}),
+        ("openai_chat", {"model": "openai/gpt-6:online"}),
+        ("openai_chat", {"tools": [{"type": "web_search"}]}),
+        ("openai_chat", {"tools": [{"google_search": {}}]}),
+        ("openai_chat", {"messages": [{"role": "assistant", "audio": {"id": "audio_1"}}]}),
+        ("openai_chat", {"messages": [{"role": "user", "content": "a", "Content": [{"type": "file"}]}]}),
+        ("anthropic", _anthropic_blocks({"type": "image", "source": _BY_URL})),
+        ("anthropic", _anthropic_blocks({"type": "image", "source": {"type": "file", "file_id": "file_1"}})),
+        ("anthropic", _anthropic_blocks({"type": "document", "source": _BY_URL})),
+        ("anthropic", _anthropic_blocks({"type": "document", "source": _BASE64_PDF})),
+        ("anthropic", _anthropic_blocks(_tool_result({"type": "image", "source": _BY_URL}))),
+        ("anthropic", _anthropic_blocks(_tool_result({"type": "document", "source": _BASE64_PDF}))),
+        ("anthropic", _anthropic_blocks(_tool_result({"type": "tool_use", "id": "tu2", "name": "Read", "input": {}}))),
+        ("anthropic", {"MESSAGES": [{"ROLE": "user", "CONTENT": [{"TYPE": "image", "SOURCE": _BY_URL}]}]}),
+        ("openai_chat", {"Messages": [{"role": "user", "Content": [{"Type": "image_url", "Image_URL": {"URL": _URL}}]}]}),
+        ("openai_chat", {"Tools": [{"Type": "web_search"}]}),
+        ("anthropic", _anthropic_blocks({"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {}})),
+        ("anthropic", {"tools": [{"type": "web_search_20250305", "name": "web_search"}]}),
+        ("anthropic", {"mcp_servers": [{"type": "url", "url": "https://example.test/mcp", "name": "x"}]}),
+        ("anthropic", {"container": "container_1"}),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_a_call_carrying_what_its_bytes_do_not_bound_is_refused(wire: Any, body: dict[str, Any]) -> None:
+    """The budget check prices a call by its bytes and its output ceiling: what a provider fetches, runs or bills by
+    anything else is bounded by neither, so the call is not sent, budget or not."""
+    call = _call(wire, **body)
+    assert call.refused is not None, f"{body} would have been sent"
+    assert getattr(call, "refusal_code", None) == "unmetered_content", (
+        call.refused,
+        getattr(call, "refusal_code", None),
+    )
+
+
+@pytest.mark.parametrize(
+    ("wire", "body", "images"),
+    [
+        ("openai_chat", _chat_parts({"type": "image_url", "image_url": {"url": _INLINE, "detail": "high"}}), 1),
+        (
+            "openai_chat",
+            _chat_parts({"type": "image_url", "image_url": {"url": _INLINE}}, {"type": "text", "text": "b"}),
+            1,
+        ),
+        (
+            "openai_chat",
+            {
+                "modalities": ["text"],
+                "service_tier": "auto",
+                "tools": [{"type": "function", "function": {"name": "Read"}}, {"type": "custom", "name": "patch"}],
+                "messages": [{"role": "tool", "tool_call_id": "c1", "content": [{"type": "text", "text": "x"}]}],
+            },
+            0,
+        ),
+        ("anthropic", _anthropic_blocks({"type": "image", "source": {"type": "base64", "data": "iVBO"}}), 1),
+        (
+            "anthropic",
+            {
+                "tools": [{"name": "Read", "input_schema": {"type": "object"}}],
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "t", "signature": "s"},
+                            {"type": "tool_use", "id": "tu1", "name": "Read", "input": {}},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            _tool_result(
+                                {"type": "image", "source": {"type": "base64", "data": "x"}},
+                                {"type": "image", "source": {"type": "base64", "data": "y"}},
+                            )
+                        ],
+                    },
+                ],
+            },
+            2,
+        ),
+    ],
+    ids=["chat-inline", "chat-inline-and-text", "chat-text-and-function-tools", "anthropic-inline", "anthropic-tools"],
+)
+def test_text_and_images_given_inline_go_through_and_are_counted(wire: Any, body: dict[str, Any], images: int) -> None:
+    """What embry0's agents send: text, their tool conversation, and screenshots inline (MCP tool results)."""
+    call = _call(wire, **body)
+    assert call.refused is None, f"{body} was refused: {call.refused}"
+    assert getattr(call, "images", None) == images, f"the call was read as carrying {getattr(call, 'images', None)}"
 
 
 def test_each_call_in_flight_carries_an_id_of_its_own() -> None:
@@ -1167,3 +1309,17 @@ def test_sixty_calls_at_once_after_a_cached_one_whose_answers_count_their_input_
     let_through, charged = _shape(600_000, 60, 600_000, 32_000, _uncached_answer(tokens))
     assert let_through < 60, "not the case under test: every call was let through"
     assert charged <= 10.0, f"{let_through} calls whose answers counted their input uncached came to ${charged:.2f}"
+
+
+def test_an_image_given_inline_is_held_at_more_than_its_bytes() -> None:
+    """A small file can be a large image, billed by its pixels or tiles: the check holds 5,000 input tokens for each
+    image besides its bytes, so ten tiny ones ($0.10 at $2 a million) do not pass for ten bits of text."""
+    meter = Meter()
+    _held(meter, _budget([_purse(0.05)]))
+    image = {"type": "image_url", "image_url": {"url": _INLINE}}
+    text = {"type": "text", "text": "x" * len(json.dumps(image))}
+    as_text = _open_or_refused(meter, {"model": "m", "max_tokens": 1000, **_chat_parts(*[text] * 10)})
+    assert as_text is not None, "ten bits of text were refused on a $0.05 purse"
+    as_text.close()
+    as_images = _open_or_refused(meter, {"model": "m", "max_tokens": 1000, **_chat_parts(*[image] * 10)})
+    assert as_images is None, "ten images given inline were held at their bytes alone"

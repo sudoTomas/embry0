@@ -343,10 +343,12 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if wire is not None:
         call = read_call(wire, body)
         if call.refused is not None:
-            logger.warning("xai_proxy_request_refused", sandbox_id=sandbox_id, reason=call.refused)
+            logger.warning(
+                "xai_proxy_request_refused", sandbox_id=sandbox_id, code=call.refusal_code, reason=call.refused
+            )
             if wire == "anthropic":
-                return anthropic_error("invalid_request_error", call.refused, 400)
-            return openai_error("unreadable_request", call.refused, 400)
+                return anthropic_error("invalid_request_error", f"{call.refusal_code}: {call.refused}", 400)
+            return openai_error(call.refusal_code, call.refused, 400)
         body = call.body
         try:
             metered = request.app[METER].open(sandbox_id, call)

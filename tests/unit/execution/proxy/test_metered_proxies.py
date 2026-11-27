@@ -987,3 +987,54 @@ async def test_hung_up_calls_after_a_cached_one_are_charged_no_more_than_the_pur
     )
     assert 0 < let_through < 12, f"{route}: {let_through} of 12 let through"
     assert charged <= 2.0, f"{route}: {let_through} hung-up calls were charged ${charged:.2f} on a $2 purse"
+
+
+def _by_url(route: str, index: int) -> dict[str, Any]:
+    """An image the provider fetches, in ``route``'s wire."""
+    if route == "xai-proxy messages":
+        url = f"https://images.example.test/{index:04d}/{'p' * 6}.png"
+        return {"type": "image", "source": {"type": "url", "url": url}}
+    return {"type": "image_url", "image_url": {"url": f"https://images.example.test/{index:04d}/{'p' * 20}.png"}}
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+async def test_sixty_calls_of_200_images_by_url_are_refused_and_never_sent(aiohttp_client, model_server, route):
+    """About 20 KB each, so the check would hold about 20,000 input tokens for a call billed about 220,000 (some
+    1,100 an image): sixty at once would charge $26 to a $10 purse. None is sent, in the wire's error shape."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET)
+    parts = [{"type": "text", "text": "describe these"}, *(_by_url(route, i) for i in range(200))]
+    body = _completion(route, max_tokens=1000, messages=[{"role": "user", "content": parts}])
+    assert 18_000 < len(json.dumps(body)) < 22_000, f"the probe's body is {len(json.dumps(body))} bytes"
+    answers = await asyncio.gather(*(client.post(path, json=body, headers=_AUTH) for _ in range(60)))
+    statuses = sorted({resp.status for resp in answers})
+    assert statuses == [400], f"{route} answered {statuses}"
+    answer = await answers[0].json(content_type=None)
+    if route == "xai-proxy messages":
+        error = answer.get("error", {})
+        shape = (answer.get("type"), error.get("type"), str(error.get("message", "")).split(":")[0])
+        assert shape == ("error", "invalid_request_error", "unmetered_content"), f"{route} refused it as {answer}"
+    else:
+        assert _refusal_code(route, answer) == ("error", "unmetered_content"), f"{route} refused it as {answer}"
+    assert upstream.calls == [], f"{route} forwarded {len(upstream.calls)} calls of images by URL"
+    assert (await _run(client))["models"] == {}, "a refused call was counted"
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+async def test_a_call_with_a_screenshot_given_inline_goes(aiohttp_client, model_server, route):
+    """A QA agent's screenshot goes inline, in its tool's result: the call goes and is charged."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    name = "anthropic-message.json" if route == "xai-proxy messages" else "openai-chat.json"
+    upstream = _Upstream()
+    upstream.answers.append(_Answer((ANSWERS / name).read_bytes(), content_type="application/json"))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET)
+    if route == "xai-proxy messages":
+        shot = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}
+        content: Any = [{"type": "tool_result", "tool_use_id": "tu1", "content": [shot]}]
+    else:
+        content = [{"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}]
+    body = _completion(route, max_tokens=1000, messages=[{"role": "user", "content": content}])
+    resp = await client.post(path, json=body, headers=_AUTH)
+    assert resp.status == 200, f"{route} answered {resp.status}: {await resp.text()}"
+    assert len(upstream.calls) == 1, f"{route} sent {len(upstream.calls)} calls"

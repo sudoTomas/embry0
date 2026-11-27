@@ -384,27 +384,158 @@ def test_a_limit_the_model_s_request_extras_name_is_the_one_sent(catalog_endpoin
     assert (body.get("max_tokens"), "max_completion_tokens" in body) == (4_000, False), body
 
 
-def test_a_custom_model_of_known_window_asks_no_more_than_the_room_left_for_its_answer(custom, monkeypatch) -> None:
-    """A server refuses a request whose limit and conversation pass its window: the fit leaves an eighth of it."""
+def _custom_record(**kw: Any) -> Any:
+    """The record the orchestrator hands a run on a custom model (its server's address from the sandbox env)."""
+    from embry0.agents.invocation import ProviderRecord
 
-    async def _window(*_a: Any, **_k: Any) -> int:
-        return 16_384
+    base: dict[str, Any] = {
+        "name": "custom",
+        "runtime": "chat_completions",
+        "upstream_model": "llama3.3:70b",
+        "rates": (0.0, 0.0),
+        "cache_read_factor": 0.0,
+        "cache_write_factor": 0.0,
+        "key_env": "EMBRY0_LLM_CUSTOM_API_KEY",
+        "base_url_env": "EMBRY0_LLM_CUSTOM_BASE_URL",
+    }
+    try:
+        return ProviderRecord(**{**base, **kw})
+    except TypeError as exc:
+        pytest.fail(f"a record cannot say its run is held to a budget: {exc}")
+
+
+def _window_of(monkeypatch: pytest.MonkeyPatch, window: int | None) -> None:
+    async def _window(*_a: Any, **_k: Any) -> int | None:
+        return window
 
     monkeypatch.setattr(eo, "_context_window", _window)
+
+
+def _room_by_estimate(body: dict[str, Any], window: int, *, calibrated: bool, ratio: float) -> int:
+    """The room a request leaves by the executor's own estimate, less its margin (the estimate before the server has
+    counted a request, an eighth of it after)."""
+    from embry0.agents.context_fit import answer_reserve, request_chars
+
+    estimate = int(request_chars(body["messages"][0]["content"], body.get("tools", []), body["messages"][1:]) * ratio)
+    margin = estimate // 8 if calibrated else estimate
+    return max(window - estimate - margin, answer_reserve(window))
+
+
+@pytest.mark.parametrize(
+    ("estimate", "calibrated", "room"),
+    [(2_000, False, 28_768), (8_000, True, 23_768), (20_000, False, 4_096), (28_000, True, 4_096)],
+    ids=["near-empty", "calibrated", "estimate-doubled-past-the-window", "near-full"],
+)
+def test_the_room_a_request_leaves_is_less_a_margin_and_never_less_than_the_fit_s_reserve(
+    estimate: int, calibrated: bool, room: int
+) -> None:
+    """On a 32k window: the margin is the estimate until the server has counted a request, an eighth after; the
+    fit keeps an eighth of the window (4,096) free by the estimate, so a call may always ask for that."""
+    try:
+        from embry0.agents.context_fit import answer_room
+    except ImportError as exc:
+        pytest.fail(f"nothing works out the room a request leaves: {exc}")
+    assert answer_room(32_768, estimate, calibrated=calibrated) == room
+
+
+def test_a_custom_model_in_a_run_with_no_budget_names_no_output_limit(custom, monkeypatch) -> None:
+    """Its server's default stands (vLLM's is the room the request leaves): a limit of the fit's reserve cut every
+    answer at 2,048 tokens on a 16k window, a near-empty conversation's too."""
+    _window_of(monkeypatch, 16_384)
     custom.answer(completion(content="ok"))
-    _run(_invocation())
-    assert _body_of_first_call(custom).get("max_tokens") == 2_048
+    _run(_invocation(provider_record=_custom_record()))
+    body = _body_of_first_call(custom)
+    assert "max_tokens" not in body and "max_completion_tokens" not in body, f"a run with no budget named {body}"
+
+
+def test_a_custom_model_in_a_run_with_a_budget_names_the_room_its_request_leaves(
+    custom, workspace, monkeypatch
+) -> None:
+    """A metering proxy holds a call naming no limit to 128,000 output tokens, so a budgeted run names one: the room
+    the request leaves less a margin for the estimate, on every turn, not the fit's reserve."""
+    from embry0.agents.context_fit import answer_reserve
+
+    window = 32_768
+    _window_of(monkeypatch, window)
+    (workspace / "notes.txt").write_text("the answer is 42\n")
+    custom.answer(completion(tool_calls=[tool_call("call_1", "Read", {"file_path": "notes.txt"})], prompt_tokens=0))
+    custom.answer(completion(tool_calls=[tool_call("call_2", "Read", {"file_path": "notes.txt"})], prompt_tokens=9_000))
+    custom.answer(completion(content="done", prompt_tokens=9_500))
+    out = _run(_invocation(provider_record=_custom_record(budgeted=True)))
+    assert not out.is_error, out.error_message
+    first, second, third = (r["json"] for r in custom.chat_requests())
+    named = [first.get("max_tokens"), second.get("max_tokens"), third.get("max_tokens")]
+    assert named[0] == _room_by_estimate(first, window, calibrated=False, ratio=0.3), f"each call named {named}"
+    assert named[0] > answer_reserve(window), f"a near-empty conversation was given the fit's reserve: {named}"
+    # A server that counted no input leaves the estimate where it was, and calibrated no more than before.
+    assert named[1] == _room_by_estimate(second, window, calibrated=False, ratio=0.3), f"each call named {named}"
+    from embry0.agents.context_fit import request_chars
+
+    ratio = 9_000 / request_chars(second["messages"][0]["content"], second.get("tools", []), second["messages"][1:])
+    assert named[2] == _room_by_estimate(third, window, calibrated=True, ratio=ratio), f"each call named {named}"
+
+
+def test_a_custom_model_in_a_run_with_a_budget_names_the_default_when_its_window_is_unknown(
+    custom, monkeypatch
+) -> None:
+    _window_of(monkeypatch, None)
+    custom.answer(completion(content="ok"))
+    _run(_invocation(provider_record=_custom_record(budgeted=True)))
+    assert _body_of_first_call(custom).get("max_tokens") == 32_000
+
+
+def test_a_custom_model_s_own_limit_is_named_within_the_room_its_request_leaves(custom, monkeypatch) -> None:
+    """An entry's max_output_tokens is the operator's, budget or not; a known window still bounds it."""
+    _window_of(monkeypatch, 8_192)
+    custom.answer(completion(content="ok"))
+    _run(_invocation(provider_record=_custom_record(max_output_tokens=100_000)))
+    body = _body_of_first_call(custom)
+    assert body.get("max_tokens") == _room_by_estimate(body, 8_192, calibrated=False, ratio=0.3), body
 
 
 def test_a_custom_model_of_unknown_window_naming_no_limit_keeps_its_server_s_default(custom, monkeypatch) -> None:
-    async def _window(*_a: Any, **_k: Any) -> None:
-        return None
-
-    monkeypatch.setattr(eo, "_context_window", _window)
+    _window_of(monkeypatch, None)
     custom.answer(completion(content="ok"))
     _run(_invocation())
     body = _body_of_first_call(custom)
     assert "max_tokens" not in body and "max_completion_tokens" not in body, body
+
+
+# ---------------------------------------------------------------------------
+# An answer cut at its output limit is not an end of turn (#759): the run fails, saying so.
+
+
+def _cut(**kw: Any) -> dict[str, Any]:
+    answer = completion(**kw)
+    answer["choices"][0]["finish_reason"] = "length"
+    return answer
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param(lambda: _cut(content='the verdict is {"appro'), id="a text answer"),
+        pytest.param(
+            lambda: _cut(tool_calls=[tool_call("call_1", "Write", '{"file_path": "out.txt", "content": "par')]),
+            id="a half-written tool call",
+        ),
+        pytest.param(
+            lambda: _cut(tool_calls=[tool_call("call_1", "Write", {"file_path": "out.txt", "content": "x"})]),
+            id="a whole tool call",
+        ),
+    ],
+)
+def test_an_answer_cut_at_its_output_limit_fails_the_run(custom, workspace, answer) -> None:
+    custom.answer(answer())
+    events: list[dict[str, Any]] = []
+    out = _run(_invocation(), events)
+    assert (out.is_error, out.error_code) == (True, "ERR_AGENT_ANSWER_CUT"), (out.is_error, out.error_code)
+    assert "output limit" in (out.error_message or ""), out.error_message
+    assert len(custom.chat_requests()) == 1, "the run went on past a cut answer"
+    assert not (workspace / "out.txt").exists(), "a tool call of a cut answer was run"
+    assert out.tools_called == {}, out.tools_called
+    codes = [e.get("code") for e in events if e.get("type") == "error"]
+    assert "ERR_AGENT_ANSWER_CUT" in codes, f"the run's error events: {codes}"
 
 
 def test_the_run_s_record_carries_the_model_s_output_limit_to_the_sandbox(server, workspace, monkeypatch) -> None:

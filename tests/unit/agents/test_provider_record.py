@@ -647,3 +647,21 @@ def test_a_record_routed_through_the_llm_proxy_says_so_in_the_runner_s_config() 
 @pytest.mark.parametrize("via_proxy", ["true", 1, None], ids=["text", "number", "null"])
 def test_a_record_whose_route_is_not_a_yes_or_no_is_none(via_proxy: Any) -> None:
     assert ProviderRecord.from_config({**_record().to_config(), "via_proxy": via_proxy}) is None
+
+
+def test_a_record_of_a_budgeted_run_says_so_in_the_runner_s_config() -> None:
+    """#759: the orchestrator marks the record of a run held to a budget; a custom model's calls then name a limit."""
+    try:
+        record = _record(name="custom", budgeted=True)
+    except TypeError as exc:
+        pytest.fail(f"a record cannot say its run is held to a budget: {exc}")
+    config = json.loads(json.dumps({"agent_type": "developer", "prompt": "p", "provider_record": record.to_config()}))
+    carried = _invocation_from_config(config).provider_record
+    assert carried is not None and carried.budgeted is True, f"the budget mark was lost on the way: {carried}"
+    older = {key: value for key, value in _record().to_config().items() if key != "budgeted"}
+    assert ProviderRecord.from_config(older) == _record(), "a record from an orchestrator before the mark is refused"
+
+
+@pytest.mark.parametrize("budgeted", ["true", 1, None], ids=["text", "number", "null"])
+def test_a_record_whose_budget_mark_is_not_a_yes_or_no_is_none(budgeted: Any) -> None:
+    assert ProviderRecord.from_config({**_record().to_config(), "budgeted": budgeted}) is None

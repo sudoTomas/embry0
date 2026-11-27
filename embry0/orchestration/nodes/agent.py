@@ -1467,6 +1467,9 @@ async def run_agent_node(
                     provider=record.name if record is not None else None,
                     budget=declared,
                 )
+                if declared is not None and isinstance(serialized.get("provider_record"), dict):
+                    # A custom model's calls name an output limit only for a run held to a budget.
+                    serialized["provider_record"]["budgeted"] = True
             except Exception:  # noqa: BLE001 — the run goes ahead, charged its sandbox's figure
                 logger.warning("run_meter_begin_failed", run_id=run_id, exc_info=True)
 

@@ -71,6 +71,9 @@ class ProviderRecord:
     #: The most output tokens a chat-completions call asks the model for, where the catalogue says
     #: (``max_output_tokens``); None: the executor's default.
     max_output_tokens: int | None = None
+    #: The run is held to a budget at a metering proxy: a custom model's calls then name an output limit too. Set by
+    #: the orchestrator once the run is declared with one (``embry0.orchestration.nodes.agent``), not here.
+    budgeted: bool = False
 
     @property
     def charged_from(self) -> Literal["cli", "catalogue"]:
@@ -105,6 +108,7 @@ class ProviderRecord:
             "request_extras": dict(self.request_extras),
             "context_window": self.context_window,
             "max_output_tokens": self.max_output_tokens,
+            "budgeted": self.budgeted,
             "resolved_at": self.resolved_at,
             "via_proxy": self.via_proxy,
         }
@@ -138,6 +142,9 @@ class ProviderRecord:
         via_proxy = value.get("via_proxy", False)
         if not isinstance(via_proxy, bool):
             return None
+        budgeted = value.get("budgeted", False)
+        if not isinstance(budgeted, bool):
+            return None
         return cls(
             name=str(value["name"]),
             runtime=value["runtime"],
@@ -152,6 +159,7 @@ class ProviderRecord:
             request_extras=dict(extras),
             context_window=window,
             max_output_tokens=output,
+            budgeted=budgeted,
             resolved_at=str(value.get("resolved_at") or ""),
             via_proxy=via_proxy,
         )

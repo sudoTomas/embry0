@@ -48,8 +48,9 @@ from embry0.agents.catalogue import DEFAULT_OUTPUT_LIMIT, EXECUTOR_FIELDS
 from embry0.agents.context_fit import (
     DEFAULT_TOKENS_PER_CHAR,
     ContextWindowExceeded,
-    answer_reserve,
+    answer_room,
     calibrated_ratio,
+    estimate_tokens,
     fit_messages,
     request_chars,
     window_from_models,
@@ -169,9 +170,12 @@ class _ChatCompletionsWire:
         self._extras = {key: value for key, value in (extras or {}).items() if key not in EXECUTOR_FIELDS}
         # The model's context window when known; each request is fitted to it.
         self._window = window
-        # The output limit every call names (_output_limit), as (field, tokens); None when the extras name one.
+        # The output limit every call names (_output_limit), as (field, tokens); None to name none. Within a known
+        # window, each call names no more than the room its request leaves (answer_room).
         self._output_limit = output_limit
         self._tokens_per_char = DEFAULT_TOKENS_PER_CHAR
+        # Whether the server has counted a request yet, so the estimate is calibrated.
+        self._calibrated = False
 
     def tool_defs(self, defs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
@@ -224,6 +228,9 @@ class _ChatCompletionsWire:
             body["tools"] = tools
         if self._output_limit is not None:
             field_name, tokens = self._output_limit
+            if self._window:
+                estimate = estimate_tokens(system, tools, messages, self._tokens_per_char)
+                tokens = min(tokens, answer_room(self._window, estimate, calibrated=self._calibrated))
             body[field_name] = tokens
         data = await self._post(body)
         # Some gateways answer 200 with an error object instead of a completion.
@@ -243,6 +250,7 @@ class _ChatCompletionsWire:
                 self._tokens_per_char = calibrated_ratio(
                     prompt_tokens, request_chars(system, tools, messages), self._tokens_per_char
                 )
+                self._calibrated = self._calibrated or prompt_tokens > 0
             details = raw_usage.get("prompt_tokens_details")
             cached = int((details.get("cached_tokens") if isinstance(details, dict) else 0) or 0)
             # prompt_tokens counts the cached ones; the loop prices cached input apart.
@@ -283,6 +291,8 @@ class _ChatCompletionsWire:
             wants_tools=bool(tool_calls),
             usage=usage,
             assistant_message=assistant,
+            # "length": the answer stopped at its output limit (or the context's end), a tool call in it maybe half-way.
+            cut_short=choices[0].get("finish_reason") == "length",
         )
 
     def tool_result_messages(self, results: list[ToolResult]) -> list[dict[str, Any]]:
@@ -352,6 +362,8 @@ class _Target:
     via_proxy: bool = False
     #: The catalogue's ``max_output_tokens`` for the model; None: :data:`DEFAULT_OUTPUT_LIMIT`.
     max_output_tokens: int | None = None
+    #: The run is held to a budget at a metering proxy (the record says so).
+    budgeted: bool = False
 
     @property
     def endpoint(self) -> str:
@@ -377,6 +389,7 @@ def _target(invocation: AgentInvocation) -> _Target | str:
             record.context_window,
             record.via_proxy,
             record.max_output_tokens,
+            record.budgeted,
         )
     provider = provider_named(invocation.provider)
     if provider is None or provider.runtime != "chat_completions":
@@ -397,22 +410,19 @@ def _target(invocation: AgentInvocation) -> _Target | str:
 _OUTPUT_LIMIT_FIELDS = {"openai": "max_completion_tokens"}
 
 
-def _output_limit(provider: _Target, window: int | None) -> tuple[str, int] | None:
+def _output_limit(provider: _Target, *, budgeted: bool) -> tuple[str, int] | None:
     """The output limit every call of the run names, as (body field, tokens): the model's ``max_output_tokens``,
     else :data:`DEFAULT_OUTPUT_LIMIT`, so a metering proxy holds the call to it rather than to the 128,000 a call
-    naming none is taken to produce. Within a known context window, no more than the room the conversation is fitted
-    to leave for the answer (``answer_reserve``): a server refuses a request whose limit would not fit. None when the
-    model's ``request_extras`` name a limit of their own, and for a model on the operator's own server whose window
-    is not known and whose entry names none: its server's own default stands."""
+    naming none is taken to produce. None when the model's ``request_extras`` name a limit of their own, and for a
+    model on the operator's own server whose entry names none in a run not held to a budget: its server's own default
+    stands (vLLM's is the room the request leaves). The wire names no more than that room where the window is known."""
     if "max_tokens" in provider.request_extras or "max_completion_tokens" in provider.request_extras:
         return None
     limit = provider.max_output_tokens
     if limit is None:
-        if provider.name == "custom" and window is None:
+        if provider.name == "custom" and not budgeted:
             return None
         limit = DEFAULT_OUTPUT_LIMIT
-    if window:
-        limit = min(limit, answer_reserve(window))
     return _OUTPUT_LIMIT_FIELDS.get(provider.name, "max_tokens"), limit
 
 
@@ -469,7 +479,7 @@ class OpenAICompatibleExecutor:
                 model=model,
                 extras=extras,
                 window=window,
-                output_limit=_output_limit(provider, window),
+                output_limit=_output_limit(provider, budgeted=provider.budgeted),
             ),
             execute_builtin=execute_tool,
             make_mcp_client=_make_mcp_client,

@@ -1533,6 +1533,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_DEV_RUN_UNFINISHED` | A coding run stopped (its turn cap, any error) before committing; embry0 committed and pushed what it left as `wip: unfinished — <agent> stopped (<reason>)` so it survives (salvage, `docs/superpowers/specs/2026-10-25-salvage-unfinished-work-design.md`); the subject is the settings document's `salvage.commit_subject` template, which an organization or a repository may set. The job pauses (stage `dev_run_unfinished`); `continue_retrying` tells the next run to finish that commit, not redo it. "Merge as is" at such a pause opens the job's pull request labelled `human-merge-only`, saying the branch ends in that unfinished commit. Where `salvage.enabled` is false, embry0 commits nothing: the job pauses at stage `dev_run_uncommitted` with the changes left in its sandbox (also where salvage on could not have made its commit), "merge as is" is not offered (`POST /jobs/{job_id}/resume` answers 409 for any choice a pause does not offer, and the node still reads one that reaches it as a stop), and the next run is told they are uncommitted in its working tree. |
 | `ERR_DONE_WHEN_UNMET` | The coding runs left items of the job's done-when list unmet, or unreported, after its `done_when.retries`, and the repository's `done_when.on_unmet` is `fail`, so the job failed instead of pausing. Its branch is on origin: the pull request opened for it says it did not finish, names the unmet items and carries `human-merge-only`; a pull request the job already had gets that label and a comment saying so. A run that ended in an error keeps its own code instead. |
 | `ERR_AGENT_MAX_TURNS` | An agent hit its `max_turns` cap without finishing (and the decide-now recovery, where one exists, did not rescue it). |
+| `ERR_AGENT_ANSWER_CUT` | A chat-completions or direct xAI agent's answer stopped at its output limit (`finish_reason` `length`, `stop_reason` `max_tokens`) before it ended. The run fails rather than take a cut answer, or a half-written tool call, as done; raise the model's `max_output_tokens` in the provider catalogue ([providers.md](providers.md)). |
 | `ERR_AGENT_PROCESS_FAILED` | The agent CLI subprocess exited non-zero ("Command failed with exit code N"). The cause is in the run's stored stderr tail — see below. |
 | `ERR_AGENT_IDLE` | The runner's idle watchdog killed an agent that produced no events. |
 | `ERR_AGENT_NO_RESULT` | The runner exited without a final result after the agent had started (it wrote at least one line to stdout, or exited 0). |
@@ -1655,8 +1656,11 @@ output ceiling priced in full and its input as the run's calls have cost it for
 one call in flight at a time (uncached, a token a byte, past the largest request
 read in full and for its other calls at once); a broken-off call is charged no
 more input than was held for it: 402, `budget_exceeded`, in the wire's error
-shape, and nothing is sent. A refusal is routed as crossing its limit is: for
-the job's cap, by the job's overrun mode (`soft` pauses the job for a person, as
+shape, and nothing is sent. A call carrying what its bytes do not bound (media
+other than an image given inline, a document, web search, a provider's own
+tools, audio, predicted output) is refused whether or not the run has a budget:
+400, `unmetered_content`. A refusal for the budget is routed as crossing its
+limit is: for the job's cap, by the job's overrun mode (`soft` pauses the job for a person, as
 a crossing does, saying a model call was refused, and a continue raises the cap;
 `hard` fails the job with `ERR_BUDGET_CALL_REFUSED`, its overrun 0, wherever a
 hard crossing would, a QA fan-out's apps included); for the day's or the

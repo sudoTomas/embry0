@@ -103,6 +103,7 @@ class ErrorCode(StrEnum):
     # #281 — failure taxonomy. Each of these was a cluster hiding inside
     # ERR_UNKNOWN (or a NULL code) in the 2026-09-20 audit.
     AGENT_MAX_TURNS = "ERR_AGENT_MAX_TURNS"  # agent hit its max_turns cap without finishing (no decide-now recovery, or the recovery failed too)
+    AGENT_ANSWER_CUT = "ERR_AGENT_ANSWER_CUT"  # an agent's answer stopped at its output limit before it ended (chat completions' finish_reason length, the Messages API's stop_reason max_tokens): the run fails rather than take a cut answer, or a half-written tool call, as done
     AGENT_PROCESS_FAILED = "ERR_AGENT_PROCESS_FAILED"  # the agent CLI subprocess exited non-zero ("Command failed with exit code N") — the cause is in jobs.agent_stderr_tail
     AGENT_IDLE = "ERR_AGENT_IDLE"  # the runner's idle watchdog killed an agent that produced no events
     AGENT_OUTPUT_OVERFLOW = "ERR_AGENT_OUTPUT_OVERFLOW"  # one agent stdout line exceeded the stream reader's limit (asyncio LimitOverrunError; #266 raised the limit)
@@ -235,6 +236,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.EMPTY_INTERRUPT: _C.INFRA,
     ErrorCode.REPO_UNREGISTERED: _C.CONFIG,
     ErrorCode.AGENT_MAX_TURNS: _C.AGENT,
+    ErrorCode.AGENT_ANSWER_CUT: _C.AGENT,
     ErrorCode.AGENT_PROCESS_FAILED: _C.AGENT,
     ErrorCode.AGENT_IDLE: _C.AGENT,
     ErrorCode.AGENT_OUTPUT_OVERFLOW: _C.INFRA,

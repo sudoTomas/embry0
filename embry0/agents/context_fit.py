@@ -47,6 +47,19 @@ def answer_reserve(window: int) -> int:
     return max(1024, min(8192, window // 8))
 
 
+def answer_room(window: int, estimate: int, *, calibrated: bool) -> int:
+    """The most output tokens a request of about ``estimate`` input tokens can ask for within ``window``: the room
+    left less a margin for the estimate's error (the estimate itself before the server has counted a request, an
+    eighth of it after), and never less than :func:`answer_reserve`, which the fit keeps free by the estimate."""
+    margin = estimate // 8 if calibrated else estimate
+    return max(window - estimate - margin, answer_reserve(window))
+
+
+def estimate_tokens(system: str, tools: Sequence[Any], messages: Sequence[Any], tokens_per_char: float) -> int:
+    """A request's tokens, estimated from its characters."""
+    return int(request_chars(system, tools, messages) * tokens_per_char)
+
+
 def request_chars(system: str, tools: Sequence[Any], messages: Sequence[Any]) -> int:
     """The characters a request carries, as the estimate counts them."""
     return len(system) + len(json.dumps(list(tools))) + len(json.dumps(list(messages)))
@@ -80,7 +93,7 @@ def fit_messages(
     budget = window - answer_reserve(window)
 
     def estimate(msgs: Sequence[Any]) -> int:
-        return int(request_chars(system, tools, msgs) * tokens_per_char)
+        return estimate_tokens(system, tools, msgs, tokens_per_char)
 
     if estimate(messages) <= budget:
         return messages
