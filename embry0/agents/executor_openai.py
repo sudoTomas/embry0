@@ -226,13 +226,27 @@ class _ChatCompletionsWire:
         }
         if tools:
             body["tools"] = tools
+        # Whether the request names a limit within a known window: a server's refusal of it as too long may then be a
+        # refusal of the limit alone, and the request goes again naming none.
+        room_bound = False
         if self._output_limit is not None:
             field_name, tokens = self._output_limit
+            room = None
             if self._window:
                 estimate = estimate_tokens(system, tools, messages, self._tokens_per_char)
-                tokens = min(tokens, answer_room(self._window, estimate, calibrated=self._calibrated))
-            body[field_name] = tokens
-        data = await self._post(body)
+                room = answer_room(self._window, estimate, calibrated=self._calibrated)
+            if not self._window or room is not None:
+                room_bound = room is not None
+                body[field_name] = min(tokens, room) if room is not None else tokens
+        try:
+            data = await self._post(body)
+        except ProviderHTTPError as exc:
+            if not (room_bound and exc.status == 400 and exc.error_code is ErrorCode.CONTEXT_WINDOW_EXCEEDED):
+                raise
+            # The request was nearer the window's end than estimated: named no limit, the server answers in the room
+            # the request truly leaves, so naming one never fails a request that naming none would not.
+            del body[field_name]
+            data = await self._post(body)
         # Some gateways answer 200 with an error object instead of a completion.
         if isinstance(data.get("error"), dict):
             raise ProviderHTTPError(self._provider, 200, str(data["error"].get("message") or data["error"]))
@@ -415,7 +429,8 @@ def _output_limit(provider: _Target, *, budgeted: bool) -> tuple[str, int] | Non
     else :data:`DEFAULT_OUTPUT_LIMIT`, so a metering proxy holds the call to it rather than to the 128,000 a call
     naming none is taken to produce. None when the model's ``request_extras`` name a limit of their own, and for a
     model on the operator's own server whose entry names none in a run not held to a budget: its server's own default
-    stands (vLLM's is the room the request leaves). The wire names no more than that room where the window is known."""
+    stands (vLLM's is the room the request leaves). Where the window is known the wire names no more than the room
+    each request leaves, and none when that is less than the fit's reserve (``answer_room``)."""
     if "max_tokens" in provider.request_extras or "max_completion_tokens" in provider.request_extras:
         return None
     limit = provider.max_output_tokens

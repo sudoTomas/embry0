@@ -47,12 +47,15 @@ def answer_reserve(window: int) -> int:
     return max(1024, min(8192, window // 8))
 
 
-def answer_room(window: int, estimate: int, *, calibrated: bool) -> int:
-    """The most output tokens a request of about ``estimate`` input tokens can ask for within ``window``: the room
-    left less a margin for the estimate's error (the estimate itself before the server has counted a request, an
-    eighth of it after), and never less than :func:`answer_reserve`, which the fit keeps free by the estimate."""
+def answer_room(window: int, estimate: int, *, calibrated: bool) -> int | None:
+    """The most output tokens a request of about ``estimate`` input tokens may ask for within ``window``: the room left
+    less a margin for the estimate's error (the estimate itself before the server has counted a request, an eighth of
+    it after). None when that is less than :func:`answer_reserve`: the request may then be nearer the window's end than
+    its estimate says, and a limit past the room it truly leaves is refused by a server (vLLM) that, given none,
+    would answer in that room. Such a request names no limit."""
     margin = estimate // 8 if calibrated else estimate
-    return max(window - estimate - margin, answer_reserve(window))
+    room = window - estimate - margin
+    return room if room >= answer_reserve(window) else None
 
 
 def estimate_tokens(system: str, tools: Sequence[Any], messages: Sequence[Any], tokens_per_char: float) -> int:

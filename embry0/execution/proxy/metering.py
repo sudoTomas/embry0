@@ -142,15 +142,29 @@ _ANSWER_COUNTS: frozenset[str] = frozenset({"n", "n_cmpl", "best_of"})
 #: The ``stream_options`` a streamed chat completion goes upstream with, whatever the sandbox asked for.
 _STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
 # What a metered call may carry, in this one place (``_unmetered``). The budget check prices a call by its bytes (at
-# most a token a byte, which bounds text) and its output ceiling. What a provider fetches or runs for the call, or bills
-# by anything else, is bounded by neither, so a request carrying it is refused, 400 ``unmetered_content``, whether or
-# not its run has a budget. Media goes only as an image given inline, which the check holds at IMAGE_TOKENS.
-#: Fields, at the top level or on a message, that have the provider spend on the call's behalf: OpenAI's web search,
-#: OpenRouter's plugins (web search, file parsing), xAI's live search (retrieved content and a fee a source), audio
-#: (billed at audio rates), predicted output (rejected prediction tokens bill as output), Anthropic's MCP servers
-#: and code execution container (billed by the hour). Compared with case folded.
+# most a token a byte, which bounds text) and its output ceiling, at its run's rates. What a provider fetches or runs for
+# the call, or bills at a price of its own, is bounded by neither, so a request carrying it is refused, 400
+# ``unmetered_content``, whether or not its run has a budget. Media goes only as an image given inline, which the check
+# holds at IMAGE_TOKENS. A request whose shape is not one of these is refused too, never passed over unread.
+#: Fields, at the top level or on a message, that have the provider spend on the call's behalf or bill it at another
+#: price: OpenAI's web search; OpenRouter's plugins (web search, file parsing), its fallback ``models`` (an ``:online``
+#: id among them searches the web), its ``provider`` preferences and ``route`` (another upstream, at its own prices);
+#: xAI's live search (retrieved content and a fee a source); audio (billed at audio rates); predicted output (rejected
+#: prediction tokens bill as output); Anthropic's MCP servers and code execution container (billed by the hour).
+#: Compared with case folded.
 _UNMETERED_FIELDS: frozenset[str] = frozenset(
-    {"web_search_options", "plugins", "search_parameters", "audio", "prediction", "mcp_servers", "container"}
+    {
+        "web_search_options",
+        "plugins",
+        "models",
+        "provider",
+        "route",
+        "search_parameters",
+        "audio",
+        "prediction",
+        "mcp_servers",
+        "container",
+    }
 )
 #: The ``modalities`` a request may ask for: text alone (``audio`` bills at audio rates).
 _METERED_MODALITIES: frozenset[str] = frozenset({"text"})
@@ -158,6 +172,29 @@ _METERED_MODALITIES: frozenset[str] = frozenset({"text"})
 _METERED_SERVICE_TIERS: frozenset[str] = frozenset({"auto", "default", "flex", "standard_only"})
 #: A model id suffix a router reads as a web search with every call (OpenRouter's ``:online``).
 _UNMETERED_MODEL_SUFFIXES: tuple[str, ...] = (":online",)
+#: The object-valued top-level fields a chat completion may carry, each known to change neither which model answers nor
+#: what its tokens cost: OpenAI's ``response_format``, ``tool_choice``, ``stream_options`` (rewritten for a stream),
+#: ``logit_bias`` and ``metadata``; vLLM's and SGLang's ``chat_template_kwargs``, arguments to the model's chat template
+#: such as ``enable_thinking`` (the catalogue's request extras send it); Ollama's and llama.cpp's ``options``, sampling
+#: and context settings (an output limit among them is refused above); and an ``extra_body`` holding only what
+#: :data:`_EXTRA_BODY` lets through. Any other object, a router's or a server's own extension, is refused: what it does
+#: to the bill is not known here. The Messages API has no such container: its billed fields are named above.
+_CHAT_OBJECT_FIELDS: frozenset[str] = frozenset(
+    {
+        "response_format",
+        "tool_choice",
+        "stream_options",
+        "logit_bias",
+        "metadata",
+        "chat_template_kwargs",
+        "options",
+        "extra_body",
+    }
+)
+#: What a chat completion's ``extra_body`` may hold, by vendor: Gemini's ``thinking_config`` (its thinking tokens bill
+#: as output, within the call's limit). Not its ``cached_content``: a server-side cache, billed as input the request
+#: does not carry.
+_EXTRA_BODY: dict[str, frozenset[str]] = {"google": frozenset({"thinking_config"})}
 #: The tool types a request may define, which the client runs: none of a provider's own (web search, web fetch, code
 #: execution, a model id of its own).
 _CLIENT_TOOL_TYPES: dict[str, frozenset[str | None]] = {
@@ -170,6 +207,9 @@ _CHAT_TEXT_PARTS: frozenset[str] = frozenset({"text", "refusal"})
 #: its source is inline (``base64``), within a ``tool_result`` too. A document (PDFs bill by the page, whatever their
 #: source), an image by URL or file, and a server tool's blocks are not.
 _ANTHROPIC_BLOCKS: frozenset[str] = frozenset({"text", "tool_use", "tool_result", "thinking", "redacted_thinking"})
+#: The media types an image given inline may name, in either wire's shape: the ones billed as an image. A PDF named an
+#: image is billed by the page.
+_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 #: The input tokens the budget check holds for an inline image besides its bytes: above what a hosted provider bills
 #: one at its largest (an image is billed by its pixels or tiles, which a small file can make many).
 IMAGE_TOKENS = 5_000
@@ -353,33 +393,39 @@ def read_call(wire: Wire, body: bytes) -> Call:
 def _unmetered(wire: Wire, payload: dict[str, Any]) -> tuple[str, int]:
     """What ``payload`` carries that a metered call may not (the list above), or ''; and the images it carries
     inline. Each object read here is read as every server would read it: its keys are matched with case folded (some
-    servers match them so), and one naming a key in two spellings that match so is refused."""
+    servers match them so), and one naming a key in two spellings that match so is refused. A field in a shape a
+    server would not read as text or an inline image is refused, not passed over."""
     found = _unmetered_fields(payload)
+    if wire == "openai_chat":
+        found += _unknown_objects(payload)
     model = _field(payload, "model")
     if isinstance(model, str) and model.casefold().endswith(_UNMETERED_MODEL_SUFFIXES):
         found.append("a model id asking for web search")
+    system = _field(payload, "system")
+    if system is not None and not isinstance(system, str) and _text_blocks(system) is None:
+        found.append("a system prompt that is not text")
     tools = _field(payload, "tools")
+    if tools is not None and not isinstance(tools, list):
+        found.append("tools that are not a list")
     for tool in tools if isinstance(tools, list) else ():
         kind = _field(tool, "type") if isinstance(tool, dict) else None
         if not isinstance(tool, dict) or _clashing(tool) or kind not in _CLIENT_TOOL_TYPES[wire]:
             found.append(f"a tool of type {str(kind)[:40]!r}")
             break
-    images = 0
     messages = _field(payload, "messages")
+    if messages is not None and not isinstance(messages, list):
+        found.append("messages that are not a list")
+    images = 0
     for message in messages if isinstance(messages, list) else ():
-        if not isinstance(message, dict):
-            continue
-        if _clashing(message):
-            found.append("a message naming a key in more than one spelling")
+        if not isinstance(message, dict) or _clashing(message):
+            found.append("a message that is not one object, each key in one spelling")
             break
         found += [f"a message's {key}" for key in _unmetered_fields(message)]
         content = _field(message, "content")
-        for part in content if isinstance(content, list) else ():
-            inline = _inline_images(wire, part)
-            if inline is None:
-                kind = _field(part, "type") if isinstance(part, dict) else type(part).__name__
-                found.append(f"a content part of type {str(kind)[:40]!r}, not text or an image given inline")
-                break
+        inline = 0 if content is None or isinstance(content, str) else _parts_images(wire, content)
+        if inline is None:
+            found.append("a message's content that is not text or an image given inline")
+        else:
             images += inline
         if found:
             break
@@ -398,6 +444,30 @@ def _unmetered_fields(entry: dict[str, Any]) -> list[str]:
     return found
 
 
+def _unknown_objects(payload: dict[str, Any]) -> list[str]:
+    """The object-valued fields of a chat completion beyond :data:`_CHAT_OBJECT_FIELDS`, and an ``extra_body``
+    holding more than :data:`_EXTRA_BODY` lets through, as written."""
+    found = [
+        key
+        for key, value in payload.items()
+        if isinstance(value, dict)
+        and key.casefold() not in _CHAT_OBJECT_FIELDS
+        and key.casefold() not in _UNMETERED_FIELDS
+    ]
+    extra = _field(payload, "extra_body")
+    if extra is None:
+        return found
+    if not isinstance(extra, dict) or _clashing(extra):
+        return [*found, "extra_body"]
+    for vendor, settings in extra.items():
+        allowed = _EXTRA_BODY.get(vendor.casefold())
+        if allowed is None or not isinstance(settings, dict) or _clashing(settings):
+            found.append(f"extra_body.{vendor[:40]}")
+        else:
+            found += [f"extra_body.{vendor[:40]}.{key[:40]}" for key in settings if key.casefold() not in allowed]
+    return found
+
+
 def _field(entry: dict[str, Any], name: str) -> Any:
     """The value of ``entry``'s key ``name``, matched with case folded; None when it names none."""
     return next((value for key, value in entry.items() if key.casefold() == name), None)
@@ -407,6 +477,36 @@ def _clashing(entry: dict[str, Any]) -> bool:
     """Whether ``entry`` names a key in two spellings that match once case is folded: a server matching keys that way
     may read the other one."""
     return len({key.casefold() for key in entry}) != len(entry)
+
+
+def _text_blocks(blocks: Any) -> int | None:
+    """0 when ``blocks`` is a list of text blocks (a system prompt's), else None."""
+    if not isinstance(blocks, list):
+        return None
+    for block in blocks:
+        if not isinstance(block, dict) or _clashing(block) or _field(block, "type") != "text":
+            return None
+    return 0
+
+
+def _parts_images(wire: Wire, parts: Any) -> int | None:
+    """The images a message's content parts carry inline, or None when it is not a list of parts a metered call may
+    carry."""
+    if not isinstance(parts, list):
+        return None
+    images = 0
+    for part in parts:
+        inline = _inline_images(wire, part)
+        if inline is None:
+            return None
+        images += inline
+    return images
+
+
+def _inline_image(media_type: Any) -> int | None:
+    """1 for an image of a media type billed as one (:data:`_IMAGE_MEDIA_TYPES`), else None."""
+    ok = isinstance(media_type, str) and media_type.strip().casefold() in _IMAGE_MEDIA_TYPES
+    return 1 if ok else None
 
 
 def _inline_images(wire: Wire, part: Any) -> int | None:
@@ -421,21 +521,29 @@ def _inline_images(wire: Wire, part: Any) -> int | None:
         if isinstance(image, dict) and _clashing(image):
             return None
         url = _field(image, "url") if isinstance(image, dict) else image
-        return 1 if isinstance(url, str) and url[:5].casefold() == "data:" else None
+        if not isinstance(url, str) or url[:5].casefold() != "data:":
+            return None
+        # data:<media type>[;<parameter>]...,<data>
+        return _inline_image(url[5:].split(",", 1)[0].split(";", 1)[0])
     if kind == "image":
         source = _field(part, "source")
-        ok = isinstance(source, dict) and not _clashing(source) and _field(source, "type") == "base64"
-        return 1 if ok else None
+        if not isinstance(source, dict) or _clashing(source) or _field(source, "type") != "base64":
+            return None
+        return _inline_image(_field(source, "media_type"))
     if kind not in _ANTHROPIC_BLOCKS:
         return None
-    inner = _field(part, "content") if kind == "tool_result" else None
+    if kind != "tool_result":
+        return 0
+    inner = _field(part, "content")
+    if inner is None or isinstance(inner, str):
+        return 0
+    if not isinstance(inner, list):
+        return None
     images = 0
-    for block in inner if isinstance(inner, list) else ():
-        one = (
-            _inline_images(wire, block)
-            if isinstance(block, dict) and _field(block, "type") in ("text", "image")
-            else None
-        )
+    for block in inner:
+        if not isinstance(block, dict) or _field(block, "type") not in ("text", "image"):
+            return None
+        one = _inline_images(wire, block)
         if one is None:
             return None
         images += one

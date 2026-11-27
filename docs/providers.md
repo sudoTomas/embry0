@@ -307,20 +307,33 @@ A completion request carrying what its bytes do not bound is refused too, budget
 or not (400, `unmetered_content`; on the Messages API an
 `invalid_request_error` whose message starts with that code): the budget check
 prices a call by its bytes and its output ceiling, and what a provider fetches
-or runs for the call, or bills by anything else, is neither. Media goes only as
-an image given inline, a chat completion's `image_url` part whose URL is a
-`data:` URL or a Messages API `image` block of a `base64` source (in a
-`tool_result` too), each held at 5,000 input tokens besides its bytes, more than
-a hosted provider bills one at its largest. Refused: an image by URL or file, an
-audio, file or video part, a document (PDFs bill by the page, inline too),
-OpenAI's `web_search_options`, OpenRouter's `plugins` and its `:online` model
-ids, xAI's `search_parameters`, `audio` and any `modalities` but text,
-`prediction` (rejected prediction tokens bill as output), a `service_tier`
+or runs for the call, or bills at a price of its own, is neither. Media goes
+only as an image given inline, a chat completion's `image_url` part whose URL is
+a `data:` URL or a Messages API `image` block of a `base64` source (in a
+`tool_result` too), of a media type billed as an image (`image/png`,
+`image/jpeg`, `image/gif`, `image/webp`; a PDF named an image is refused), each
+held at 5,000 input tokens besides its bytes, more than a hosted provider bills
+one at its largest. Refused: an image by URL or file, an audio, file or video
+part, a document (PDFs bill by the page, inline too), OpenAI's
+`web_search_options`, OpenRouter's `plugins`, its `:online` model ids, its
+fallback `models`, its `provider` preferences and its `route` (another upstream,
+at its own prices), xAI's `search_parameters`, `audio` and any `modalities` but
+text, `prediction` (rejected prediction tokens bill as output), a `service_tier`
 billed above the standard rates, Anthropic's `mcp_servers` and `container`, and
 a tool the provider runs itself (a chat completion's tools are `function` or
-`custom`, a Messages API tool has no type or `custom`). So is a message, content
-part or tool naming a key in two spellings that match once case is folded. The
-list is in one place, `_unmetered` in `embry0/execution/proxy/metering.py`.
+`custom`, a Messages API tool has no type or `custom`). A chat completion may
+carry no object-valued field beyond a known set that changes neither the model
+nor its prices: `response_format`, `tool_choice`, `stream_options`,
+`logit_bias`, `metadata`, `chat_template_kwargs` (vLLM's and SGLang's template
+arguments), `options` (Ollama's and llama.cpp's settings, an output limit among
+them refused) and an `extra_body` holding only Gemini's `thinking_config` (not
+its `cached_content`, a server-side cache billed as input). A system prompt that
+is not text, a message's content that is neither text nor a list of parts, and
+messages or tools that are not a list are refused rather than passed over, and
+so is a message, content part or tool naming a key in two spellings that match
+once case is folded. The list is in one place, `_unmetered` in
+`embry0/execution/proxy/metering.py`. A call is priced at its run's rates
+whatever model it names, until a call is held to its run's model.
 embry0's own agents send text, their tool conversation and screenshots inline,
 none of it refused; a Claude Code agent whose tool result is a document (a PDF
 it read) has the calls carrying it refused.
@@ -494,8 +507,14 @@ budget, since a metering proxy holds a call naming none to 128,000 output
 tokens. Within a custom model's known context window, a call asks for no more
 than the room its request leaves by the executor's estimate, less a margin for
 the estimate's error (the estimate itself until the server has counted a
-request, an eighth of it after), and never less than the room the fit keeps for
-the answer (an eighth of the window, 1,024 to 8,192 tokens). The check holds a
+request, an eighth of it after), when that is at least the room the fit keeps for
+the answer (an eighth of the window, 1,024 to 8,192 tokens): below that, the
+request may be nearer the window's end than estimated, and it names no limit, so
+the server answers in the room it truly leaves. A call whose limit the server
+refuses as past the window (`maximum context length`) goes again once naming
+none: naming a limit never fails a request that naming none would not. A call
+naming none is held at a metering proxy to 128,000 output tokens; the run of a
+free model, such as one on the operator's own hardware, is not checked. The check holds a
 call's whole limit, so with the 32,000 default a hosted model's calls on a $2
 cap are first refused at some 60 to 90% of it, the earlier the dearer its output
 (32,000 tokens at $15 a million hold $0.48); a smaller `max_output_tokens` lets

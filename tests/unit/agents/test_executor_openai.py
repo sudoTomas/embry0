@@ -423,19 +423,37 @@ def _room_by_estimate(body: dict[str, Any], window: int, *, calibrated: bool, ra
 
 @pytest.mark.parametrize(
     ("estimate", "calibrated", "room"),
-    [(2_000, False, 28_768), (8_000, True, 23_768), (20_000, False, 4_096), (28_000, True, 4_096)],
-    ids=["near-empty", "calibrated", "estimate-doubled-past-the-window", "near-full"],
+    [
+        (2_000, False, 28_768),
+        (8_000, True, 23_768),
+        (14_336, False, 4_096),
+        (14_337, False, None),
+        (20_000, False, None),
+        (25_000, True, 4_643),
+        (26_000, True, None),
+    ],
+    ids=[
+        "near-empty",
+        "calibrated",
+        "just-the-reserve",
+        "just-under-the-reserve",
+        "estimate-doubled-past",
+        "calibrated-near-full",
+        "calibrated-past",
+    ],
 )
-def test_the_room_a_request_leaves_is_less_a_margin_and_never_less_than_the_fit_s_reserve(
-    estimate: int, calibrated: bool, room: int
+def test_the_room_a_request_leaves_is_less_a_margin_or_no_limit_below_the_fit_s_reserve(
+    estimate: int, calibrated: bool, room: int | None
 ) -> None:
-    """On a 32k window: the margin is the estimate until the server has counted a request, an eighth after; the
-    fit keeps an eighth of the window (4,096) free by the estimate, so a call may always ask for that."""
+    """On a 32k window: the margin is the estimate until the server has counted a request, an eighth after. Below the
+    fit's reserve (4,096) the request may be nearer the window's end than estimated, and names no limit: a limit past
+    the room it truly leaves is refused where naming none is not."""
     try:
         from embry0.agents.context_fit import answer_room
     except ImportError as exc:
         pytest.fail(f"nothing works out the room a request leaves: {exc}")
-    assert answer_room(32_768, estimate, calibrated=calibrated) == room
+    named = answer_room(32_768, estimate, calibrated=calibrated)
+    assert named == room, f"a request of {estimate:,} tokens by estimate (calibrated: {calibrated}) asks for {named}"
 
 
 def test_a_custom_model_in_a_run_with_no_budget_names_no_output_limit(custom, monkeypatch) -> None:
@@ -473,6 +491,55 @@ def test_a_custom_model_in_a_run_with_a_budget_names_the_room_its_request_leaves
 
     ratio = 9_000 / request_chars(second["messages"][0]["content"], second.get("tools", []), second["messages"][1:])
     assert named[2] == _room_by_estimate(third, window, calibrated=True, ratio=ratio), f"each call named {named}"
+
+
+def test_a_request_near_its_window_s_end_by_estimate_names_no_limit(custom, monkeypatch) -> None:
+    """32k window, a first request of about 21,000 tokens by estimate: what it truly holds may be more, so a limit of the
+    fit's reserve could pass the room it leaves and be refused where naming none is not."""
+    _window_of(monkeypatch, 32_768)
+    custom.answer(completion(content="ok"))
+    out = _run(_invocation(prompt="word " * 14_000, provider_record=_custom_record(budgeted=True)))
+    assert not out.is_error, out.error_message
+    body = _body_of_first_call(custom)
+    assert "max_tokens" not in body and "max_completion_tokens" not in body, f"named {body.get('max_tokens')}"
+
+
+_TOO_LONG = {
+    "error": {
+        "message": "This model's maximum context length is 32768 tokens. However, you requested 33010 tokens "
+        "(28914 in the messages, 4096 in the completion). Please reduce the length of the messages or completion.",
+        "type": "BadRequestError",
+    }
+}
+
+
+def test_a_limit_refused_as_past_the_window_goes_again_naming_none(custom, monkeypatch) -> None:
+    """The server counted more than estimated: what it refused was the limit, and naming none it answers in the room
+    the request truly leaves. Naming a limit never fails a request that naming none would not."""
+    _window_of(monkeypatch, 32_768)
+    custom.answer(_TOO_LONG, status=400)
+    custom.answer(completion(content="done"))
+    out = _run(_invocation(provider_record=_custom_record(budgeted=True)))
+    assert not out.is_error, out.error_message
+    first, second = (r["json"] for r in custom.chat_requests())
+    assert "max_tokens" in first, f"the first call named no limit: {sorted(first)}"
+    assert "max_tokens" not in second, f"the call went again naming {second.get('max_tokens')}"
+    assert {k: v for k, v in first.items() if k != "max_tokens"} == second, "the call went again changed"
+
+
+@pytest.mark.parametrize(
+    ("answer", "window"),
+    [
+        pytest.param({"error": {"message": "tools[0] is not a valid tool"}}, 32_768, id="another-refusal"),
+        pytest.param(_TOO_LONG, None, id="no-known-window"),
+    ],
+)
+def test_only_a_refusal_as_past_a_known_window_sends_the_call_again(custom, monkeypatch, answer, window) -> None:
+    _window_of(monkeypatch, window)
+    custom.answer(answer, status=400)
+    out = _run(_invocation(provider_record=_custom_record(budgeted=True)))
+    assert out.is_error, "the run took a refusal as an answer"
+    assert len(custom.chat_requests()) == 1, f"the call went {len(custom.chat_requests())} times"
 
 
 def test_a_custom_model_in_a_run_with_a_budget_names_the_default_when_its_window_is_unknown(

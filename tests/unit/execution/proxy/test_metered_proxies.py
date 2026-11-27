@@ -1038,3 +1038,35 @@ async def test_a_call_with_a_screenshot_given_inline_goes(aiohttp_client, model_
     resp = await client.post(path, json=body, headers=_AUTH)
     assert resp.status == 200, f"{route} answered {resp.status}: {await resp.text()}"
     assert len(upstream.calls) == 1, f"{route} sent {len(upstream.calls)} calls"
+
+
+def _pdf_as_image(route: str) -> dict[str, Any]:
+    """A PDF named an inline image, in ``route``'s wire: billed by the page, not as an image."""
+    if route == "xai-proxy messages":
+        return {"type": "image", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0x"}}
+    return {"type": "image_url", "image_url": {"url": "data:application/pdf;base64,JVBERi0x"}}
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+async def test_a_pdf_named_an_inline_image_is_refused_and_never_sent(aiohttp_client, model_server, route):
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET)
+    body = _completion(route, max_tokens=1000, messages=[{"role": "user", "content": [_pdf_as_image(route)]}])
+    resp = await client.post(path, json=body, headers=_AUTH)
+    assert resp.status == 400, f"{route} answered {resp.status} to a PDF named an image"
+    assert "unmetered_content" in await resp.text(), await resp.text()
+    assert upstream.calls == [], f"{route} forwarded a PDF named an image"
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
+async def test_a_fallback_model_list_is_refused_and_never_sent(aiohttp_client, model_server, route):
+    """An ``:online`` id among a router's fallback models searches the web: the refusal of one as the model, kept."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET)
+    body = _completion(route, max_tokens=1000, models=["openai/gpt-6:online"])
+    resp = await client.post(path, json=body, headers=_AUTH)
+    assert resp.status == 400, f"{route} answered {resp.status} to a fallback model list"
+    assert _refusal_code(route, await resp.json(content_type=None)) == ("error", "unmetered_content")
+    assert upstream.calls == [], f"{route} forwarded a fallback model list"

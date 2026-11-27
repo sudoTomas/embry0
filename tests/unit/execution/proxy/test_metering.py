@@ -728,6 +728,40 @@ _BASE64_PDF = {"type": "base64", "media_type": "application/pdf", "data": "JVBER
         ("anthropic", {"tools": [{"type": "web_search_20250305", "name": "web_search"}]}),
         ("anthropic", {"mcp_servers": [{"type": "url", "url": "https://example.test/mcp", "name": "x"}]}),
         ("anthropic", {"container": "container_1"}),
+        # Another upstream, at prices of its own, or a server-side cache billed as input the request does not carry.
+        ("openai_chat", {"models": ["openai/gpt-6:online", "openai/gpt-6"]}),
+        ("openai_chat", {"provider": {"order": ["some-host"], "allow_fallbacks": True}}),
+        ("openai_chat", {"Provider": {"order": ["some-host"]}}),
+        ("openai_chat", {"route": "fallback"}),
+        ("openai_chat", {"extra_body": {"google": {"cached_content": "cachedContents/abc"}}}),
+        ("openai_chat", {"extra_body": {"google": {"thinking_config": {}, "Cached_Content": "cachedContents/abc"}}}),
+        ("openai_chat", {"extra_body": {"openrouter": {"provider": {}}}}),
+        ("openai_chat", {"extra_body": "google"}),
+        ("openai_chat", {"reasoning": {"effort": "high"}}),
+        ("openai_chat", {"mm_processor_kwargs": {"max_pixels": 99_999_999}}),
+        # A PDF, or nothing at all, named an inline image.
+        (
+            "openai_chat",
+            _chat_parts({"type": "image_url", "image_url": {"url": "data:application/pdf;base64,JVBERi0x"}}),
+        ),
+        ("openai_chat", _chat_parts({"type": "image_url", "image_url": {"url": "data:;base64,iVBORw0KGgo="}})),
+        ("openai_chat", _chat_parts({"type": "image_url", "image_url": {"url": "data:image/svg+xml;base64,PHN2Zz4="}})),
+        ("anthropic", _anthropic_blocks({"type": "image", "source": {**_BASE64_PDF}})),
+        ("anthropic", _anthropic_blocks({"type": "image", "source": {"type": "base64", "data": "iVBO"}})),
+        ("anthropic", _anthropic_blocks(_tool_result({"type": "image", "source": _BASE64_PDF}))),
+        # A shape no server reads as text or an inline image, refused rather than passed over.
+        ("anthropic", {"system": [{"type": "text", "text": "a"}, {"type": "image", "source": _BY_URL}]}),
+        ("anthropic", {"system": {"type": "text", "text": "a"}}),
+        ("anthropic", {"System": [{"type": "document", "source": _BASE64_PDF}]}),
+        ("openai_chat", {"messages": [{"role": "user", "content": {"type": "image_url", "image_url": {"url": _URL}}}]}),
+        ("anthropic", {"messages": [{"role": "user", "content": {"type": "image", "source": _BY_URL}}]}),
+        ("anthropic", _anthropic_blocks({"type": "tool_result", "tool_use_id": "t", "content": {"type": "document"}})),
+        ("openai_chat", {"messages": {"role": "user", "content": [{"type": "image_url", "image_url": {"url": _URL}}]}}),
+        ("openai_chat", {"messages": ["look at https://example.test/a.png"]}),
+        ("openai_chat", {"tools": {"type": "web_search"}}),
+        ("anthropic", {"messages": {"role": "user", "content": [{"type": "image", "source": _BY_URL}]}}),
+        ("anthropic", {"tools": {"type": "web_search_20250305", "name": "web_search"}}),
+        ("openai_chat", {"messages": "look at https://example.test/a.png"}),
     ],
     ids=lambda value: value if isinstance(value, str) else None,
 )
@@ -761,7 +795,13 @@ def test_a_call_carrying_what_its_bytes_do_not_bound_is_refused(wire: Any, body:
             },
             0,
         ),
-        ("anthropic", _anthropic_blocks({"type": "image", "source": {"type": "base64", "data": "iVBO"}}), 1),
+        (
+            "anthropic",
+            _anthropic_blocks(
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBO"}}
+            ),
+            1,
+        ),
         (
             "anthropic",
             {
@@ -778,8 +818,8 @@ def test_a_call_carrying_what_its_bytes_do_not_bound_is_refused(wire: Any, body:
                         "role": "user",
                         "content": [
                             _tool_result(
-                                {"type": "image", "source": {"type": "base64", "data": "x"}},
-                                {"type": "image", "source": {"type": "base64", "data": "y"}},
+                                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "x"}},
+                                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "y"}},
                             )
                         ],
                     },
@@ -787,8 +827,44 @@ def test_a_call_carrying_what_its_bytes_do_not_bound_is_refused(wire: Any, body:
             },
             2,
         ),
+        (
+            "openai_chat",
+            {
+                "chat_template_kwargs": {"enable_thinking": False},
+                "options": {"temperature": 0.2, "num_ctx": 8192},
+                "response_format": {"type": "json_object"},
+                "metadata": {"job": "j"},
+                "extra_body": {"google": {"thinking_config": {"thinking_budget": 1024}}},
+                **_chat_parts({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ"}}),
+            },
+            1,
+        ),
+        (
+            "anthropic",
+            {
+                "system": [{"type": "text", "text": "you are", "cache_control": {"type": "ephemeral"}}],
+                "messages": [
+                    {"role": "user", "content": "plain text"},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {"type": "base64", "media_type": "IMAGE/WEBP", "data": "UklG"}}
+                        ],
+                    },
+                ],
+            },
+            1,
+        ),
     ],
-    ids=["chat-inline", "chat-inline-and-text", "chat-text-and-function-tools", "anthropic-inline", "anthropic-tools"],
+    ids=[
+        "chat-inline",
+        "chat-inline-and-text",
+        "chat-text-and-function-tools",
+        "anthropic-inline",
+        "anthropic-tools",
+        "chat-known-objects-and-a-jpeg",
+        "anthropic-text-system-and-a-webp",
+    ],
 )
 def test_text_and_images_given_inline_go_through_and_are_counted(wire: Any, body: dict[str, Any], images: int) -> None:
     """What embry0's agents send: text, their tool conversation, and screenshots inline (MCP tool results)."""

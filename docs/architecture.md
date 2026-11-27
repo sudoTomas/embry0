@@ -1658,7 +1658,8 @@ read in full and for its other calls at once); a broken-off call is charged no
 more input than was held for it: 402, `budget_exceeded`, in the wire's error
 shape, and nothing is sent. A call carrying what its bytes do not bound (media
 other than an image given inline, a document, web search, a provider's own
-tools, audio, predicted output) is refused whether or not the run has a budget:
+tools, another upstream or a server-side cache, audio, predicted output) is
+refused whether or not the run has a budget:
 400, `unmetered_content`. A refusal for the budget is routed as crossing its
 limit is: for the job's cap, by the job's overrun mode (`soft` pauses the job for a person, as
 a crossing does, saying a model call was refused, and a continue raises the cap;
