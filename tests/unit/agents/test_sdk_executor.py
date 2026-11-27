@@ -823,7 +823,14 @@ async def test_grok_overlay_prefers_xai_proxy_bearer(tmp_path, monkeypatch) -> N
         "ANTHROPIC_AUTH_TOKEN": "sandbox-bearer",
         "ANTHROPIC_API_KEY": "",
         "CLAUDE_CODE_OAUTH_TOKEN": "",
-    }
+        # The CLI's small, fast model and its subagents' haiku, sonnet and opus: the run's own, which the proxy holds
+        # its calls to.
+        "ANTHROPIC_SMALL_FAST_MODEL": "grok-4.5",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "grok-4.5",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "grok-4.5",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "grok-4.5",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "grok-4.5",
+    }, f"a grok run's CLI env: {options.env!r}"
 
 
 @pytest.mark.asyncio

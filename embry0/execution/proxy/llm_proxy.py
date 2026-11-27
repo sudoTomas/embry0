@@ -69,11 +69,13 @@ from embry0.execution.proxy.metering import (
     METER,
     BudgetExceededError,
     Metered,
+    ModelNotDeclaredError,
     NoRunError,
     TalliesFullError,
     budget_answer,
     no_run_answer,
     read_call,
+    refusal_answer,
     register_meter_routes,
 )
 from embry0.execution.proxy.model_request import openai_error, read_body, unreadable_encoding
@@ -477,6 +479,11 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
         except NoRunError:
             logger.warning("llm_proxy_call_without_run", sandbox_id=sandbox_id)
             return no_run_answer("openai_chat")
+        except ModelNotDeclaredError as refusal:
+            logger.warning(
+                "llm_proxy_model_not_declared", sandbox_id=sandbox_id, provider=provider, model=refusal.model
+            )
+            return refusal_answer("openai_chat", "model_not_declared", str(refusal))
         except BudgetExceededError as refusal:
             logger.warning(
                 "llm_proxy_call_over_budget",

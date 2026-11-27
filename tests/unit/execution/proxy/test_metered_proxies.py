@@ -1070,3 +1070,75 @@ async def test_a_fallback_model_list_is_refused_and_never_sent(aiohttp_client, m
     assert resp.status == 400, f"{route} answered {resp.status} to a fallback model list"
     assert _refusal_code(route, await resp.json(content_type=None)) == ("error", "unmetered_content")
     assert upstream.calls == [], f"{route} forwarded a fallback model list"
+
+
+# --------------------------------------------------------------------------- a run held to its provider and model
+
+
+def _model_of(route: str) -> str:
+    return "grok-4.7" if route == "xai-proxy messages" else "qwen"
+
+
+@pytest.mark.parametrize("route", sorted(_COMPLETION_ROUTES))
+async def test_a_call_naming_a_model_its_run_was_not_declared_with_is_refused_and_never_sent(
+    aiohttp_client, model_server, route
+):
+    """Checked and charged at the run's rates, a dearer model on the same route would cost more than both say."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    name = "anthropic-message.json" if route == "xai-proxy messages" else "openai-chat.json"
+    upstream = _Upstream()
+    upstream.answers.append(_Answer((ANSWERS / name).read_bytes()))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=BUDGET, models=[_model_of(route)])
+    dearer = await client.post(path, json=_completion(route, max_tokens=100, model="pricier-model"), headers=_AUTH)
+    assert dearer.status == 403, f"{route} answered {dearer.status} to a call naming another model"
+    answer = await dearer.json(content_type=None)
+    if route == "xai-proxy messages":
+        error = answer.get("error", {})
+        shape = (answer.get("type"), error.get("type"), str(error.get("message", "")).split(":")[0])
+        assert shape == ("error", "permission_error", "model_not_declared"), f"{route} refused it as {answer}"
+    else:
+        assert _refusal_code(route, answer) == ("error", "model_not_declared"), f"{route} refused it as {answer}"
+    assert upstream.calls == [], f"{route} forwarded a call naming another model"
+    held = await client.post(path, json=_completion(route, stream=False, max_tokens=100), headers=_AUTH)
+    assert held.status == 200, f"{route} answered {held.status} to a call naming the run's own model"
+    await held.read()
+    assert sum(m["requests"] for m in (await _settled(client))["models"].values()) == 1
+
+
+async def test_a_declaration_says_it_holds_the_run_to_its_models(aiohttp_client):
+    client = await _xai(aiohttp_client, _Upstream())
+    resp = await _declare(client, provider="xai", models=["grok-4.7"])
+    assert resp.status == 200, await resp.text()
+    assert (await resp.json()).get("models") == ["grok-4.7"], "the proxy did not say it holds the run to its model"
+    for bad in ([], "grok-4.7", [""], ["a", "a"], [7], [f"m{i}" for i in range(9)]):
+        refused = await _declare(client, run_id="run-2", provider="xai", models=bad)
+        assert refused.status == 400, f"a declaration naming models {bad!r} was taken ({refused.status})"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("POST", "/v1/messages"), ("POST", "/v1/chat/completions"), ("GET", "/v1/models")],
+)
+async def test_the_xai_proxy_refuses_a_sandbox_whose_run_is_on_another_provider(aiohttp_client, method, path):
+    """Another provider's run is charged from its own provider's proxy: what it spent here would be counted under it
+    and never charged."""
+    upstream = _Upstream()
+    client = await _xai(aiohttp_client, upstream)
+    held = await _declare(client, provider="custom")
+    assert held.status == 200, await held.text()
+    body = _messages(max_tokens=100) if path == "/v1/messages" else {"model": "grok-4.7", "max_tokens": 100}
+    resp = await client.request(method, path, json=body if method == "POST" else None, headers=_AUTH)
+    assert resp.status == 403, f"{method} {path} answered {resp.status} for a run on another provider"
+    assert "provider_not_declared" in await resp.text(), await resp.text()
+    assert upstream.calls == [], f"{method} {path} went upstream for a run on another provider"
+
+
+async def test_the_xai_proxy_lets_a_run_on_xai_through(aiohttp_client):
+    upstream = _Upstream()
+    upstream.answers.append(_Answer((ANSWERS / "anthropic-message.json").read_bytes()))
+    client = await _xai(aiohttp_client, upstream)
+    held = await _declare(client, provider="xai", models=["grok-4.7"])
+    assert held.status == 200, await held.text()
+    resp = await client.post("/v1/messages", json=_messages(max_tokens=100, stream=False), headers=_AUTH)
+    assert resp.status == 200, f"a call of a run on xai answered {resp.status}: {await resp.text()}"
+    assert len(upstream.calls) == 1

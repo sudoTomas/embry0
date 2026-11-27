@@ -77,9 +77,11 @@ class _Proxies:
         job_id: str | None = None,
         provider: str | None = None,
         budget: dict[str, Any] | None = None,
+        models: Any = None,
     ) -> str:
         self._maybe_fail(proxy, "declare")
         self.declared_providers = {**getattr(self, "declared_providers", {}), (proxy, run_id): provider}
+        self.declared_models = {**getattr(self, "declared_models", {}), (proxy, run_id): models}
         self.declared_budgets = {**getattr(self, "declared_budgets", {}), (proxy, run_id): budget}
         self.tallies[proxy][run_id] = {
             "run_id": run_id,

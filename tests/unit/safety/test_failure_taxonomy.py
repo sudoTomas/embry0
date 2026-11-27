@@ -51,10 +51,11 @@ _PIPELINE_PACKAGES = (
 # MalformedCommandList (#559) likewise lives in the git-proxy: raised while it
 # reads a push's command list and caught by its own handler, which refuses
 # the push with HTTP 403.
-# NoRunError, TalliesFullError and BudgetExceededError live in the model
-# proxies' meter (execution/proxy/metering.py): raised when a call has no run,
-# the meter is full or the call's ceiling would pass its run's budget, and
-# caught by the proxy's own handlers, which answer 403, 429, 503 or 402.
+# NoRunError, TalliesFullError, BudgetExceededError and ModelNotDeclaredError
+# live in the model proxies' meter (execution/proxy/metering.py): raised when
+# a call has no run, the meter is full, the call's ceiling would pass its run's
+# budget or it names a model its run was not declared with, and caught by the
+# proxy's own handlers, which answer 403, 429, 503 or 402.
 # The orchestrator sees only those answers; the check below keeps it so.
 # XaiDeviceLoginError (#457) is raised by the operator's xAI device login,
 # which only the credentials API runs (api/v1/credentials.py turns it into an
@@ -77,6 +78,7 @@ _NEVER_ESCAPES = {
     "NoRunError",
     "TalliesFullError",
     "BudgetExceededError",
+    "ModelNotDeclaredError",
     "XaiDeviceLoginError",
     "ImagePinError",
     "RegistryAuthError",
@@ -156,8 +158,8 @@ _METER_MODULES = {
 
 
 def test_the_meter_s_refusals_stay_in_the_proxies():
-    """NoRunError / TalliesFullError / BudgetExceededError are exempt only while no module outside the model proxies
-    names them."""
+    """NoRunError / TalliesFullError / BudgetExceededError / ModelNotDeclaredError are exempt only while no module
+    outside the model proxies names them."""
     names = []
     for entry in _PIPELINE_PACKAGES:
         root = _REPO_ROOT / entry
@@ -165,7 +167,8 @@ def test_the_meter_s_refusals_stay_in_the_proxies():
             rel = str(path.relative_to(_REPO_ROOT))
             text = path.read_text()
             if rel not in _METER_MODULES and any(
-                name in text for name in ("NoRunError", "TalliesFullError", "BudgetExceededError")
+                name in text
+                for name in ("NoRunError", "TalliesFullError", "BudgetExceededError", "ModelNotDeclaredError")
             ):
                 names.append(rel)
     assert names == [], f"the meter's refusals now leave the proxies; give them a code: {names}"

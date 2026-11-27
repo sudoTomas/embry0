@@ -1402,3 +1402,66 @@ def test_an_image_given_inline_is_held_at_more_than_its_bytes() -> None:
     as_text.close()
     as_images = _open_or_refused(meter, {"model": "m", "max_tokens": 1000, **_chat_parts(*[image] * 10)})
     assert as_images is None, "ten images given inline were held at their bytes alone"
+
+
+# --------------------------------------------------------------------------- a run held to its model
+
+
+def _model_error() -> Any:
+    try:
+        from embry0.execution.proxy.metering import ModelNotDeclaredError
+    except ImportError as exc:
+        pytest.fail(f"the meter holds no run to its model: {exc}")
+    return ModelNotDeclaredError
+
+
+def _held_to(meter: Meter, *models: str, run_id: str = "run-1") -> None:
+    try:
+        meter.declare("sbx", run_id, "job-1", provider="xai", models=models)  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared with its models: {exc}")
+
+
+@pytest.mark.parametrize(
+    "named",
+    [
+        "grok-4.7-heavy",
+        "GROK-4.7",
+        " grok-4.7",
+        None,
+        "grok-4.7" + "x" * 300,
+    ],
+    ids=["a dearer model", "another spelling", "padded", "no model", "past the cut a name is kept to"],
+)
+def test_a_call_naming_a_model_its_run_was_not_declared_with_is_refused(named: str | None) -> None:
+    """Checked and charged at the run's rates, a call to a dearer model on the same route would cost more than both
+    say: only the ids the run was declared with go, exactly as written."""
+    error = _model_error()
+    meter = Meter()
+    _held_to(meter, "grok-4.7", "grok-4.7" + "x" * 192)
+    body = {"max_tokens": 10, "messages": [], **({"model": named} if named is not None else {})}
+    with pytest.raises(error):
+        meter.open("sbx", read_call("anthropic", json.dumps(body).encode()))
+    assert _tally(meter, "run-1")["models"] == {}, "a refused call was counted"
+
+
+def test_a_call_naming_a_declared_model_goes() -> None:
+    meter = Meter()
+    _held_to(meter, "qwen3.8-27b", "custom/qwen3.8-27b")
+    for model in ("qwen3.8-27b", "custom/qwen3.8-27b"):
+        meter.open("sbx", read_call("openai_chat", json.dumps({"model": model, "max_tokens": 10}).encode())).close()
+
+
+def test_a_run_declared_with_no_models_is_held_to_none() -> None:
+    """A declaration from an orchestrator before runs were held to their model, or a run with no provider record."""
+    meter = Meter()
+    meter.declare("sbx", "run-1", "job-1", provider="xai")
+    meter.open("sbx", read_call("anthropic", json.dumps({"model": "anything", "max_tokens": 10}).encode())).close()
+
+
+def test_a_run_declared_again_with_other_models_is_refused() -> None:
+    meter = Meter()
+    _held_to(meter, "grok-4.7")
+    with pytest.raises(ValueError):
+        meter.declare("sbx", "run-1", "job-1", provider="xai", models=("grok-4.7", "grok-4.7-heavy"))  # type: ignore[call-arg]
+    _held_to(meter, "grok-4.7")  # the same declaration again changes nothing

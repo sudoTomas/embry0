@@ -122,6 +122,8 @@ DEFAULT_MAX_TALLIES = 1000
 #: The longest model name a tally keeps, the catalogue's own limit: a longer one is cut to it, so a request or an
 #: answer cannot make a tally (or the trace that names its models) as large as it likes.
 MAX_MODEL_CHARS = 200
+#: The most model ids a run's declaration names (the id its provider knows the model by, and its routed name).
+MAX_RUN_MODELS = 8
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 #: Output limits some servers of the OpenAI-style API honour besides (or over) ``max_tokens`` and
@@ -251,6 +253,18 @@ class Usage:
             setattr(self, f.name, max(getattr(self, f.name), getattr(other, f.name)))
 
 
+def read_models(value: Any) -> tuple[str, ...] | None:
+    """The model ids a declaration names: None when it names none, ``()`` when ``value`` is not 1 to
+    :data:`MAX_RUN_MODELS` distinct ids of 1 to :data:`MAX_MODEL_CHARS` characters."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_RUN_MODELS or len(set(map(str, value))) != len(value):
+        return ()
+    if any(not isinstance(m, str) or not 1 <= len(m) <= MAX_MODEL_CHARS for m in value):
+        return ()
+    return tuple(value)
+
+
 def _model_name(value: Any) -> str | None:
     """A model name, cut to :data:`MAX_MODEL_CHARS`; None when ``value`` is not one."""
     return value[:MAX_MODEL_CHARS] if isinstance(value, str) and value else None
@@ -287,6 +301,8 @@ class Call:
     refusal_code: str = "unreadable_request"
     #: The images the request carries inline, each held at :data:`IMAGE_TOKENS` besides its bytes.
     images: int = 0
+    #: The model the request names, as written (``model`` is cut to :data:`MAX_MODEL_CHARS`); None when it names none.
+    model_id: str | None = None
 
     def ceiling(self) -> Usage:
         """What the call is charged when its answer is lost."""
@@ -387,6 +403,7 @@ def read_call(wire: Wire, body: bytes) -> Call:
         output_ceiling=ceiling,
         output_limited=bool(limits),
         images=images,
+        model_id=payload.get("model") if isinstance(payload.get("model"), str) else None,
     )
 
 
@@ -1069,6 +1086,8 @@ class _Tally:
     ended: float | None = None
     #: The provider the run was declared on; None when its declaration named none (or the sandbox had no run).
     provider: str | None = None
+    #: The model ids the run was declared with: a call naming any other is refused. None: a declaration naming none.
+    held_models: tuple[str, ...] | None = None
     #: The rates the run is priced at and the purses it draws on, when its declaration named a budget.
     budget: Budget | None = None
     models: dict[str, _ModelTally] = field(default_factory=dict)
@@ -1174,6 +1193,15 @@ class NoRunError(Exception):
     """A call from a sandbox with no run in progress, while the proxy requires one."""
 
 
+class ModelNotDeclaredError(Exception):
+    """A call naming a model its run was not declared with: it would be checked and charged at the run's rates."""
+
+    def __init__(self, model: str | None, held: tuple[str, ...]) -> None:
+        named = repr(model[:MAX_MODEL_CHARS]) if model is not None else "no model"
+        super().__init__(f"this sandbox's current run is on {', '.join(held)}: a call naming {named} is refused")
+        self.model = model
+
+
 class TalliesFullError(Exception):
     """The meter holds as many tallies as it may."""
 
@@ -1234,21 +1262,34 @@ class Meter:
         budget: Budget | None = None,
         purses: list[PurseFigure] | None = None,
         seq: int | None = None,
+        models: tuple[str, ...] | None = None,
     ) -> None:
         """Make ``run_id`` the run ``sandbox_id``'s calls count under, on ``provider`` when it names one, held to
-        ``budget`` and drawing on ``purses`` (the figures of admin number ``seq``) when it names one. Declaring it
-        again changes nothing (its budget included); declaring it again on another provider is refused."""
+        ``budget`` and drawing on ``purses`` (the figures of admin number ``seq``) when it names one, and to
+        ``models`` when it names them (:meth:`open` refuses a call naming another). Declaring it again changes nothing
+        (its budget included); declaring it again on another provider, or other models, is refused."""
         held = self._runs.get(run_id)
         if held is not None:
-            if held.sandbox_id != sandbox_id or held.ended is not None or held.provider != provider:
-                raise ValueError(f"run {run_id} belongs to another sandbox or provider, or has ended")
+            if (
+                held.sandbox_id != sandbox_id
+                or held.ended is not None
+                or held.provider != provider
+                or held.held_models != models
+            ):
+                raise ValueError(f"run {run_id} belongs to another sandbox, provider or models, or has ended")
             return
         self._purge()
         if len(self) >= self._max:
             raise TalliesFullError(f"the meter holds {self._max} tallies")
         self._end_current(sandbox_id)
         self._runs[run_id] = _Tally(
-            sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now(), provider=provider, budget=budget
+            sandbox_id=sandbox_id,
+            run_id=run_id,
+            job_id=job_id,
+            started=self._now(),
+            provider=provider,
+            budget=budget,
+            held_models=models,
         )
         self._current[sandbox_id] = run_id
         if purses:
@@ -1348,7 +1389,9 @@ class Meter:
 
     def open(self, sandbox_id: str, call: Call) -> Metered:
         """Start metering ``call`` from ``sandbox_id``. Raises :class:`NoRunError` when the sandbox has no run and
-        one is required, and :class:`BudgetExceededError` when the call, priced as the check prices it
+        one is required, :class:`ModelNotDeclaredError` when the call names a model its run was not declared with
+        (checked and charged at the run's rates, it could cost more), and :class:`BudgetExceededError` when the call,
+        priced as the check prices it
         (:meth:`_Tally.check_input_usd`, :meth:`_Tally.output_usd`), would take a purse its run draws on past what it
         has left."""
         run_id = self._current.get(sandbox_id)
@@ -1366,6 +1409,8 @@ class Meter:
                 tally = _Tally(sandbox_id=sandbox_id, run_id=None, job_id=None, started=self._now())
                 self._unattributed[self._next_unattributed] = tally
                 self._live_unattributed[sandbox_id] = self._next_unattributed
+        if tally.held_models is not None and call.model_id not in tally.held_models:
+            raise ModelNotDeclaredError(call.model_id, tally.held_models)
         budget = tally.budget
         observed = tally.observed_price_free()
         reserved_input = tally.check_input_usd(len(call.body), observed_price=observed) + tally.images_usd(call.images)
@@ -1485,7 +1530,8 @@ METER = web.AppKey("meter", Meter)
 def register_meter_routes(app: web.Application, *, proxy_name: str, require_run: bool = False) -> Meter:
     """Give ``app`` a :class:`Meter` and its admin routes, behind the enrollment's admin gate:
 
-    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?, budget?}`` declares an enrolled sandbox's run,
+    - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?, models?, budget?}`` declares an enrolled
+      sandbox's run,
       on ``provider`` when it names one, held to ``budget`` (:func:`read_budget`) when it names one (the answer
       echoes each);
     - ``PUT /admin/purses`` ``{purses, seq}`` takes the orchestrator's figures for purses (:func:`read_purses`);
@@ -1518,6 +1564,9 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             return web.json_response({"error": "bad_request"}, status=400)
         if job_id is not None and not isinstance(job_id, str):
             return web.json_response({"error": "bad_request"}, status=400)
+        models = read_models(body.get("models"))
+        if models == ():
+            return web.json_response({"error": "bad_request"}, status=400)
         try:
             budget, purses = read_budget(body["budget"]) if body.get("budget") is not None else (None, [])
         except ValueError:
@@ -1531,7 +1580,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         if stale is not None:
             return stale
         try:
-            meter.declare(sandbox_id, run_id, job_id or None, provider, budget, purses, seq)
+            meter.declare(sandbox_id, run_id, job_id or None, provider, budget, purses, seq, models)
         except TalliesFullError:
             logger.error(f"{proxy_name}_meter_full", sandbox_id=sandbox_id, run_id=run_id)
             return web.json_response({"error": "meter_full"}, status=429)
@@ -1553,6 +1602,9 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             answer["seq"] = seq
         if provider is not None:
             answer["provider"] = provider
+        if models is not None:
+            # That this proxy holds the run's calls to them (an older image does not).
+            answer["models"] = list(models)
         if budget is not None:
             # That this proxy holds the run to it (an older image does not).
             answer["budget"] = {"purses": {key: meter.purse_left(key) for key in budget.purses}}
@@ -1620,6 +1672,14 @@ def budget_answer(wire: Wire, refusal: BudgetExceededError) -> web.Response:
     if wire == "anthropic":
         return anthropic_error("budget_exceeded", refusal.message, 402)
     return openai_error("budget_exceeded", refusal.message, 402)
+
+
+def refusal_answer(wire: Wire | None, code: str, message: str) -> web.Response:
+    """A 403 refusal in the shape ``wire``'s client reads as final: the Messages API's ``permission_error`` with the
+    code at the head of its message, else the OpenAI shape with ``code`` (a path no wire reads takes that too)."""
+    if wire == "anthropic":
+        return anthropic_error("permission_error", f"{code}: {message}", 403)
+    return openai_error(code, message, 403)
 
 
 def no_run_answer(wire: Wire) -> web.Response:

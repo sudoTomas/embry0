@@ -47,6 +47,7 @@ from embry0.safety.error_codes import ErrorCode
 from embry0.safety.redaction import redact_bounded, redact_secrets, secret_env_values
 
 if TYPE_CHECKING:
+    from embry0.agents.invocation import AgentInvocation
     from embry0.services.account_waits import WaitPolicy
     from embry0.settings.sections.budget import BudgetSettings
 
@@ -445,6 +446,17 @@ async def evaluate_job_cap(state: dict[str, Any], config: Any, state_total: floa
         may_exceed_ceiling=settings.continue_may_exceed_ceiling,
     )
     return JobCapCheck(total=total, cap=cap, mode=overrun_mode, decision=check_budget(total, cap, overrun_mode))
+
+
+def run_models(invocation: AgentInvocation) -> tuple[str, ...] | None:
+    """The ids a run's model goes by at the metering proxies: the one its provider knows it by (its record's), and the
+    one it was routed by, which the Claude Code CLI and the direct xAI executor send. The CLI's background and
+    subagent models are set to the run's own on a provider's run (``embry0.agents.executor``). None for a run with no
+    provider record: its calls are held to no model."""
+    record = invocation.provider_record
+    if record is None:
+        return None
+    return tuple(dict.fromkeys(m for m in (record.upstream_model, invocation.model) if m))
 
 
 async def declared_budget(
@@ -1466,6 +1478,8 @@ async def run_agent_node(
                     trace_job_id or None,
                     provider=record.name if record is not None else None,
                     budget=declared,
+                    # And to its model: a call naming another would be checked and charged at this model's rates.
+                    models=run_models(invocation),
                 )
                 if declared is not None and isinstance(serialized.get("provider_record"), dict):
                     # A custom model's calls name an output limit only for a run held to a budget.

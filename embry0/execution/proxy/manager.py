@@ -1303,10 +1303,12 @@ class ProxyManager:
         job_id: str | None = None,
         provider: str | None = None,
         budget: Mapping[str, Any] | None = None,
+        models: Sequence[str] | None = None,
     ) -> str:
         """Declare ``run_id`` as ``sandbox_id``'s run on ``proxy``, so the calls it forwards count under it, on
-        ``provider`` (the run's provider record's name) when given: the llm-proxy then refuses the sandbox's calls to
-        any other provider while the run is current. With ``budget`` (``embry0.orchestration.run_budget``) the proxy
+        ``provider`` (the run's provider record's name) when given: each metering proxy then refuses the sandbox's
+        calls to any other provider while the run is current. With ``models`` (the ids the run's model goes by), it
+        refuses a call naming any other model. With ``budget`` (``embry0.orchestration.run_budget``) the proxy
         refuses a call whose ceiling would take the run past it. Returns the proxy's boot id. Raises RuntimeError when
         the proxy refuses or cannot be reached."""
         port = METERED_PROXIES[proxy][0]
@@ -1316,6 +1318,8 @@ class ProxyManager:
             body["job_id"] = job_id
         if provider:
             body["provider"] = provider
+        if models:
+            body["models"] = list(models)
         if budget:
             body["budget"] = {
                 **budget,
@@ -1339,6 +1343,10 @@ class ProxyManager:
         elif provider and response.get("provider") != provider:
             # Nor the provider: its image predates runs held to their provider, so the sandbox's calls to another one
             # count under this run too, at this run's rates. Its tally there is not taken as whole either.
+            self._unordered_runs.add((proxy, run_id))
+        elif models and response.get("models") != list(models):
+            # Nor the models: its image predates runs held to their model, so a call naming another one counts under
+            # this run at this run's rates. Its tally there is not taken as whole either.
             self._unordered_runs.add((proxy, run_id))
         if budget and not isinstance(response.get("budget"), dict):
             # Nor the budget: its image predates budgets, so the run's calls are checked against nothing there. What

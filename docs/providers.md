@@ -262,8 +262,29 @@ provider (its record's), and the proxy echoes it. While the run is current, the 
 refuses the sandbox's calls on any other provider's path, `/v1` included
 (403, `provider_not_declared`), so a run's tally there holds its own
 provider's calls, says which provider that is, and is priced at the run's
-rates. A proxy that does not echo the provider (an image from before) is not
-taken as whole for the run.
+rates. The xai-proxy refuses a sandbox whose current run is on any provider but
+xAI the same way, on every path: such a run is charged from its own provider's
+proxy, so what it spent there would be counted under it and never charged. A
+proxy that does not echo the provider (an image from before) is not taken as
+whole for the run.
+
+**A run is held to its model.** The declaration also names the ids the run's
+model goes by: the one its provider knows it by (its record's upstream model,
+which the chat-completions executor sends) and the one it was routed by (which
+the Claude Code CLI and the direct xAI executor send), `qwen3.8-27b` and
+`custom/qwen3.8-27b` for a custom model. Both metering proxies refuse a call of
+the run naming any other model, or none, exactly as written (403,
+`model_not_declared`, in the wire's shape): checked and charged at the run's
+rates, a dearer model on the same route would cost more than either says. On a
+provider's run the CLI's small, fast model, which it calls for its own
+background work, and the `haiku`, `sonnet` and `opus` its subagents may ask for
+are set to the run's model (`ANTHROPIC_SMALL_FAST_MODEL`,
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`,
+`ANTHROPIC_DEFAULT_OPUS_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`), so none of its
+calls names another. A fallback to another model is a new run, declared with
+its own. A run with no provider record is held to no model, and a proxy that
+does not echo the models (an image from before) is not taken as whole for the
+run.
 
 A cancelled run is ended on the proxies in the background, so its declaration
 does not linger; what they counted is kept in `run_meter`, but the run is not
@@ -332,8 +353,7 @@ is not text, a message's content that is neither text nor a list of parts, and
 messages or tools that are not a list are refused rather than passed over, and
 so is a message, content part or tool naming a key in two spellings that match
 once case is folded. The list is in one place, `_unmetered` in
-`embry0/execution/proxy/metering.py`. A call is priced at its run's rates
-whatever model it names, until a call is held to its run's model.
+`embry0/execution/proxy/metering.py`.
 embry0's own agents send text, their tool conversation and screenshots inline,
 none of it refused; a Claude Code agent whose tool result is a document (a PDF
 it read) has the calls carrying it refused.
