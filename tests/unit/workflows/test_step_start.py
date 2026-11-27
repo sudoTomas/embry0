@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langgraph.types import Command
 
-from embry0.execution.sandbox_processes import LEFTOVER_STOP
+from embry0.execution.sandbox_processes import ATTEMPTS, LEFTOVER_STOP, LeftoversNotStopped
 from embry0.workflows.issue_to_pr import step_start
 from embry0.workflows.issue_to_pr.step_start import begin_step, starts_a_step
 
@@ -140,7 +140,7 @@ async def test_a_job_none_of_whose_steps_holds_a_role_never_opens_it() -> None:
 async def test_a_failed_stop_keeps_a_step_that_may_push_from_starting() -> None:
     """A coder's or a docs step does not start beside a process that was not stopped: the job fails closed
     (``ERR_SANDBOX_LEFTOVERS``), and nothing is opened."""
-    from embry0.execution.sandbox_processes import LeftoversNotStopped
+
     from embry0.safety.error_codes import ErrorCode, error_code_for_exception
 
     for kind, delta in (("developer", {"route_cursor": 1}), ("review", {"route_cursor": 2})):
@@ -163,7 +163,6 @@ async def test_a_failed_stop_runs_a_step_with_no_role_before_the_branch_is_open_
 
 @pytest.mark.parametrize("push_open", [True, None], ids=["opened", "a-checkpoint-from-before-the-flag"])
 async def test_a_failed_stop_keeps_any_step_from_starting_once_the_branch_is_open(push_open: bool | None) -> None:
-    from embry0.execution.sandbox_processes import LeftoversNotStopped
 
     order: list[str] = []
 
@@ -241,10 +240,15 @@ class _RealStop:
         self.proc = proc
 
     async def stop_leftover_processes(self, container: str) -> int:
-        done = subprocess.run(
-            [sys.executable, "-I", "-c", LEFTOVER_STOP, str(self.proc)], capture_output=True, text=True, check=True
-        )
-        return int(done.stdout.strip())
+        """Run again while a run does not end clean, up to ``ATTEMPTS`` runs, as the sandbox manager does: on a busy
+        host a process it signalled can take longer to end than one run's passes."""
+        for _ in range(ATTEMPTS):
+            done = subprocess.run(
+                [sys.executable, "-I", "-c", LEFTOVER_STOP, str(self.proc)], capture_output=True, text=True, check=False
+            )
+            if done.returncode == 0:
+                return int(done.stdout.strip())
+        raise LeftoversNotStopped(container, done.stderr.strip())
 
 
 async def test_a_background_process_from_one_step_is_gone_when_the_next_starts(tmp_path: Path) -> None:

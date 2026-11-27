@@ -11,7 +11,9 @@ every successor its group holds. A process every thread of which has ended, wait
 status, is left out: it runs nothing. One whose first thread has ended while another still runs reads as ended in
 its own entry, so its threads are read too: it is stopped.
 
-The stop goes over the process table again until a pass finds nothing left to stop (at most :data:`PASSES` passes).
+The stop goes over the process table again, a short pause apart, until a pass finds nothing left to stop or its time
+is up (:data:`PASS_DEADLINE`). A process it has signalled can take a while to end on a busy host, one holding much
+memory or many threads above all, and the pauses (:data:`PASS_PAUSE`) give it a CPU to end on.
 A pass finds nothing only when no process was created while it read the table: the sandbox's last process id
 (``sys/kernel/ns_last_pid``) is the same before and after it, so a process created after the table was listed, in
 place of one that ended before it was read, is not missed. A stop that never gets a pass like that exits non-zero,
@@ -28,14 +30,21 @@ from __future__ import annotations
 
 from typing import Final
 
-#: How many times one run of the stop goes over the process table for a pass that finds nothing left to stop.
-PASSES: Final = 20
+#: How long, in seconds, one run of the stop goes over the process table for a pass that finds nothing left to stop.
+#: A killed process ends at once on an idle host, but one holding much memory ends only once that memory is freed:
+#: with three CPU-bound processes on every CPU, one holding 8 GB took up to 6.7 s to end, one holding 12 GB (the largest
+#: built-in sandbox profile) up to about 10 s. A run is well inside the sandbox manager's 30 s per command, and its
+#: three runs cover such a process; one that never ends fails the step closed after them, about 30 s in all.
+PASS_DEADLINE: Final = 10.0
+#: The pause between two passes, in seconds: a process just killed gets a CPU to end on.
+PASS_PAUSE: Final = 0.01
 #: How many runs of the stop the sandbox manager makes before it gives up (``SandboxManager.stop_leftover_processes``).
 ATTEMPTS: Final = 3
 
-#: The stop, as the sandbox's interpreter runs it (``-I -c``). It prints how many processes it stopped and exits 0
-#: once a pass finds nothing left to stop; it exits 3 when no pass of its :data:`PASSES` did, naming on stderr the
-#: processes still running (at most five) and their users.
+#: The stop, as the sandbox's interpreter runs it (``-I -c``). It prints how many processes it stopped (each once,
+#: though one slow to end is signalled again on a later pass) and exits 0 once a pass finds nothing left to stop; it
+#: exits 3 when no pass did within :data:`PASS_DEADLINE`, naming on stderr the processes still running (at most five)
+#: and their users.
 LEFTOVER_STOP: Final = r"""
 import os, signal, sys, time
 root = sys.argv[1] if len(sys.argv) > 1 else "/proc"
@@ -124,12 +133,13 @@ first = table()
 keepalive = min((p for p, (ppid, _g, c) in first.items() if ppid == 1 and c == b"sleep\0infinity\0"), default=None)
 keep = {1, me} | ({keepalive} if keepalive is not None else set())
 spared_groups = {0, 1, os.getpgrp()} | {first[p][1] for p in keep if p in first}
-stopped = 0
-for _ in range(PASSES):
+stopped = set()  # each process once, however many passes it takes to end
+deadline = time.monotonic() + PASS_DEADLINE
+while time.monotonic() < deadline:
     found, quiet = quiet_table()
     targets = [p for p in sorted(found) if p not in keep]
     if not targets and quiet:
-        print(stopped)
+        print(len(stopped))
         sys.exit(0)
     for pid in targets:
         group = found[pid][1]
@@ -140,14 +150,14 @@ for _ in range(PASSES):
                 pass
         try:
             os.kill(pid, signal.SIGKILL)
-            stopped += 1
+            stopped.add(pid)
         except (ProcessLookupError, PermissionError):
             pass
-    time.sleep(0.005)
+    time.sleep(PASS_PAUSE)
 found, quiet = quiet_table()
 left = [p for p in sorted(found) if p not in keep]
 if not left and quiet:
-    print(stopped)
+    print(len(stopped))
     sys.exit(0)
 if not left:
     sys.stderr.write("not clean: processes kept being created while the table was read\n")
@@ -156,7 +166,7 @@ named = ", ".join("pid %d (user %s)" % (p, owner(p)) for p in left[:5])
 more = " and %d more" % (len(left) - 5) if len(left) > 5 else ""
 sys.stderr.write("not clean: still running " + named + more + "\n")
 sys.exit(3)
-""".replace("PASSES", str(PASSES))
+""".replace("PASS_DEADLINE", repr(PASS_DEADLINE)).replace("PASS_PAUSE", repr(PASS_PAUSE))
 
 
 class LeftoversNotStopped(RuntimeError):
