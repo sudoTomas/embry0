@@ -528,8 +528,8 @@ async def _forward(
 ) -> web.StreamResponse:
     """Send the call upstream and stream its answer back through the meter, with every key the proxy holds scrubbed
     from it, an error answer and a streamed one alike (:class:`_Scrubber` finds a key however the chunks split it). A
-    call whose answer never came back after it was sent is charged its ceiling; one that never connected costs
-    nothing."""
+    call whose answer never came back after it was sent, or broke off before its usage (the upstream cut it, it could
+    not be decoded, the sandbox went away), is charged its ceiling; one that never connected costs nothing."""
     try:
         async with client.stream(
             method,
@@ -565,7 +565,11 @@ async def _forward(
                     out = scrubber.feed(chunk)
                     if out:
                         await response.write(out)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
+                # Broken off: the upstream cut it, or what came could not be decoded. Charged its ceiling unless its
+                # usage was read in full (``Metered.lost``).
+                if metered is not None:
+                    metered.lost()
                 logger.warning("llm_proxy_stream_truncated", sandbox_id=sandbox_id, error=str(exc))
             rest = scrubber.finish()
             if rest:

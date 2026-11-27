@@ -13,8 +13,10 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import httpx
 import pytest
+import structlog.testing
 from aiohttp import web
 from aiohttp.test_utils import TestClient
 
@@ -71,6 +73,8 @@ class _Answer:
             if self._gate is not None and i == 1:
                 await self._gate.wait()
             yield piece
+        if self._fail is not None and self._fail_after == len(self._chunks):
+            raise self._fail  # after the whole answer
 
 
 class _Upstream:
@@ -204,7 +208,8 @@ async def test_an_upstream_that_fails_after_the_request_went_is_charged_the_ceil
     assert (model["output_tokens"], model["estimated"]) == (900, 1)
 
 
-async def test_a_stream_cut_midway_keeps_its_input_and_estimates_the_rest(aiohttp_client):
+async def test_a_stream_cut_midway_keeps_its_input_and_is_charged_its_output_ceiling(aiohttp_client):
+    """The provider may have generated the whole answer: what was read of it is no measure of its output."""
     upstream = _Upstream()
     raw = (ANSWERS / "anthropic-stream.sse").read_bytes()
     upstream.answers.append(
@@ -216,7 +221,7 @@ async def test_a_stream_cut_midway_keeps_its_input_and_estimates_the_rest(aiohtt
     await resp.read()
     model = (await _run(client))["models"]["grok-4.7"]
     assert (model["input_tokens"], model["cache_read_tokens"], model["estimated"]) == (1000, 400, 1)
-    assert model["output_tokens"] >= 1
+    assert model["output_tokens"] == 32000, f"a cut stream was charged an estimate, not its ceiling: {model}"
 
 
 async def test_a_call_that_never_connected_and_an_error_answer_cost_nothing(aiohttp_client):
@@ -233,7 +238,8 @@ async def test_a_call_that_never_connected_and_an_error_answer_cost_nothing(aioh
     assert (tally["models"], tally["errors"], tally["open"]) == ({}, 1, [])
 
 
-async def test_a_client_that_goes_away_midstream_leaves_an_estimate_not_nothing(aiohttp_client):
+async def test_a_client_that_goes_away_midstream_is_charged_its_ceiling(aiohttp_client):
+    """A sandbox that hangs up mid-answer does not pay for only what it read."""
     upstream = _Upstream()
     gate = asyncio.Event()
     raw = (ANSWERS / "anthropic-stream.sse").read_bytes()
@@ -251,7 +257,7 @@ async def test_a_client_that_goes_away_midstream_leaves_an_estimate_not_nothing(
         await asyncio.sleep(0.02)
     model = tally["models"]["grok-4.7"]
     assert (model["requests"], model["estimated"], model["input_tokens"]) == (1, 1, 1000), tally
-    assert model["output_tokens"] >= 1
+    assert model["output_tokens"] == 32000, f"a sandbox that went away paid an estimate of what it read: {model}"
 
 
 async def test_with_a_run_required_a_call_under_none_is_refused_before_it_goes_upstream(aiohttp_client):
@@ -329,7 +335,8 @@ def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     allow_loopback_test_servers(monkeypatch)
 
 
-async def _local(aiohttp_client: Any, server: Any, **kw: Any) -> TestClient:
+async def _local(aiohttp_client: Any, server: Any, *, providers: bool = False, **kw: Any) -> TestClient:
+    """The llm-proxy with sbx-1 enrolled with ``server`` for the custom provider, and for openai too when ``providers``."""
     client = await aiohttp_client(create_llm_proxy_app(_ADMIN, **kw))
     server_of_sandbox = {
         "credential_id": "cred-a",
@@ -337,11 +344,10 @@ async def _local(aiohttp_client: Any, server: Any, **kw: Any) -> TestClient:
         "api_key": "",
         "address": "127.0.0.1",
     }
-    enrolled = await client.post(
-        "/admin/enroll",
-        json={"sandbox_id": "sbx-1", "sandbox_token": _TOKEN, "local_llm": server_of_sandbox, "limits": LIMITS},
-        headers=_ADMIN_HEADERS,
-    )
+    body: dict[str, Any] = {"sandbox_id": "sbx-1", "sandbox_token": _TOKEN, "local_llm": server_of_sandbox}
+    if providers:
+        body["provider_servers"] = {"openai": {**server_of_sandbox, "credential_id": "cred-o"}}
+    enrolled = await client.post("/admin/enroll", json={**body, "limits": LIMITS}, headers=_ADMIN_HEADERS)
     assert enrolled.status == 200
     return client
 
@@ -391,3 +397,155 @@ async def test_a_local_model_call_whose_answer_is_lost_is_charged_its_ceiling(
     assert (await client.post("/v1/chat/completions", json=chat, headers=_AUTH)).status == status
     model = (await _run(client))["models"]["qwen"]
     assert (model["output_tokens"], model["estimated"]) == (600, 1)
+
+
+# --------------------------------------------------------------------------- an answer that breaks off
+
+
+#: Each metering proxy's route, the answer its upstream streams, and the output ceiling of the call made.
+_ROUTES = {
+    "xai-proxy": ("/v1/messages", "anthropic-stream.sse", 900),
+    "llm-proxy /v1": ("/v1/chat/completions", "openai-chat-stream.sse", 700),
+    "llm-proxy /p/openai": ("/p/openai/v1/chat/completions", "openai-chat-stream.sse", 700),
+}
+
+
+async def _metered(aiohttp_client: Any, model_server: Any, route: str, upstream: _Upstream) -> TestClient:
+    """A metering proxy with sbx-1 enrolled and a run declared, its upstream calls answered by ``upstream``."""
+    if route == "xai-proxy":
+        client = await _xai(aiohttp_client, upstream)
+    else:
+        client = await _local(aiohttp_client, model_server, providers=True)
+        route_upstream(client.app, upstream)
+    assert (await _declare(client)).status == 200
+    return client
+
+
+def _call(route: str) -> dict[str, Any]:
+    ceiling = _ROUTES[route][2]
+    if route == "xai-proxy":
+        return _messages(max_tokens=ceiling)
+    return {"model": "qwen", "messages": [], "stream": True, "max_tokens": ceiling}
+
+
+async def _settled(client: TestClient) -> dict[str, Any]:
+    """The run's tally once no call is in flight."""
+    for _ in range(200):
+        tally = await _run(client)
+        if not tally["open"]:
+            return tally
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"a call stayed in flight: {tally}")
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES))
+@pytest.mark.parametrize("cause", ["the upstream cut it", "it could not be decoded", "the sandbox went away"])
+async def test_an_answer_broken_off_before_its_usage_is_charged_its_ceiling_once(
+    aiohttp_client, model_server, route, cause
+):
+    path, answer, ceiling = _ROUTES[route]
+    raw = (ANSWERS / answer).read_bytes()
+    upstream = _Upstream()
+    gate = asyncio.Event()
+    if cause == "the upstream cut it":
+        upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=300, fail=httpx.ReadError("cut"), fail_after=1))
+    elif cause == "it could not be decoded":
+        upstream.answers.append(
+            _Answer(raw, content_type=_SSE, chunk=300, fail=httpx.DecodingError("bad gzip data"), fail_after=1)
+        )
+    else:
+        upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=300, gate=gate))
+    client = await _metered(aiohttp_client, model_server, route, upstream)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = await client.post(path, json=_call(route), headers=_AUTH)
+        if cause == "the sandbox went away":
+            await resp.content.read(100)
+            resp.close()
+            gate.set()
+        else:
+            try:
+                await resp.read()
+            except aiohttp.ClientPayloadError:
+                pass  # the answer comes cut short, which is the point
+        tally = await _settled(client)
+    if cause != "the sandbox went away":
+        truncated = f"{route.split()[0].replace('-', '_')}_stream_truncated"
+        assert [e["event"] for e in logs if e["event"] == truncated], f"{cause}, nothing said so: {logs}"
+
+    assert len(tally["models"]) == 1, tally
+    (counted,) = tally["models"].values()
+    assert counted["output_tokens"] == ceiling, f"{cause}, the call was charged {counted['output_tokens']}: {tally}"
+    assert (counted["requests"], counted["estimated"], tally["errors"]) == (1, 1, 0), f"counted twice or not: {tally}"
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES))
+async def test_an_answer_that_breaks_after_its_usage_is_charged_that_usage(aiohttp_client, model_server, route):
+    """Its usage was read in full: that is what it cost, however it ended."""
+    path, answer, _ceiling = _ROUTES[route]
+    raw = (ANSWERS / answer).read_bytes()
+    upstream = _Upstream()
+    whole = -(-len(raw) // 300)  # its chunks: it breaks once every one of them was read
+    upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=300, fail=httpx.ReadError("cut"), fail_after=whole))
+    client = await _metered(aiohttp_client, model_server, route, upstream)
+    await (await client.post(path, json=_call(route), headers=_AUTH)).read()
+    (counted,) = (await _settled(client))["models"].values()
+    expected = 100 if route == "xai-proxy" else 64
+    assert (counted["output_tokens"], counted["estimated"]) == (expected, 0), counted
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES))
+async def test_an_error_answer_that_breaks_off_still_costs_nothing(aiohttp_client, model_server, route):
+    path, _answer, _ceiling = _ROUTES[route]
+    upstream = _Upstream()
+    error = b'{"error": {"type": "overloaded_error", "message": "' + b"x" * 400 + b'"}}'
+    upstream.answers.append(_Answer(error, status=529, chunk=100, fail=httpx.ReadError("cut"), fail_after=2))
+    client = await _metered(aiohttp_client, model_server, route, upstream)
+    await (await client.post(path, json=_call(route), headers=_AUTH)).read()
+    tally = await _settled(client)
+    assert (tally["models"], tally["errors"]) == ({}, 1), tally
+
+
+async def test_a_gzip_answer_that_turns_to_garbage_is_charged_its_ceiling(aiohttp_client, aiohttp_server):
+    """A real server, through the proxy's own client: a 200 whose gzip body stops decoding halfway."""
+    import zlib
+
+    raw = (ANSWERS / "openai-chat-stream.sse").read_bytes()
+
+    async def answer(request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse(status=200, headers={"Content-Type": _SSE, "Content-Encoding": "gzip"})
+        await response.prepare(request)
+        packer = zlib.compressobj(wbits=31)
+        await response.write(packer.compress(raw[:300]) + packer.flush(zlib.Z_SYNC_FLUSH))  # decodes
+        await response.write(b"\xff" * 64 + b"not gzip at all")  # does not
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", answer)
+    server = await aiohttp_server(app)
+    client = await _local(aiohttp_client, server)
+    assert (await _declare(client)).status == 200
+    resp = await client.post("/v1/chat/completions", json=_call("llm-proxy /v1"), headers=_AUTH)
+    try:
+        await resp.read()
+    except aiohttp.ClientPayloadError:
+        pass
+    (counted,) = (await _settled(client))["models"].values()
+    assert (counted["requests"], counted["output_tokens"]) == (1, 700), f"charged {counted}"
+
+
+@pytest.mark.parametrize("route", sorted(_ROUTES))
+async def test_an_answer_that_ends_whole_without_its_usage_is_charged_an_estimate(aiohttp_client, model_server, route):
+    """Not broken off, only unreadable (a shape this release does not know): it carried all it generated, so an
+    estimate from its bytes stands."""
+    path, _answer, ceiling = _ROUTES[route]
+    body = json.dumps({"id": "unknown-shape", "said": "x" * 200}).encode()
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(body, chunk=40))
+    client = await _metered(aiohttp_client, model_server, route, upstream)
+    await (await client.post(path, json=_call(route), headers=_AUTH)).read()
+    (counted,) = (await _settled(client))["models"].values()
+    assert (counted["estimated"], counted["output_tokens"]) == (1, -(-len(body) // 2)), (
+        f"a whole answer was charged {counted['output_tokens']}, not an estimate of its bytes (ceiling {ceiling})"
+    )

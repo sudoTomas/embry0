@@ -366,7 +366,8 @@ async def _forward(
     """Send the call upstream and stream its answer back, through the meter when the call is metered.
 
     A call whose answer never came back after it was sent (a timeout, the handler cancelled, an error past the
-    connect) is charged its ceiling; one that never connected costs nothing.
+    connect), or whose answer broke off before its usage (the upstream cut it, it could not be decoded, the sandbox
+    went away), is charged its ceiling; one that never connected costs nothing.
     """
     try:
         async with client.stream(
@@ -392,7 +393,11 @@ async def _forward(
                     if metered is not None:
                         metered.feed(chunk)
                     await response.write(chunk)
-            except httpx.TransportError as exc:
+            except (httpx.TransportError, httpx.DecodingError) as exc:
+                # Broken off: the upstream cut it, or what came could not be decoded. Charged its ceiling unless its
+                # usage was read in full (``Metered.lost``).
+                if metered is not None:
+                    metered.lost()
                 logger.warning("xai_proxy_stream_truncated", error=str(exc))
             await response.write_eof()
             return response

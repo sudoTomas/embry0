@@ -14,14 +14,19 @@ knows tokens, not prices.
 
 Everything here fails toward counting more, never less:
 
-- an answer whose usage cannot be read (a cut stream, a client that went away,
-  a shape this release does not know) is charged an estimate from the bytes it
-  carried, above what the provider counts for ordinary text, and marked
-  ``estimated``;
+- an answer that ended whose usage cannot be read (a shape this release does
+  not know, a JSON answer too large to read) is charged an estimate from the
+  bytes it carried, above what the provider counts for ordinary text, and
+  marked ``estimated``;
 - a call whose answer never arrived (a timeout, a connect timeout included,
   since the proxy cannot tell whether the request left; or a failure past the
   connect) is charged its ceiling: the request's size as input and the most
   output it asked for;
+- so is one whose answer broke off before its usage was read: the upstream cut
+  it, it could not be decoded, or the sandbox went away while it came. The
+  provider may have generated all of it, and what was read is no measure of
+  that. What it did say (an input count) is kept where it is larger. An
+  answer whose usage was read in full is charged that usage, however it ended;
 - a call still in flight shows in every snapshot with that ceiling, so a reader
   that loses the proxy (a restart) can charge it;
 - an error answer (no 2xx) is counted as an error and charged nothing: the
@@ -734,7 +739,8 @@ class Metered:
 
     def lost(self) -> None:
         """No answer came back for a request that may have gone upstream (a timeout, a connect timeout included,
-        or a failure past the connect): it is charged its ceiling."""
+        or a failure past the connect), or its answer broke off (the upstream cut it, it could not be decoded, the
+        sandbox went away): it is charged its ceiling, unless its usage was already read in full."""
         self._lost = True
 
     def close(self) -> None:
@@ -750,6 +756,9 @@ class Metered:
         if self._reader is not None:
             reading = self._reader.finish()
             usage, estimated = charge(self.call, reading)
+            if self._lost and not reading.complete:
+                # Broken off before its usage: what the provider generated is not what was read.
+                usage.raise_to(self.call.ceiling())
             model = reading.model or self.call.model
         elif self._lost:
             usage, estimated, model = self.call.ceiling(), True, self.call.model

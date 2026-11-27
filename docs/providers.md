@@ -271,7 +271,12 @@ interrupts (#694).
 
 A call still in flight when a tally was last read is charged its ceiling, as
 the proxy reported it: the request's size as input and its output limit as
-output. A proxy process that went away mid-run leaves its last read in
+output. So is a call whose answer broke off before its usage was read: the
+upstream cut it, it could not be decoded, or the sandbox went away while it
+came. The provider may have generated all of it, so what was read is no
+measure; a count the answer did give (an input count) is kept where larger. An
+answer whose usage was read in full is charged that usage however it ended,
+and an error answer still costs nothing. A proxy process that went away mid-run leaves its last read in
 `run_meter` with its calls in flight, and the recreated proxy is given the run
 back after the sandbox's enrollment, under a new process (`boot_id`), so the
 run's calls are the two tallies summed and the charge is the larger figure.
