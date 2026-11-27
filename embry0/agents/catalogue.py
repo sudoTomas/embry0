@@ -591,16 +591,17 @@ class CatalogueLoader(yaml.SafeLoader):
     reads as a number still is, and a scalar that does not start with a digit, a sign or a point never becomes one,
     so no provider name, model id (each starts with its provider's prefix) or extras key can. The shipped catalogue
     is read with it, an overlay when it is written (``provider_catalogue_store.load_text``), and a stored overlay's
-    text again when it is installed, so one stored before this rule reads by it too (``provider_catalogue_store``)."""
+    text again when it is installed and when it is answered: one stored before this rule is in force as it reads
+    now when a number in exponent form is all that differs (``provider_catalogue_store.read_again``)."""
 
+
+#: A number in exponent form, as YAML 1.2 reads one. YAML 1.1 reads it as a number only with a decimal point and a sign
+#: after the ``e`` (``1.0e-7``), and as a string otherwise (``1e-7``).
+EXPONENT_NUMBER: Final = re.compile(r"^[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[eE][-+]?[0-9]+$")
 
 # Added on the subclass, which PyYAML gives a copy of the resolvers: the safe loader every other reader uses is left
 # as it is.
-CatalogueLoader.add_implicit_resolver(
-    "tag:yaml.org,2002:float",
-    re.compile(r"^[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[eE][-+]?[0-9]+$"),
-    list("-+0123456789."),
-)
+CatalogueLoader.add_implicit_resolver("tag:yaml.org,2002:float", EXPONENT_NUMBER, list("-+0123456789."))
 
 
 @cache

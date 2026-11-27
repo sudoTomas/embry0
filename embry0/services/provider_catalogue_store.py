@@ -58,6 +58,7 @@ import structlog
 import yaml
 
 from embry0.agents.catalogue import (
+    EXPONENT_NUMBER,
     Catalogue,
     CatalogueInvalid,
     CatalogueLoader,
@@ -494,19 +495,23 @@ class CatalogueStore:
         and a warning is logged; :meth:`_take` audits them. Models kept as the
         deployment's own are :attr:`notes`, logged.
         """
-        stored, how = read_again(stored)
-        if how != "same":
+        reading = read_again(stored)
+        stored = reading.row
+        if reading.how == "read_again":
             # Once a generation: a process installs each generation once (at its start, or after a write).
             logger.warning(
-                "provider_catalogue_read_again" if how == "read_again" else "provider_catalogue_text_not_read_again",
+                "provider_catalogue_read_again",
                 generation=stored.generation,
-                msg=(
-                    "the stored overlay's text reads otherwise with this release's loader: the values read from it "
-                    "now are in force, and a save of the text stores them"
-                    if how == "read_again"
-                    else "the stored overlay's text does not read again with this release's loader, or reads to an "
-                    "overlay it takes less of: the values stored with it stay in force"
-                ),
+                msg="the stored overlay's text reads a number in exponent form as a number with this release's "
+                "loader: the values read from it now are in force, and the next save stores them",
+            )
+        elif reading.how == "kept":
+            logger.warning(
+                "provider_catalogue_text_not_read_again",
+                generation=stored.generation,
+                reason=reading.why,
+                problems=[str(problem) for problem in reading.problems[:10]],
+                msg="the values stored with the overlay stay in force, not its text as this release reads it",
             )
         candidate, read = _built(stored)
         refused = read.refused
@@ -768,9 +773,9 @@ async def _held_row(conn: Any, lock: str) -> _Row:
 
 def built(stored: _Row) -> tuple[Catalogue, StoredRead]:
     """The catalogue a stored overlay makes with this release's seed: every part of it that applies, its models
-    whose price is left out unpriced, and why (``catalogue.merge_stored``). Its values are read again from its text
-    first (:func:`read_again`)."""
-    return _built(read_again(stored)[0])
+    whose price is left out unpriced, and why (``catalogue.merge_stored``). Its values are those in force
+    (:func:`read_again`)."""
+    return _built(read_again(stored).row)
 
 
 def _built(stored: _Row) -> tuple[Catalogue, StoredRead]:
@@ -779,30 +784,70 @@ def _built(stored: _Row) -> tuple[Catalogue, StoredRead]:
 
 
 ReadAgain = Literal["same", "read_again", "kept"]
+KeptBecause = Literal["unreadable", "differs", "refused"]
 
 
-def read_again(stored: _Row) -> tuple[_Row, ReadAgain]:
-    """``stored`` with its values read again from its text by this release's loader, and how that went.
+@dataclass(frozen=True)
+class Reading:
+    """A stored overlay as this release reads it (:func:`read_again`): the row with the values in force, and how."""
+
+    row: _Row
+    how: ReadAgain
+    #: Why the stored values stay in force, when ``how`` is ``kept``: the text does not read (``unreadable``), reads
+    #: to values that differ from them otherwise than by a number in exponent form (``differs``), or reads to a part
+    #: of the catalogue this release refuses (``refused``).
+    why: KeptBecause | None = None
+    #: Where the text does not read, or each part its reading refuses; never a value.
+    problems: tuple[Problem, ...] = ()
+
+    def kept(self) -> dict[str, Any] | None:
+        """Why the stored values stay in force, for ``GET``'s ``text_not_read_again``; None when they do not."""
+        if self.how != "kept":
+            return None
+        return {"reason": self.why, "problems": [problem.to_dict() for problem in self.problems]}
+
+
+def read_again(stored: _Row) -> Reading:
+    """``stored`` with the values in force: those its text reads to with this release's loader, or those stored.
 
     The values a row holds were read when the text was written, by that release's loader: an overlay stored before
     the loader read ``1e-7`` as a number (#756) holds the string, and a save of the same text records nothing. So
-    the text is read again, and its values are in force (``read_again``) when they differ. The stored values stand
-    (``kept``) when the text cannot be read, or reads to an overlay this release takes less of, so a deployment
-    never loses its catalogue to a new reading; ``same`` when nothing differs (an empty text keeps its values)."""
+    the text is read again when the overlay is installed and when it is answered, and its values are in force
+    (``read_again``) when the only difference is that: a string of the stored values that now reads as the number
+    it spells (:data:`EXPONENT_NUMBER`). The stored values stay in force (``kept``, :attr:`Reading.why`) when the
+    text does not read, reads to anything else (a text changed beside its values, by a hand at the database), or
+    reads to a part this release refuses (``1e400``, now infinite), so a deployment never loses its catalogue to
+    a new reading; ``same`` when nothing differs (an empty text keeps its values)."""
     if not stored.yaml_text.strip():
-        return stored, "same"
+        return Reading(stored, "same")
     try:
         data = stored_form(load_text(stored.yaml_text))
-    except (CatalogueInvalid, CatalogueTooLarge):
-        return stored, "kept"
+    except CatalogueInvalid as invalid:
+        return Reading(stored, "kept", "unreadable", tuple(invalid.problems))
+    except CatalogueTooLarge as large:
+        return Reading(stored, "kept", "unreadable", (Problem((), "too_large", str(large)),))
     if data == stored.data:
-        return stored, "same"
+        return Reading(stored, "same")
+    if not _reads_as_numbers(stored.data, data):
+        return Reading(stored, "kept", "differs")
     again = replace(stored, data=data)
     refused_before = {problem.loc for problem in _built(stored)[1].refused}
-    refused_after = {problem.loc for problem in _built(again)[1].refused}
-    if not refused_after <= refused_before:
-        return stored, "kept"
-    return again, "read_again"
+    refused = tuple(problem for problem in _built(again)[1].refused if problem.loc not in refused_before)
+    if refused:
+        return Reading(stored, "kept", "refused", refused)
+    return Reading(again, "read_again")
+
+
+def _reads_as_numbers(stored: Any, again: Any) -> bool:
+    """Whether ``again`` differs from ``stored`` only where a string of ``stored`` now reads as the number it spells:
+    the same keys and the same lengths throughout, every other value equal and of the same type."""
+    if isinstance(stored, Mapping) and isinstance(again, Mapping):
+        return stored.keys() == again.keys() and all(_reads_as_numbers(stored[key], again[key]) for key in stored)
+    if isinstance(stored, list) and isinstance(again, list):
+        return len(stored) == len(again) and all(map(_reads_as_numbers, stored, again))
+    if isinstance(stored, str) and isinstance(again, float):
+        return EXPONENT_NUMBER.fullmatch(stored) is not None and float(stored) == again
+    return type(stored) is type(again) and stored == again
 
 
 async def held_catalogue(conn: Any) -> Catalogue:
@@ -839,10 +884,12 @@ __all__ = [
     "GenerationMismatch",
     "NotUndoable",
     "Preview",
+    "Reading",
     "Reference",
     "RevisionNotFound",
     "SaveResult",
     "broken_references",
     "load_text",
+    "read_again",
     "read_references",
 ]

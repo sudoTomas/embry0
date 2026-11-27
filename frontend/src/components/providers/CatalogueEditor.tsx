@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { apiErrorMessage, isConflict } from "@/api/errorDetail";
-import type { ProviderCatalogueDocument } from "@/api/providerCatalogue";
+import type { ProviderCatalogueDocument, TextNotReadAgain } from "@/api/providerCatalogue";
 import { TextDiff } from "@/components/documents/TextDiff";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
@@ -308,6 +308,29 @@ function AddModel({
   );
 }
 
+// Why the stored values stay in force rather than the text, by the reason the orchestrator gives.
+const NOT_READ_AGAIN: Record<string, string> = {
+  unreadable: "its text does not read with this release",
+  differs: "its text reads to other values than those stored with it",
+  refused: "its text, read with this release, has a part the catalogue refuses",
+};
+
+/**
+ * The values stored with the overlay are in force, not its text as this release reads it: the form shows those
+ * values and Advanced the text, so an admin sees which a save from each would store.
+ */
+function StoredValuesInForce({ kept }: { kept: TextNotReadAgain }) {
+  const where = kept.problems.map((p) => (p.loc.length > 0 ? `${p.loc.join(".")}: ${p.msg}` : p.msg)).join("; ");
+  return (
+    <p className="text-sm text-warning" data-testid="catalogue-text-not-read-again">
+      The values stored with the overlay are in force, not its text:{" "}
+      {NOT_READ_AGAIN[kept.reason] ?? "its text is not read again"}
+      {where ? ` (${where})` : ""}. The form shows the values in force and Advanced the text; a save from either
+      stores a text and its values together.
+    </p>
+  );
+}
+
 function Problems({ problems }: { problems: DocumentProblem[] }) {
   return (
     <div
@@ -477,6 +500,7 @@ function Editor({ doc, isAdmin }: { doc: ProviderCatalogueDocument; isAdmin: boo
             Part of the stored overlay is not in force: {doc.refused.map((p) => p.loc.join(".")).join(", ")}.
           </p>
         )}
+        {doc.text_not_read_again && <StoredValuesInForce kept={doc.text_not_read_again} />}
         {conflict && (
           <p role="alert" className="text-sm text-destructive" data-testid="catalogue-conflict">
             The catalogue changed since you opened it. Your edits are kept here; reload the page to start from the

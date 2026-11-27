@@ -626,3 +626,77 @@ async def test_a_request_extra_with_a_number_json_cannot_hold_is_refused(
     named = [p for p in resp.json()["detail"] if p.get("type") == "finite_number"]
     assert named and named[0]["loc"][-1] == key, f"the refusal names {key}: {resp.text}"
     assert (await client.get(CATALOG)).json()["generation"] == generation, "something was stored"
+
+
+# ---- an overlay stored before exponent-form numbers read as numbers (#757 review) ----
+
+
+async def _stored_by_an_older_release(client: AsyncClient, monkeypatch: pytest.MonkeyPatch, text: str) -> None:
+    """``text`` saved as a release before #756 saved it: its values read by YAML 1.1's rules."""
+    import yaml
+
+    from embry0.services import provider_catalogue_store as store_module
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store_module, "CatalogueLoader", yaml.SafeLoader)
+        await store_module.CatalogueStore(_db(client)).save(text, actor="ops@example.com")
+
+
+def _local(body: dict[str, Any]) -> Any:
+    return body["providers"]["custom"]["models"]["custom/local"]
+
+
+async def test_a_read_answers_the_values_in_force_so_a_save_from_the_form_keeps_them(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dashboard's form starts from ``data`` and writes the overlay again from it, a JSON field as JSON: answered
+    the stored string, any edit saved ``"1e-7"`` quoted, where no new reading reaches it."""
+    await _stored_by_an_older_release(client, monkeypatch, _LOCAL.format(extras="{temperature: 1e-7}"))
+    body = (await client.get(CATALOG)).json()
+    model = _local(body["data"])
+    assert model["request_extras"] == {"temperature": 1e-07}, f"answered {model['request_extras']!r}, not in force"
+    assert body["text_not_read_again"] is None
+
+    edited = {**model, "chat_only": True}  # Chat-only ticked in the form
+    form_text = "providers:\n  custom:\n    models:\n      custom/local:\n" + "".join(
+        f"        {key}: {json.dumps(value)}\n" for key, value in edited.items()
+    )
+    resp = await _put(client, form_text, **{"If-Match": f'"{body["generation"]}"'})
+    assert resp.status_code == 200, resp.text
+    in_force = _local((await client.get(CATALOG)).json()["catalogue"])["request_extras"]
+    assert in_force == {"temperature": 1e-07}, f"the form's save put {in_force!r} in force"
+    stored = await _db(client).fetchval("SELECT data FROM provider_catalogue WHERE scope = 'deployment'")
+    stored = json.loads(stored) if isinstance(stored, str) else stored
+    assert _local(stored)["request_extras"] == {"temperature": 1e-07}, "the save did not store the number"
+
+
+@pytest.mark.parametrize(
+    ("text", "reason", "problems"),
+    [
+        ("providers:\n  custom:\n    models: {}\n", "differs", []),
+        ("providers: {", "unreadable", [([], "yaml_syntax")]),
+        (
+            _LOCAL.format(extras="{temperature: 1e400}"),
+            "refused",
+            [
+                (["providers", "custom", "models", "custom/local", "request_extras", "temperature"], "finite_number"),
+                (["providers", "custom", "models", "custom/local"], "withheld"),
+            ],
+        ),
+    ],
+    ids=["differs", "unreadable", "refused"],
+)
+async def test_a_read_says_why_the_stored_values_stay_in_force(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch, text: str, reason: str, problems: list[Any]
+) -> None:
+    """When the stored values stay in force rather than the text as this release reads it, a read says so and why,
+    and answers those values for the form."""
+    await _stored_by_an_older_release(client, monkeypatch, _LOCAL.format(extras="{temperature: 1e400}"))
+    if reason != "refused":
+        await _db(client).execute("UPDATE provider_catalogue SET yaml_text = $1, generation = generation + 1", text)
+    body = (await client.get(CATALOG)).json()
+    said = body.get("text_not_read_again")
+    assert said is not None, "a read said nothing of the stored values in force"
+    assert (said["reason"], [(p["loc"], p["type"]) for p in said["problems"]]) == (reason, problems), said
+    assert _local(body["data"])["request_extras"] == {"temperature": "1e400"}, "a read answered other values"
+    assert _local(body["catalogue"])["request_extras"] == {"temperature": "1e400"}

@@ -433,10 +433,17 @@ never pass each other.
 A number may be typed in exponent form: `1e-7` and `5E-1` are numbers, as YAML
 1.2 and JSON read them (YAML 1.1 read them as text, #756). A value meant as
 text that looks like one goes in quotes. An overlay stored before that is read
-again from its text when it is installed, at the start and after each write:
-the values it reads to now are in force (`provider_catalogue_read_again` in the
-log), unless the text does not read or reads to an overlay the release takes
-less of, when the stored values stay (`provider_catalogue_text_not_read_again`).
+again from its text when it is installed (at the start and after each write)
+and when it is read. When the only difference from the values stored with it
+is such a number, stored as text, the values it reads to now are in force and
+are the `data` a read answers, which the Providers page's form edits
+(`provider_catalogue_read_again` in the log); the next save stores them. Any
+other difference keeps the stored values in force
+(`provider_catalogue_text_not_read_again`), and a read says why in
+`text_not_read_again`, which the Providers page shows: the text does not read
+(`unreadable`), reads to other values than those stored with it (`differs`: a
+text changed beside its values, by a hand at the database), or reads to a part
+the catalogue refuses (`refused`: `1e400`, which is now infinite).
 
 **Everything in the document is readable by every key**, a key with a
 repository allowlist included: the YAML as written with its comments, each
