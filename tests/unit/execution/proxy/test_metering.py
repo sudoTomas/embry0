@@ -1019,15 +1019,18 @@ def test_a_run_whose_purse_this_proxy_no_longer_holds_is_given_nothing() -> None
 
 
 def test_a_claude_code_sized_workload_on_a_2_dollar_cap_is_not_refused_until_near_it() -> None:
-    """600 KB requests asking 32,000 tokens, three in flight, each costing about $0.04 (mostly cache reads). Priced at
-    two bytes a token uncached, each held $0.79 and the third was refused at $0.08 spent. At the run's own input cost
-    a request byte, the first refusal comes only once its charges and the output ceilings of its calls in flight fill
-    the cap: past $1.30 charged."""
+    """600 KB requests asking 32,000 tokens, each costing about $0.04 (mostly cache reads): the first alone, then three
+    in flight. Priced at two bytes a token uncached, each held $0.79 and the third was refused at $0.08 spent. Past the
+    first, a request no larger than one read in full is priced at what the run's input has cost a byte, and the first
+    refusal comes only once the charges and the output ceilings of the calls in flight fill the cap: past $1.30."""
     meter = Meter()
     _held(meter, _budget([_purse(2.0)], cache={"read": 0.1, "write": 1.25}))
     body = {"model": "grok-4.7", "messages": [{"role": "user", "content": "x" * 600_000}], "max_tokens": 32_000}
+    first = _open_or_refused(meter, body)
+    assert first is not None, "the first call of a $2 job was refused"
+    _answer(first, cached=149_000, uncached=1_000, output=1_500)
     in_flight = [c for c in (_open_or_refused(meter, body) for _ in range(3)) if c is not None]
-    assert len(in_flight) == 3, "the first three calls of a $2 job were refused"
+    assert len(in_flight) == 3, "three calls in flight were refused with $1.96 left"
     for _ in range(200):
         _answer(in_flight.pop(0), cached=149_000, uncached=1_000, output=1_500)
         nxt = _open_or_refused(meter, body)
@@ -1036,12 +1039,63 @@ def test_a_claude_code_sized_workload_on_a_2_dollar_cap_is_not_refused_until_nea
         in_flight.append(nxt)
     else:
         pytest.fail("the workload was never held to its cap")
+    charged = _priced(meter)
+    assert charged >= 1.3, f"refused at ${charged:.2f} charged of a $2 cap"
+    assert meter.purse_left("job:job-1") < 0.23, "refused with room left for the call"
+
+
+def _priced(meter: Meter, cache_read: float = 0.1) -> float:
+    """What the run's charges come to at its rates (cached input at ``cache_read`` of the input rate)."""
     total = Usage()
     for counted in _only_tally(meter)["models"].values():
         total.add(Usage(**{k: v for k, v in counted.items() if k in Usage.__dataclass_fields__}))
-    charged = _budget()[0].price(total)
-    assert charged >= 1.3, f"refused at ${charged:.2f} charged of a $2 cap"
-    assert meter.purse_left("job:job-1") < 0.23, "refused with room left for the call"
+    return _budget(cache={"read": cache_read, "write": 1.25})[0].price(total)
+
+
+def _shape(prime_size: int, calls: int, size: int, max_tokens: int, resolve: Any) -> tuple[int, float]:
+    """On a $10 purse, one call of ``prime_size`` answered whole (99% cache reads), then ``calls`` calls of ``size``
+    in flight at once, each ``resolve``-d: how many were let through, and what the run was charged."""
+    meter = Meter()
+    _held(meter, _budget([_purse(10.0)], cache={"read": 0.1, "write": 1.25}))
+    prime = {"model": "grok-4.7", "messages": [{"role": "user", "content": "x" * prime_size}], "max_tokens": 32_000}
+    tokens = prime_size // 4
+    _answer(_open_or_refused(meter, prime), cached=tokens * 99 // 100, uncached=tokens // 100, output=1_500)
+    body = {"model": "grok-4.7", "messages": [{"role": "user", "content": "x" * size}], "max_tokens": max_tokens}
+    opened = [c for c in (_open_or_refused(meter, body) for _ in range(calls)) if c is not None]
+    for call in opened:
+        resolve(call)
+    return len(opened), _priced(meter)
+
+
+def _hang_up(call: Any) -> None:
+    call.lost()
+    call.close()
+
+
+def test_sixty_hung_up_calls_after_a_cached_one_are_charged_no_more_than_the_purse() -> None:
+    """Each held its input at the run's cached cost a byte ($0.03) and was charged it at two bytes a token uncached
+    ($0.60): 44 let through came to $35 on a $10 purse. A broken-off call's input is charged no more than was held."""
+    let_through, charged = _shape(600_000, 60, 600_000, 32_000, _hang_up)
+    assert let_through < 60, "not the case under test: every call was let through"
+    assert charged <= 10.0, f"{let_through} hung-up calls were charged ${charged:.2f} on a $10 purse"
+
+
+def test_eight_mib_calls_after_a_cached_one_are_held_at_the_uncached_rate() -> None:
+    """Request bytes past the largest one read in full could all be new to the cache: 21 such calls were let through
+    at the cached cost a byte and charged $176 on a $10 purse."""
+    let_through, charged = _shape(600_000, 25, 8 * 1024 * 1024, 1_000, _hang_up)
+    assert let_through <= 1, f"{let_through} calls of 8 MiB were let through on a $10 purse"
+    assert charged <= 10.0, f"they were charged ${charged:.2f} on a $10 purse"
+
+
+def test_one_cheap_cached_call_does_not_price_large_uncached_ones_at_its_rate() -> None:
+    """A 1 KB call read in full, then 2 MiB requests the provider bills uncached ($1.05 each): priced at the small
+    call's cost a byte, all ten were let through and really cost $10.50 on a $10 purse."""
+    let_through, charged = _shape(
+        1_000, 10, 2 * 1024 * 1024, 1_000, lambda c: _answer(c, cached=0, uncached=524_288, output=500)
+    )
+    assert let_through < 10, "every large uncached call was let through at the small call's price"
+    assert charged <= 10.0, f"the large calls really cost ${charged:.2f} on a $10 purse"
 
 
 @pytest.mark.parametrize(

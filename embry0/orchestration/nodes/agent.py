@@ -457,31 +457,27 @@ async def declared_budget(
     after its turn as before. The day's and month's spend are left out when they cannot be read, as the dispatch gate
     allows a dispatch then.
 
-    With ``run_meter``, at start-up, it first waits for the runs the previous process left to be closed (their charges
-    settled); past the wait every scope is given nothing (fail closed)."""
+    With ``run_meter``, what the runs the previous process left, not closed yet, were counted at the proxies is taken
+    off too (``RunMeter.interrupted_spend``): their charges are not in their traces until they are."""
     if record is None or record.rates is None or not any(rate > 0 for rate in record.rates):
         return None
-    ready = run_meter is None or await run_meter.budgets_ready()
     try:
         job = await evaluate_job_cap(state, config, float(state.get("total_cost_usd") or 0.0))
         settings = await load_budget_settings(config)
     except Exception:  # noqa: BLE001 — the run goes ahead unchecked at the proxies, as before
         logger.warning("run_budget_unread", exc_info=True)
         return None
-    limits = [Limit("job", job.cap, job.total)]
+    job_id = str(_graph_configurable(config).get("job_id") or state.get("job_id") or run_id)
+    pending_job, pending_all = run_meter.interrupted_spend(job_id) if run_meter is not None else (0.0, 0.0)
+    limits = [Limit("job", job.cap, job.total + pending_job)]
     if settings.daily_cap_usd > 0 or settings.monthly_cap_usd > 0:
         rollup = await _spend_rollup(config)
         if rollup is not None:
             limits += [
-                Limit("daily", settings.daily_cap_usd, rollup["daily"]),
-                Limit("monthly", settings.monthly_cap_usd, rollup["monthly"]),
+                Limit("daily", settings.daily_cap_usd, rollup["daily"] + pending_all),
+                Limit("monthly", settings.monthly_cap_usd, rollup["monthly"] + pending_all),
             ]
-    job_id = str(_graph_configurable(config).get("job_id") or state.get("job_id") or run_id)
-    request = run_budget(record, limits, f"job:{job_id}")
-    if request is not None and not ready:
-        logger.warning("run_budget_held_at_start_up", run_id=run_id)
-        request = {**request, "scopes": [{**scope, "remaining_usd": 0.0} for scope in request["scopes"]]}
-    return request
+    return run_budget(record, limits, f"job:{job_id}")
 
 
 async def _spend_rollup(config: Any) -> dict[str, float] | None:
@@ -1398,19 +1394,26 @@ async def run_agent_node(
             except Exception:
                 logger.warning("trace_finish_persist_failed", agent_type=agent_type, exc_info=True)
             if written.get("trace"):
-                await _settle_budget()
+                await _settle_budget(fields.get("cost_usd"))
 
         # Whether the run's trace was written with its charge: only then does it leave its budget purses.
         written: dict[str, bool] = {}
 
-        async def _settle_budget() -> None:
-            """The run's charge is in its trace: it leaves its purses at the metering proxies, worked out again
-            (embry0.execution.run_meter's ledger). A run that cannot be settled stays counted: more held back."""
+        async def _settle_budget(charged: Any) -> None:
+            """The run's charge (``charged``) is in its trace: it leaves its purses at the metering proxies, worked out
+            again (embry0.execution.run_meter's ledger), or lowered by the charge where they cannot be."""
             if run_meter is None or meter_window is None or declared is None:
                 return
+            usd = float(charged) if isinstance(charged, int | float) and not isinstance(charged, bool) else 0.0
             try:
-                again = await declared_budget(state, config, invocation.provider_record, run_id=run_id)
-                await run_meter.settle(meter_window, again)
+                again = await declared_budget(
+                    state, config, invocation.provider_record, run_id=run_id, run_meter=run_meter
+                )
+            except Exception:  # noqa: BLE001 — settled with the charge alone
+                logger.warning("run_budget_unread_at_settle", run_id=run_id, exc_info=True)
+                again = None
+            try:
+                await run_meter.settle(meter_window, again, usd)
             except Exception:  # noqa: BLE001 — the run stays counted in its purses
                 logger.warning("run_budget_settle_failed", run_id=run_id, exc_info=True)
 
@@ -1524,7 +1527,7 @@ async def run_agent_node(
                 # total, so neither is ever written without the other.
                 if not await traces_repo.close_running(run_id, **fields, cost_update=update):
                     return  # the run's own finish, or an earlier close, reached it first
-                await _settle_budget()
+                await _settle_budget(fields.get("cost_usd"))
             else:
                 await traces_repo.create(
                     job_id=trace_job_id,
@@ -1534,6 +1537,7 @@ async def run_agent_node(
                     **trace_extra,
                     **fields,
                 )
+                await _settle_budget(fields.get("cost_usd"))
                 jobs_repo = configurable.get("jobs_repo")
                 if update is not None and jobs_repo is not None:
                     from embry0.services.job_events import broadcast_job_event

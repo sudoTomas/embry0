@@ -948,3 +948,42 @@ async def test_a_purse_s_figures_are_updated_and_a_bad_update_refused(aiohttp_cl
     bad = await client.put("/admin/purses", json={"purses": [{**purse, "remaining_usd": -1}]}, headers=_ADMIN_HEADERS)
     assert bad.status == 400
     assert (await client.put("/admin/purses", json={"purses": [purse]})).status in (401, 403), "no admin token"
+
+
+@pytest.mark.parametrize("route", ["llm-proxy /v1", "llm-proxy /p/openai", "xai-proxy chat"])
+async def test_hung_up_calls_after_a_cached_one_are_charged_no_more_than_the_purse(aiohttp_client, model_server, route):
+    """One 600 KB call answered whole (mostly cache reads), then twelve held open and hung up: each was let through at
+    the run's cached cost a byte and charged its input at two bytes a token uncached, past the $2 purse."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    content = "x" * 600_000
+    cached = {
+        "id": "c1",
+        "model": "qwen",
+        "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+        "usage": {
+            "prompt_tokens": 150_000,
+            "completion_tokens": 1_500,
+            "prompt_tokens_details": {"cached_tokens": 149_000},
+        },
+    }
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(json.dumps(cached).encode()))
+    gate = asyncio.Event()
+    raw = (ANSWERS / "openai-chat-stream.sse").read_bytes()
+    upstream.answers.extend(_Answer(raw, content_type=_SSE, chunk=300, gate=gate) for _ in range(12))
+    budget = {**_budget(2.0), "cache": {"read": 0.1, "write": 1.25}}
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=budget)
+    body = {"model": "qwen", "messages": [{"role": "user", "content": content}], "max_tokens": 32_000}
+    await (await client.post(path, json=body, headers=_AUTH)).read()
+    held = [await client.post(path, json={**body, "stream": True}, headers=_AUTH) for _ in range(12)]
+    let_through = sum(r.status == 200 for r in held)
+    for resp in held:
+        resp.close()  # the sandbox hangs up on every one
+    gate.set()
+    tally = await _settled(client)
+    charged = sum(
+        (m["input_tokens"] * 2.0 + m["cache_read_tokens"] * 2.0 * 0.1 + m["output_tokens"] * 6.0) / 1e6
+        for m in tally["models"].values()
+    )
+    assert 0 < let_through < 12, f"{route}: {let_through} of 12 let through"
+    assert charged <= 2.0, f"{route}: {let_through} hung-up calls were charged ${charged:.2f} on a $2 purse"

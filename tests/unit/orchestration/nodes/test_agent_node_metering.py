@@ -47,11 +47,16 @@ class _Traces:
 class _Meter(RunMeter):
     """The orchestrator's meter: the run's calls as the xai-proxy counted them."""
 
-    def __init__(self, models: dict[str, Any], refused_by: dict[str, int] | None = None, ready: bool = True) -> None:
+    def __init__(
+        self,
+        models: dict[str, Any],
+        refused_by: dict[str, int] | None = None,
+        interrupted: tuple[float, float] = (0.0, 0.0),
+    ) -> None:
         self.models = models
         self.refused_by = dict(refused_by or {})
-        self.ready = ready
-        self.settled: list[tuple[str, Any]] = []
+        self.interrupted = interrupted
+        self.settled: list[tuple[str, Any, float]] = []
         self.begun: list[tuple[str, str, str | None]] = []
         self.providers: list[str | None] = []
         self.budgets: list[Any] = []
@@ -101,11 +106,14 @@ class _Meter(RunMeter):
     def meters(self, sandbox_id: str) -> bool:
         return True
 
-    async def budgets_ready(self, timeout: float = 30.0) -> bool:
-        return self.ready
+    def interrupted_spend(self, job_id: str) -> tuple[float, float]:
+        return self.interrupted
 
-    async def settle(self, window: Any, budget: Any) -> None:
-        self.settled.append((window.run_id, budget))
+    async def budgets_ready(self, timeout: float = 30.0) -> bool:
+        return True  # what an agent node before #759's last round asked of the meter, so its tests fail on what they assert
+
+    async def settle(self, window: Any, budget: Any, charged_usd: float = 0.0) -> None:
+        self.settled.append((window.run_id, budget, charged_usd))
 
 
 PROXY_COUNT = {"grok-4.7": {"input_tokens": 50_000, "output_tokens": 4_000, "requests": 3, "estimated": 0}}
@@ -398,15 +406,26 @@ async def test_a_run_settles_once_its_trace_holds_its_charge() -> None:
 
     await _run(_runner(meter, run), traces)
     assert traces.finished, "not the case under test: no trace was written"
-    assert [run_id for run_id, _ in meter.settled] == [meter.begun[0][1]], "the run never left its purses"
-    (_, again) = meter.settled[0]
+    assert [run_id for run_id, _, _ in meter.settled] == [meter.begun[0][1]], "the run never left its purses"
+    (_, again, charged) = meter.settled[0]
     assert again is not None and {s["key"] for s in again["scopes"]} >= {"job:job-1"}, again
+    assert charged == pytest.approx(PROXY_COST), f"the run settled with a charge of {charged}, not its trace's"
 
 
 @pytest.mark.asyncio
-async def test_a_run_declared_before_the_last_process_s_runs_are_closed_is_given_nothing() -> None:
-    meter, traces = _Meter(PROXY_COUNT, ready=False), _Traces()
-    await _run(_runner(meter, _done()), traces)
+async def test_a_run_declared_before_the_last_process_s_runs_are_closed_has_their_charges_taken_off() -> None:
+    """Their charges are not in their traces until they are closed: $0.50 of this job's, $40 of the day's."""
+    meter, traces = _Meter(PROXY_COUNT, interrupted=(0.5, 40.0)), _Traces()
+
+    class _Spent(_Db):
+        async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+            if "date_trunc('day'" in sql:
+                return {"daily": 10.0, "monthly": 10.0}
+            return await super().fetchrow(sql, *args)
+
+    await _run(_runner(meter, _done()), traces, state={"total_cost_usd": 1.0}, db=_Spent())
     (budget,) = meter.budgets
     assert budget is not None and "scopes" in budget, f"the run was declared with no scope a cap: {budget}"
-    assert [scope["remaining_usd"] for scope in budget["scopes"]] == [0.0] * len(budget["scopes"]), budget
+    left = {scope["key"]: scope["remaining_usd"] for scope in budget["scopes"]}
+    assert left.get("job:job-1") == pytest.approx(10.0 - 1.0 - 0.5), budget
+    assert left.get("daily") == pytest.approx(100.0 - 10.0 - 40.0), budget

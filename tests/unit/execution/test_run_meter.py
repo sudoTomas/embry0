@@ -222,16 +222,22 @@ async def test_a_settled_run_leaves_its_purses_which_are_worked_out_again() -> N
     ), proxies.purse_updates
 
 
-async def test_a_run_that_cannot_be_worked_out_again_stays_counted() -> None:
-    proxies = _Proxies({"sbx": ["xai-proxy"]})
+async def test_a_run_whose_figures_cannot_be_worked_out_again_leaves_its_purse_less_its_charge() -> None:
+    """Its trace holds its charge, so later declarations count it there: the purse must not count it too."""
+    proxies = _Proxies({"sbx": ["xai-proxy"], "sbx-2": ["xai-proxy"]})
     meter, _ = _meter(proxies, _Repo())
     window = await _begin(meter, "run-1", _request(job=2.0))
+    await _begin(meter, "run-2", _request(job=2.0), sandbox="sbx-2")
     settle = getattr(meter, "settle", None)
     assert settle is not None, "the meter cannot settle a run"
-    await settle(window, None)
-    assert getattr(proxies, "purse_updates", []) == [], "the run left its purse with its charge unknown"
-    await _begin(meter, "run-2", _request(job=2.0), sandbox="sbx")
-    assert _purses(proxies, "xai-proxy", "run-2")["job:job-1"]["members"] == ["run-1"]
+    try:
+        await settle(window, None, 0.5)
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be settled with its charge alone: {exc}")
+    updates = getattr(proxies, "purse_updates", [])
+    assert updates == [
+        ("xai-proxy", [{"key": "job:job-1", "limit": "job", "remaining_usd": 1.5, "members": ["run-2"]}])
+    ], f"the run stayed in its purse, or left it whole: {updates}"
 
 
 async def test_a_run_whose_declaration_failed_draws_on_no_purse() -> None:
@@ -244,15 +250,60 @@ async def test_a_run_whose_declaration_failed_draws_on_no_purse() -> None:
     assert _purses(proxies, "xai-proxy", "run-b")["job:job-1"]["members"] == []
 
 
-async def test_at_start_up_a_budget_waits_for_the_last_process_s_runs_to_close_then_fails_closed() -> None:
+def test_the_last_process_s_runs_count_until_each_is_closed() -> None:
+    try:
+        from embry0.services.interrupted_runs import InterruptedCharges
+    except ImportError as exc:
+        pytest.fail(f"the runs the last process left count nothing against a budget: {exc}")
+
     meter, _ = _meter(_Proxies({}), _Repo())
-    hold = getattr(meter, "hold_budgets_until", None)
-    assert hold is not None, "a run's budget does not wait for the last process's runs to close"
-    closing: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-    hold(closing)
-    assert await meter.budgets_ready(timeout=0.01) is False, "a budget was read with their charges unsettled"
-    closing.set_result(None)
-    assert await meter.budgets_ready(timeout=0.01) is True
+    hold = getattr(meter, "hold_interrupted", None)
+    assert hold is not None, "the meter takes nothing off for the runs the last process left"
+    charges = InterruptedCharges({"run-a": ("job-1", 0.5), "run-b": ("job-2", 2.0)})
+    hold(charges)
+    assert meter.interrupted_spend("job-1") == (0.5, 2.5)
+    charges.closed("run-a")
+    assert meter.interrupted_spend("job-1") == (0.0, 2.0)
+
+
+async def test_the_deployment_purses_are_given_their_figures_again_on_each_read() -> None:
+    """What background features spent since a run joined or settled reaches them."""
+    proxies = _Proxies({"sbx": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-1", _request(job=10.0, daily=100.0))
+    refresh = getattr(meter, "refresh_deployment_with", None)
+    assert refresh is not None, "the deployment purses are never given their figures again"
+    left = {"daily": 4.0}
+
+    async def _left() -> dict[str, float]:
+        return dict(left)
+
+    refresh(_left)
+    await meter.poll_once()
+    updates = getattr(proxies, "purse_updates", [])
+    assert updates == [
+        ("xai-proxy", [{"key": "daily", "limit": "daily", "remaining_usd": 4.0, "members": ["run-1"]}])
+    ], updates
+    await meter.poll_once()
+    assert len(proxies.purse_updates) == 1, "an unchanged figure was sent again"
+
+
+async def test_a_refresh_read_while_a_run_joined_is_not_sent() -> None:
+    """Its figures were read before the run's own, which are newer."""
+    proxies = _Proxies({"sbx": ["xai-proxy"], "sbx-2": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    # Job purses large enough that the day's purse is not held to them: only the order decides.
+    await _begin(meter, "run-1", _request(job=500.0, daily=100.0))
+
+    async def _left() -> dict[str, float]:
+        await _begin(meter, "run-2", _request(job=500.0, daily=50.0), sandbox="sbx-2")
+        return {"daily": 90.0}
+
+    refresh = getattr(meter, "refresh_deployment_with", None)
+    assert refresh is not None, "the deployment purses are never given their figures again"
+    refresh(_left)
+    await meter.poll_once()
+    assert getattr(proxies, "purse_updates", []) == [], "a refresh older than a declaration was sent over it"
 
 
 async def test_a_run_is_declared_on_its_provider_at_every_proxy_it_is_enrolled_with() -> None:

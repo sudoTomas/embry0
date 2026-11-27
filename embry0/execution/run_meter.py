@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Protocol
@@ -57,10 +57,6 @@ class MeteringProxies(Protocol):
     async def read_meter(self, proxy: str) -> dict[str, Any]: ...
     def declared_unordered(self, proxy: str, run_id: str) -> bool: ...
     def replay_abandoned(self, proxy: str) -> bool: ...
-
-
-#: How long a run's budget waits, at start-up, for the runs the previous process left to be closed and charged.
-INTERRUPTED_WAIT_SECONDS = 30.0
 
 
 @dataclass
@@ -203,8 +199,14 @@ class RunMeter:
         # its purses from its declaration until it settles (its charge is in its trace); runs at the same proxy share
         # a purse as they go, and a purse's scope is split between the proxies holding it.
         self._purses: dict[str, dict[str, _Purse]] = {}
-        # At start-up: the closing of the runs the previous process left, which settles their charges.
-        self._interrupted: asyncio.Future[Any] | None = None
+        # Bumped by every change to the ledger: a refresh whose figures were read before one is not sent.
+        self._ledger_changes = 0
+        # At start-up: what the runs the previous process left were counted at the proxies, until each is closed
+        # (embry0.services.interrupted_runs.InterruptedCharges).
+        self._interrupted: Any = None
+        # What the deployment's daily and monthly caps have left, settled runs charged: the deployment purses are
+        # given it again on every read of the proxies, so what background features spend reaches them.
+        self._deployment_left: Callable[[], Awaitable[Mapping[str, float]]] | None = None
 
     # ---- a run -----------------------------------------------------------------
 
@@ -212,22 +214,20 @@ class RunMeter:
         """Whether ``sandbox_id`` is enrolled with a metering proxy: a run there is declared, and held to a budget."""
         return bool(self._proxies.metered_proxies_for(sandbox_id))
 
-    def hold_budgets_until(self, closing: asyncio.Future[Any] | None) -> None:
-        """At start-up: the closing of the runs the previous process left (their charges not yet in their traces), which
-        a run's budget waits for (:meth:`budgets_ready`)."""
-        self._interrupted = closing
+    def hold_interrupted(self, charges: Any) -> None:
+        """At start-up: what the runs the previous process left, not closed yet, were counted at the proxies
+        (``InterruptedCharges``). Until each is closed its charge is not in its trace, so it is taken off what a run's
+        scopes have left (:meth:`interrupted_spend`)."""
+        self._interrupted = charges
 
-    async def budgets_ready(self, timeout: float = INTERRUPTED_WAIT_SECONDS) -> bool:
-        """Whether every run the previous process left is closed, so what the caps have left counts their charges:
-        waits for that up to ``timeout``. False past it: the run is to be held to nothing (fail closed)."""
-        closing = self._interrupted
-        if closing is None or closing.done():
-            return True
-        try:
-            await asyncio.wait_for(asyncio.shield(closing), timeout)
-        except Exception:  # noqa: BLE001 — a close that failed or did not finish leaves the charges uncounted
-            return closing.done() and not closing.cancelled() and closing.exception() is None
-        return True
+    def interrupted_spend(self, job_id: str) -> tuple[float, float]:
+        """What the runs the previous process left, not closed yet, were counted: ``job_id``'s, and all of them."""
+        return self._interrupted.spend(job_id) if self._interrupted is not None else (0.0, 0.0)
+
+    def refresh_deployment_with(self, left: Callable[[], Awaitable[Mapping[str, float]]]) -> None:
+        """How to read what the deployment's caps have left (``daily``, ``monthly``), for :meth:`poll_once` to give
+        the deployment purses again."""
+        self._deployment_left = left
 
     async def begin(
         self,
@@ -271,6 +271,7 @@ class RunMeter:
         held to no more than the job purses at the proxy can spend, so a proxy never takes the whole day from another.
         The figures go to the proxy with the purse's other members there (the run joins on its side)."""
         purses = self._purses.setdefault(proxy, {})
+        self._ledger_changes += 1
         figures: list[dict[str, Any]] = []
         # The job's purse first: a deployment purse's bound counts it.
         for scope in sorted(scopes, key=lambda s: s["limit"] != "job"):
@@ -317,15 +318,13 @@ class RunMeter:
             if not purses[key].members:
                 del purses[key]
 
-    async def settle(self, window: RunWindow, budget: Mapping[str, Any] | None) -> None:
-        """The run's charge is in its trace: take it out of its purses, and give each proxy holding them its new
-        figures, what ``budget``'s scopes (worked out again now, the run's charge settled) have left. Without
-        ``budget`` the figures cannot be worked out again, and the run stays counted (fail toward less)."""
-        if budget is None:
-            if any(window.run_id in p.members for purses in self._purses.values() for p in purses.values()):
-                logger.warning("run_meter_budget_not_settled", run_id=window.run_id)
-            return
-        settled = {str(s["key"]): float(s["remaining_usd"]) for s in budget.get("scopes") or []}
+    async def settle(self, window: RunWindow, budget: Mapping[str, Any] | None, charged_usd: float = 0.0) -> None:
+        """The run's charge (``charged_usd``) is in its trace: take it out of its purses, and give each proxy holding
+        them its new figures, what ``budget``'s scopes (worked out again now, the run's charge settled) have left. A
+        purse whose figure cannot be worked out again (no ``budget``, or no scope for it) is lowered by the charge: the
+        traces count it from now, so the purse must not."""
+        settled = {str(s["key"]): float(s["remaining_usd"]) for s in (budget or {}).get("scopes") or []}
+        self._ledger_changes += 1
         for proxy, purses in list(self._purses.items()):
             # The job's purse first: a deployment purse's bound counts it.
             keys = sorted((k for k, p in purses.items() if window.run_id in p.members), key=lambda k: k[:4] != "job:")
@@ -337,6 +336,8 @@ class RunMeter:
                 purse.members.discard(window.run_id)
                 if key in settled:
                     purse.remaining_usd = self._figure(proxy, key, settled[key])
+                else:
+                    purse.remaining_usd = max(0.0, purse.remaining_usd - max(0.0, charged_usd))
                 figures.append(self._sent(purse, key))
                 if not purse.members:
                     del purses[key]
@@ -492,7 +493,44 @@ class RunMeter:
         for proxy in self._proxies.metered_proxies():
             # After the reads: a read the proxy answers is what sends a given-up replay's remainder.
             self._metrics.meter_replay_abandoned(proxy, self._proxies.replay_abandoned(proxy))
+        await self._refresh_deployment()
         await self._prune_now_and_then()
+
+    async def _refresh_deployment(self) -> None:
+        """Give every deployment purse with runs in it its figure again, from what the caps have left now: what
+        background features spent since it was last given one reaches it. Not sent when a run joined or settled while
+        the figures were read: that run's own figures are newer."""
+        held = [
+            (proxy, key)
+            for proxy, purses in self._purses.items()
+            for key, purse in purses.items()
+            if not key.startswith("job:") and purse.members
+        ]
+        if self._deployment_left is None or not held:
+            return
+        before = self._ledger_changes
+        try:
+            left = await self._deployment_left()
+        except Exception as exc:  # noqa: BLE001 — the purses keep their figures until the next read
+            logger.warning("run_meter_deployment_unread", error=str(exc))
+            return
+        if self._ledger_changes != before:
+            return
+        for proxy in sorted({p for p, _ in held}):
+            purses = self._purses.get(proxy, {})
+            figures = []
+            for key in [k for p, k in held if p == proxy and k in left and k in purses]:
+                figure = self._figure(proxy, key, float(left[key]))
+                if figure != purses[key].remaining_usd:
+                    purses[key].remaining_usd = figure
+                    figures.append(self._sent(purses[key], key))
+            if not figures:
+                continue
+            try:
+                await self._proxies.update_purses(proxy, figures)
+            except Exception as exc:  # noqa: BLE001 — tried again on the next read
+                self._metrics.meter_admin_failed(proxy, "purses")
+                logger.warning("run_meter_purses_not_updated", proxy=proxy, error=str(exc))
 
     async def _prune_now_and_then(self) -> None:
         now = self._clock()

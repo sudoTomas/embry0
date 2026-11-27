@@ -206,3 +206,29 @@ async def test_the_sweep_reads_where_one_call_ends_and_the_next_begins() -> None
     )
     closed = traces.closed[run]
     assert (closed["cost_usd"], closed["metering"]["closed"]["calls"]) == (pytest.approx(0.5), 2)
+
+
+async def test_what_the_kept_tallies_count_each_run_left_is_its_charge_until_it_is_closed() -> None:
+    """The proxies' figure the close charges a run from: taken off a run's budget meanwhile, so nothing waits."""
+    try:
+        from embry0.services.interrupted_runs import kept_charges
+    except ImportError as exc:
+        pytest.fail(f"the runs the last process left count nothing against a budget: {exc}")
+    rows = [_trace("run-metered", "job-1"), _trace("run-sandbox", "job-2")]
+    charges = await kept_charges(rows, _Tallies({"run-metered": [_kept()]}))
+    assert charges.charges == {"run-metered": ("job-1", pytest.approx(PROXY_COST))}, charges.charges
+    assert charges.spend("job-1") == (pytest.approx(PROXY_COST), pytest.approx(PROXY_COST))
+    assert charges.spend("job-2") == (0.0, pytest.approx(PROXY_COST))
+
+
+async def test_each_run_closed_in_the_background_stops_counting_and_one_that_fails_does_not() -> None:
+    from embry0.services.interrupted_runs import close_runs
+
+    rows = [_trace("run-a", "job-1"), _trace("run-b", "job-1"), _trace("run-c", "job-1")]
+    traces = _Traces(rows, already_closed={"run-b"}, fail={"run-c"})
+    told: list[str] = []
+    try:
+        await close_runs(rows, traces, _Tallies({}), _Jobs({}), None, on_closed=told.append)
+    except TypeError as exc:
+        pytest.fail(f"nothing is told when a run left is closed: {exc}")
+    assert told == ["run-a", "run-b"], f"told of {told}: a close that failed must keep counting"

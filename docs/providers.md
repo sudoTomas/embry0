@@ -329,42 +329,48 @@ under one day's cap) never each spend what was left. A scope held at two proxies
 at once is split between them, and a deployment purse takes no more than the job
 purses at its proxy can spend, so one proxy never takes the whole day from
 another. A run settles once its trace holds its charge: it leaves its purses,
-and the proxy is given their figures worked out again; a run that cannot be
-settled stays counted. The proxy refuses a call that would take a purse past
-what it has left: 402, `budget_exceeded`, in the wire's error shape, with the
-figures in its message, and nothing is sent. The check prices a call's output
-ceiling (its limit times its answers) in full, the part a call left to hang can
-inflate, and its input at what the run's input has cost a request byte so far,
-cache reads included (the uncached rate at four bytes a token before any of its
-calls was read in full); what a broken-off call is charged is still the meter's
-estimate, which can be more. So `{"stream": true, "n": 78}` naming no limit,
-about $60 of output at $6 per million, is refused while the job has $10 left;
-twenty calls in flight at $1.20 of output each are let through only as far as
-their ceilings fit; and a Claude Code–sized run, 600 KB requests asking 32,000
-tokens, three in flight, on a $2 cap, is first refused past $1.30 charged. A
-refusal is routed as crossing its limit is: for the job's cap, by the job's
-overrun mode (`soft` pauses the job for a person, as a crossing does, saying a
-model call was refused, and a continue raises the cap; `hard` fails the job with
-`ERR_BUDGET_CALL_REFUSED`, its overrun 0, wherever a hard crossing would, a QA
-fan-out's apps included); for the day's or the month's, by failing the run with
-`ERR_BUDGET_CALL_REFUSED`, since crossing those caps stops no running job (the
-dispatch gate checks them only when a job starts), and the job goes on as after
-any failed run. A run that fails after a call of it was refused carries
-`ERR_BUDGET_CALL_REFUSED` (set by the orchestrator from the proxies' count,
-whatever the sandbox's image reads from the message), and its trace's `metering`
-counts the refusals (`budget_refused`, `budget_refused_by`). No call is checked
-for a free run (an unpriced model, or rates of 0), a run with no cap set, a
-declaration from an older orchestrator, a run whose declaration failed (its
-calls count under no run), or at a proxy image from before (the orchestrator
-logs `proxy_run_budget_not_held`). What background features spend between two
-figures for a deployment purse counts there from the next. After an orchestrator
-restart the ledger is not rebuilt (the proxies are recreated empty): a run's
-budget first waits, up to 30 seconds, for the runs the previous process left to
-be closed and charged, and past that is given nothing (fail closed). A proxy
-recreated mid-run is given its purses back less what their members could have
-spent at the process that went away, their charges and their calls in flight at
-their ceilings as its last read said (every 5 seconds); a member never read
-there leaves its purses nothing more (fail closed).
+and the proxy is given their figures worked out again; a run whose figures
+cannot be worked out again leaves its purses lowered by its charge. The proxy
+refuses a call that would take a purse past what it has left: 402,
+`budget_exceeded`, in the wire's error shape, with the figures in its message,
+and nothing is sent. The check prices a call's output ceiling (its limit times
+its answers) in full, the part a call left to hang can inflate, and its input,
+up to the largest request of the run read in full, at what the run's input has
+cost a request byte so far, cache reads included, and past it at the uncached
+rate and two bytes a token, as the meter estimates input. A broken-off call
+whose answer counted no input, or a call in flight at the run's end, is charged
+no more input than the check held for it, so a purse bounds what is recorded as
+well as what is spent. So `{"stream": true, "n": 78}` naming no limit, about $60
+of output at $6 per million, is refused while the job has $10 left; twenty calls
+in flight at $1.20 of output each are let through only as far as their ceilings
+fit; a Claude Code–sized run, 600 KB requests asking 32,000 tokens, the first
+alone and then three in flight, on a $2 cap, is first refused past $1.30
+charged; and calls hung up after a cached one, 8 MiB requests after one of 600
+KB, or large uncached requests after a small cached one, all stay within the
+purse. A refusal is routed as crossing its limit is: for the job's cap, by the
+job's overrun mode (`soft` pauses the job for a person, as a crossing does,
+saying a model call was refused, and a continue raises the cap; `hard` fails the
+job with `ERR_BUDGET_CALL_REFUSED`, its overrun 0, wherever a hard crossing
+would, a QA fan-out's apps included); for the day's or the month's, by failing
+the run with `ERR_BUDGET_CALL_REFUSED`, since crossing those caps stops no
+running job (the dispatch gate checks them only when a job starts), and the job
+goes on as after any failed run. A run that fails after a call of it was refused
+carries `ERR_BUDGET_CALL_REFUSED` (set by the orchestrator from the proxies'
+count, whatever the sandbox's image reads from the message), and its trace's
+`metering` counts the refusals (`budget_refused`, `budget_refused_by`). No call
+is checked for a free run (an unpriced model, or rates of 0), a run with no cap
+set, a declaration from an older orchestrator, a run whose declaration failed
+(its calls count under no run), or at a proxy image from before (the
+orchestrator logs `proxy_run_budget_not_held`). The deployment purses are given
+their figures again on every read of the proxies (every 5 seconds), so what
+background features spend reaches them. After an orchestrator restart the ledger
+starts empty, as the proxies do, and what the tallies kept of the runs the
+previous process left count them (the figures their close charges them from) is
+taken off a run's scopes until each is closed: nothing waits. A proxy recreated
+mid-run is given its purses back less what their members could have spent at the
+process that went away, their charges and their calls in flight at their
+ceilings as its last read said (every 5 seconds); a member never read there
+leaves its purses nothing more (fail closed).
 
 **Every admin request is ordered.** The orchestrator numbers each request it
 sends a proxy (an enrollment, its end, a change of push branches, a run

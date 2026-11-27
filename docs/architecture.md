@@ -1651,22 +1651,24 @@ meter's ledger turns each scope into a purse at the proxy serving the run, which
 every run there drawing on it shares as it goes, and splits a scope between
 proxies; a run settles, and leaves its purses, once its trace holds its charge.
 The proxy refuses a call that would take a purse past what it has left, its
-output ceiling priced in full and its input at what the run's input has cost so
-far: 402, `budget_exceeded`, in the wire's error shape, and nothing is sent. A
-refusal is routed as crossing its limit is: for the job's cap, by the job's
-overrun mode (`soft` pauses the job for a person, as a crossing does, saying a
-model call was refused, and a continue raises the cap; `hard` fails the job with
-`ERR_BUDGET_CALL_REFUSED`, its overrun 0, wherever a hard crossing would, a QA
-fan-out's apps included); for the day's or the month's, by failing the run with
-`ERR_BUDGET_CALL_REFUSED`, since crossing those caps stops no running job (the
-dispatch gate checks them only when a job starts), and the job goes on as after
-any failed run. The run carries `ERR_BUDGET_CALL_REFUSED` when it fails, and its
-trace's `metering` counts the refusals (`budget_refused`). Not checked: a free
-run (an unpriced model, or rates of 0), a run with no cap set, and a run
-declared by an older orchestrator or at an older proxy image
-(`proxy_run_budget_not_held`). After a restart, a run's budget waits for the
-previous process's runs to be closed, and past 30 seconds is given nothing. A
-run's spend is added to the job and the day after its turn, as before. Detail:
+output ceiling priced in full and its input as the run's calls have cost it
+(uncached past the largest request read in full); a broken-off call is charged
+no more input than was held for it: 402, `budget_exceeded`, in the wire's error
+shape, and nothing is sent. A refusal is routed as crossing its limit is: for
+the job's cap, by the job's overrun mode (`soft` pauses the job for a person, as
+a crossing does, saying a model call was refused, and a continue raises the cap;
+`hard` fails the job with `ERR_BUDGET_CALL_REFUSED`, its overrun 0, wherever a
+hard crossing would, a QA fan-out's apps included); for the day's or the
+month's, by failing the run with `ERR_BUDGET_CALL_REFUSED`, since crossing those
+caps stops no running job (the dispatch gate checks them only when a job
+starts), and the job goes on as after any failed run. The run carries
+`ERR_BUDGET_CALL_REFUSED` when it fails, and its trace's `metering` counts the
+refusals (`budget_refused`). Not checked: a free run (an unpriced model, or
+rates of 0), a run with no cap set, and a run declared by an older orchestrator
+or at an older proxy image (`proxy_run_budget_not_held`). After a restart, what
+the kept tallies count the runs the previous process left is taken off a run's
+scopes until each is closed. A run's spend is added to the job and the day after
+its turn, as before. Detail:
 [providers.md](providers.md#metering-at-the-proxies).
 
 The cap in force is triage's

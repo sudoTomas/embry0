@@ -662,9 +662,6 @@ BUDGET_LIMITS: dict[str, str] = {
     "daily": "the deployment's daily budget",
     "monthly": "the deployment's monthly budget",
 }
-#: The bytes of request a token is taken to be when the check prices a run's first call's input: about what the
-#: providers' tokenizers average for English. The meter's own estimate (:data:`BYTES_PER_TOKEN`) stays above them.
-CHECK_BYTES_PER_TOKEN = 4
 #: A purse's name: its job's (``job:<id>``), or the deployment's day's or month's.
 _PURSE_KEY_RE = re.compile(r"^(job:[A-Za-z0-9_.:-]{1,128}|daily|monthly)$")
 
@@ -798,11 +795,12 @@ class _ModelTally:
 @dataclass
 class _Open:
     model: str | None
+    #: What the call is charged if it never answers in full: its output limit (times its answers), and its input at
+    #: the meter's estimate, no more than the budget check reserved for it.
     ceiling: Usage
     since: float
-    #: The request's size and output limit (times its answers), which the budget check prices it from.
-    size: int = 0
-    output_ceiling: int = 0
+    #: What the budget check reserved for the call's input when it let it through, in USD.
+    reserved_input_usd: float = 0.0
 
 
 @dataclass
@@ -824,10 +822,11 @@ class _Tally:
     #: purse's limit.
     budget_refused: dict[str, int] = field(default_factory=dict)
     open: dict[int, _Open] = field(default_factory=dict)
-    #: The request bytes of the run's calls whose usage was read in full, and their input as the answers counted it:
-    #: what the budget check prices a call's input from.
+    #: The request bytes of the run's calls whose usage was read in full, their input as the answers counted it, and
+    #: the largest of those requests: what the budget check prices a call's input from.
     observed_bytes: int = 0
     observed_input: Usage = field(default_factory=Usage)
+    observed_largest: int = 0
 
     def spent_usd(self) -> float:
         """What the run has been charged at its rates, each call in flight at the meter's ceiling for it (the
@@ -841,29 +840,33 @@ class _Tally:
             total.add(call.ceiling)
         return self.budget.price(total)
 
-    def check_cost(self, size: int, output_ceiling: int) -> float:
-        """What the budget check takes a call of ``size`` request bytes and that output ceiling to cost: its output
-        ceiling at full price, the part a call left to hang can inflate; its input at what the run's input has cost a
-        request byte, cache reads included, or at the uncached rate and :data:`CHECK_BYTES_PER_TOKEN` before any call
-        of it was read in full."""
+    def check_input_usd(self, size: int) -> float:
+        """What the budget check reserves for the input of a call of ``size`` request bytes. Up to the largest request
+        of the run read in full, at what the run's input has cost a request byte, cache reads included; past it, at
+        the uncached rate and :data:`BYTES_PER_TOKEN`, as the meter estimates input: bytes the run has never had
+        counted could all be new to the provider's cache."""
         budget = self.budget
         if budget is None:
             return 0.0
-        if self.observed_bytes > 0:
-            per_byte = budget.price(self.observed_input) / self.observed_bytes
-        else:
-            per_byte = budget.input_rate / 1_000_000 / CHECK_BYTES_PER_TOKEN
-        return size * per_byte + output_ceiling * budget.output_rate / 1_000_000
+        uncached = budget.input_rate / 1_000_000 / BYTES_PER_TOKEN
+        seen = min(size, self.observed_largest)
+        per_byte = budget.price(self.observed_input) / self.observed_bytes if self.observed_bytes else uncached
+        return seen * per_byte + (size - seen) * uncached
+
+    def output_usd(self, output_ceiling: int) -> float:
+        """An output ceiling at full price: the part of a call left to hang that its request can inflate."""
+        return output_ceiling * self.budget.output_rate / 1_000_000 if self.budget is not None else 0.0
 
     def committed_usd(self) -> float:
         """What the budget check holds the run to have committed: its charges at its rates, and each call in flight
-        at :meth:`check_cost`."""
+        at what it reserved for it (:meth:`check_input_usd` and :meth:`output_usd`, when it let it through)."""
         if self.budget is None:
             return 0.0
         total = Usage()
         for counted in self.models.values():
             total.add(counted.usage)
-        return self.budget.price(total) + sum(self.check_cost(o.size, o.output_ceiling) for o in self.open.values())
+        in_flight = sum(o.reserved_input_usd + self.output_usd(o.ceiling.output_tokens) for o in self.open.values())
+        return self.budget.price(total) + in_flight
 
     def snapshot(self) -> dict[str, Any]:
         budget = (
@@ -1079,7 +1082,8 @@ class Meter:
     def open(self, sandbox_id: str, call: Call) -> Metered:
         """Start metering ``call`` from ``sandbox_id``. Raises :class:`NoRunError` when the sandbox has no run and
         one is required, and :class:`BudgetExceededError` when the call, priced as the check prices it
-        (:meth:`_Tally.check_cost`), would take a purse its run draws on past what it has left."""
+        (:meth:`_Tally.check_input_usd`, :meth:`_Tally.output_usd`), would take a purse its run draws on past what it
+        has left."""
         run_id = self._current.get(sandbox_id)
         tally = self._runs.get(run_id) if run_id is not None else None
         if tally is None:
@@ -1096,8 +1100,13 @@ class Meter:
                 self._unattributed[self._next_unattributed] = tally
                 self._live_unattributed[sandbox_id] = self._next_unattributed
         budget = tally.budget
+        reserved_input = tally.check_input_usd(len(call.body))
+        input_ceiling = call.input_estimate
         if budget is not None:
-            cost = tally.check_cost(len(call.body), call.output_ceiling)
+            cost = reserved_input + tally.output_usd(call.output_ceiling)
+            # Never charged more input than the check reserved for it: the purse bounds what is recorded too.
+            if budget.input_rate > 0:
+                input_ceiling = min(input_ceiling, math.ceil(reserved_input * 1_000_000 / budget.input_rate))
             # The purse with the least left decides; one this proxy no longer holds has nothing left.
             left, purse_key = min((self.purse_left(k), k) for k in budget.purses)
             if cost > left:
@@ -1108,19 +1117,21 @@ class Meter:
         request_id = self._next_request
         tally.open[request_id] = _Open(
             model=call.model,
-            ceiling=call.ceiling(),
+            ceiling=Usage(input_tokens=input_ceiling, output_tokens=call.output_ceiling),
             since=self._now(),
-            size=len(call.body),
-            output_ceiling=call.output_ceiling,
+            reserved_input_usd=reserved_input,
         )
-        return Metered(tally, request_id, call)
+        return Metered(tally, request_id, call, input_ceiling)
 
 
 class Metered:
     """One call on its way: the answer's status and bytes go in, and :meth:`close` adds it to its tally once."""
 
-    def __init__(self, tally: _Tally, request_id: int, call: Call) -> None:
+    def __init__(self, tally: _Tally, request_id: int, call: Call, input_ceiling: int | None = None) -> None:
         self.call = call
+        #: The most input it is charged when its answer never counts it: the estimate, held to what its run's
+        #: budget check reserved for it.
+        self._input_ceiling = call.input_estimate if input_ceiling is None else input_ceiling
         self._tally = tally
         self._request_id = request_id
         self._reader: _Reader | None = None
@@ -1160,6 +1171,7 @@ class Metered:
             usage, estimated = charge(self.call, reading)
             if reading.complete:
                 # Its input as counted: what the budget check prices the run's next calls' input from.
+                tally.observed_largest = max(tally.observed_largest, len(self.call.body))
                 tally.observed_bytes += len(self.call.body)
                 tally.observed_input.add(
                     Usage(
@@ -1170,11 +1182,15 @@ class Metered:
                 )
             if self._lost and not reading.complete:
                 # Broken off before its usage: what the provider generated is not what was read. Its output is the
-                # most the request allowed; its input stays what the answer said, or the estimate ``charge`` made.
+                # most the request allowed; its input stays what the answer said, or the estimate ``charge`` made,
+                # no more than its run's budget check reserved for it.
                 usage.output_tokens = max(usage.output_tokens, self.call.output_ceiling)
+                if reading.usage.inputs() == 0:
+                    usage.input_tokens = min(usage.input_tokens, self._input_ceiling)
             model = reading.model or self.call.model
         elif self._lost:
-            usage, estimated, model = self.call.ceiling(), True, self.call.model
+            usage = Usage(input_tokens=self._input_ceiling, output_tokens=self.call.output_ceiling)
+            estimated, model = True, self.call.model
         else:
             return
         entry = tally.models.setdefault(model or "unknown", _ModelTally())
