@@ -785,11 +785,13 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > above what the providers count for ordinary text), one lost after the request
 > may have gone upstream (a timeout, a connect timeout included, or a failure
 > past the connect) is charged its ceiling (the request's size as input, its
-> output limit as output), and so is one whose answer broke off before its
-> usage was read (the upstream cut it, it could not be decoded, the sandbox
-> went away mid-answer): its output is its limit, its input what the answer
-> said (else the request's size); a count reported again lower never lowers
-> it, and only an error answer is charged nothing. Both proxies ask the
+> output limit times the answers it asks for as output; a request whose
+> ceiling is above 10,000,000 tokens is refused), and so is one whose answer
+> broke off before its usage was read (the upstream cut it, it could not be
+> decoded, the sandbox went away mid-answer): its output is the ceiling's, its
+> input what the answer said (else the request's size); a count reported again
+> lower never lowers it, and only an error answer is charged nothing. Both
+> proxies ask the
 > upstream for uncompressed answers and refuse one in an encoding they do not
 > decode (anything but gzip or deflate), charging a completion so refused its
 > ceiling. The xai-proxy forwards

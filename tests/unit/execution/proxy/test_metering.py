@@ -779,3 +779,72 @@ def test_a_limit_that_is_not_a_whole_number_is_refused(wire: Any, key: str, valu
 def test_a_limit_that_is_a_whole_number_or_null_is_read(value: Any) -> None:
     call = read_call("openai_chat", json.dumps({"model": "m", "max_tokens": value}).encode())
     assert call.refused is None
+
+
+@pytest.mark.parametrize(
+    ("extra", "answers"),
+    [
+        ({"n": 8}, 8),
+        ({"n_cmpl": 3}, 3),
+        ({"n": 2, "n_cmpl": 3}, 3),
+        ({"n": 5, "n_cmpl": 3}, 5),
+        ({"best_of": 4, "n": 2}, 4),
+        ({"N": 6}, 6),
+        ({"n": 1}, 1),
+        ({"n": None}, 1),
+    ],
+    ids=["n", "n_cmpl", "n_cmpl-larger", "n-larger", "best_of", "case-folded", "one", "null"],
+)
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_a_call_asking_for_several_answers_has_its_limit_times_them_as_its_ceiling(
+    wire: Any, extra: dict[str, Any], answers: int
+) -> None:
+    """Each answer may run to the limit: {"max_tokens": 1000, "n": 8} can generate 8,000."""
+    call = read_call(wire, json.dumps({"model": "m", "max_tokens": 1000, **extra}).encode())
+    assert call.refused is None, call.refused
+    assert call.output_ceiling == 1000 * answers, f"{extra}: a ceiling of {call.output_ceiling}"
+
+
+def test_a_call_naming_no_limit_has_the_default_times_its_answers_as_its_ceiling() -> None:
+    call = read_call("openai_chat", b'{"model": "m", "n": 2}')
+    assert (call.output_ceiling, call.output_limited) == (256_000, False), call
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, 2.0, "8", True, [2], {"n": 2}], ids=str)
+@pytest.mark.parametrize("key", ["n", "n_cmpl", "best_of", "N"])
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_an_answer_count_that_is_not_a_positive_whole_number_is_refused(wire: Any, key: str, value: Any) -> None:
+    raw = json.dumps({"model": "m", "max_tokens": 10, key: value}).encode()
+    assert read_call(wire, raw).refused, f"forwarded {raw!r}"
+
+
+@pytest.mark.parametrize(
+    ("extra", "refused"),
+    [
+        ({"max_tokens": 10_000_000}, False),
+        ({"max_tokens": 10_000_001}, True),
+        ({"max_tokens": 10**18}, True),
+        ({"max_tokens": 2_000_000, "n": 5}, False),
+        ({"max_tokens": 2_000_000, "n": 6}, True),
+        ({"n": 78}, False),  # 128,000 x 78 = 9,984,000
+        ({"n": 79}, True),  # 10,112,000
+        ({"max_tokens": 10**4000, "n": 10**4000}, True),  # a product too long to write out
+    ],
+    ids=[
+        "at-the-most",
+        "past-it",
+        "1e18",
+        "limit-times-answers",
+        "limit-times-answers-past",
+        "default",
+        "default-past",
+        "long",
+    ],
+)
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_a_call_whose_ceiling_is_above_ten_million_tokens_is_refused(
+    wire: Any, extra: dict[str, Any], refused: bool
+) -> None:
+    """A call charged its ceiling is charged a figure the traces can hold: max_tokens 1e18 would be 1e18."""
+    call = read_call(wire, json.dumps({"model": "m", **extra}).encode())
+    assert bool(call.refused) is refused, f"{extra}: refused {call.refused!r}, a ceiling of {call.output_ceiling}"

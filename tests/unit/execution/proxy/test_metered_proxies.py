@@ -671,6 +671,10 @@ _COMPLETION_ROUTES = {
         b'{"model": "m", "max_tokens": 10, "stream": "false"}',
         b'{"model": "m", "max_tokens": "1000000"}',
         b'{"model": "m", "max_tokens": 1e6}',
+        b'{"model": "m", "max_tokens": 1000000000000000000}',
+        b'{"model": "m", "max_tokens": 2000000, "n": 6}',
+        b'{"model": "m", "max_tokens": 10, "n": 0}',
+        b'{"model": "m", "max_tokens": 10, "n_cmpl": 1.5}',
     ],
     ids=[
         "case-folded-twin",
@@ -680,6 +684,10 @@ _COMPLETION_ROUTES = {
         "stream-as-text",
         "limit-as-text",
         "limit-1e6",
+        "ceiling-1e18",
+        "limit-times-answers-past-the-most",
+        "no-answers",
+        "answers-as-fraction",
     ],
 )
 async def test_a_completion_body_the_meter_cannot_read_as_every_server_would_is_refused(
@@ -709,6 +717,27 @@ async def test_a_completion_naming_both_limits_is_charged_the_larger(aiohttp_cli
         pass
     (counted,) = (await _settled(client))["models"].values()
     assert counted["output_tokens"] == 100_000, f"{route} read the lower limit: {counted}"
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
+@pytest.mark.parametrize(("extra", "answers"), [({"n": 8}, 8), ({"n": 2, "n_cmpl": 3}, 3)], ids=["n", "n_cmpl"])
+async def test_a_completion_asking_for_several_answers_is_charged_its_limit_times_them_after_a_hang_up(
+    aiohttp_client, model_server, route, extra, answers
+):
+    """{"max_tokens": 1000, "n": 8} can generate 8,000 tokens upstream, whatever the sandbox read of it."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    raw = (ANSWERS / "openai-chat-stream.sse").read_bytes()
+    upstream = _Upstream()
+    gate = asyncio.Event()
+    upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=300, gate=gate))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream)
+    body = {"model": "qwen", "messages": [], "stream": True, "max_tokens": 1000, **extra}
+    resp = await client.post(path, json=body, headers=_AUTH)
+    await resp.content.read(100)
+    resp.close()
+    gate.set()
+    (counted,) = (await _settled(client))["models"].values()
+    assert counted["output_tokens"] == 1000 * answers, f"{route}, {extra}: charged {counted['output_tokens']}"
 
 
 @pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])

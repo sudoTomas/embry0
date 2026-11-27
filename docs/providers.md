@@ -270,13 +270,13 @@ charged from it, and its trace stays `running` like that of a run a restart
 interrupts (#694).
 
 A call still in flight when a tally was last read is charged its ceiling, as
-the proxy reported it: the request's size as input and its output limit as
-output. So is a call whose answer broke off before its usage was read: the
-upstream cut it, it could not be decoded, or the sandbox went away while it
-came. The provider may have generated all of it, so what was read is no
-measure: its output is the request's limit, and its input the counts the
-answer did give (the request's size when it gave none). An answer whose usage
-was read in full is charged that usage however it ended, and an error answer
+the proxy reported it: the request's size as input and its output limit, times
+the answers it asks for, as output. So is a call whose answer broke off before
+its usage was read: the upstream cut it, it could not be decoded, or the
+sandbox went away while it came. The provider may have generated all of it, so
+what was read is no measure: its output is that ceiling, and its input the
+counts the answer did give (the request's size when it gave none). An answer
+whose usage was read in full is charged that usage however it ended, and an error answer
 still costs nothing. A streamed chat completion goes upstream asking for
 exactly its final usage, which counts only from a chunk that finishes the
 answer. A completion request the proxy cannot read the way every server would
@@ -291,17 +291,28 @@ many). The ceiling assumes the server honours those two: a chat completion that
 names another server's output limit, at its top level or in its `options`
 (llama.cpp's `n_predict`, Ollama's `num_predict`, `max_new_tokens`,
 `max_output_tokens`, `max_tokens_to_sample`, compared with case folded), is
-refused. A run whose calls counted under the sandbox's calls under no run (it
-could not be declared) is given what those grew by, each call in flight at its
-end counted at its ceiling; a call in flight at its start is taken off only
-when the orchestrator charged an earlier run for it (it remembers which, by the
-id the proxy gives each call in flight), so a call is charged once across runs,
-and one that began between runs is charged to the run it ends in. Where it
-cannot tell (after a restart, or from a proxy that names no ids), the call is
-charged again: more, never less. A proxy process that went away mid-run leaves its last read in
-`run_meter` with its calls in flight, and the recreated proxy is given the run
-back after the sandbox's enrollment, under a new process (`boot_id`), so the
-run's calls are the two tallies summed and the charge is the larger figure.
+refused. A call that names neither is taken to produce at most 128,000 tokens an
+answer, which assumes the server stops by then: vLLM and llama.cpp, given no
+limit, generate up to the model's context, so with a longer context such a call
+can produce more than its ceiling. A call asking for several answers (`n`,
+llama.cpp's `n_cmpl` or older vLLM's `best_of`, compared with case folded, each
+a positive whole number or refused) has its limit times the largest as its
+ceiling, and one whose ceiling is above 10,000,000 tokens is refused on both
+wires, so that a call charged its ceiling is charged a figure a trace can hold.
+A trace's token counts are held to their columns' range as it is written, and a
+count held is logged (`trace_count_held_to_column`): one past them would fail
+the write and leave the trace `running`. A run whose calls counted under the
+sandbox's calls under no run (it could not be declared) is given what those grew
+by, each call in flight at its end counted at its ceiling; a call in flight at
+its start is taken off only when the orchestrator charged an earlier run for it
+(it remembers which, by the id the proxy gives each call in flight), so a call
+is charged once across runs, and one that began between runs is charged to the
+run it ends in. Where it cannot tell (after a restart, or from a proxy that
+names no ids), the call is charged again: more, never less. A proxy process that
+went away mid-run leaves its last read in `run_meter` with its calls in flight,
+and the recreated proxy is given the run back after the sandbox's enrollment,
+under a new process (`boot_id`), so the run's calls are the two tallies summed
+and the charge is the larger figure.
 
 **Every admin request is ordered.** The orchestrator numbers each request it
 sends a proxy (an enrollment, its end, a change of push branches, a run

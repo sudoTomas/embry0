@@ -93,9 +93,13 @@ Wire = Literal["anthropic", "openai_chat"]
 #: four characters a token for English, two to three for code and for text in other scripts), so an estimate from
 #: bytes lands above their count.
 BYTES_PER_TOKEN = 2
-#: The output a call is taken to be able to produce when it names no limit: above what the providers' models emit
-#: in one answer.
+#: The output a call is taken to be able to produce in one answer when it names no limit: above what the providers'
+#: models emit in one. It assumes the server stops by then; vLLM and llama.cpp, given no limit, run to the model's
+#: context.
 DEFAULT_OUTPUT_CEILING = 128_000
+#: The most output a call may be able to produce (its ceiling, the limit times the answers it asks for): a request
+#: whose ceiling is higher is refused, so that a call charged its ceiling is charged a figure the traces can hold.
+MAX_OUTPUT_CEILING = 10_000_000
 #: The largest JSON answer read whole for its usage. A bigger one is charged its estimate.
 MAX_JSON_ANSWER_BYTES = 16 * 1024 * 1024
 #: The longest server-sent event line kept. Past it the stream is no longer read (its estimate stands).
@@ -119,6 +123,11 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _SERVER_OUTPUT_LIMITS: frozenset[str] = frozenset(
     {"n_predict", "num_predict", "max_new_tokens", "max_output_tokens", "maxoutputtokens", "max_tokens_to_sample"}
 )
+#: The keys a request names how many answers it wants with, compared with case folded: OpenAI's and vLLM's ``n``,
+#: llama.cpp's ``n_cmpl`` and older vLLM's ``best_of`` (that many generated, ``n`` of them returned). Each answer may
+#: run to the output limit, so the ceiling is the limit times the largest. A server that matches keys with case folded
+#: reads ``N`` as ``n``, so the meter does too: it can only charge more.
+_ANSWER_COUNTS: frozenset[str] = frozenset({"n", "n_cmpl", "best_of"})
 #: The ``stream_options`` a streamed chat completion goes upstream with, whatever the sandbox asked for.
 _STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
 #: A provider's name, as a run's declaration names it (a provider record's ``name``).
@@ -183,7 +192,8 @@ class Call:
     model: str | None
     #: The request's size in tokens, estimated from its bytes: the input charged when no answer says it.
     input_estimate: int
-    #: The most output the request allows: its own limit, or :data:`DEFAULT_OUTPUT_CEILING`.
+    #: The most output the request allows: its own limit, or :data:`DEFAULT_OUTPUT_CEILING`, times the answers it
+    #: asks for.
     output_ceiling: int
     #: Whether the request named that limit itself (an estimate of its output is then capped by it).
     output_limited: bool
@@ -214,7 +224,9 @@ def read_call(wire: Wire, body: bytes) -> Call:
     refused (:attr:`Call.refused`). A key named twice exactly goes as the proxy read it (each key once, its last
     value). A chat completion that streams goes with ``stream`` true and ``stream_options`` exactly
     ``include_usage``. The output limit is the larger the request names, ``max_tokens`` or (for chat completions)
-    ``max_completion_tokens``: a server may honour either."""
+    ``max_completion_tokens``: a server may honour either. The ceiling is that limit (or
+    :data:`DEFAULT_OUTPUT_CEILING`) times the answers the request asks for (:data:`_ANSWER_COUNTS`, each a positive
+    whole number), and a request whose ceiling is above :data:`MAX_OUTPUT_CEILING` is refused."""
     tops: list[list[str]] = []
 
     def keep(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -248,6 +260,22 @@ def read_call(wire: Wire, body: bytes) -> Call:
             # A server may read "1000000" or 1e6 as that many: the meter would read no limit, a lower ceiling.
             return _refused(wire, body, f"the request's {key} is not a whole number of tokens")
     limits = [value for key in keys if (value := _count(payload.get(key)))]
+    answers = 1
+    for key, value in payload.items():
+        if key.casefold() not in _ANSWER_COUNTS or value is None:
+            continue
+        count = _count(value)
+        if not count:
+            return _refused(wire, body, f"the request's {key} is not a positive whole number")
+        answers = max(answers, count)
+    ceiling = (max(limits) if limits else DEFAULT_OUTPUT_CEILING) * answers
+    if ceiling > MAX_OUTPUT_CEILING:
+        # Not the figure itself: a product of two long numbers may be too long to write out.
+        return _refused(
+            wire,
+            body,
+            f"the request's output ceiling (its limit times its answers) is above {MAX_OUTPUT_CEILING:,} tokens",
+        )
     rewrite = len(set(named)) != len(named)
     if wire == "openai_chat" and streaming:
         # Exactly the final usage: another option (vLLM's continuous_usage_stats) would have a usage in every chunk,
@@ -262,7 +290,7 @@ def read_call(wire: Wire, body: bytes) -> Call:
         body=body,
         model=_model_name(payload.get("model")),
         input_estimate=math.ceil(len(body) / BYTES_PER_TOKEN),
-        output_ceiling=max(limits) if limits else DEFAULT_OUTPUT_CEILING,
+        output_ceiling=ceiling,
         output_limited=bool(limits),
     )
 
