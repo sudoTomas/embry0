@@ -773,9 +773,11 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > stream's usage counts as the answer's only in a chunk that finishes it. The tokens count under the run
 > the orchestrator declared for the sandbox (`POST /admin/runs`, ended by
 > `DELETE /admin/runs/{run_id}`, which answers its tally); a sandbox never
-> names its own run. The declaration names the run's provider, and the
-> llm-proxy, which carries every chat-completions provider's calls (ADR 0033),
-> refuses the sandbox's calls to any other provider while the run is current. `GET /admin/meter` answers every tally the proxy holds,
+> names its own run. The declaration names the run's provider and the ids its
+> model goes by: the llm-proxy, which carries every chat-completions provider's
+> calls (ADR 0033), refuses the sandbox's calls to any other provider while the
+> run is current, the xai-proxy refuses them for a run on any provider but xAI,
+> and both refuse a call naming another model (`model_not_declared`). `GET /admin/meter` answers every tally the proxy holds,
 > cumulative, with the proxy's boot id and each call still in flight at its
 > ceiling, so a reader that loses the proxy can still charge those. With
 > `METER_REQUIRE_RUN` a call from a sandbox with no declared run is refused

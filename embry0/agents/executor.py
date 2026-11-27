@@ -43,6 +43,16 @@ from embry0.safety.skill_commands import SkillError, SkillSnapshot
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
 
+
+#: The CLI variables naming the models it calls besides the run's own: on a provider's run each names the run's model.
+RUN_MODEL_ENV: tuple[str, ...] = (
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "CLAUDE_CODE_SUBAGENT_MODEL",
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -791,6 +801,9 @@ class SdkAgentExecutor:
                     "ANTHROPIC_AUTH_TOKEN": "",
                     "CLAUDE_CODE_OAUTH_TOKEN": "",
                 }
+            # The CLI's background calls (its small, fast model) and its subagents' haiku, sonnet and opus go to the
+            # run's own model: a metering proxy refuses a call naming a model the run was not declared with.
+            options.env = {**(options.env or {}), **dict.fromkeys(RUN_MODEL_ENV, invocation.model)}
 
         # --- EMB-35 session resume, in precedence order:
         # 1. ``resume_session_id`` → the CLI's own file-based resume. The

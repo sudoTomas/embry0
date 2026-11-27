@@ -1159,3 +1159,50 @@ async def test_a_recreated_proxy_is_given_the_latest_figure_not_the_declared_one
     mgr._carry("xai-proxy")
     await mgr._replay("xai-proxy")
     assert _left(new) == pytest.approx(3.0), f"the replay restored the declared figure: ${_left(new):.2f}"
+
+
+async def _status_of_call_naming(proxy: Any, model: str) -> int:
+    import aiohttp
+
+    proxy.upstream.answers.append(_Answer((ANSWERS / "anthropic-stream.sse").read_bytes(), content_type=_SSE))
+    body = {"model": model, "max_tokens": 32000, "stream": True, "messages": []}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            proxy.make_url("/v1/messages"), json=body, headers={"Authorization": f"Bearer {TOKEN}"}
+        ) as r:
+            await r.read()
+            return r.status
+
+
+async def test_a_run_declared_with_its_models_is_held_to_them_at_the_proxy(proxy: Any) -> None:
+    meter = RunMeter(proxy.mgr, _Repo())
+    try:
+        window = await meter.begin("sbx-1", "run-1", "job-1", provider="xai", models=("grok-4.7",))  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared with its models: {exc}")
+    assert window.declared, "the run was not declared on the proxy"
+    assert await _status_of_call_naming(proxy, "grok-4.7-heavy") == 403, "a call naming another model went"
+    assert await _status_of_call_naming(proxy, "grok-4.7") == 200, "a call naming the run's model was refused"
+    metering = await meter.end(window)
+    assert metering.unordered == (), "a run on a proxy that holds it to its models was taken as unordered"
+
+
+async def test_a_run_on_a_proxy_that_does_not_hold_it_to_its_models_is_not_taken_as_whole(proxy: Any) -> None:
+    """An older proxy image does not echo the models: a call naming another counts under the run at its rates."""
+    mgr = proxy.mgr
+    meter = RunMeter(mgr, _Repo())
+    real_once = mgr._exec_admin_once
+
+    async def _older_image(**kw: Any) -> dict[str, Any]:
+        answer = await real_once(**kw)
+        return {k: v for k, v in answer.items() if k != "models"}
+
+    mgr._exec_admin_once = _older_image  # type: ignore[method-assign]
+    try:
+        window = await meter.begin("sbx-1", "run-1", "job-1", provider="xai", models=("grok-4.7",))  # type: ignore[call-arg]
+    except TypeError as exc:
+        pytest.fail(f"a run cannot be declared with its models: {exc}")
+    finally:
+        mgr._exec_admin_once = real_once  # type: ignore[method-assign]
+    metering = await meter.end(window)
+    assert metering.unordered == ("xai-proxy",), f"a proxy not holding the run to its models: {metering.unordered}"

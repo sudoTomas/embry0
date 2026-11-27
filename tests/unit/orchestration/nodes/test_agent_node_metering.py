@@ -60,6 +60,7 @@ class _Meter(RunMeter):
         self.begun: list[tuple[str, str, str | None]] = []
         self.providers: list[str | None] = []
         self.budgets: list[Any] = []
+        self.declared_models: list[Any] = []
         self.ended: list[str] = []
         self.charges: list[Any] = []
 
@@ -70,12 +71,14 @@ class _Meter(RunMeter):
         job_id: str | None = None,
         provider: str | None = None,
         budget: Any = None,
+        models: Any = None,
     ) -> Any:
         from embry0.execution.run_meter import RunWindow
 
         self.begun.append((sandbox_id, run_id, job_id))
         self.providers.append(provider)
         self.budgets.append(budget)
+        self.declared_models.append(models)
         return RunWindow(sandbox_id, run_id, ("xai-proxy",), {"xai-proxy": "b1"})
 
     async def end(self, window: Any) -> Any:
@@ -450,3 +453,28 @@ async def test_the_sandbox_is_told_whether_its_run_is_held_to_a_budget() -> None
     assert budgeted.budgets[0] is not None and unmetered.budgets == [None], (budgeted.budgets, unmetered.budgets)
     marks = [record.get("budgeted") if isinstance(record, dict) else record for record in records]
     assert marks == [True, False], f"the sandbox was told its run's budget as {marks}"
+
+
+@pytest.mark.asyncio
+async def test_a_run_is_declared_with_the_ids_its_model_goes_by() -> None:
+    """A call naming another model would be checked and charged at this run's rates: the proxies hold it to these."""
+    meter = _Meter(PROXY_COUNT)
+    await _run(_runner(meter, _done()), _Traces())
+    declared = getattr(meter, "declared_models", None)
+    assert declared == [("grok-4.7",)], f"the run was declared with models {declared}"
+
+
+def test_a_routed_model_is_declared_by_both_its_names() -> None:
+    """The chat executor sends the id its provider knows the model by; the CLI and the direct xAI executor, the routed
+    one. No record: no hold (an orchestrator's run on a model of no provider)."""
+    from types import SimpleNamespace
+
+    try:
+        from embry0.orchestration.nodes.agent import run_models
+    except ImportError as exc:
+        pytest.fail(f"nothing names the ids a run's model goes by: {exc}")
+    custom = SimpleNamespace(model="custom/qwen3.8-27b", provider_record=SimpleNamespace(upstream_model="qwen3.8-27b"))
+    grok = SimpleNamespace(model="grok-4.7", provider_record=SimpleNamespace(upstream_model="grok-4.7"))
+    assert run_models(custom) == ("qwen3.8-27b", "custom/qwen3.8-27b")  # type: ignore[arg-type]
+    assert run_models(grok) == ("grok-4.7",)  # type: ignore[arg-type]
+    assert run_models(SimpleNamespace(model="m", provider_record=None)) is None  # type: ignore[arg-type]

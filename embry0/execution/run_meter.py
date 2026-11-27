@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Protocol
@@ -51,6 +51,7 @@ class MeteringProxies(Protocol):
         job_id: str | None = None,
         provider: str | None = None,
         budget: Mapping[str, Any] | None = None,
+        models: Sequence[str] | None = None,
     ) -> str: ...
     async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None: ...
     async def update_purses(self, proxy: str, purses: list[dict[str, Any]]) -> None: ...
@@ -236,9 +237,10 @@ class RunMeter:
         job_id: str | None = None,
         provider: str | None = None,
         budget: Mapping[str, Any] | None = None,
+        models: Sequence[str] | None = None,
     ) -> RunWindow:
         """Declare ``run_id`` on every metering proxy ``sandbox_id`` is enrolled with, on ``provider`` (its provider
-        record's name). With ``budget`` (``embry0.orchestration.run_budget``), at each proxy that serves ``provider``
+        record's name) and ``models`` (the ids its model goes by: a call naming another is refused). With ``budget`` (``embry0.orchestration.run_budget``), at each proxy that serves ``provider``
         the run draws on a purse a scope (:meth:`_allocate`). A proxy that refuses or cannot be reached is left out of
         ``declared``: the run's tally there will not be whole."""
         window = RunWindow(sandbox_id, run_id, tuple(self._proxies.metered_proxies_for(sandbox_id)))
@@ -252,7 +254,7 @@ class RunMeter:
                 }
             try:
                 window.declared[proxy] = await self._proxies.declare_run(
-                    proxy, sandbox_id, run_id, job_id, provider=provider, budget=held
+                    proxy, sandbox_id, run_id, job_id, provider=provider, budget=held, models=models
                 )
             except Exception as exc:  # noqa: BLE001 — the run goes ahead; its charge allows for the gap
                 self._metrics.meter_admin_failed(proxy, "declare")

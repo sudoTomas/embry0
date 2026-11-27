@@ -40,12 +40,14 @@ from embry0.execution.proxy.metering import (
     METER,
     BudgetExceededError,
     Metered,
+    ModelNotDeclaredError,
     NoRunError,
     TalliesFullError,
     Wire,
     budget_answer,
     no_run_answer,
     read_call,
+    refusal_answer,
     register_meter_routes,
 )
 from embry0.execution.proxy.model_request import (
@@ -60,6 +62,8 @@ from embry0.safety.xai_denials import XaiDenial, classify_xai_denial
 logger = structlog.get_logger(__name__)
 
 XAI_API_BASE = "https://api.x.ai"
+#: The provider a run on this proxy is declared on (its provider record's name).
+PROVIDER = "xai"
 
 #: The billed paths under ``/v1`` the proxy forwards, each metered in its wire format. Any other call that is not a
 #: read is refused: an answer the meter cannot read would be spent and never counted.
@@ -305,6 +309,14 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     if wire is None and request.method not in ("GET", "HEAD") and route not in UNBILLED_PATHS:
         logger.warning("xai_proxy_path_refused", sandbox_id=sandbox_id, method=request.method, path=route)
         return web.json_response({"error": "not_found"}, status=404)
+    # While a run is current, only a run on xAI: another provider's run is charged from its own provider's proxy, so
+    # what it spent here would be counted under it and never charged (the llm-proxy holds its runs the same way).
+    declared = request.app[METER].declared_provider(sandbox_id)
+    if declared is not None and declared != PROVIDER:
+        logger.warning("xai_proxy_provider_not_declared", sandbox_id=sandbox_id, declared=declared, path=route)
+        return refusal_answer(
+            wire, "provider_not_declared", f"this sandbox's current run is on {declared}: {PROVIDER} is refused"
+        )
     path = "/" + request.match_info.get("path", "")
     upstream_url = f"{XAI_API_BASE}/v1{path}"
 
@@ -355,6 +367,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         except NoRunError:
             logger.warning("xai_proxy_call_without_run", sandbox_id=sandbox_id, path=route)
             return no_run_answer(wire)
+        except ModelNotDeclaredError as refusal:
+            logger.warning("xai_proxy_model_not_declared", sandbox_id=sandbox_id, path=route, model=refusal.model)
+            return refusal_answer(wire, "model_not_declared", str(refusal))
         except BudgetExceededError as refusal:
             logger.warning(
                 "xai_proxy_call_over_budget",
