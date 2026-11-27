@@ -862,116 +862,209 @@ def test_a_call_whose_ceiling_is_above_ten_million_tokens_is_refused(
 
 # --------------------------------------------------------------------------- a run's budget
 
-#: A run's budget as the orchestrator declares it: $10 left of the job's, at $2 / $6 per million tokens.
-BUDGET = {
-    "remaining_usd": 10.0,
-    "limit": "job",
-    "rates": {"in": 2.0, "out": 6.0},
-    "cache": {"read": 0.25, "write": 1.25},
-}
+#: The job's purse at this proxy: $10 left once its settled runs are charged.
+PURSE = {"key": "job:job-1", "limit": "job", "remaining_usd": 10.0, "members": []}
+#: A run's budget as the orchestrator declares it: $2 / $6 per million tokens, drawing on ``PURSE``.
+BUDGET = {"rates": {"in": 2.0, "out": 6.0}, "cache": {"read": 0.25, "write": 1.25}, "purses": [PURSE]}
 
 
-def _budget(**over: Any) -> Any:
-    """The meter's budget for ``BUDGET`` with ``over`` laid on it; the test fails, saying so, on a meter without."""
+def _budget(purses: list[dict[str, Any]] | None = None, **over: Any) -> Any:
+    """The meter's (budget, purse figures) for ``BUDGET`` with ``over`` laid on it; the test fails, saying so, on a
+    meter without."""
     try:
-        from embry0.execution.proxy.metering import Budget
+        from embry0.execution.proxy.metering import read_budget
     except ImportError as exc:
         pytest.fail(f"the meter holds no run to a budget: {exc}")
-    return Budget.read({**BUDGET, **over})
+    return read_budget({**BUDGET, **({"purses": purses} if purses is not None else {}), **over})
 
 
-def _held(meter: Meter, budget: Any, run_id: str = "run-1") -> None:
+def _purse(remaining: float = 10.0, **over: Any) -> dict[str, Any]:
+    return {**PURSE, "remaining_usd": remaining, **over}
+
+
+def _held(meter: Meter, budget: Any = None, run_id: str = "run-1", sandbox: str = "sbx", seq: int = 1) -> None:
+    rates, purses = budget if budget is not None else _budget()
     try:
-        meter.declare("sbx", run_id, "job-1", budget=budget)  # type: ignore[call-arg]
+        meter.declare(sandbox, run_id, "job-1", budget=rates, purses=purses, seq=seq)  # type: ignore[call-arg]
     except TypeError as exc:
         pytest.fail(f"a run cannot be declared with a budget: {exc}")
 
 
-def _open_or_refused(meter: Meter, body: dict[str, Any]) -> Any:
-    """The call ``body`` makes, opened; None when the meter refused it for the run's budget."""
+def _open_or_refused(meter: Meter, body: dict[str, Any], sandbox: str = "sbx") -> Any:
+    """The call ``body`` makes, opened; None when the meter refused it for its run's budget."""
     try:
-        return meter.open("sbx", read_call("openai_chat", json.dumps(body).encode()))
+        return meter.open(sandbox, read_call("openai_chat", json.dumps(body).encode()))
     except Exception as exc:
         if type(exc).__name__ == "BudgetExceededError":
             return None
         raise
 
 
-def _only_tally(meter: Meter) -> dict[str, Any]:
-    (tally,) = meter.snapshot()["tallies"]
+def _only_tally(meter: Meter, run_id: str = "run-1") -> dict[str, Any]:
+    (tally,) = [t for t in meter.snapshot()["tallies"] if t["run_id"] == run_id]
     return tally
+
+
+def _answer(call: Any, *, cached: int, uncached: int, output: int) -> None:
+    """``call`` answered whole, its usage ``uncached`` + ``cached`` input tokens and ``output``."""
+    answer = {
+        "id": "c1",
+        "model": "grok-4.7",
+        "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+        "usage": {
+            "prompt_tokens": uncached + cached,
+            "completion_tokens": output,
+            "prompt_tokens_details": {"cached_tokens": cached},
+        },
+    }
+    call.answer(200, "application/json")
+    call.feed(json.dumps(answer).encode())
+    call.close()
 
 
 def test_a_budget_prices_usage_as_the_orchestrator_does() -> None:
     """ProviderRecord.price: cached input at its factor of the input rate, cache writes at theirs."""
     usage = Usage(input_tokens=10**6, output_tokens=10**6, cache_read_tokens=10**6, cache_creation_tokens=10**6)
-    assert _budget().price(usage) == pytest.approx(2.0 + 6.0 + 0.5 + 2.5)
+    assert _budget()[0].price(usage) == pytest.approx(2.0 + 6.0 + 0.5 + 2.5)
 
 
-def test_a_call_that_could_take_its_run_past_its_budget_is_refused_and_counted() -> None:
+def test_a_call_that_could_take_its_purse_past_what_it_has_left_is_refused_and_counted() -> None:
     """{"stream": true, "n": 78} naming no limit: 9,984,000 output tokens at $6 a million, about $60, with $10 left."""
     meter = Meter()
-    _held(meter, _budget())
+    _held(meter)
     opened = _open_or_refused(meter, {"model": "m", "messages": [], "stream": True, "n": 78})
-    assert opened is None, "a call whose ceiling costs about $60 was let through with $10 left"
+    assert opened is None, "a call whose output ceiling costs about $60 was let through with $10 left"
     tally = _only_tally(meter)
-    assert (tally.get("budget_refused"), tally["open"], tally["models"]) == (1, [], {}), tally
+    assert (tally.get("budget_refused_by"), tally["open"], tally["models"]) == ({"job": 1}, [], {}), tally
     with pytest.raises(Exception) as refused:
         meter.open("sbx", read_call("openai_chat", b'{"model": "m", "n": 78}'))
     message = str(refused.value)
     assert "budget_exceeded" in message and "$59.9" in message and "the job's budget" in message, message
 
 
-def test_twenty_calls_in_flight_are_let_through_only_as_far_as_the_budget_covers_their_ceilings() -> None:
-    """Each at its ceiling ($1.20 of output): eight fit in $10; the run's charge, all of them hung up, stays in it."""
+def test_twenty_calls_in_flight_are_let_through_only_as_far_as_their_output_ceilings_fit() -> None:
+    """Each at $1.20 of output ceiling: eight fit in $10; the run's charge, all of them hung up, stays in it."""
     meter = Meter()
-    _held(meter, _budget())
+    _held(meter)
     body = {"model": "m", "messages": [], "stream": True, "max_tokens": 200_000}
     calls = [_open_or_refused(meter, body) for _ in range(20)]
     opened = [c for c in calls if c is not None]
-    assert (len(opened), _only_tally(meter).get("budget_refused")) == (8, 12), f"{len(opened)} of 20 let through"
-    assert _only_tally(meter)["budget"]["spent_usd"] <= 10.0, _only_tally(meter)["budget"]
+    assert (len(opened), _only_tally(meter).get("budget_refused_by")) == (8, {"job": 12}), f"{len(opened)} let through"
     for call in opened:
         call.lost()  # the sandbox hung up on every one: each is charged its ceiling
         call.close()
     (counted,) = _only_tally(meter)["models"].values()
-    assert _budget().price(Usage(input_tokens=counted["input_tokens"], output_tokens=counted["output_tokens"])) <= 10.0
+    charged = _budget()[0].price(Usage(input_tokens=counted["input_tokens"], output_tokens=counted["output_tokens"]))
+    assert charged <= 10.0, f"the run was charged ${charged:.2f} of $10"
 
 
-def test_a_call_within_its_budget_goes_and_what_its_answer_did_not_use_is_free_again() -> None:
+def test_a_call_within_its_purse_goes_and_what_its_answer_did_not_use_is_free_again() -> None:
     meter = Meter()
-    _held(meter, _budget(remaining_usd=2.0))
+    _held(meter, _budget([_purse(2.0)]))
     body = {"model": "m", "messages": [], "max_tokens": 200_000}
     first = _open_or_refused(meter, body)
-    assert first is not None, "a call costing $1.20 at its ceiling was refused with $2 left"
+    assert first is not None, "a call of $1.20 at its output ceiling was refused with $2 left"
     assert _open_or_refused(meter, body) is None, "two calls of $1.20 each were let through with $2 left"
-    first.answer(200, "application/json")
-    first.feed((ANSWERS / "openai-chat.json").read_bytes())
-    first.close()
-    assert _open_or_refused(meter, body) is not None, "the ceiling of an answered call was still held against the run"
-    assert _only_tally(meter)["budget"] == {
-        "remaining_usd": 2.0,
-        "limit": "job",
-        "spent_usd": pytest.approx(
-            (1000 * 2 + 80 * 6 + 200 * 2 * 0.25) / 1e6
-            + _budget().price(read_call("openai_chat", json.dumps(body).encode()).ceiling())
-        ),
-    }
+    _answer(first, cached=200, uncached=1000, output=80)
+    assert _open_or_refused(meter, body) is not None, "the ceiling of an answered call was still held against the purse"
+
+
+def test_runs_drawing_on_one_purse_share_what_it_has_left() -> None:
+    """Two runs of one job at once (a QA fan-out's apps): each sees what the other has committed, not the whole $2."""
+    meter = Meter()
+    _held(meter, _budget([_purse(2.0)]), run_id="run-a", sandbox="sbx-a")
+    _held(meter, _budget([_purse(2.0, members=["run-a"])]), run_id="run-b", sandbox="sbx-b", seq=2)
+    body = {"model": "m", "messages": [], "max_tokens": 200_000}
+    assert _open_or_refused(meter, body, "sbx-a") is not None
+    assert _open_or_refused(meter, body, "sbx-b") is None, "the second run spent the $2 the first had committed"
+    assert meter.snapshot()["purses"]["job:job-1"]["members"] == ["run-a", "run-b"]
+
+
+def test_an_ended_run_counts_in_its_purse_until_the_orchestrator_settles_it() -> None:
+    try:
+        from embry0.execution.proxy.metering import read_purses
+    except ImportError as exc:
+        pytest.fail(f"the meter takes no figures for a purse: {exc}")
+
+    meter = Meter()
+    _held(meter, _budget([_purse(2.0)]), run_id="run-a", sandbox="sbx-a")
+    call = _open_or_refused(meter, {"model": "m", "messages": [], "max_tokens": 200_000}, "sbx-a")
+    call.lost()
+    call.close()  # charged its $1.20 ceiling
+    meter.end("run-a")
+    _held(meter, _budget([_purse(2.0, members=["run-a"])]), run_id="run-b", sandbox="sbx-b", seq=2)
+    body = {"model": "m", "messages": [], "max_tokens": 200_000}
+    assert _open_or_refused(meter, body, "sbx-b") is None, "an ended run's charge was let go before it settled"
+    # Settled: its charge is in what the orchestrator says is left ($0.80), and it leaves the purse.
+    meter.update_purses(read_purses([_purse(0.8, members=["run-b"])]), seq=3)
+    assert meter.snapshot()["purses"]["job:job-1"]["members"] == ["run-b"]
+    assert meter.purse_left("job:job-1") == pytest.approx(0.8)
+    meter.update_purses(read_purses([_purse(5.0, members=["run-b"])]), seq=2)  # an older figure, arriving late
+    assert meter.purse_left("job:job-1") == pytest.approx(0.8), "an older figure was taken over a newer one"
+
+
+def test_a_run_whose_purse_this_proxy_no_longer_holds_is_given_nothing() -> None:
+    """A figure that leaves it out (it cannot be counted any more): its calls are refused, not let through unchecked."""
+    try:
+        from embry0.execution.proxy.metering import read_purses
+    except ImportError as exc:
+        pytest.fail(f"the meter takes no figures for a purse: {exc}")
+    meter = Meter()
+    _held(meter)
+    meter.update_purses(read_purses([_purse(10.0, members=[])]), seq=2)
+    assert "job:job-1" not in meter.snapshot()["purses"], "not the case under test: the purse is still held"
+    assert _open_or_refused(meter, {"model": "m", "messages": [], "max_tokens": 10}) is None, (
+        "a run whose purse is gone was let through"
+    )
+
+
+def test_a_claude_code_sized_workload_on_a_2_dollar_cap_is_not_refused_until_near_it() -> None:
+    """600 KB requests asking 32,000 tokens, three in flight, each costing about $0.04 (mostly cache reads). Priced at
+    two bytes a token uncached, each held $0.79 and the third was refused at $0.08 spent. At the run's own input cost
+    a request byte, the first refusal comes only once its charges and the output ceilings of its calls in flight fill
+    the cap: past $1.30 charged."""
+    meter = Meter()
+    _held(meter, _budget([_purse(2.0)], cache={"read": 0.1, "write": 1.25}))
+    body = {"model": "grok-4.7", "messages": [{"role": "user", "content": "x" * 600_000}], "max_tokens": 32_000}
+    in_flight = [c for c in (_open_or_refused(meter, body) for _ in range(3)) if c is not None]
+    assert len(in_flight) == 3, "the first three calls of a $2 job were refused"
+    for _ in range(200):
+        _answer(in_flight.pop(0), cached=149_000, uncached=1_000, output=1_500)
+        nxt = _open_or_refused(meter, body)
+        if nxt is None:
+            break
+        in_flight.append(nxt)
+    else:
+        pytest.fail("the workload was never held to its cap")
+    total = Usage()
+    for counted in _only_tally(meter)["models"].values():
+        total.add(Usage(**{k: v for k, v in counted.items() if k in Usage.__dataclass_fields__}))
+    charged = _budget()[0].price(total)
+    assert charged >= 1.3, f"refused at ${charged:.2f} charged of a $2 cap"
+    assert meter.purse_left("job:job-1") < 0.23, "refused with room left for the call"
 
 
 @pytest.mark.parametrize(
-    ("over", "refused"),
+    ("purses", "refused"),
     [
-        ({"rates": {"in": 0.0, "out": 0.0}, "remaining_usd": 0.0}, False),
-        ({"remaining_usd": 0.0}, True),
+        ([_purse(0.0)], True),
+        ([_purse(10.0), {"key": "daily", "limit": "daily", "remaining_usd": 0.5, "members": []}], True),
     ],
-    ids=["free", "nothing-left"],
+    ids=["nothing-left", "the-day-leaves-less"],
 )
-def test_a_free_run_is_never_refused_and_a_run_with_nothing_left_always_is(over: dict[str, Any], refused: bool) -> None:
+def test_the_purse_with_least_left_decides_and_names_itself(purses: list[dict[str, Any]], refused: bool) -> None:
     meter = Meter()
-    _held(meter, _budget(**over))
-    opened = _open_or_refused(meter, {"model": "m", "messages": [], "max_tokens": 10})
-    assert (opened is None) is refused, f"{over}: refused {opened is None}"
+    _held(meter, _budget(purses))
+    opened = _open_or_refused(meter, {"model": "m", "messages": [], "max_tokens": 200_000})
+    assert (opened is None) is refused
+    limits = set(_only_tally(meter).get("budget_refused_by") or {})
+    assert limits == ({"job"} if len(purses) == 1 else {"daily"}), limits
+
+
+def test_a_free_run_is_never_refused() -> None:
+    meter = Meter()
+    _held(meter, _budget([_purse(0.0)], rates={"in": 0.0, "out": 0.0}))
+    assert _open_or_refused(meter, {"model": "m", "messages": [], "max_tokens": 10}) is not None
 
 
 def test_a_run_declared_without_a_budget_is_checked_against_nothing() -> None:
@@ -984,11 +1077,14 @@ def test_a_run_declared_without_a_budget_is_checked_against_nothing() -> None:
 @pytest.mark.parametrize(
     "over",
     [
-        {"remaining_usd": -1},
-        {"remaining_usd": float("nan")},
-        {"remaining_usd": True},
-        {"remaining_usd": "10"},
-        {"limit": "weekly"},
+        {"purses": [_purse(-1)]},
+        {"purses": [_purse(float("nan"))]},
+        {"purses": [_purse(True)]},
+        {"purses": [_purse(key="weekly", limit="weekly")]},
+        {"purses": [_purse(key="daily")]},
+        {"purses": [_purse(members=["bad id!"])]},
+        {"purses": []},
+        {"purses": [_purse(), _purse(key="job:other")]},
         {"rates": {"in": 2.0}},
         {"rates": [2.0, 6.0]},
         {"cache": {"read": 0.25}},

@@ -425,7 +425,8 @@ async def _metered(
     else:
         client = await _local(aiohttp_client, model_server, providers=True)
         route_upstream(client.app, upstream)
-    assert (await _declare(client, **declared)).status == 200
+    held = await _declare(client, **declared)
+    assert held.status == 200, f"the run could not be declared ({held.status}): {await held.text()}"
     return client
 
 
@@ -782,11 +783,15 @@ async def test_a_chat_completion_whose_answers_the_meter_cannot_count_is_refused
 
 #: A run's budget as the orchestrator declares it: $10 left of the job's, at $2 / $6 per million tokens.
 BUDGET = {
-    "remaining_usd": 10.0,
-    "limit": "job",
     "rates": {"in": 2.0, "out": 6.0},
     "cache": {"read": 0.25, "write": 1.25},
+    "purses": [{"key": "job:job-1", "limit": "job", "remaining_usd": 10.0, "members": []}],
 }
+
+
+def _budget(remaining: float) -> dict[str, Any]:
+    """``BUDGET`` with ``remaining`` left in the job's purse."""
+    return {**BUDGET, "purses": [{**BUDGET["purses"][0], "remaining_usd": remaining}]}
 
 
 def _completion(route: str, **body: Any) -> dict[str, Any]:
@@ -807,7 +812,7 @@ async def test_a_call_past_its_run_s_budget_is_refused_and_never_sent(aiohttp_cl
     """A job near its cap: $0.001 left, and a call that could cost $0.006 at its ceiling."""
     proxy, path = _COMPLETION_ROUTES[route]
     upstream = _Upstream()
-    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget={**BUDGET, "remaining_usd": 0.001})
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=_budget(0.001))
     resp = await client.post(path, json=_completion(route, max_tokens=1000), headers=_AUTH)
     assert resp.status == 402, f"{route} answered {resp.status} to a call past the run's budget: {await resp.text()}"
     answer = await resp.json(content_type=None)
@@ -815,7 +820,7 @@ async def test_a_call_past_its_run_s_budget_is_refused_and_never_sent(aiohttp_cl
     assert "the job's budget" in json.dumps(answer), answer
     assert upstream.calls == [], f"{route} forwarded a call past the run's budget"
     tally = await _run(client)
-    assert (tally.get("budget_refused"), tally["models"]) == (1, {}), tally
+    assert (tally.get("budget_refused_by"), tally["models"]) == ({"job": 1}, {}), tally
 
 
 @pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
@@ -870,7 +875,7 @@ async def test_a_call_within_its_run_s_budget_goes_and_is_charged(aiohttp_client
     await resp.read()
     tally = await _settled(client)
     assert (tally.get("budget_refused"), sum(m["requests"] for m in tally["models"].values())) == (0, 1), tally
-    assert 0 < tally["budget"]["spent_usd"] < 10.0, tally["budget"]
+    assert 0 < tally["budget"]["committed_usd"] < 10.0, tally["budget"]
 
 
 @pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
@@ -895,6 +900,51 @@ async def test_a_declaration_s_budget_is_echoed_and_one_that_is_not_a_budget_is_
     )
     held = await _declare(client, budget=BUDGET)
     assert held.status == 200
-    assert (await held.json()).get("budget") == {"remaining_usd": 10.0, "limit": "job"}, "the budget was not echoed"
-    refused = await _declare(client, run_id="run-2", budget={**BUDGET, "remaining_usd": -1})
+    assert (await held.json()).get("budget") == {"purses": {"job:job-1": 10.0}}, "the budget was not echoed"
+    refused = await _declare(client, run_id="run-2", budget=_budget(-1))
     assert refused.status == 400, f"a budget of -$1 was taken (HTTP {refused.status})"
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1"])
+async def test_two_runs_of_a_job_at_one_proxy_share_its_purse(aiohttp_client, model_server, route):
+    """A QA fan-out's apps, each in its own sandbox: what one has committed the other cannot spend."""
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    gate = asyncio.Event()
+    raw = (ANSWERS / "openai-chat-stream.sse").read_bytes()
+    upstream.answers.append(_Answer(raw, content_type=_SSE, chunk=300, gate=gate))
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=_budget(2.0))
+    token_b = "second-sandbox-bearer-at-least-32-chars"
+    enrollment: dict[str, Any] = {"sandbox_id": "sbx-2", "sandbox_token": token_b}
+    if proxy != "xai-proxy":
+        server = {
+            "credential_id": "cred-a",
+            "upstream": f"http://127.0.0.1:{model_server.port}/v1",
+            "api_key": "",
+            "address": "127.0.0.1",
+        }
+        enrollment.update(local_llm=server, limits=LIMITS)
+    enrolled = await client.post("/admin/enroll", json=enrollment, headers=_ADMIN_HEADERS)
+    assert enrolled.status == 200, await enrolled.text()
+    second = {**_budget(2.0), "purses": [{**_budget(2.0)["purses"][0], "members": ["run-1"]}]}
+    assert (await _declare(client, run_id="run-2", sandbox_id="sbx-2", budget=second)).status == 200
+    body = _completion(route, stream=True, max_tokens=200_000)
+    first = await client.post(path, json=body, headers=_AUTH)
+    assert first.status == 200
+    refused = await client.post(path, json=body, headers={"Authorization": f"Bearer {token_b}"})
+    assert refused.status == 402, f"{route}: the second run spent what the first had committed ({refused.status})"
+    first.close()
+    gate.set()
+
+
+@pytest.mark.parametrize("proxy", ["xai-proxy", "llm-proxy /v1"])
+async def test_a_purse_s_figures_are_updated_and_a_bad_update_refused(aiohttp_client, model_server, proxy):
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream, budget=_budget(10.0))
+    purse = {"key": "job:job-1", "limit": "job", "remaining_usd": 0.5, "members": ["run-1"]}
+    updated = await client.put("/admin/purses", json={"purses": [purse], "seq": 10**18}, headers=_ADMIN_HEADERS)
+    assert updated.status == 200, await updated.text()
+    assert (await updated.json())["purses"] == {"job:job-1": 0.5}
+    bad = await client.put("/admin/purses", json={"purses": [{**purse, "remaining_usd": -1}]}, headers=_ADMIN_HEADERS)
+    assert bad.status == 400
+    assert (await client.put("/admin/purses", json={"purses": [purse]})).status in (401, 403), "no admin token"

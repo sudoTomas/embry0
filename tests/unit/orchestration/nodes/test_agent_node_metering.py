@@ -47,9 +47,11 @@ class _Traces:
 class _Meter(RunMeter):
     """The orchestrator's meter: the run's calls as the xai-proxy counted them."""
 
-    def __init__(self, models: dict[str, Any], budget_refused: int = 0) -> None:
+    def __init__(self, models: dict[str, Any], refused_by: dict[str, int] | None = None, ready: bool = True) -> None:
         self.models = models
-        self.budget_refused = budget_refused
+        self.refused_by = dict(refused_by or {})
+        self.ready = ready
+        self.settled: list[tuple[str, Any]] = []
         self.begun: list[tuple[str, str, str | None]] = []
         self.providers: list[str | None] = []
         self.budgets: list[Any] = []
@@ -83,7 +85,8 @@ class _Meter(RunMeter):
             "models": self.models,
             "errors": 0,
             "open": [],
-            "budget_refused": self.budget_refused,
+            "budget_refused": sum(self.refused_by.values()),
+            "budget_refused_by": self.refused_by,
         }
         return RunMetering(
             run_id=window.run_id,
@@ -97,6 +100,12 @@ class _Meter(RunMeter):
 
     def meters(self, sandbox_id: str) -> bool:
         return True
+
+    async def budgets_ready(self, timeout: float = 30.0) -> bool:
+        return self.ready
+
+    async def settle(self, window: Any, budget: Any) -> None:
+        self.settled.append((window.run_id, budget))
 
 
 PROXY_COUNT = {"grok-4.7": {"input_tokens": 50_000, "output_tokens": 4_000, "requests": 3, "estimated": 0}}
@@ -274,8 +283,9 @@ async def test_a_run_near_its_job_s_cap_is_declared_with_what_the_job_has_left()
     meter, traces = _Meter(PROXY_COUNT), _Traces()
     await _run(_runner(meter, _done()), traces, state={"total_cost_usd": 9.9})
     (budget,) = meter.budgets
-    assert budget is not None, "the run was declared with no budget"
-    assert (budget["remaining_usd"], budget["limit"]) == (pytest.approx(0.1), "job"), budget
+    assert budget is not None and "scopes" in budget, f"the run was declared with no scope a cap: {budget}"
+    left = {scope["key"]: scope["remaining_usd"] for scope in budget["scopes"]}
+    assert left.get("job:job-1") == pytest.approx(0.1), budget
     assert budget["rates"] == {"in": 2.0, "out": 6.0}, budget
 
 
@@ -290,14 +300,15 @@ async def test_a_run_is_held_to_the_deployment_s_day_when_that_leaves_less() -> 
     meter, traces = _Meter(PROXY_COUNT), _Traces()
     await _run(_runner(meter, _done()), traces, db=_Spent())
     (budget,) = meter.budgets
-    assert budget is not None, "the run was declared with no budget"
-    assert (budget["remaining_usd"], budget["limit"]) == (pytest.approx(0.05), "daily"), budget
+    assert budget is not None and "scopes" in budget, f"the run was declared with no scope a cap: {budget}"
+    left = {scope["key"]: scope["remaining_usd"] for scope in budget["scopes"]}
+    assert left.get("daily") == pytest.approx(0.05), budget
 
 
 @pytest.mark.asyncio
 async def test_a_run_that_failed_on_a_budget_refusal_says_so_whatever_its_sandbox_read() -> None:
     """An image that predates the code reads the refusal's "$1,429.00" as a rate limit: the job must not wait for one."""
-    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    meter, traces = _Meter(PROXY_COUNT, refused_by={"job": 1}), _Traces()
     said = "xai answered HTTP 402: embry0 budget_exceeded: this call could cost up to $1,429.00 at its ceiling"
 
     async def run(**_kw: Any) -> AgentOutput:
@@ -330,7 +341,7 @@ def _failed(**kwargs: Any) -> Any:
 async def test_a_refusal_for_the_job_s_cap_in_soft_mode_routes_the_job_to_its_budget_pause() -> None:
     from embry0.orchestration.routing.conditions import check_budget
 
-    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    meter, traces = _Meter(PROXY_COUNT, refused_by={"job": 1}), _Traces()
     # $9.80 spent, and the run's own $0.12: the job stays short of its $10 cap, so only the refusal can stop it.
     state = {"sandbox_container_id": "c1", "job_id": "job-1", "total_cost_usd": 9.8}
     updates = await _run(_runner(meter, _failed()), traces, state=state)
@@ -346,7 +357,7 @@ async def test_a_refusal_for_the_job_s_cap_in_soft_mode_routes_the_job_to_its_bu
 async def test_a_refusal_for_the_job_s_cap_in_hard_mode_fails_the_job_with_its_code(run: Any) -> None:
     from embry0.safety.error_codes import classify_failure
 
-    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    meter, traces = _Meter(PROXY_COUNT, refused_by={"job": 1}), _Traces()
     state = {"total_cost_usd": 9.8, "budget_overrun_mode_override": "hard"}  # short of the cap, its run included
     try:
         await _run(_runner(meter, run), traces, state=state)
@@ -363,17 +374,39 @@ async def test_a_refusal_for_the_job_s_cap_in_hard_mode_fails_the_job_with_its_c
 async def test_a_refusal_for_the_day_s_cap_fails_the_run_and_nothing_more(mode: str) -> None:
     """Crossing the day's cap stops no running job: its refusal fails the run, with its code, in either mode."""
 
-    class _Spent(_Db):
-        async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
-            if "date_trunc('day'" in sql:
-                return {"daily": 99.95, "monthly": 120.0}
-            return await super().fetchrow(sql, *args)
-
-    meter, traces = _Meter(PROXY_COUNT, budget_refused=1), _Traces()
+    meter, traces = _Meter(PROXY_COUNT, refused_by={"daily": 1}), _Traces()
     state = {"budget_overrun_mode_override": mode}
-    updates = await _run(_runner(meter, _done()), traces, state=state, db=_Spent())
+    try:
+        updates = await _run(_runner(meter, _done()), traces, state=state)
+    except Exception as exc:  # noqa: BLE001 — the job must go on
+        pytest.fail(f"a refusal for the day's cap ended the job: {exc!r}")
     (output,) = updates["agent_outputs"]
     assert (output["is_error"], output.get("error_code")) == (True, "ERR_BUDGET_CALL_REFUSED"), output
     assert output.get("budget_refused") == "daily", output
     assert updates.get("budget_refused_cap_usd") is None, "a refusal for the day's cap was routed as the job's"
     assert traces.finished[0]["error_code"] == "ERR_BUDGET_CALL_REFUSED"
+
+
+@pytest.mark.asyncio
+async def test_a_run_settles_once_its_trace_holds_its_charge() -> None:
+    """Its purses are worked out again from the settled runs, its own now among them (embry0.execution.run_meter)."""
+    meter, traces = _Meter(PROXY_COUNT), _Traces()
+
+    async def run(**_kw: Any) -> AgentOutput:
+        assert not meter.settled, "the run settled before it ended"
+        return AgentOutput(agent_type="developer", output="done", cost_usd=0.001)
+
+    await _run(_runner(meter, run), traces)
+    assert traces.finished, "not the case under test: no trace was written"
+    assert [run_id for run_id, _ in meter.settled] == [meter.begun[0][1]], "the run never left its purses"
+    (_, again) = meter.settled[0]
+    assert again is not None and {s["key"] for s in again["scopes"]} >= {"job:job-1"}, again
+
+
+@pytest.mark.asyncio
+async def test_a_run_declared_before_the_last_process_s_runs_are_closed_is_given_nothing() -> None:
+    meter, traces = _Meter(PROXY_COUNT, ready=False), _Traces()
+    await _run(_runner(meter, _done()), traces)
+    (budget,) = meter.budgets
+    assert budget is not None and "scopes" in budget, f"the run was declared with no scope a cap: {budget}"
+    assert [scope["remaining_usd"] for scope in budget["scopes"]] == [0.0] * len(budget["scopes"]), budget

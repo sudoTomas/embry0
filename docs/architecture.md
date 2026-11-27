@@ -1643,30 +1643,30 @@ anywhere else; a metered run's calls are checked as they go (below). Layers 2
 and 3 roll up from the same trace rows.
 
 **Each call of a metered run, at the metering proxies.** A run whose calls pass
-the xai-proxy or the llm-proxy is declared there with its budget
-(`embry0/orchestration/run_budget.py`): the least of what its job has left under
-the cap in force and what the deployment has left today and this month under
-`daily_cap_usd` and `monthly_cap_usd`, where each is set, with the run's rates.
-The proxy refuses a call whose ceiling, priced at those rates (its output
-ceiling and its input estimate), would take what the run has been charged, its
-calls in flight at their ceilings included, past that: 402, `budget_exceeded`,
-in the wire's error shape, and nothing is sent. A refusal is routed as crossing
-its limit is: for the job's cap, by the job's overrun mode (`soft` pauses the
-job for a person, as a crossing does, saying a model call was refused, and a
-continue raises the cap; `hard` fails the job with `ERR_BUDGET_CALL_REFUSED`,
-its overrun 0, wherever a hard crossing would, a QA fan-out's apps included);
-for the day's or the month's, by failing the run with `ERR_BUDGET_CALL_REFUSED`,
-since crossing those caps stops no running job (the dispatch gate checks them
-only when a job starts), and the job goes on as after any failed run. The run
-carries `ERR_BUDGET_CALL_REFUSED` when it fails, and its trace's `metering`
-counts the refusals (`budget_refused`). Not checked: a free run (an unpriced
-model, or rates of 0), a run with no cap set, and a run declared by an older
-orchestrator or at an older proxy image (`proxy_run_budget_not_held`). Each run
-is held to what was left when it was declared, so runs at the same time are each
-held to that amount, not to one shared between them: jobs running together can
-pass the day's cap, but each by no more than what its own job had left, and the
-apps of one QA fan-out are each held to their job's remainder. A run's spend is
-added to the job and the day after its turn, as before. Detail:
+the xai-proxy or the llm-proxy is declared there with the scopes it draws on
+(`embry0/orchestration/run_budget.py`): its job's cap in force, and
+`daily_cap_usd` and `monthly_cap_usd` where each is set, each with what it had
+left once every settled run was charged, and with the run's rates. The run
+meter's ledger turns each scope into a purse at the proxy serving the run, which
+every run there drawing on it shares as it goes, and splits a scope between
+proxies; a run settles, and leaves its purses, once its trace holds its charge.
+The proxy refuses a call that would take a purse past what it has left, its
+output ceiling priced in full and its input at what the run's input has cost so
+far: 402, `budget_exceeded`, in the wire's error shape, and nothing is sent. A
+refusal is routed as crossing its limit is: for the job's cap, by the job's
+overrun mode (`soft` pauses the job for a person, as a crossing does, saying a
+model call was refused, and a continue raises the cap; `hard` fails the job with
+`ERR_BUDGET_CALL_REFUSED`, its overrun 0, wherever a hard crossing would, a QA
+fan-out's apps included); for the day's or the month's, by failing the run with
+`ERR_BUDGET_CALL_REFUSED`, since crossing those caps stops no running job (the
+dispatch gate checks them only when a job starts), and the job goes on as after
+any failed run. The run carries `ERR_BUDGET_CALL_REFUSED` when it fails, and its
+trace's `metering` counts the refusals (`budget_refused`). Not checked: a free
+run (an unpriced model, or rates of 0), a run with no cap set, and a run
+declared by an older orchestrator or at an older proxy image
+(`proxy_run_budget_not_held`). After a restart, a run's budget waits for the
+previous process's runs to be closed, and past 30 seconds is given nothing. A
+run's spend is added to the job and the day after its turn, as before. Detail:
 [providers.md](providers.md#metering-at-the-proxies).
 
 The cap in force is triage's

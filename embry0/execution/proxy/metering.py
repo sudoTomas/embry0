@@ -662,6 +662,11 @@ BUDGET_LIMITS: dict[str, str] = {
     "daily": "the deployment's daily budget",
     "monthly": "the deployment's monthly budget",
 }
+#: The bytes of request a token is taken to be when the check prices a run's first call's input: about what the
+#: providers' tokenizers average for English. The meter's own estimate (:data:`BYTES_PER_TOKEN`) stays above them.
+CHECK_BYTES_PER_TOKEN = 4
+#: A purse's name: its job's (``job:<id>``), or the deployment's day's or month's.
+_PURSE_KEY_RE = re.compile(r"^(job:[A-Za-z0-9_.:-]{1,128}|daily|monthly)$")
 
 
 def _usd(value: Any) -> float:
@@ -673,37 +678,18 @@ def _usd(value: Any) -> float:
 
 @dataclass(frozen=True)
 class Budget:
-    """What a run may still spend, and the rates it is priced at: the orchestrator's word when it declared the run.
+    """The rates a run is priced at, and the purses it draws on: the orchestrator's word when it declared the run.
 
-    ``remaining_usd`` is the least its job, and the deployment's day and month, had left then (``limit`` names
-    which). The rates are the run's provider record's, in USD per million tokens, with cached input at
-    ``cache_read_factor`` of the input rate and cache writes at ``cache_write_factor``, as the orchestrator prices a
-    run (``ProviderRecord.price``): a run is held to one provider, priced at one rate set."""
+    The rates are the run's provider record's, in USD per million tokens, with cached input at ``cache_read_factor``
+    of the input rate and cache writes at ``cache_write_factor``, as the orchestrator prices a run
+    (``ProviderRecord.price``): a run is held to one provider, priced at one rate set. ``purses`` names what it
+    draws on (:class:`PurseFigure`): its job's, and the deployment's day's and month's, where each has a cap."""
 
-    remaining_usd: float
-    limit: str
     input_rate: float
     output_rate: float
     cache_read_factor: float
     cache_write_factor: float
-
-    @classmethod
-    def read(cls, value: Any) -> Budget:
-        """The budget a declaration names: ``{remaining_usd, limit, rates: {in, out}, cache: {read, write}}``.
-        Raises ValueError when ``value`` is not one."""
-        if not isinstance(value, dict):
-            raise ValueError("a budget is an object")
-        rates, cache, limit = value.get("rates"), value.get("cache"), value.get("limit")
-        if not isinstance(rates, dict) or not isinstance(cache, dict) or limit not in BUDGET_LIMITS:
-            raise ValueError("a budget names its limit, its rates and its cache factors")
-        return cls(
-            remaining_usd=_usd(value.get("remaining_usd")),
-            limit=str(limit),
-            input_rate=_usd(rates.get("in")),
-            output_rate=_usd(rates.get("out")),
-            cache_read_factor=_usd(cache.get("read")),
-            cache_write_factor=_usd(cache.get("write")),
-        )
+    purses: tuple[str, ...]
 
     def price(self, usage: Usage) -> float:
         """What ``usage`` costs at these rates, in USD."""
@@ -716,16 +702,85 @@ class Budget:
         return per_mtok / 1_000_000
 
 
-class BudgetExceededError(Exception):
-    """A call whose ceiling would take its run past what the run may still spend."""
+@dataclass(frozen=True)
+class PurseFigure:
+    """What the orchestrator says a purse has left at this proxy, and the runs here that draw on it.
 
-    def __init__(self, budget: Budget, *, cost_usd: float, left_usd: float) -> None:
+    ``remaining_usd`` is what its cap had left once every settled run was charged, less what the orchestrator
+    holds for its runs at other proxies; ``members`` are this proxy's runs not settled yet, whose charges, and calls
+    in flight, the proxy counts against it as they go."""
+
+    key: str
+    limit: str
+    remaining_usd: float
+    members: frozenset[str]
+
+
+def read_purses(value: Any) -> list[PurseFigure]:
+    """The purses ``value`` names: ``[{key, limit, remaining_usd, members}]``. Raises ValueError when it is not
+    that."""
+    if not isinstance(value, list) or len(value) > len(BUDGET_LIMITS):
+        raise ValueError("purses is a list of at most one purse a limit")
+    figures: list[PurseFigure] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ValueError("a purse is an object")
+        key, limit, members = raw.get("key"), raw.get("limit"), raw.get("members", [])
+        if not isinstance(key, str) or not _PURSE_KEY_RE.fullmatch(key) or limit not in BUDGET_LIMITS:
+            raise ValueError("a purse names its key and its limit")
+        if (limit == "job") != key.startswith("job:") or (limit != "job" and key != limit):
+            raise ValueError("a purse's key is its limit's")
+        if not isinstance(members, list) or len(members) > DEFAULT_MAX_TALLIES:
+            raise ValueError("a purse's members are a list of runs")
+        if any(not isinstance(m, str) or not _RUN_ID_RE.fullmatch(m) for m in members):
+            raise ValueError("a purse's members are runs")
+        figures.append(PurseFigure(key, str(limit), _usd(raw.get("remaining_usd")), frozenset(members)))
+    if len({f.limit for f in figures}) != len(figures):
+        raise ValueError("a run draws on one purse a limit")
+    return figures
+
+
+def read_budget(value: Any) -> tuple[Budget, list[PurseFigure]]:
+    """The budget a declaration names: ``{rates: {in, out}, cache: {read, write}, purses: [...]}``
+    (:func:`read_purses`). Raises ValueError when ``value`` is not one."""
+    if not isinstance(value, dict):
+        raise ValueError("a budget is an object")
+    rates, cache = value.get("rates"), value.get("cache")
+    if not isinstance(rates, dict) or not isinstance(cache, dict):
+        raise ValueError("a budget names its rates and its cache factors")
+    figures = read_purses(value.get("purses"))
+    if not figures:
+        raise ValueError("a budget names a purse")
+    budget = Budget(
+        input_rate=_usd(rates.get("in")),
+        output_rate=_usd(rates.get("out")),
+        cache_read_factor=_usd(cache.get("read")),
+        cache_write_factor=_usd(cache.get("write")),
+        purses=tuple(f.key for f in figures),
+    )
+    return budget, figures
+
+
+@dataclass
+class _Purse:
+    limit: str
+    remaining_usd: float
+    members: set[str]
+    #: The admin number of the figure it holds: an older one, arriving late, is not taken.
+    seq: int
+
+
+class BudgetExceededError(Exception):
+    """A call whose ceiling would take a purse its run draws on past what it has left."""
+
+    def __init__(self, limit: str, *, cost_usd: float, left_usd: float) -> None:
+        self.limit = limit
         self.cost_usd = cost_usd
         self.left_usd = left_usd
         self.message = (
-            f"embry0 budget_exceeded: this call could cost up to ${cost_usd:,.2f} at its ceiling (its output limit "
-            f"and its input), and the run has ${max(left_usd, 0.0):,.2f} left of {BUDGET_LIMITS[budget.limit]}, so "
-            "it was not sent. A call asking for fewer output tokens may fit."
+            f"embry0 budget_exceeded: this call could cost up to ${cost_usd:,.2f} (its output limit at full price, "
+            f"its input as the run's calls have cost), and ${max(left_usd, 0.0):,.2f} is left of "
+            f"{BUDGET_LIMITS[limit]}, so it was not sent. A call asking for fewer output tokens may fit."
         )
         super().__init__(self.message)
 
@@ -745,6 +800,9 @@ class _Open:
     model: str | None
     ceiling: Usage
     since: float
+    #: The request's size and output limit (times its answers), which the budget check prices it from.
+    size: int = 0
+    output_ceiling: int = 0
 
 
 @dataclass
@@ -758,29 +816,61 @@ class _Tally:
     ended: float | None = None
     #: The provider the run was declared on; None when its declaration named none (or the sandbox had no run).
     provider: str | None = None
-    #: What the run may spend, when its declaration named a budget.
+    #: The rates the run is priced at and the purses it draws on, when its declaration named a budget.
     budget: Budget | None = None
     models: dict[str, _ModelTally] = field(default_factory=dict)
     errors: int = 0
-    #: Calls refused because their ceiling would have taken the run past its budget.
-    budget_refused: int = 0
+    #: Calls refused because their ceiling would have taken a purse the run draws on past what it had left, by the
+    #: purse's limit.
+    budget_refused: dict[str, int] = field(default_factory=dict)
     open: dict[int, _Open] = field(default_factory=dict)
+    #: The request bytes of the run's calls whose usage was read in full, and their input as the answers counted it:
+    #: what the budget check prices a call's input from.
+    observed_bytes: int = 0
+    observed_input: Usage = field(default_factory=Usage)
 
-    def spent_usd(self, budget: Budget) -> float:
-        """What the run has been charged at ``budget``'s rates, each call in flight at its ceiling."""
+    def spent_usd(self) -> float:
+        """What the run has been charged at its rates, each call in flight at the meter's ceiling for it (the
+        request's size as input): what it could have cost, for a reader that loses this process."""
+        if self.budget is None:
+            return 0.0
         total = Usage()
         for counted in self.models.values():
             total.add(counted.usage)
         for call in self.open.values():
             total.add(call.ceiling)
-        return budget.price(total)
+        return self.budget.price(total)
+
+    def check_cost(self, size: int, output_ceiling: int) -> float:
+        """What the budget check takes a call of ``size`` request bytes and that output ceiling to cost: its output
+        ceiling at full price, the part a call left to hang can inflate; its input at what the run's input has cost a
+        request byte, cache reads included, or at the uncached rate and :data:`CHECK_BYTES_PER_TOKEN` before any call
+        of it was read in full."""
+        budget = self.budget
+        if budget is None:
+            return 0.0
+        if self.observed_bytes > 0:
+            per_byte = budget.price(self.observed_input) / self.observed_bytes
+        else:
+            per_byte = budget.input_rate / 1_000_000 / CHECK_BYTES_PER_TOKEN
+        return size * per_byte + output_ceiling * budget.output_rate / 1_000_000
+
+    def committed_usd(self) -> float:
+        """What the budget check holds the run to have committed: its charges at its rates, and each call in flight
+        at :meth:`check_cost`."""
+        if self.budget is None:
+            return 0.0
+        total = Usage()
+        for counted in self.models.values():
+            total.add(counted.usage)
+        return self.budget.price(total) + sum(self.check_cost(o.size, o.output_ceiling) for o in self.open.values())
 
     def snapshot(self) -> dict[str, Any]:
         budget = (
             {
-                "remaining_usd": self.budget.remaining_usd,
-                "limit": self.budget.limit,
-                "spent_usd": self.spent_usd(self.budget),
+                "purses": list(self.budget.purses),
+                "spent_usd": self.spent_usd(),
+                "committed_usd": self.committed_usd(),
             }
             if self.budget is not None
             else None
@@ -799,7 +889,8 @@ class _Tally:
             },
             "errors": self.errors,
             "budget": budget,
-            "budget_refused": self.budget_refused,
+            "budget_refused": sum(self.budget_refused.values()),
+            "budget_refused_by": dict(self.budget_refused),
             # Each call in flight with its id (unique in this proxy process), so a reader can tell one from another
             # across reads.
             "open": [
@@ -847,6 +938,10 @@ class Meter:
         self._live_unattributed: dict[str, int] = {}
         self._next_request = 0
         self._next_unattributed = 0
+        # The purses runs draw on (PurseFigure), and the ended runs still counted in one until the orchestrator
+        # settles them.
+        self._purses: dict[str, _Purse] = {}
+        self._ended: dict[str, _Tally] = {}
 
     def __len__(self) -> int:
         return len(self._runs) + len(self._unattributed)
@@ -854,7 +949,9 @@ class Meter:
     def _purge(self) -> None:
         cutoff = self._now() - self._retention
         for run_id in [r for r, t in self._runs.items() if t.ended is not None and t.ended <= cutoff]:
-            del self._runs[run_id]
+            tally = self._runs.pop(run_id)
+            if self._in_a_purse(run_id):
+                self._ended[run_id] = tally  # still counted until the orchestrator settles it
         for key in [k for k, t in self._unattributed.items() if t.ended is not None and t.ended <= cutoff]:
             del self._unattributed[key]
 
@@ -865,10 +962,12 @@ class Meter:
         job_id: str | None = None,
         provider: str | None = None,
         budget: Budget | None = None,
+        purses: list[PurseFigure] | None = None,
+        seq: int | None = None,
     ) -> None:
         """Make ``run_id`` the run ``sandbox_id``'s calls count under, on ``provider`` when it names one, held to
-        ``budget`` when it names one. Declaring it again changes nothing (its budget included); declaring it again on
-        another provider is refused."""
+        ``budget`` and drawing on ``purses`` (the figures of admin number ``seq``) when it names one. Declaring it
+        again changes nothing (its budget included); declaring it again on another provider is refused."""
         held = self._runs.get(run_id)
         if held is not None:
             if held.sandbox_id != sandbox_id or held.ended is not None or held.provider != provider:
@@ -882,6 +981,43 @@ class Meter:
             sandbox_id=sandbox_id, run_id=run_id, job_id=job_id, started=self._now(), provider=provider, budget=budget
         )
         self._current[sandbox_id] = run_id
+        if purses:
+            self._apply_purses(purses, seq, joining=run_id)
+
+    def update_purses(self, purses: list[PurseFigure], seq: int | None) -> None:
+        """Take the orchestrator's figures for ``purses``: what each has left, and its members here (a run it
+        settled is left out, its charge now in what is left)."""
+        self._apply_purses(purses, seq)
+
+    def _apply_purses(self, figures: list[PurseFigure], seq: int | None, joining: str | None = None) -> None:
+        for figure in figures:
+            purse = self._purses.get(figure.key)
+            if purse is None:
+                purse = self._purses[figure.key] = _Purse(figure.limit, figure.remaining_usd, set(), -1)
+            number = seq if seq is not None else purse.seq + 1
+            if number > purse.seq:
+                # A member this proxy does not hold (ended and dropped, or never here) counts nothing.
+                purse.limit, purse.remaining_usd, purse.seq = figure.limit, figure.remaining_usd, number
+                purse.members = {m for m in figure.members if m in self._runs or m in self._ended}
+            if joining is not None:
+                purse.members.add(joining)
+        for key in [k for k, purse in self._purses.items() if not purse.members]:
+            del self._purses[key]
+        for run_id in [r for r in self._ended if not self._in_a_purse(r)]:
+            del self._ended[run_id]
+
+    def _in_a_purse(self, run_id: str) -> bool:
+        return any(run_id in purse.members for purse in self._purses.values())
+
+    def purse_left(self, key: str) -> float:
+        """What ``key``'s purse has left: what the orchestrator said, less what its members here have committed
+        (their charges, and their calls in flight at the check's price). Nothing for a purse this proxy does not
+        hold."""
+        purse = self._purses.get(key)
+        if purse is None:
+            return 0.0
+        members = (self._runs.get(m) or self._ended.get(m) for m in purse.members)
+        return purse.remaining_usd - sum(t.committed_usd() for t in members if t is not None)
 
     def has_run(self, sandbox_id: str) -> bool:
         """Whether the sandbox has a run in progress: declared, and not ended."""
@@ -913,6 +1049,8 @@ class Meter:
             del self._current[tally.sandbox_id]
         if tally.ended is None:
             tally.ended = self._now()
+        if self._in_a_purse(run_id):
+            self._ended[run_id] = tally  # its charge still counts until the orchestrator settles it
         return tally.snapshot()
 
     def sandbox_gone(self, sandbox_id: str) -> None:
@@ -927,12 +1065,21 @@ class Meter:
         """Every tally held, cumulative since it began, with the proxy's boot id."""
         self._purge()
         tallies = [t.snapshot() for t in self._runs.values()] + [t.snapshot() for t in self._unattributed.values()]
-        return {"boot_id": self.boot_id, "tallies": tallies}
+        purses = {
+            key: {
+                "limit": purse.limit,
+                "remaining_usd": purse.remaining_usd,
+                "members": sorted(purse.members),
+                "left_usd": self.purse_left(key),
+            }
+            for key, purse in sorted(self._purses.items())
+        }
+        return {"boot_id": self.boot_id, "tallies": tallies, "purses": purses}
 
     def open(self, sandbox_id: str, call: Call) -> Metered:
         """Start metering ``call`` from ``sandbox_id``. Raises :class:`NoRunError` when the sandbox has no run and
-        one is required, and :class:`BudgetExceededError` when the call's ceiling, priced at its run's rates, would
-        take what the run has been charged (its calls in flight at their ceilings) past the run's budget."""
+        one is required, and :class:`BudgetExceededError` when the call, priced as the check prices it
+        (:meth:`_Tally.check_cost`), would take a purse its run draws on past what it has left."""
         run_id = self._current.get(sandbox_id)
         tally = self._runs.get(run_id) if run_id is not None else None
         if tally is None:
@@ -950,14 +1097,22 @@ class Meter:
                 self._live_unattributed[sandbox_id] = self._next_unattributed
         budget = tally.budget
         if budget is not None:
-            cost = budget.price(call.ceiling())
-            left = budget.remaining_usd - tally.spent_usd(budget)
+            cost = tally.check_cost(len(call.body), call.output_ceiling)
+            # The purse with the least left decides; one this proxy no longer holds has nothing left.
+            left, purse_key = min((self.purse_left(k), k) for k in budget.purses)
             if cost > left:
-                tally.budget_refused += 1
-                raise BudgetExceededError(budget, cost_usd=cost, left_usd=left)
+                limit = purse_key.split(":", 1)[0]  # job:<id>, daily, monthly
+                tally.budget_refused[limit] = tally.budget_refused.get(limit, 0) + 1
+                raise BudgetExceededError(limit, cost_usd=cost, left_usd=left)
         self._next_request += 1
         request_id = self._next_request
-        tally.open[request_id] = _Open(model=call.model, ceiling=call.ceiling(), since=self._now())
+        tally.open[request_id] = _Open(
+            model=call.model,
+            ceiling=call.ceiling(),
+            since=self._now(),
+            size=len(call.body),
+            output_ceiling=call.output_ceiling,
+        )
         return Metered(tally, request_id, call)
 
 
@@ -1003,6 +1158,16 @@ class Metered:
         if self._reader is not None:
             reading = self._reader.finish()
             usage, estimated = charge(self.call, reading)
+            if reading.complete:
+                # Its input as counted: what the budget check prices the run's next calls' input from.
+                tally.observed_bytes += len(self.call.body)
+                tally.observed_input.add(
+                    Usage(
+                        input_tokens=usage.input_tokens,
+                        cache_read_tokens=usage.cache_read_tokens,
+                        cache_creation_tokens=usage.cache_creation_tokens,
+                    )
+                )
             if self._lost and not reading.complete:
                 # Broken off before its usage: what the provider generated is not what was read. Its output is the
                 # most the request allowed; its input stays what the answer said, or the estimate ``charge`` made.
@@ -1036,8 +1201,9 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
     """Give ``app`` a :class:`Meter` and its admin routes, behind the enrollment's admin gate:
 
     - ``POST /admin/runs`` ``{sandbox_id, run_id, job_id?, provider?, budget?}`` declares an enrolled sandbox's run,
-      on ``provider`` when it names one, held to ``budget`` (:meth:`Budget.read`) when it names one (the answer
+      on ``provider`` when it names one, held to ``budget`` (:func:`read_budget`) when it names one (the answer
       echoes each);
+    - ``PUT /admin/purses`` ``{purses, seq}`` takes the orchestrator's figures for purses (:func:`read_purses`);
     - ``DELETE /admin/runs/{run_id}`` ends it and answers its last snapshot;
     - ``GET /admin/meter`` answers every tally held.
 
@@ -1068,7 +1234,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         if job_id is not None and not isinstance(job_id, str):
             return web.json_response({"error": "bad_request"}, status=400)
         try:
-            budget = Budget.read(body["budget"]) if body.get("budget") is not None else None
+            budget, purses = read_budget(body["budget"]) if body.get("budget") is not None else (None, [])
         except ValueError:
             return web.json_response({"error": "bad_request"}, status=400)
         seq = request_seq(body)
@@ -1080,7 +1246,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         if stale is not None:
             return stale
         try:
-            meter.declare(sandbox_id, run_id, job_id or None, provider, budget)
+            meter.declare(sandbox_id, run_id, job_id or None, provider, budget, purses, seq)
         except TalliesFullError:
             logger.error(f"{proxy_name}_meter_full", sandbox_id=sandbox_id, run_id=run_id)
             return web.json_response({"error": "meter_full"}, status=429)
@@ -1093,7 +1259,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             sandbox_id=sandbox_id,
             run_id=run_id,
             provider=provider,
-            budget_usd=budget.remaining_usd if budget is not None else None,
+            purses={f.key: f.remaining_usd for f in purses},
         )
         # The number echoed says this proxy orders admin requests (an older image does not); the provider echoed, that
         # it holds the run to it.
@@ -1104,8 +1270,26 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
             answer["provider"] = provider
         if budget is not None:
             # That this proxy holds the run to it (an older image does not).
-            answer["budget"] = {"remaining_usd": budget.remaining_usd, "limit": budget.limit}
+            answer["budget"] = {"purses": {key: meter.purse_left(key) for key in budget.purses}}
         return web.json_response(answer)
+
+    async def _purses(request: web.Request) -> web.Response:
+        denied = guard_admin(request, proxy_name)
+        if denied is not None:
+            return denied
+        body = await json_or_empty(request)
+        try:
+            if not isinstance(body, dict):
+                raise ValueError("not an object")
+            figures = read_purses(body.get("purses"))
+        except ValueError:
+            return web.json_response({"error": "bad_request"}, status=400)
+        seq = request_seq(body)
+        if isinstance(seq, web.Response):
+            return seq
+        meter.update_purses(figures, seq)
+        logger.info(f"{proxy_name}_purses_updated", purses={f.key: f.remaining_usd for f in figures})
+        return web.json_response({"purses": {f.key: meter.purse_left(f.key) for f in figures}, "seq": seq})
 
     async def _end(request: web.Request) -> web.Response:
         denied = guard_admin(request, proxy_name)
@@ -1139,6 +1323,7 @@ def register_meter_routes(app: web.Application, *, proxy_name: str, require_run:
         return web.json_response({**meter.snapshot(), "stale_refused": request.app[ADMIN_SEQUENCE].refused})
 
     app.router.add_post("/admin/runs", _declare)
+    app.router.add_put("/admin/purses", _purses)
     app.router.add_delete("/admin/runs/{run_id}", _end)
     app.router.add_get("/admin/meter", _meter)
     return meter

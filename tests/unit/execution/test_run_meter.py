@@ -91,6 +91,10 @@ class _Proxies:
         }
         return self.boot[proxy]
 
+    async def update_purses(self, proxy: str, purses: list[dict[str, Any]]) -> None:
+        self._maybe_fail(proxy, "purses")
+        self.purse_updates = [*getattr(self, "purse_updates", []), (proxy, purses)]
+
     async def end_run(self, proxy: str, run_id: str, *, seq: int | None = None) -> dict[str, Any] | None:
         self.end_seqs = {**getattr(self, "end_seqs", {}), proxy: seq}
         self._maybe_fail(proxy, "end")
@@ -140,23 +144,115 @@ def test_a_sandbox_is_metered_where_it_is_enrolled_with_a_metering_proxy() -> No
     assert (meters("sbx"), meters("none")) == (True, False)
 
 
-async def test_a_run_is_declared_with_its_budget_at_every_proxy_it_is_enrolled_with() -> None:
-    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
-    meter, _ = _meter(proxies, _Repo())
-    budget = {
-        "remaining_usd": 0.5,
-        "limit": "job",
-        "rates": {"in": 2.0, "out": 6.0},
-        "cache": {"read": 0.25, "write": 1.0},
-    }
+def _request(job: float = 2.0, daily: float | None = None, job_key: str = "job:job-1") -> dict[str, Any]:
+    """A run's budget request (embry0.orchestration.run_budget): its rates, and what each scope has left settled."""
+    scopes = [{"key": job_key, "limit": "job", "remaining_usd": job}]
+    if daily is not None:
+        scopes.append({"key": "daily", "limit": "daily", "remaining_usd": daily})
+    return {"rates": {"in": 2.0, "out": 6.0}, "cache": {"read": 0.25, "write": 1.0}, "scopes": scopes}
+
+
+async def _begin(meter: RunMeter, run_id: str, budget: Any, sandbox: str = "sbx", provider: str = "xai") -> Any:
     try:
-        await meter.begin("sbx", "run-1", "job-1", provider="xai", budget=budget)  # type: ignore[call-arg]
+        return await meter.begin(sandbox, run_id, "job-1", provider=provider, budget=budget)  # type: ignore[call-arg]
     except TypeError as exc:
         pytest.fail(f"a run cannot be declared with its budget: {exc}")
-    assert getattr(proxies, "declared_budgets", {}) == {
-        ("xai-proxy", "run-1"): budget,
-        ("llm-proxy", "run-1"): budget,
-    }, "the run was not declared with its budget"
+
+
+def _purses(proxies: _Proxies, proxy: str, run_id: str) -> dict[str, Any]:
+    budget = getattr(proxies, "declared_budgets", {}).get((proxy, run_id))
+    assert budget is not None, f"{run_id} was declared at {proxy} with no budget"
+    assert "purses" in budget, f"{run_id} was declared at {proxy} with no purses: {budget}"
+    return {p["key"]: p for p in budget["purses"]}
+
+
+async def test_a_run_is_declared_with_its_purses_at_the_proxy_serving_its_provider() -> None:
+    proxies = _Proxies({"sbx": ["xai-proxy", "llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-1", _request(job=0.5))
+    purses = _purses(proxies, "xai-proxy", "run-1")
+    assert purses == {"job:job-1": {"key": "job:job-1", "limit": "job", "remaining_usd": 0.5, "members": []}}
+    assert proxies.declared_budgets[("llm-proxy", "run-1")] is None, "a proxy not serving the run was given a budget"
+
+
+async def test_runs_of_one_job_at_one_proxy_share_its_purse_and_at_two_split_it() -> None:
+    """At one proxy the purse counts each member as it goes; across proxies the ledger splits what is left."""
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["xai-proxy"], "sbx-c": ["llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-a", _request(job=2.0), sandbox="sbx-a")
+    await _begin(meter, "run-b", _request(job=2.0), sandbox="sbx-b")
+    assert _purses(proxies, "xai-proxy", "run-b")["job:job-1"] == {
+        "key": "job:job-1",
+        "limit": "job",
+        "remaining_usd": 2.0,
+        "members": ["run-a"],
+    }, "the second run was not told it shares the purse with the first"
+    await _begin(meter, "run-c", _request(job=2.0), sandbox="sbx-c", provider="openai")
+    assert _purses(proxies, "llm-proxy", "run-c")["job:job-1"]["remaining_usd"] == 0.0, (
+        "the job's purse at a second proxy was given what the first already holds"
+    )
+
+
+async def test_a_deployment_purse_takes_no_more_than_the_job_purses_at_its_proxy() -> None:
+    """So jobs at one proxy never take the whole day from jobs at another."""
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-a", _request(job=10.0, daily=100.0, job_key="job:a"), sandbox="sbx-a")
+    assert _purses(proxies, "xai-proxy", "run-a")["daily"]["remaining_usd"] == 10.0
+    await _begin(meter, "run-b", _request(job=10.0, daily=100.0, job_key="job:b"), sandbox="sbx-b", provider="openai")
+    assert _purses(proxies, "llm-proxy", "run-b")["daily"]["remaining_usd"] == 10.0, "the day went to the first proxy"
+    await _begin(meter, "run-c", _request(job=10.0, daily=15.0, job_key="job:c"), sandbox="sbx-a")
+    assert _purses(proxies, "xai-proxy", "run-c")["daily"]["remaining_usd"] == 5.0, (
+        "near the day's cap, what the other proxy holds was not taken off"
+    )
+
+
+async def test_a_settled_run_leaves_its_purses_which_are_worked_out_again() -> None:
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    window = await _begin(meter, "run-a", _request(job=2.0), sandbox="sbx-a")
+    await _begin(meter, "run-b", _request(job=2.0), sandbox="sbx-b")
+    settle = getattr(meter, "settle", None)
+    assert settle is not None, "the meter cannot settle a run"
+    await settle(window, _request(job=1.6))  # run-a was charged $0.40, now in its trace
+    (proxy, figures), *_ = proxies.purse_updates
+    assert (proxy, figures) == (
+        "xai-proxy",
+        [{"key": "job:job-1", "limit": "job", "remaining_usd": 1.6, "members": ["run-b"]}],
+    ), proxies.purse_updates
+
+
+async def test_a_run_that_cannot_be_worked_out_again_stays_counted() -> None:
+    proxies = _Proxies({"sbx": ["xai-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    window = await _begin(meter, "run-1", _request(job=2.0))
+    settle = getattr(meter, "settle", None)
+    assert settle is not None, "the meter cannot settle a run"
+    await settle(window, None)
+    assert getattr(proxies, "purse_updates", []) == [], "the run left its purse with its charge unknown"
+    await _begin(meter, "run-2", _request(job=2.0), sandbox="sbx")
+    assert _purses(proxies, "xai-proxy", "run-2")["job:job-1"]["members"] == ["run-1"]
+
+
+async def test_a_run_whose_declaration_failed_draws_on_no_purse() -> None:
+    proxies = _Proxies({"sbx-a": ["xai-proxy"], "sbx-b": ["xai-proxy"]})
+    proxies.fail[("xai-proxy", "declare")] = RuntimeError("proxy away")
+    meter, _ = _meter(proxies, _Repo())
+    await _begin(meter, "run-a", _request(job=2.0), sandbox="sbx-a")
+    del proxies.fail[("xai-proxy", "declare")]
+    await _begin(meter, "run-b", _request(job=2.0), sandbox="sbx-b")
+    assert _purses(proxies, "xai-proxy", "run-b")["job:job-1"]["members"] == []
+
+
+async def test_at_start_up_a_budget_waits_for_the_last_process_s_runs_to_close_then_fails_closed() -> None:
+    meter, _ = _meter(_Proxies({}), _Repo())
+    hold = getattr(meter, "hold_budgets_until", None)
+    assert hold is not None, "a run's budget does not wait for the last process's runs to close"
+    closing: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+    hold(closing)
+    assert await meter.budgets_ready(timeout=0.01) is False, "a budget was read with their charges unsettled"
+    closing.set_result(None)
+    assert await meter.budgets_ready(timeout=0.01) is True
 
 
 async def test_a_run_is_declared_on_its_provider_at_every_proxy_it_is_enrolled_with() -> None:

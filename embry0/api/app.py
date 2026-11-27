@@ -1654,6 +1654,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         metrics=loop_metrics if loop_metrics is not None else NULL_METRICS,
     )
     app.state.run_meter = run_meter
+    # A run's budget counts the charges of the runs the previous process left only once they are closed: until the
+    # background close of the rest is done, a run's budget waits for it (RunMeter.budgets_ready).
+    run_meter.hold_budgets_until(interrupted_runs_task)
     agent_runner = AgentRunner(
         sandbox_mgr,
         docker,

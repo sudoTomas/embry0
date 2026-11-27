@@ -479,6 +479,7 @@ async def _serve(request: web.Request, provider: str, *, path_per_provider: bool
             logger.warning(
                 "llm_proxy_call_over_budget",
                 sandbox_id=sandbox_id,
+                limit=refusal.limit,
                 cost_usd=refusal.cost_usd,
                 left_usd=refusal.left_usd,
             )

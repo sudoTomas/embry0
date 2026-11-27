@@ -358,6 +358,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
                 "xai_proxy_call_over_budget",
                 sandbox_id=sandbox_id,
                 path=route,
+                limit=refusal.limit,
                 cost_usd=refusal.cost_usd,
                 left_usd=refusal.left_usd,
             )
