@@ -605,3 +605,62 @@ def test_a_stream_s_usage_is_the_answer_s_only_in_a_chunk_with_no_choice_open(ch
     reading = reader.finish()
     assert reading.complete is complete, f"a usage beside choices {choices!r} was taken as complete={reading.complete}"
     assert (reading.usage.input_tokens, reading.usage.output_tokens) == (5, 7), "the counts it gave were not kept"
+
+
+def _keys(body: bytes) -> list[str]:
+    """The top-level keys of ``body`` as written, a repeated one each time."""
+    found: list[list[str]] = []
+    json.loads(body, object_pairs_hook=lambda pairs: found.append([k for k, _ in pairs]) or dict(pairs))
+    return found[-1]
+
+
+@pytest.mark.parametrize(
+    ("wire", "raw", "sent", "ceiling"),
+    [
+        (
+            "openai_chat",
+            b'{"model": "m", "stream": true, "stream_options": {"continuous_usage_stats": true},'
+            b' "stream_options": {"include_usage": true}}',
+            {"model": "m", "stream": True, "stream_options": {"include_usage": True}},
+            DEFAULT_OUTPUT_CEILING,
+        ),
+        (
+            "openai_chat",
+            b'{"model": "m", "stream": 1}',
+            {"model": "m", "stream": True, "stream_options": {"include_usage": True}},
+            DEFAULT_OUTPUT_CEILING,
+        ),
+        ("anthropic", b'{"model": "m", "max_tokens": 100000, "max_tokens": 10}', {"model": "m", "max_tokens": 10}, 10),
+        ("openai_chat", b'{"model": "m", "max_tokens": 9, "max_tokens": 4}', {"model": "m", "max_tokens": 4}, 4),
+    ],
+    ids=["repeated-stream-options", "stream-one", "repeated-anthropic-limit", "repeated-chat-limit"],
+)
+def test_a_body_goes_upstream_as_the_proxy_read_it(wire: Any, raw: bytes, sent: dict[str, Any], ceiling: int) -> None:
+    """An upstream that read a repeated key's first value, or took a truthy stream for one without its usage, would
+    answer another request than the one metered."""
+    call = read_call(wire, raw)
+    assert _keys(call.body) == list(sent), f"went upstream as {call.body!r}"
+    assert json.loads(call.body) == sent, f"went upstream as {call.body!r}"
+    if "stream" in sent:
+        assert json.loads(call.body)["stream"] is True, f"the stream went upstream as {call.body!r}"
+    assert call.output_ceiling == ceiling
+
+
+def test_a_body_with_nothing_to_change_goes_upstream_as_written() -> None:
+    raw = b'{"model": "m",   "max_tokens": 9, "messages": [{"role": "user", "content": "a", "content": "b"}]}'
+    assert read_call("openai_chat", raw).body == raw, "a body with no repeated top-level key was written again"
+    assert read_call("anthropic", raw).body == raw
+
+
+def test_each_call_in_flight_carries_an_id_of_its_own() -> None:
+    """So a reader can tell, across reads, which calls in flight it has already charged."""
+    meter = Meter()
+    meter.declare("sbx", "run-1")
+    first, second = (
+        meter.open("sbx", read_call("openai_chat", b"{}")),
+        meter.open("sbx", read_call("openai_chat", b"{}")),
+    )
+    ids = [call.get("id") for call in meter.snapshot()["tallies"][0]["open"]]
+    assert all(isinstance(i, int) for i in ids) and len(set(ids)) == 2, f"the calls in flight: {ids}"
+    first.close()
+    second.close()

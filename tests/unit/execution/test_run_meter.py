@@ -422,7 +422,7 @@ async def test_two_undeclared_runs_in_a_row_count_a_call_in_flight_between_them_
     key = "unattributed:sbx:1.0"
     proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
     meter, _ = _meter(proxies, _Repo())
-    in_flight = {"model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    in_flight = {"id": 7, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
 
     first = await meter.begin("sbx", "run-1", "job-1")
     proxies.tallies["llm-proxy"][key].update(models=_calls(1, output=10), open=[in_flight])
@@ -446,7 +446,7 @@ async def test_a_call_in_flight_across_two_undeclared_runs_is_not_given_to_the_s
     proxies = _Proxies({"sbx": ["llm-proxy"]})
     proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
     key = "unattributed:sbx:1.0"
-    in_flight = {"model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    in_flight = {"id": 7, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
     proxies.tallies["llm-proxy"][key] = _unattributed("sbx", {})
     meter, _ = _meter(proxies, _Repo())
     first = await meter.begin("sbx", "run-1", "job-1")
@@ -462,27 +462,83 @@ async def test_a_call_in_flight_across_two_undeclared_runs_is_not_given_to_the_s
     )
 
 
-async def test_a_call_in_flight_that_ends_under_another_model_s_name_is_counted_once() -> None:
-    """The proxy keeps a call in flight under the model it was asked for, and its end under the one its answer named:
-    the run after is given the totals' rise, so the call is not counted again under the new name."""
+def _output(metering: Any) -> tuple[int, int]:
     from embry0.agents.run_charge import charge_run
 
-    proxies = _Proxies({"sbx": ["llm-proxy"]})
-    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
-    key = "unattributed:sbx:1.0"
-    in_flight = {"model": "qwen", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
-    proxies.tallies["llm-proxy"][key] = {**_unattributed("sbx", {}), "open": [in_flight]}
-    meter, _ = _meter(proxies, _Repo())
-    window = await meter.begin("sbx", "run-2", "job-1")  # an earlier run was charged the call at its ceiling
-    proxies.tallies["llm-proxy"][key].update(
-        models={
-            "deployed-model-id": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1},
-            "qwen": {"input_tokens": 200, "output_tokens": 20, "requests": 1, "estimated": 0},
-        },
-        open=[],
-    )  # the call ended at its ceiling, named after the answer's model; the run made one call of its own
-    metering = await meter.end(window)
     charge = charge_run(metering, _record(), sandbox_cost_usd=0.0, sandbox_tokens=(0, 0, 0, 0))
-    assert (charge.input_tokens, charge.output_tokens) == (200, 20), (
-        f"the call was counted again under its answer's model: {charge.metering['proxies']}"
+    return charge.input_tokens, charge.output_tokens
+
+
+async def _undeclared(proxies: _Proxies, meter: RunMeter, run_id: str, between: Any) -> Any:
+    """Run ``run_id`` undeclared on the llm-proxy, ``between(tally)`` changing the sandbox's calls under no run during
+    it; its metering."""
+    proxies.fail[("llm-proxy", "declare")] = RuntimeError("the proxy refused the declaration")
+    window = await meter.begin("sbx", run_id, "job-1")
+    between(proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"])
+    return await meter.end(window)
+
+
+@pytest.mark.parametrize("renamed", [True, False], ids=["its-model-makes-another-call", "its-model-makes-none"])
+async def test_a_call_in_flight_that_ends_under_another_model_s_name_is_counted_once(renamed: bool) -> None:
+    """The proxy keeps a call in flight under the model it was asked for, and its end under the one its answer named:
+    the run after is given the totals' rise, so the call is not counted again under the new name, whether or not its
+    first model makes another call in that run."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    in_flight = {"id": 3, "model": "qwen", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    await _undeclared(proxies, meter, "run-1", lambda tally: tally.update(open=[in_flight]))
+    own = {"input_tokens": 200, "output_tokens": 20, "requests": 1, "estimated": 0}
+
+    def ended(tally: dict[str, Any]) -> None:
+        tally["models"] = {
+            "deployed-model-id": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1},
+            ("qwen" if renamed else "another-model"): dict(own),
+        }  # the call ended at its ceiling, named after the answer's model; the run made one call of its own
+        tally["open"] = []
+
+    metering = await _undeclared(proxies, meter, "run-2", ended)
+    assert _output(metering) == (200, 20), f"the call was counted again under its answer's model: {metering.tallies}"
+
+
+async def test_a_call_that_began_between_runs_is_charged_to_the_run_it_ends_in() -> None:
+    """Charged by no run when it began (it began outside one), so the run it ends in is charged it, whatever its
+    ceiling: a call held open between runs and ended short is not left to no one."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    meter, _ = _meter(proxies, _Repo())
+    first = await meter.begin("sbx", "run-1", "job-1")  # declared: its calls are its own tally's
+    await meter.end(first)
+    key = "unattributed:sbx:1.0"
+    held = {"id": 9, "model": "grok-4.7", "since": 3.0, "input_tokens": 40, "output_tokens": 128_000}
+    proxies.tallies["llm-proxy"][key] = {**_unattributed("sbx", {}), "open": [held]}  # opened outside any run
+
+    def during(tally: dict[str, Any]) -> None:
+        tally["models"] = {"grok-4.7": {"input_tokens": 2000 + 30, "output_tokens": 3000 + 10, "requests": 2}}
+        tally["open"] = []  # the run's own calls, and the held one, ended short
+
+    metering = await _undeclared(proxies, meter, "run-2", during)
+    assert _output(metering) == (2030, 3010), (
+        f"the call held open between runs was charged to no one: {_output(metering)}"
     )
+
+
+@pytest.mark.parametrize("lost", ["the meter restarted", "the proxy names no ids"])
+async def test_a_call_in_flight_not_known_to_be_charged_is_charged_again(lost: str) -> None:
+    """Where the meter cannot tell that the run before was charged a call at its ceiling, the run it ends in is
+    charged it too: more, never less."""
+    proxies = _Proxies({"sbx": ["llm-proxy"]})
+    in_flight = {"id": 5, "model": "grok-4.7", "since": 2.0, "input_tokens": 50, "output_tokens": 500}
+    if lost == "the proxy names no ids":
+        del in_flight["id"]
+    proxies.tallies["llm-proxy"]["unattributed:sbx:1.0"] = _unattributed("sbx", {})
+    meter, _ = _meter(proxies, _Repo())
+    first = await _undeclared(proxies, meter, "run-1", lambda tally: tally.update(open=[in_flight]))
+    assert _output(first) == (50, 500)
+    if lost == "the meter restarted":
+        meter, _ = _meter(proxies, _Repo())
+
+    def ended(tally: dict[str, Any]) -> None:
+        tally["models"] = {"grok-4.7": {"input_tokens": 50, "output_tokens": 500, "requests": 1, "estimated": 1}}
+        tally["open"] = []
+
+    assert _output(await _undeclared(proxies, meter, "run-2", ended)) == (50, 500), f"{lost}: not charged again"

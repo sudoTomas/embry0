@@ -184,11 +184,24 @@ class Call:
         return Usage(input_tokens=self.input_estimate, output_tokens=self.output_ceiling)
 
 
+def _last_object_repeats(pairs: list[tuple[str, Any]], seen: list[bool]) -> dict[str, Any]:
+    """``json.loads``'s hook for each object, innermost first: notes whether the last one (the top level, once parsing
+    ends) named a key twice."""
+    seen.append(len({key for key, _ in pairs}) != len(pairs))
+    return dict(pairs)
+
+
 def read_call(wire: Wire, body: bytes) -> Call:
-    """The call ``body`` makes. A chat completions request that streams is sent exactly ``include_usage``."""
+    """The call ``body`` makes, and the body that goes upstream. A chat completions request that streams goes with
+    ``stream`` true and ``stream_options`` exactly ``include_usage``. A body naming a top-level key twice goes as the
+    proxy read it (each key's last value): an upstream that read the first would answer a request other than the one
+    metered (another output limit, another stream option)."""
     payload: Any = None
+    repeats: list[bool] = []
     try:
-        payload = json.loads(body) if body else None
+        payload = (
+            json.loads(body, object_pairs_hook=lambda pairs: _last_object_repeats(pairs, repeats)) if body else None
+        )
     except (ValueError, RecursionError):  # see embry0.json_text; UnicodeDecodeError is a ValueError
         payload = None
     model: str | None = None
@@ -201,10 +214,14 @@ def read_call(wire: Wire, body: bytes) -> Call:
             if value:
                 limit = value
                 break
-        if wire == "openai_chat" and payload.get("stream") is True and payload.get("stream_options") != _STREAM_OPTIONS:
+        rewrite = bool(repeats and repeats[-1])
+        if wire == "openai_chat" and payload.get("stream"):
             # Exactly the final usage: another option (vLLM's continuous_usage_stats) would have a usage in every chunk,
             # and a stream that broke after one would look read in full.
+            payload["stream"] = True
             payload["stream_options"] = dict(_STREAM_OPTIONS)
+            rewrite = True
+        if rewrite:
             body = json.dumps(payload).encode("utf-8")
     return Call(
         wire=wire,
@@ -588,7 +605,12 @@ class _Tally:
                 for model, t in sorted(self.models.items())
             },
             "errors": self.errors,
-            "open": [{"model": o.model, "since": o.since, **o.ceiling.to_dict()} for _, o in sorted(self.open.items())],
+            # Each call in flight with its id (unique in this proxy process), so a reader can tell one from another
+            # across reads.
+            "open": [
+                {"id": request_id, "model": o.model, "since": o.since, **o.ceiling.to_dict()}
+                for request_id, o in sorted(self.open.items())
+            ],
         }
 
 

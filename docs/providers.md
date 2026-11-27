@@ -280,9 +280,13 @@ was read in full is charged that usage however it ended, and an error answer
 still costs nothing. A streamed chat completion goes upstream asking for
 exactly its final usage, which counts only from a chunk that finishes the
 answer. A run whose calls counted under the sandbox's calls under no run (it
-could not be declared) is given what those grew by with calls in flight at
-their ceiling at both ends, so a call in flight between two such runs is
-charged once. A proxy process that went away mid-run leaves its last read in
+could not be declared) is given what those grew by, each call in flight at its
+end counted at its ceiling; a call in flight at its start is taken off only
+when the orchestrator charged an earlier run for it (it remembers which, by the
+id the proxy gives each call in flight), so a call is charged once across runs,
+and one that began between runs is charged to the run it ends in. Where it
+cannot tell (after a restart, or from a proxy that names no ids), the call is
+charged again: more, never less. A proxy process that went away mid-run leaves its last read in
 `run_meter` with its calls in flight, and the recreated proxy is given the run
 back after the sandbox's enrollment, under a new process (`boot_id`), so the
 run's calls are the two tallies summed and the charge is the larger figure.

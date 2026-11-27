@@ -84,8 +84,21 @@ def _counted(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def _counts(tally: Mapping[str, Any] | None) -> dict[str, dict[str, int]]:
-    """A tally's counts by model, each call still in flight in it counted at its ceiling (one request, estimated)."""
+#: What a call in flight in a tally carries besides its ceiling's counts.
+_IN_FLIGHT_FIELDS = frozenset({"id", "model", "since"})
+
+
+def _call_id(call: Mapping[str, Any]) -> int | None:
+    """A call in flight's id in its proxy process; None from a proxy that predates ids."""
+    value = call.get("id")
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _counts(
+    tally: Mapping[str, Any] | None, *, in_flight: Callable[[Mapping[str, Any]], bool]
+) -> dict[str, dict[str, int]]:
+    """A tally's counts by model, with each call in flight that ``in_flight`` takes counted at its ceiling (one
+    request, estimated)."""
     counts: dict[str, dict[str, int]] = {}
     raw = tally.get("models") if isinstance(tally, Mapping) else None
     for model, entry in raw.items() if isinstance(raw, Mapping) else ():
@@ -93,27 +106,31 @@ def _counts(tally: Mapping[str, Any] | None) -> dict[str, dict[str, int]]:
             counts[str(model)] = {str(name): _counted(value) for name, value in entry.items()}
     calls = tally.get("open") if isinstance(tally, Mapping) else None
     for call in calls if isinstance(calls, list) else ():
-        if not isinstance(call, Mapping):
+        if not isinstance(call, Mapping) or not in_flight(call):
             continue
         into = counts.setdefault(str(call.get("model") or "unknown"), {})
         for name, value in call.items():
-            if name not in ("model", "since"):
+            if name not in _IN_FLIGHT_FIELDS:
                 into[str(name)] = into.get(str(name), 0) + _counted(value)
         into["requests"] = into.get("requests", 0) + 1
         into["estimated"] = into.get("estimated", 0) + 1
     return counts
 
 
-def _grown(window: RunWindow, now: Mapping[str, Any], before: Mapping[str, Any] | None) -> dict[str, Any]:
+def _grown(
+    window: RunWindow, now: Mapping[str, Any], before: Mapping[str, Any] | None, charged: frozenset[int]
+) -> dict[str, Any]:
     """What a sandbox's tally of calls under no run grew by from ``before`` to ``now``, as a tally of the run.
 
-    Calls in flight are counted at their ceiling at both ends, so a call already in flight at the run's start (an
-    earlier run's, charged there at its ceiling when that run ended) is not this run's, whether it is still in flight
-    now or ended during it; a call that began during the run counts here, at its ceiling if still in flight. Read so,
-    two runs in a row count each call once. Each model's counts are what they rose by; where one fell (an earlier
-    call that ended for less than its ceiling, or under another model's name than it was asked by), the run is given
-    the totals' rise instead, under the model with the most requests."""
-    after, earlier = _counts(now), _counts(before)
+    Every call in flight now is counted at its ceiling. A call in flight when the run began counts at its ceiling
+    there too only when an earlier run was charged it so (``charged``, the ids this process remembers it charged):
+    such a call is not this run's, whether still in flight or ended during it. Any other call in flight at the start
+    (one that began between runs, one a proxy that predates ids reported, one this process does not remember
+    charging) is this run's when it ends during it: more, never less. Each model's counts are what they rose by;
+    where one fell (an earlier call that ended for less than its ceiling, or under another model's name than it was
+    asked by), the run is given the totals' rise instead, under the model with the most requests."""
+    after = _counts(now, in_flight=lambda _call: True)
+    earlier = _counts(before, in_flight=lambda call: _call_id(call) in charged)
     rises = {
         model: {name: value - earlier.get(model, {}).get(name, 0) for name, value in entry.items()}
         for model, entry in after.items()
@@ -157,6 +174,10 @@ class RunMeter:
         self._clock = clock
         self._task: asyncio.Task[None] | None = None
         self._last_prune: float | None = None
+        # Per (proxy, boot id, tally key) of a sandbox's calls under no run: the ids of the calls in flight a run that
+        # could not be declared was charged at their ceiling when it ended. Held in memory only: a process that does
+        # not remember charges again (more, never less).
+        self._charged_in_flight: dict[tuple[str, str, str], frozenset[int]] = {}
 
     # ---- a run -----------------------------------------------------------------
 
@@ -260,9 +281,19 @@ class RunMeter:
             now = await self._unattributed(proxy, window.sandbox_id)
             started = window.undeclared_from.get(proxy) or {}
             for (boot, counted_as), tally in sorted((now or {}).items()):
+                where = (proxy, boot, counted_as)
+                charged = self._charged_in_flight.pop(where, frozenset())
                 grown.append(
-                    BootTally(proxy, boot, _grown(window, tally, started.get((boot, counted_as))), final=False)
+                    BootTally(proxy, boot, _grown(window, tally, started.get((boot, counted_as)), charged), final=False)
                 )
+                # Every call in flight now is charged to this run at its ceiling: remembered, so the next run is not.
+                ids = frozenset(
+                    i
+                    for call in tally.get("open") or ()
+                    if isinstance(call, Mapping) and (i := _call_id(call)) is not None
+                )
+                if ids:
+                    self._charged_in_flight[where] = ids
         return RunMetering(
             run_id=window.run_id,
             targets=window.targets,
