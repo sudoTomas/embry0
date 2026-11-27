@@ -285,7 +285,13 @@ top-level key named in two spellings that match once case is folded (some
 servers match keys so, the last winning), or a `stream` neither true nor
 false. A key named twice exactly goes upstream once, with the value the proxy
 read; the output limit is the larger of `max_tokens` and
-`max_completion_tokens`, since a server may honour either. A run whose calls counted under the sandbox's calls under no run (it
+`max_completion_tokens`, since a server may honour either, and must be a whole
+number of tokens (`"1000000"` or `1e6` is refused: a server may read it as that
+many). The ceiling assumes the server honours those two: a chat completion that
+names another server's output limit, at its top level or in its `options`
+(llama.cpp's `n_predict`, Ollama's `num_predict`, `max_new_tokens`,
+`max_output_tokens`, `max_tokens_to_sample`, compared with case folded), is
+refused. A run whose calls counted under the sandbox's calls under no run (it
 could not be declared) is given what those grew by, each call in flight at its
 end counted at its ceiling; a call in flight at its start is taken off only
 when the orchestrator charged an earlier run for it (it remembers which, by the

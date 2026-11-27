@@ -110,6 +110,15 @@ DEFAULT_MAX_TALLIES = 1000
 MAX_MODEL_CHARS = 200
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+#: Output limits some servers of the OpenAI-style API honour besides (or over) ``max_tokens`` and
+#: ``max_completion_tokens``, compared with case folded: llama.cpp's ``n_predict`` (which overrides both),
+#: Ollama's ``num_predict`` (in ``options``), TGI and Hugging Face's ``max_new_tokens``, Gemini's ``max_output_tokens``
+#: (``maxOutputTokens``) and the old Anthropic ``max_tokens_to_sample``. The meter's ceiling is the limit it reads,
+#: so a chat completion naming one of these, at its top level or in its ``options``, is refused: a server honouring it
+#: could generate past the ceiling the call is charged.
+_SERVER_OUTPUT_LIMITS: frozenset[str] = frozenset(
+    {"n_predict", "num_predict", "max_new_tokens", "max_output_tokens", "maxoutputtokens", "max_tokens_to_sample"}
+)
 #: The ``stream_options`` a streamed chat completion goes upstream with, whatever the sandbox asked for.
 _STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
 #: A provider's name, as a run's declaration names it (a provider record's ``name``).
@@ -228,7 +237,16 @@ def read_call(wire: Wire, body: bytes) -> Call:
     streaming = _stream_value(payload.get("stream"))
     if streaming is None:
         return _refused(wire, body, "the request's stream is neither true nor false")
+    if wire == "openai_chat":
+        named_limits = _server_output_limits(payload)
+        if named_limits:
+            return _refused(wire, body, f"the request names an output limit the meter does not read: {named_limits}")
     keys = ("max_tokens",) if wire == "anthropic" else ("max_completion_tokens", "max_tokens")
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and _count(value) is None:
+            # A server may read "1000000" or 1e6 as that many: the meter would read no limit, a lower ceiling.
+            return _refused(wire, body, f"the request's {key} is not a whole number of tokens")
     limits = [value for key in keys if (value := _count(payload.get(key)))]
     rewrite = len(set(named)) != len(named)
     if wire == "openai_chat" and streaming:
@@ -247,6 +265,16 @@ def read_call(wire: Wire, body: bytes) -> Call:
         output_ceiling=max(limits) if limits else DEFAULT_OUTPUT_CEILING,
         output_limited=bool(limits),
     )
+
+
+def _server_output_limits(payload: dict[str, Any]) -> str:
+    """The output limits of :data:`_SERVER_OUTPUT_LIMITS` ``payload`` names, at its top level or in its ``options``,
+    as written; '' for none."""
+    found = [key for key in payload if key.casefold() in _SERVER_OUTPUT_LIMITS]
+    for key, value in payload.items():
+        if key.casefold() == "options" and isinstance(value, dict):
+            found += [f"{key}.{inner}" for inner in value if str(inner).casefold() in _SERVER_OUTPUT_LIMITS]
+    return ", ".join(sorted(found))[:200]
 
 
 def _refused(wire: Wire, body: bytes, reason: str) -> Call:

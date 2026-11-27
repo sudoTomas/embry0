@@ -718,3 +718,64 @@ def test_a_chat_completion_s_ceiling_is_the_larger_limit_it_names(limits: dict[s
     """A server may honour either: one that knows only max_tokens (Ollama) generates up to it."""
     call = read_call("openai_chat", json.dumps({"model": "m", **limits}).encode())
     assert (call.refused, call.output_ceiling) == (None, 100_000), f"the ceiling read: {call.output_ceiling}"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"n_predict": 100_000},
+        {"n_predict": -1},
+        {"N_Predict": 100_000},
+        {"num_predict": 100_000},
+        {"max_new_tokens": 100_000},
+        {"max_output_tokens": 100_000},
+        {"maxOutputTokens": 100_000},
+        {"max_tokens_to_sample": 100_000},
+        {"options": {"num_predict": -1}},
+        {"Options": {"NUM_PREDICT": 100_000}},
+        {"options": {"n_predict": 100_000}},
+    ],
+    ids=[
+        "llama-cpp",
+        "llama-cpp-unlimited",
+        "llama-cpp-case",
+        "ollama-top",
+        "tgi",
+        "gemini",
+        "gemini-camel",
+        "old-anthropic",
+        "ollama-options",
+        "ollama-options-case",
+        "llama-cpp-in-options",
+    ],
+)
+def test_a_chat_completion_naming_another_server_s_output_limit_is_refused(extra: dict[str, Any]) -> None:
+    """The ceiling is the limit the meter reads (max_tokens, max_completion_tokens): a server honouring another one
+    (llama.cpp's n_predict overrides max_tokens) could generate past it."""
+    raw = json.dumps({"model": "m", "max_tokens": 10, **extra}).encode()
+    assert read_call("openai_chat", raw).refused, f"forwarded {raw!r}"
+
+
+def test_other_options_and_the_anthropic_wire_are_left_alone() -> None:
+    raw = json.dumps({"model": "m", "max_tokens": 10, "options": {"temperature": 0.2, "num_ctx": 8192}}).encode()
+    assert read_call("openai_chat", raw).refused is None
+    assert read_call("anthropic", json.dumps({"model": "m", "max_tokens": 10, "n_predict": 5}).encode()).refused is None
+
+
+@pytest.mark.parametrize("value", ["1000000", 1e6, 1_000_000.0, -1, True, [10], {"n": 10}], ids=str)
+@pytest.mark.parametrize("key", ["max_tokens", "max_completion_tokens"])
+@pytest.mark.parametrize("wire", ["openai_chat", "anthropic"])
+def test_a_limit_that_is_not_a_whole_number_is_refused(wire: Any, key: str, value: Any) -> None:
+    """A server may read "1000000" or 1e6 as that many; the meter would read no limit, and charge a lower ceiling."""
+    raw = json.dumps({"model": "m", key: value}).encode()
+    call = read_call(wire, raw)
+    if wire == "anthropic" and key == "max_completion_tokens":
+        assert call.refused is None, "the Anthropic wire has no max_completion_tokens to read"
+    else:
+        assert call.refused, f"forwarded {raw!r}"
+
+
+@pytest.mark.parametrize("value", [None, 0, 4096])
+def test_a_limit_that_is_a_whole_number_or_null_is_read(value: Any) -> None:
+    call = read_call("openai_chat", json.dumps({"model": "m", "max_tokens": value}).encode())
+    assert call.refused is None

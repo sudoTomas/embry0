@@ -669,8 +669,18 @@ _COMPLETION_ROUTES = {
         b'{"model": "m", "max_tokens": 10} trailing',
         b'{"model": "m\xff", "max_tokens": 10}',
         b'{"model": "m", "max_tokens": 10, "stream": "false"}',
+        b'{"model": "m", "max_tokens": "1000000"}',
+        b'{"model": "m", "max_tokens": 1e6}',
     ],
-    ids=["case-folded-twin", "long-s-twin", "trailing-garbage", "not-utf-8", "stream-as-text"],
+    ids=[
+        "case-folded-twin",
+        "long-s-twin",
+        "trailing-garbage",
+        "not-utf-8",
+        "stream-as-text",
+        "limit-as-text",
+        "limit-1e6",
+    ],
 )
 async def test_a_completion_body_the_meter_cannot_read_as_every_server_would_is_refused(
     aiohttp_client, model_server, route, raw
@@ -699,3 +709,21 @@ async def test_a_completion_naming_both_limits_is_charged_the_larger(aiohttp_cli
         pass
     (counted,) = (await _settled(client))["models"].values()
     assert counted["output_tokens"] == 100_000, f"{route} read the lower limit: {counted}"
+
+
+@pytest.mark.parametrize("route", ["xai-proxy chat", "llm-proxy /v1", "llm-proxy /p/openai"])
+@pytest.mark.parametrize(
+    "extra",
+    [{"n_predict": 100_000}, {"options": {"num_predict": -1}}, {"max_new_tokens": 100_000}],
+    ids=["llama-cpp", "ollama-options", "tgi"],
+)
+async def test_a_chat_completion_naming_another_server_s_limit_is_refused_on_each_route(
+    aiohttp_client, model_server, route, extra
+):
+    proxy, path = _COMPLETION_ROUTES[route]
+    upstream = _Upstream()
+    client = await _metered(aiohttp_client, model_server, proxy, upstream)
+    body = {"model": "qwen", "messages": [], "max_tokens": 10, **extra}
+    resp = await client.post(path, json=body, headers=_AUTH)
+    assert resp.status == 400, f"{route} answered {resp.status} to {body}"
+    assert upstream.calls == [], f"{route} forwarded {body}"
