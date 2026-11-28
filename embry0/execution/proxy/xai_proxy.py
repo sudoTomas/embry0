@@ -75,8 +75,10 @@ METERED_PATHS: dict[str, Wire] = {"messages": "anthropic", "chat/completions": "
 UNBILLED_PATHS = frozenset({"messages/count_tokens"})
 #: The reads under ``/v1`` the proxy forwards: the model listing and one model's entry, which an agent's client may ask
 #: for. Any other read is refused: a deferred completion's result is fetched by a read the meter never sees (its call
-#: is refused besides, ``deferred``), and the account's reads (its key, its billing) are no agent's.
-READ_PATHS = re.compile(r"models(/[A-Za-z0-9._:-]{1,200})?")
+#: is refused besides, ``deferred``), and the account's reads (its key, its billing) are no agent's. A model's id starts
+#: with a letter or a digit, so none is a path segment of dots (``..``, sent encoded) that the client upstream
+#: resolves to another path.
+READ_PATHS = re.compile(r"models(/[A-Za-z0-9][A-Za-z0-9._:-]{0,199})?")
 
 
 def _normalize_tool_schemas(body: bytes) -> bytes:

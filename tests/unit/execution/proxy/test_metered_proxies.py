@@ -1324,3 +1324,16 @@ async def test_the_llm_proxy_answers_only_its_two_routes(aiohttp_client, model_s
         resp = await client.request(method, path, json={} if method == "POST" else None, headers=_AUTH)
         assert resp.status in (404, 405), f"{method} {path} answered {resp.status}"
     assert model_server.seen == [], f"{path} reached the server"
+
+
+@pytest.mark.parametrize("path", ["/v1/models/%2e%2e", "/v1/models/%2E%2E", "/v1/models/%2e", "/v1/models/.hidden"])
+async def test_a_model_read_whose_id_is_dots_is_refused(aiohttp_client, path):
+    """An encoded ``..`` reaches the route as the id "..", and the client upstream would resolve it to another path."""
+    from yarl import URL
+
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(b'{"data": []}'))
+    client = await _xai(aiohttp_client, upstream)
+    resp = await client.get(URL(path, encoded=True), headers=_AUTH)
+    assert resp.status == 404, f"GET {path} answered {resp.status}"
+    assert upstream.calls == [], f"GET {path} was forwarded as {upstream.calls}"
