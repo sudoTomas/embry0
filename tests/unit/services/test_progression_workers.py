@@ -23,7 +23,7 @@ import signal
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -123,27 +123,47 @@ async def _bulk(db: DatabasePool, jobs: int, runs: int) -> None:
     await db.execute("ANALYZE")
 
 
-async def _held(work: Callable[[], Awaitable[Any]]) -> tuple[float, float]:
-    """How long ``work`` took, and the longest the event loop went without running a tick meanwhile."""
-    longest = 0.0
+class Held(NamedTuple):
+    """How the event loop fared while some work ran."""
+
+    took: float  #: how long the work took
+    longest: float  #: the longest the loop went without running a tick, by the wall clock
+    busiest: float  #: the most CPU time the loop's thread spent between two ticks
+
+
+async def _held(work: Callable[[], Awaitable[Any]]) -> Held:
+    """How the event loop fared while ``work`` ran: a tick every 5 ms, timed by the wall clock and by its thread's
+    CPU clock.
+
+    A fold computed on the loop keeps its thread busy between two ticks; a fold in a worker leaves it idle. A runner
+    that does not get a CPU for a while makes a long gap by the wall clock with little CPU in it (#769): ``busiest``
+    is not moved by it, ``longest`` is.
+
+    The ticks start before the work does: work that blocks the loop before its first await that suspends would
+    otherwise run before the first tick, and measure as no hold at all.
+    """
+    longest = busiest = 0.0
     done = False
+    ticking = asyncio.Event()
 
     async def tick() -> None:
-        nonlocal longest
-        last = time.monotonic()
+        nonlocal longest, busiest
+        last, last_cpu = time.monotonic(), time.thread_time()
+        ticking.set()
         while not done:
             await asyncio.sleep(0.005)
-            now = time.monotonic()
-            longest = max(longest, now - last)
-            last = now
+            now, cpu = time.monotonic(), time.thread_time()
+            longest, busiest = max(longest, now - last), max(busiest, cpu - last_cpu)
+            last, last_cpu = now, cpu
 
     ticker = asyncio.create_task(tick())
+    await ticking.wait()
     started = time.monotonic()
     await work()
     took = time.monotonic() - started
     done = True
     await ticker
-    return took, longest
+    return Held(took, longest, busiest)
 
 
 async def test_a_fold_in_a_worker_does_not_hold_the_event_loop(
@@ -153,17 +173,26 @@ async def test_a_fold_in_a_worker_does_not_hold_the_event_loop(
     await _bulk(db, 20_000, 150_000)
     here, there = _service(db, None), _service(db, workers)
     await there.compute(RULES, list(SCOPE))  # the process starts and imports, which is not the fold
-    took_here, held_here = await _held(lambda: here.compute(RULES))
-    assert held_here > 0.25, (
-        f"on the loop the fold held it {held_here:.3f}s of {took_here:.2f}s: too small a history to measure"
+    on = await _held(lambda: here.compute(RULES))
+    assert on.busiest > 0.25, (
+        f"on the loop the fold kept its thread busy {on.busiest:.3f}s at a stretch, of {on.took:.2f}s: too small a "
+        "history to measure"
     )
     for name, work in (
         ("a read's fold", lambda: there.compute(RULES)),
         ("a full build of the rollup", lambda: there.rebuild()),
     ):
-        took_there, held_there = await _held(work)
-        assert held_there < max(0.1, held_here / 5), (
-            f"{name} in a worker held the loop {held_there:.3f}s of {took_there:.2f}s; a fold on it, {held_here:.3f}s"
+        off = await _held(work)
+        # The fold's work done on the loop keeps its thread busy as it did above: a fifth of that is far more than a
+        # worker's call costs it, and a runner short of CPU does not add to it.
+        assert off.busiest < max(0.05, on.busiest / 5), (
+            f"{name} in a worker kept the loop's thread busy {off.busiest:.3f}s at a stretch, of {off.took:.2f}s; "
+            f"a fold on the loop, {on.busiest:.3f}s"
+        )
+        # A loop that waits on its worker without running is idle but held for most of the run: a runner's stall
+        # of three quarters of a run of seconds is not what a busy CI runner makes (0.92s of 8.47s, #769).
+        assert off.longest < 0.75 * off.took, (
+            f"{name} in a worker held the loop {off.longest:.3f}s of {off.took:.2f}s without a tick: it waited on it"
         )
 
 
