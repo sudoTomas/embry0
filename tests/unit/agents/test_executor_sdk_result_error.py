@@ -47,9 +47,11 @@ _FAKE_CLI = textwrap.dedent(
     for line in sys.stdin:
         message = json.loads(line)
         if message.get("type") == "control_request":
+            # As the CLI the SDK bundles answers initialize: it honours a hook's on_failure.
+            answer = {{"hook_on_failure_supported": True}} if message["request"].get("subtype") == "initialize" else {{}}
             reply = {{
                 "type": "control_response",
-                "response": {{"subtype": "success", "request_id": message["request_id"], "response": {{}}}},
+                "response": {{"subtype": "success", "request_id": message["request_id"], "response": answer}},
             }}
             sys.stdout.write(json.dumps(reply) + "\\n")
             sys.stdout.flush()

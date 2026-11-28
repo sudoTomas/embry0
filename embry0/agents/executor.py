@@ -474,6 +474,43 @@ def _extract_hook_call(hook_input: Any) -> tuple[str, dict[str, Any]]:
     return name, tool_input
 
 
+#: What the agent is told when the safety policy could not check a call: it was refused, not run.
+GATE_FAILED_REASON = "embry0's safety policy could not check this call, so it was refused"
+
+
+def _refusal(reason: str) -> dict[str, Any]:
+    """The PreToolUse answer that refuses a call, with the reason the agent reads."""
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+#: How long a hook's check may take, in seconds, before its call or reload is refused. A check reads the session's
+#: policy and skills, which takes milliseconds; a minute is far more than any check needs, and short enough that a
+#: run waiting on one that never finishes ends.
+HOOK_TIMEOUT_SECONDS = 60.0
+
+
+def gate_hooks(
+    matcher: Any, pre_tool_use: Any, config_change: Any, *, timeout: float = HOOK_TIMEOUT_SECONDS
+) -> dict[Any, list[Any]]:
+    """The session's hooks: the PreToolUse gate and the ConfigChange hold, each as one ``matcher`` (the SDK's
+    ``HookMatcher``) for every tool or file.
+
+    ``on_failure="block"``: a callback that does not complete (it raises, gives an answer the CLI cannot use, or does
+    not finish within ``timeout`` seconds) refuses the call or the reload it was asked about. The SDK refuses to start
+    a session whose CLI does not support it.
+    """
+    return {
+        "PreToolUse": [matcher(matcher=None, hooks=[pre_tool_use], timeout=timeout, on_failure="block")],
+        "ConfigChange": [matcher(matcher=None, hooks=[config_change], timeout=timeout, on_failure="block")],
+    }
+
+
 async def _hold_config(hook_input: Any, tool_use_id: str | None, context: Any) -> Any:  # noqa: ARG001
     """The ConfigChange hook: refuse every reload of settings or skills during the session.
 
@@ -593,13 +630,7 @@ async def _evaluate_hook(
                 **(ids or {}),
             )
         )
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": _denial_guidance(verdict.reason or "", attempts),
-            }
-        }
+        return _refusal(_denial_guidance(verdict.reason or "", attempts))
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -857,21 +888,25 @@ class SdkAgentExecutor:
             tool_use_id: str | None,  # noqa: ARG001
             context: HookContext,  # noqa: ARG001
         ) -> HookJSONOutput:
-            tool_name, hook_tool_input = _extract_hook_call(hook_input)
             # NOTE: tools_called is incremented on ToolUseBlock emission (after
             # hook allows) — not here — so denied tools don't inflate the counter.
             # Denials are counted separately in policy_denials.
-            return await _evaluate_hook(  # type: ignore[return-value]
-                invocation.safety_policy,
-                tool_name,
-                hook_tool_input,
-                tools_called,
-                writer,
-                policy_denials,
-                ids=ids,
-                skills=skills,
-                session_cwd=_hook_cwd(hook_input),
-            )
+            try:
+                tool_name, hook_tool_input = _extract_hook_call(hook_input)
+                return await _evaluate_hook(  # type: ignore[return-value]
+                    invocation.safety_policy,
+                    tool_name,
+                    hook_tool_input,
+                    tools_called,
+                    writer,
+                    policy_denials,
+                    ids=ids,
+                    skills=skills,
+                    session_cwd=_hook_cwd(hook_input),
+                )
+            except Exception:  # noqa: BLE001 — a call the policy could not check is refused, never run
+                logger.exception("tool_gate_failed", **ids)
+                return _refusal(GATE_FAILED_REASON)  # type: ignore[return-value]
 
         # Attach the hooks to options. The SDK's hook support was asserted at
         # the top of run() and fails closed; a try/except around this
@@ -879,11 +914,7 @@ class SdkAgentExecutor:
         # 2026-04-28 review (S3) flagged. Set unconditionally. ConfigChange
         # keeps the settings and skills the session started with: the CLI
         # watches .claude/ and loads a changed file again unless this refuses.
-        hooks: dict[Any, list[HookMatcher]] = {
-            "PreToolUse": [HookMatcher(matcher=None, hooks=[pre_tool_use_hook])],
-            "ConfigChange": [HookMatcher(matcher=None, hooks=[_hold_config])],
-        }
-        options.hooks = hooks
+        options.hooks = gate_hooks(HookMatcher, pre_tool_use_hook, _hold_config)
 
         # --- Prompt assembly: system_context prepended (legacy behavior).
         prompt = invocation.prompt

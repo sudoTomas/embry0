@@ -41,7 +41,7 @@ def assert_sdk_supports_hooks() -> None:
     event the SDK forwards.
     """
     try:
-        from claude_agent_sdk import ClaudeAgentOptions, HookMatcher  # noqa: F401 — importability is the check
+        from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
         from claude_agent_sdk.types import HookEvent
     except ImportError as exc:
         raise SdkSupportError(f"claude_agent_sdk with hook support is not importable: {exc}") from exc
@@ -58,6 +58,19 @@ def assert_sdk_supports_hooks() -> None:
         )
     if "PreToolUse" not in _literal_values(HookEvent):
         raise SdkSupportError("claude_agent_sdk does not support the PreToolUse hook event")
+    # A call whose hook does not complete is refused (executor.gate_hooks): HookMatcher(on_failure="block"), in
+    # claude-agent-sdk 0.2.177 and later.
+    on_failure = (
+        next((f.type for f in dataclasses.fields(HookMatcher) if f.name == "on_failure"), None)
+        if dataclasses.is_dataclass(HookMatcher)
+        else None
+    )
+    hints = typing.get_type_hints(HookMatcher) if on_failure is not None else {}
+    if "block" not in _literal_values(hints.get("on_failure")):
+        raise SdkSupportError(
+            "claude_agent_sdk.HookMatcher cannot block a call whose hook fails (on_failure='block'), which the "
+            "Ring-3 PreToolUse hook needs: claude-agent-sdk 0.2.177 or later"
+        )
 
 
 def _cli_version(path: str | Path) -> str:

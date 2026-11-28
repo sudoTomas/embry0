@@ -1108,7 +1108,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4,<4" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.69,<1" },
     { name = "asyncpg", specifier = ">=0.32,<0.33" },
-    { name = "claude-agent-sdk", specifier = ">=0.2.164,<0.3" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.177,<0.3" },
     { name = "cryptography", specifier = ">=50.0.2,<51" },
     { name = "fastapi", specifier = ">=0.136.3,!=0.137.0,!=0.137.1,<0.166" },
     { name = "google-re2", specifier = ">=1.1.20251105,<2" },
