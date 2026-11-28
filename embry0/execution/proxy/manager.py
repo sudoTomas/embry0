@@ -251,6 +251,9 @@ class ProxyManager:
         # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
         # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
         self._unordered_runs: set[tuple[str, str]] = set()
+        # (proxy, sandbox) where the proxy said, at the sandbox's enrollment, that it refuses the sandbox's calls
+        # outside a declared run.
+        self._held_to_runs: set[tuple[str, str]] = set()
         # (proxy, run id) -> boot id -> what the run could have spent at that proxy process (its charges, and its
         # calls in flight at their ceilings), by its budget's rates, as the last read of it there said.
         self._run_spent: dict[tuple[str, str], dict[str, float]] = {}
@@ -864,8 +867,14 @@ class ProxyManager:
                 await self._confirm_provider_servers(port, sandbox_id, provider_payload, response)
             if name == "llm-proxy" and limits_body is not None:
                 await self._confirm_limits(port, sandbox_id, limits_body, response)
-            if REQUIRE_RUN_FIELD in body and response.get(REQUIRE_RUN_FIELD) is not require_run:
-                logger.warning("proxy_run_requirement_not_held", proxy=name, sandbox_id=sandbox_id)
+            if REQUIRE_RUN_FIELD in body:
+                if response.get(REQUIRE_RUN_FIELD) is not require_run:
+                    logger.warning("proxy_run_requirement_not_held", proxy=name, sandbox_id=sandbox_id)
+                    self._held_to_runs.discard((name, sandbox_id))
+                elif require_run:
+                    self._held_to_runs.add((name, sandbox_id))
+                else:
+                    self._held_to_runs.discard((name, sandbox_id))
 
         if xai_credential_id:
             logger.info("sandbox_xai_credential", sandbox_id=sandbox_id, credential_id=xai_credential_id)
@@ -1168,6 +1177,11 @@ class ProxyManager:
         logger.info("sandbox_enrolled_with_context_proxy", sandbox_id=sandbox_id, containers=granted)
         return [str(c) for c in granted]
 
+    def held_to_runs(self, proxy: str, sandbox_id: str) -> bool:
+        """Whether ``proxy`` said, at ``sandbox_id``'s enrollment, that it refuses the sandbox's calls outside a
+        declared run."""
+        return (proxy, sandbox_id) in self._held_to_runs
+
     async def unenroll_sandbox(self, sandbox_id: str) -> None:
         """Authoritative unenrollment (RAV-1070): retried per proxy, never raises.
 
@@ -1175,6 +1189,7 @@ class ProxyManager:
         still fails is logged at ERROR — its bearer stays live only until the
         enrollment TTL kills it (the fail-safe this retry loop backs onto).
         """
+        self._held_to_runs = {held for held in self._held_to_runs if held[1] != sandbox_id}
         if self._http is None:
             return
         targets: list[tuple[str, int]] = []

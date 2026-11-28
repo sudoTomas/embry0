@@ -728,6 +728,10 @@ _BASE64_PDF = {"type": "base64", "media_type": "application/pdf", "data": "JVBER
         ("anthropic", {"tools": [{"type": "web_search_20250305", "name": "web_search"}]}),
         ("anthropic", {"mcp_servers": [{"type": "url", "url": "https://example.test/mcp", "name": "x"}]}),
         ("anthropic", {"container": "container_1"}),
+        # A deferred completion is answered with a request id; its result, fetched later, never reaches the meter.
+        ("openai_chat", {"deferred": True}),
+        ("openai_chat", {"Deferred": True}),
+        ("anthropic", {"deferred": True}),
         # Another upstream, at prices of its own, or a server-side cache billed as input the request does not carry.
         ("openai_chat", {"models": ["openai/gpt-6:online", "openai/gpt-6"]}),
         ("openai_chat", {"provider": {"order": ["some-host"], "allow_fallbacks": True}}),

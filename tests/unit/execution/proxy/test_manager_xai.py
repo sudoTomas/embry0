@@ -99,3 +99,32 @@ async def test_a_metering_proxy_that_does_not_echo_the_requirement_is_logged(mon
             pytest.fail(f"an enrollment cannot say whether the sandbox is held to runs: {exc}")
     events = [e for e in logs if e.get("event") == "proxy_run_requirement_not_held"]
     assert [e.get("proxy") for e in events] == ["xai-proxy"], f"what was logged: {[e.get('event') for e in logs]}"
+
+
+@pytest.mark.asyncio
+async def test_the_manager_remembers_which_proxies_hold_the_sandbox_to_runs(monkeypatch) -> None:
+    """What the run meter asks when a run cannot be declared: held where the proxy echoed true, until unenrolled."""
+    pm, _captured = await _manager(monkeypatch)
+    echoing = pm._exec_admin_request
+
+    async def _echo(**kwargs):
+        answer = await echoing(**kwargs)
+        body = kwargs.get("body") or {}
+        return {**answer, **({"require_run": body["require_run"]} if "require_run" in body else {})}
+
+    monkeypatch.setattr(pm, "_exec_admin_request", _echo)
+    held = getattr(pm, "held_to_runs", None)
+    assert held is not None, "the manager does not say which proxies hold a sandbox to runs"
+    await pm.enroll_sandbox("sb-1", github_token="ghp_SECRET", forge="github", require_run=True)
+    await pm.enroll_sandbox("sb-2", github_token="ghp_SECRET", forge="github", require_run=False)
+    assert (held("xai-proxy", "sb-1"), held("xai-proxy", "sb-2"), held("git-proxy", "sb-1")) == (True, False, False)
+    await pm.unenroll_sandbox("sb-1")
+    assert held("xai-proxy", "sb-1") is False, "an unenrolled sandbox is still held to runs"
+
+
+@pytest.mark.asyncio
+async def test_a_proxy_that_does_not_echo_holds_no_sandbox_to_runs(monkeypatch) -> None:
+    pm, _captured = await _manager(monkeypatch)
+    await pm.enroll_sandbox("sb-1", github_token="ghp_SECRET", forge="github", require_run=True)
+    held = getattr(pm, "held_to_runs", None)
+    assert held is not None and held("xai-proxy", "sb-1") is False, "a proxy that did not echo is taken as holding"

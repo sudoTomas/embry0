@@ -152,8 +152,9 @@ _STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
 #: price: OpenAI's web search; OpenRouter's plugins (web search, file parsing), its fallback ``models`` (an ``:online``
 #: id among them searches the web), its ``provider`` preferences and ``route`` (another upstream, at its own prices);
 #: xAI's live search (retrieved content and a fee a source); audio (billed at audio rates); predicted output (rejected
-#: prediction tokens bill as output); Anthropic's MCP servers and code execution container (billed by the hour).
-#: Compared with case folded.
+#: prediction tokens bill as output); Anthropic's MCP servers and code execution container (billed by the hour); xAI's
+#: ``deferred`` completions (answered with a request id, the completion fetched later by another request, so its usage
+#: never reaches the meter and its purse lets it go at once). Compared with case folded.
 _UNMETERED_FIELDS: frozenset[str] = frozenset(
     {
         "web_search_options",
@@ -166,6 +167,7 @@ _UNMETERED_FIELDS: frozenset[str] = frozenset(
         "prediction",
         "mcp_servers",
         "container",
+        "deferred",
     }
 )
 #: The ``modalities`` a request may ask for: text alone (``audio`` bills at audio rates).

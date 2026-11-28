@@ -30,6 +30,7 @@ from embry0.agents.run_charge import Charge, charge_run
 from embry0.agents.run_close import close_run, sandbox_figure
 from embry0.agents.session import AgentSession
 from embry0.execution import events
+from embry0.execution.agent_runner import AgentOutput
 from embry0.execution.auth_provider import AuthConfigError
 from embry0.execution.run_meter import RunMeter
 from embry0.execution.skill_actions import count_action
@@ -1574,16 +1575,31 @@ async def run_agent_node(
 
         exec_started = time.monotonic()
         try:
-            # Production path: docker-exec the sandbox runner with the serialized
-            # invocation; the in-container SdkAgentExecutor handles the actual
-            # Claude call.
-            result = await agent_runner.run(
-                container=container,
-                config=serialized,
-                network=network,
-                on_event=_count_then_forward,
-                resume_session=resume_session,
-            )
+            refusing = meter_window.refusing if meter_window is not None else ()
+            if refusing:
+                # A proxy its calls go to refuses the sandbox's calls outside a declared run, and it could not be
+                # told of this one: every call would be refused, so the run fails before it starts, saying why.
+                logger.error("agent_run_not_declared", agent_type=agent_type, run_id=run_id, proxies=list(refusing))
+                result = AgentOutput(
+                    agent_type=agent_type,
+                    is_error=True,
+                    error_code=ErrorCode.RUN_NOT_DECLARED.value,
+                    error_message=(
+                        f"the run could not be declared at {', '.join(refusing)}, which refuses this sandbox's model "
+                        "calls outside a declared run: it was not started"
+                    ),
+                )
+            else:
+                # Production path: docker-exec the sandbox runner with the serialized
+                # invocation; the in-container SdkAgentExecutor handles the actual
+                # Claude call.
+                result = await agent_runner.run(
+                    container=container,
+                    config=serialized,
+                    network=network,
+                    on_event=_count_then_forward,
+                    resume_session=resume_session,
+                )
             returned["result"] = result
             # Inside the try: a cancel while the run is ended on the proxies closes its trace too.
             metering = await _end_metering(run_meter, meter_window)

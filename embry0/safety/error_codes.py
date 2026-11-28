@@ -33,6 +33,7 @@ class ErrorCode(StrEnum):
     RESUME_LIMIT = "ERR_RESUME_LIMIT"  # the job was already recovered MAX_RESUME_ATTEMPTS times after unclean orchestrator stops; it may be what takes the orchestrator down, so boot fails it instead of resuming it again (#307)
     WORKFLOW_UNKNOWN = "ERR_WORKFLOW_UNKNOWN"  # Referenced workflow not in registry
     SANDBOX_INIT = "ERR_SANDBOX_INIT"  # Sandbox container setup failed
+    RUN_NOT_DECLARED = "ERR_RUN_NOT_DECLARED"  # an agent run could not be declared, tried twice, at a metering proxy its calls go to that refuses the sandbox's calls outside a declared run (budget.refuse_calls_outside_runs): every call of it there would have been refused, so it was not started
     SANDBOX_GONE = (
         "ERR_SANDBOX_GONE"  # a paused job's sandbox container no longer exists or is stopped; dispatch the job again
     )
@@ -191,6 +192,7 @@ ERROR_CATEGORIES: dict[ErrorCode, FailureCategory] = {
     ErrorCode.RESUME_LIMIT: _C.INFRA,
     ErrorCode.WORKFLOW_UNKNOWN: _C.CONFIG,
     ErrorCode.SANDBOX_INIT: _C.INFRA,
+    ErrorCode.RUN_NOT_DECLARED: _C.INFRA,
     ErrorCode.SANDBOX_GONE: _C.INFRA,
     ErrorCode.SANDBOX_ROUTE_RETIRED: _C.INFRA,
     ErrorCode.DOCKER_TIMEOUT: _C.INFRA,

@@ -478,3 +478,30 @@ def test_a_routed_model_is_declared_by_both_its_names() -> None:
     assert run_models(custom) == ("qwen3.8-27b", "custom/qwen3.8-27b")  # type: ignore[arg-type]
     assert run_models(grok) == ("grok-4.7",)  # type: ignore[arg-type]
     assert run_models(SimpleNamespace(model="m", provider_record=None)) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_cannot_be_declared_where_its_calls_would_be_refused_is_not_started() -> None:
+    """Every call of it there would be refused as outside a run: it fails before it starts, saying why."""
+    from embry0.execution.run_meter import RunWindow
+
+    class _Refusing(_Meter):
+        async def begin(self, sandbox_id: str, run_id: str, *args: Any, **kwargs: Any) -> Any:
+            await super().begin(sandbox_id, run_id, *args, **kwargs)
+            try:
+                return RunWindow(sandbox_id, run_id, ("xai-proxy",), {}, refusing=("xai-proxy",))  # type: ignore[call-arg]
+            except TypeError as exc:
+                pytest.fail(f"a run window cannot say where the run would be refused: {exc}")
+
+    started: list[Any] = []
+
+    async def run(**kwargs: Any) -> AgentOutput:
+        started.append(kwargs)
+        return AgentOutput(agent_type="developer", output="done", cost_usd=0.001)
+
+    meter, traces = _Refusing(PROXY_COUNT), _Traces()
+    updates = await _run(_runner(meter, run), traces)
+    assert started == [], "the run was started where every call of it would be refused"
+    outputs = updates["agent_outputs"]
+    assert [(o.get("is_error"), o.get("error_code")) for o in outputs] == [(True, "ERR_RUN_NOT_DECLARED")], outputs
+    assert traces.finished and traces.finished[0].get("error_code") == "ERR_RUN_NOT_DECLARED", traces.finished

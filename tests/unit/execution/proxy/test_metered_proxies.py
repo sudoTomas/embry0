@@ -1272,3 +1272,55 @@ async def test_an_enrollment_again_says_afresh_whether_the_sandbox_is_held_to_ru
     for bad in ("true", 1, [True]):
         refused = await client.post("/admin/enroll", json={**again, "require_run": bad}, headers=_ADMIN_HEADERS)
         assert refused.status == 400, f"an enrollment with require_run {bad!r} was taken ({refused.status})"
+
+
+# --------------------------------------------------------------------------- what the xai-proxy forwards besides calls
+
+
+async def test_a_deferred_completion_is_refused_and_never_sent(aiohttp_client):
+    """Answered with a request id and fetched later by a read, its usage would never reach the meter, and its purse
+    would let it go at once."""
+    upstream = _Upstream()
+    client = await _xai(aiohttp_client, upstream)
+    assert (await _declare(client, provider="xai", budget=BUDGET)).status == 200
+    body = {"model": "grok-4.7", "messages": [], "max_tokens": 32000, "deferred": True}
+    resp = await client.post("/v1/chat/completions", json=body, headers=_AUTH)
+    assert resp.status == 400, f"a deferred completion answered {resp.status}"
+    assert _refusal_code("xai-proxy chat", await resp.json(content_type=None)) == ("error", "unmetered_content")
+    assert upstream.calls == [], "a deferred completion was forwarded"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/v1/chat/deferred-completion/req-1", "/v1/api-key", "/v1/language-models", "/v1/messages", "/v1/models/a/b"],
+)
+@pytest.mark.parametrize("declared", [True, False], ids=["in-a-run", "outside-a-run"])
+async def test_the_xai_proxy_forwards_no_read_but_the_model_listing(aiohttp_client, path, declared):
+    """A deferred completion's result and the account's own reads are no agent's: refused, in a run or out of one."""
+    upstream = _Upstream()
+    client = await _xai(aiohttp_client, upstream)
+    if declared:
+        assert (await _declare(client, provider="xai")).status == 200
+    for method in ("GET", "HEAD"):
+        resp = await client.request(method, path, headers=_AUTH)
+        assert resp.status == 404, f"{method} {path} answered {resp.status}"
+    assert upstream.calls == [], f"{path} was forwarded"
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/v1/models/grok-4.7"])
+async def test_the_xai_proxy_forwards_the_model_listing(aiohttp_client, path):
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(b'{"data": []}'))
+    client = await _xai(aiohttp_client, upstream)
+    resp = await client.get(path, headers=_AUTH)
+    assert resp.status == 200, f"GET {path} answered {resp.status}: {await resp.text()}"
+    assert len(upstream.calls) == 1
+
+
+@pytest.mark.parametrize("path", ["/v1/files", "/v1/api-key", "/v1/chat/deferred-completion/req-1", "/v1/embeddings"])
+async def test_the_llm_proxy_answers_only_its_two_routes(aiohttp_client, model_server, path):
+    client = await _local(aiohttp_client, model_server)
+    for method in ("GET", "POST"):
+        resp = await client.request(method, path, json={} if method == "POST" else None, headers=_AUTH)
+        assert resp.status in (404, 405), f"{method} {path} answered {resp.status}"
+    assert model_server.seen == [], f"{path} reached the server"

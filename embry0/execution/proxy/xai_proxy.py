@@ -20,6 +20,7 @@ Per-sandbox bearers are enrolled by the orchestrator at sandbox-create time via
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -72,6 +73,10 @@ PROVIDER = "xai"
 METERED_PATHS: dict[str, Wire] = {"messages": "anthropic", "chat/completions": "openai_chat"}
 #: Calls that are not reads and bill nothing.
 UNBILLED_PATHS = frozenset({"messages/count_tokens"})
+#: The reads under ``/v1`` the proxy forwards: the model listing and one model's entry, which an agent's client may ask
+#: for. Any other read is refused: a deferred completion's result is fetched by a read the meter never sees (its call
+#: is refused besides, ``deferred``), and the account's reads (its key, its billing) are no agent's.
+READ_PATHS = re.compile(r"models(/[A-Za-z0-9._:-]{1,200})?")
 
 
 def _normalize_tool_schemas(body: bytes) -> bytes:
@@ -318,8 +323,10 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 
     route = request.match_info.get("path", "").strip("/")
     wire = METERED_PATHS.get(route)
-    if wire is None and request.method not in ("GET", "HEAD") and route not in UNBILLED_PATHS:
-        logger.warning("xai_proxy_path_refused", sandbox_id=sandbox_id, method=request.method, path=route)
+    reading = request.method in ("GET", "HEAD")
+    allowed = READ_PATHS.fullmatch(route) is not None if reading else wire is not None or route in UNBILLED_PATHS
+    if not allowed:
+        logger.warning("xai_proxy_path_refused", sandbox_id=sandbox_id, method=request.method, path=route[:200])
         return web.json_response({"error": "not_found"}, status=404)
     # While a run is current, only a run on xAI: another provider's run is charged from its own provider's proxy, so
     # what it spent here would be counted under it and never charged (the llm-proxy holds its runs the same way).

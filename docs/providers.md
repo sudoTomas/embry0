@@ -340,7 +340,9 @@ part, a document (PDFs bill by the page, inline too), OpenAI's
 fallback `models`, its `provider` preferences and its `route` (another upstream,
 at its own prices), xAI's `search_parameters`, `audio` and any `modalities` but
 text, `prediction` (rejected prediction tokens bill as output), a `service_tier`
-billed above the standard rates, Anthropic's `mcp_servers` and `container`, and
+billed above the standard rates, Anthropic's `mcp_servers` and `container`, xAI's
+`deferred` completions (answered with a request id, the completion fetched by a
+later read the meter never sees), and
 a tool the provider runs itself (a chat completion's tools are `function` or
 `custom`, a Messages API tool has no type or `custom`). A chat completion may
 carry no object-valued field beyond a known set that changes neither the model
@@ -493,9 +495,14 @@ the proxies, so a change reaches the next sandbox; it replaces the proxies'
 `METER_REQUIRE_RUN`, which the orchestrator never passed them, so until now
 they forwarded every such call. With it false, such a call is forwarded and
 counted as the sandbox's calls under no run, which
-`Embry0MeterCallsOutsideRuns` watches. A run whose declaration failed at a
-proxy has its calls there refused too: they would be charged to it only from
-what the sandbox's calls under no run grew by. A proxy that does not echo the
+`Embry0MeterCallsOutsideRuns` watches. A run whose declaration fails at a proxy
+is declared once more; if that fails too at a proxy that refuses the sandbox's
+calls outside a run and that its calls go to (it serves the run's provider),
+the run is not started and fails with `ERR_RUN_NOT_DECLARED`, rather than have
+every call refused. The xai-proxy forwards no read but the model listing
+(`/v1/models` and one model's entry); every other read, a deferred
+completion's result or the account's own, is refused (404). The llm-proxy
+answers only `chat/completions` and `models`. A proxy that does not echo the
 setting (an image from before) is logged (`proxy_run_requirement_not_held`)
 and forwards such calls as before.
 
