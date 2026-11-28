@@ -42,6 +42,10 @@ _DENIAL_MARKERS = (
     "deny rule in your permission settings",
     "has been denied",
 )
+# What the CLI says when the tool itself refuses a path, before any permission rule is asked: Grep and Read refuse
+# a process file such as /proc/self/environ (Grep since CLI 2.1.326). Such a call reads nothing, so it is refused
+# too; a /proc file the tools do read (/proc/cpuinfo) keeps the rules' own refusal in the table.
+_TOOL_REFUSALS = ("names a device or process file that this tool does not read",)
 _TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
 _MODEL = "claude-sonnet-4-6"
 
@@ -204,6 +208,8 @@ def _table(project: Path, home: Path, outside: Path) -> list[tuple[str, dict[str
         ("Glob", {"pattern": "*", "path": "/proc/self"}, True),
         ("Grep", {"pattern": "root", "path": "/etc/passwd"}, True),
         ("Grep", {"pattern": "DISABLE_AUTOUPDATER", "path": "/proc/self/environ", "output_mode": "content"}, True),
+        ("Grep", {"pattern": "model", "path": "/proc/cpuinfo", "output_mode": "content"}, True),
+        ("Read", {"file_path": "/proc/cpuinfo"}, True),
         ("Edit", {"file_path": "/etc/passwd", **miss}, True),
         ("Edit", {"file_path": f"{p}/.claude/settings.json", **miss}, True),
         ("Write", {"file_path": f"{p}/.claude/settings.local.json", "content": "{}"}, True),
@@ -456,7 +462,7 @@ def test_the_cli_and_evaluate_ring2_paths_refuse_the_same_calls(
     mismatches = []
     for i, (tool, tool_input, refused) in enumerate(table):
         result = api.results[f"toolu_{i:03d}"]
-        cli_refused = any(marker in result for marker in _DENIAL_MARKERS)
+        cli_refused = any(marker in result for marker in (*_DENIAL_MARKERS, *_TOOL_REFUSALS))
         verdict = evaluate_ring2_paths(policy, tool, tool_input, cwd=str(project), home=str(home))
         if cli_refused is not refused or verdict.allowed is refused:
             mismatches.append(
