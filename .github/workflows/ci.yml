@@ -31,7 +31,7 @@ env:
   # The orchestrator, proxy and sandbox images export the lock with the same
   # uv, the `uv` stage of their Dockerfiles, and
   # tests/unit/infra/test_image_lockfile.py fails while it differs from this.
-  UV_VERSION: "0.13.6"
+  UV_VERSION: "0.13.10"
 
 jobs:
   backend-lint:
