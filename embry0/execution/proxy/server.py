@@ -8,15 +8,14 @@ Dispatches to one of the stateless proxy apps based on PROXY_TYPE env:
 - gitlab  -> gitlab_proxy.create_gitlab_proxy_app(GITLAB_TOKEN, PROXY_ADMIN_TOKEN,
              api_base=GITLAB_API_BASE, ca_pem=GITLAB_CA_PEM)  # spec 1A 3.2
 - xai     -> xai_proxy.create_xai_proxy_app(PROXY_ADMIN_TOKEN,
-             max_request_bytes=MAX_REQUEST_BYTES,
-             require_run=METER_REQUIRE_RUN)  # access token pushed at runtime
+             max_request_bytes=MAX_REQUEST_BYTES)  # access token pushed at runtime
 - minio   -> minio_proxy.create_minio_proxy_app(UPSTREAM_URL)
 - presign -> presign_proxy.create_presign_proxy_app(UPSTREAM_URL)
 - llm     -> llm_proxy.create_llm_proxy_app(PROXY_ADMIN_TOKEN,
-             max_request_bytes=MAX_REQUEST_BYTES,
-             require_run=METER_REQUIRE_RUN)  # each sandbox's server comes with its enrollment
+             max_request_bytes=MAX_REQUEST_BYTES)  # each sandbox's server comes with its enrollment
              (local_llm, its name before the rename, which an older orchestrator sends, too)
-  (METER_REQUIRE_RUN=true: a model call from a sandbox with no declared run is refused; see metering)
+  (whether a metered call from a sandbox with no declared run is refused comes with each sandbox's enrollment,
+  the settings document's budget.refuse_calls_outside_runs; METER_REQUIRE_RUN is no longer read)
 - context -> context_proxy.create_context_proxy_app(UPSTREAM_URL, ORCHESTRATOR_API_KEY,
              PROXY_ADMIN_TOKEN, CONTAINER_ALLOWLIST, QUERY_QUOTA)  # RAV-1140
              (LOG_REDACTION_FIELDS: payload fields its redaction also removes, #294)
@@ -62,11 +61,6 @@ DEFAULT_PORTS = {
     # 9109+ is free; 9100/9101/9103-9108 are taken.
     "gitlab": 9105,
 }
-
-
-def _flag(name: str) -> bool:
-    """A true/false setting: "true", "1" or "yes" (any case) is true, anything else false."""
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
 def _require_env(name: str) -> str:
@@ -167,7 +161,6 @@ def build_app_from_env() -> web.Application:
         return create_xai_proxy_app(
             admin_token,
             max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or MODEL_MAX_REQUEST_BYTES),
-            require_run=_flag("METER_REQUIRE_RUN"),
         )
     if proxy_type in ("llm", "local_llm"):  # local_llm: the name an orchestrator from before the rename sends
         # The operator's model servers: each sandbox is enrolled with its own (ADR 0032), so none is configured here.
@@ -175,7 +168,6 @@ def build_app_from_env() -> web.Application:
             admin_token,
             # The ceiling no enrollment's own cap may pass (local_models.max_request_bytes is each sandbox's).
             max_request_bytes=int(os.environ.get("MAX_REQUEST_BYTES") or MAX_REQUEST_BYTES_CEILING),
-            require_run=_flag("METER_REQUIRE_RUN"),
         )
     if proxy_type == "context":
         # RAV-1140: mediated read-only log queries for watcher analysis jobs.

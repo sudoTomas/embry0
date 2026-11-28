@@ -73,6 +73,8 @@ MOVED_TO_DOCUMENTS: Final[Mapping[str, str]] = {
     "OPENROUTER_CATALOG_REFRESH_HOURS": "the provider catalogue's openrouter.refresh_hours",
     "LOCAL_LLM_SLOT_WAIT_SECONDS": f"{_SETTINGS} local_models.slot_wait_seconds",
     "LOCAL_LLM_MAX_REQUEST_BYTES": f"{_SETTINGS} local_models.max_request_bytes",
+    # The proxies' own variable, which the orchestrator never passed them: moved with no import.
+    "METER_REQUIRE_RUN": f"{_SETTINGS} budget.refuse_calls_outside_runs",
     "LOCAL_LLM_CONTEXT_TOKENS": "the provider catalogue's providers.custom.models.<model>.context_window",
 }
 

@@ -256,8 +256,8 @@ proxy's count (`embry0/agents/run_charge.py`):
 **A run is held to its provider.** A provider's path at the llm-proxy takes no
 call outside a run: before a sandbox's first run is declared, and after its run
 ends, `/p/<provider>/v1` is refused (403, `run_not_declared`), so every call
-there is some run's (the custom provider's `/v1` still forwards outside a run,
-counted as the sandbox's calls under no run). The declaration names the run's
+there is some run's (the custom provider's `/v1` and the xai-proxy too, while
+`budget.refuse_calls_outside_runs` is true: "No call outside a run", below). The declaration names the run's
 provider (its record's), and the proxy echoes it. While the run is current, the llm-proxy
 refuses the sandbox's calls on any other provider's path, `/v1` included
 (403, `provider_not_declared`), so a run's tally there holds its own
@@ -340,7 +340,9 @@ part, a document (PDFs bill by the page, inline too), OpenAI's
 fallback `models`, its `provider` preferences and its `route` (another upstream,
 at its own prices), xAI's `search_parameters`, `audio` and any `modalities` but
 text, `prediction` (rejected prediction tokens bill as output), a `service_tier`
-billed above the standard rates, Anthropic's `mcp_servers` and `container`, and
+billed above the standard rates, Anthropic's `mcp_servers` and `container`, xAI's
+`deferred` completions (answered with a request id, the completion fetched by a
+later read the meter never sees), and
 a tool the provider runs itself (a chat completion's tools are `function` or
 `custom`, a Messages API tool has no type or `custom`). A chat completion may
 carry no object-valued field beyond a known set that changes neither the model
@@ -478,8 +480,31 @@ two figures differ by more than 10% and $0.05, the orchestrator logs
 `Embry0MeterReadsFailing` (a proxy's tallies not read for 2 minutes),
 `Embry0MeterCallsOutsideRuns` (calls from a sandbox with no declared run; they
 are kept in `run_meter` and charged to no job), with
-`Embry0MeterReplayGivenUp` above. The proxies still forward a
-call from a sandbox with no declared run (`METER_REQUIRE_RUN` is not set).
+`Embry0MeterReplayGivenUp` above.
+
+**No call outside a run.** Every model call embry0 makes in a sandbox is an
+agent run's: the orchestrator declares the run before its exec and ends it
+after, and its own background calls reach the providers directly, not through
+the proxies. So with the settings document's `budget.refuse_calls_outside_runs`
+(true by default) a metering proxy refuses a sandbox's metered call outside a
+declared run: 403, `run_not_declared`, in the wire's shape, on the custom
+provider's `/v1` at the llm-proxy and at the xai-proxy, as a hosted provider's
+path always has. What bills nothing stays open: `GET /models` and the
+xai-proxy's `messages/count_tokens`. It is read when a sandbox is enrolled with
+the proxies, so a change reaches the next sandbox; it replaces the proxies'
+`METER_REQUIRE_RUN`, which the orchestrator never passed them, so until now
+they forwarded every such call. With it false, such a call is forwarded and
+counted as the sandbox's calls under no run, which
+`Embry0MeterCallsOutsideRuns` watches. A run whose declaration fails at a proxy
+is declared once more; if that fails too at a proxy that refuses the sandbox's
+calls outside a run and that its calls go to (it serves the run's provider),
+the run is not started and fails with `ERR_RUN_NOT_DECLARED`, rather than have
+every call refused. The xai-proxy forwards no read but the model listing
+(`/v1/models` and one model's entry); every other read, a deferred
+completion's result or the account's own, is refused (404). The llm-proxy
+answers only `chat/completions` and `models`. A proxy that does not echo the
+setting (an image from before) is logged (`proxy_run_requirement_not_held`)
+and forwards such calls as before.
 
 **A run that never ended** (#694). A run's trace is written `running` before
 its exec and finished after it. A run the orchestrator stopped in the middle of

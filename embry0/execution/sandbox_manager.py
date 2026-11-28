@@ -193,6 +193,7 @@ class SandboxManager:
         skill_store: SkillStore | None = None,
         skill_sources_repo: Any | None = None,
         local_models: Callable[[], Awaitable[Any]] | None = None,
+        budget: Callable[[], Awaitable[Any]] | None = None,
         instance_id: str | None = None,
     ) -> None:
         self._docker = docker
@@ -247,6 +248,9 @@ class SandboxManager:
         # The settings document's local_models: the request cap and timeout a sandbox is enrolled with. None: the
         # section's defaults (a unit test; production passes a reader of the document).
         self._local_models = local_models
+        # The settings document's budget: whether the metering proxies refuse the sandbox's calls outside a run
+        # (refuse_calls_outside_runs). None: the section's default (a unit test; production passes a reader).
+        self._budget = budget
 
     @property
     def runtime(self) -> AgentRuntime:
@@ -539,6 +543,15 @@ class SandboxManager:
             ) from exc
         register_known_secrets([cred.secret])
         return Upstream(credential_id=cred.id or "", root=root, api_key=cred.secret, address=pinned.address)
+
+    async def _refuse_calls_outside_runs(self) -> bool:
+        """Whether the metering proxies refuse the sandbox's model calls outside a declared run: the settings
+        document's ``budget.refuse_calls_outside_runs``, read now (its default without a reader)."""
+        if self._budget is not None:
+            return bool((await self._budget()).refuse_calls_outside_runs)
+        from embry0.settings.sections.budget import BUDGET
+
+        return BUDGET.model().refuse_calls_outside_runs
 
     async def _server_kwargs(self, local_server: Any, provider_servers: dict[str, Any] | None = None) -> dict[str, Any]:
         """``local_llm``, ``provider_servers`` and the sandbox's ``limits`` for ``enroll_sandbox`` when the sandbox
@@ -958,6 +971,7 @@ class SandboxManager:
                 # Only a sandbox on a chat-completions provider gets a bearer the llm-proxy accepts, for its own
                 # credentials' servers alone (ADR 0032, ADR 0033).
                 **(await self._server_kwargs(local_server, provider_servers)),
+                require_run=await self._refuse_calls_outside_runs(),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.
@@ -1168,6 +1182,7 @@ class SandboxManager:
                 git_push_branches=git_push_branches,
                 job_id=job_id,
                 **(await self._server_kwargs(local_server, provider_servers)),
+                require_run=await self._refuse_calls_outside_runs(),
             )
             # spec 3.6: the bearer matches no pattern on its own, so it is an
             # exact-value scrub target from the moment it exists.

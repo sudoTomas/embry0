@@ -106,6 +106,9 @@ class _Proxies:
     def declared_unordered(self, proxy: str, run_id: str) -> bool:
         return (proxy, run_id) in getattr(self, "unordered", set())
 
+    def held_to_runs(self, proxy: str, sandbox_id: str) -> bool:
+        return (proxy, sandbox_id) in getattr(self, "held", set())
+
     def replay_abandoned(self, proxy: str) -> bool:
         return proxy in getattr(self, "abandoned", set())
 
@@ -745,3 +748,53 @@ async def test_a_proxy_restarted_between_runs_reusing_a_key_and_an_id_has_its_ca
 
     metering = await _undeclared(proxies, meter, "run-2", ended)
     assert _output(metering) == (50, 500), f"the new process's call was taken for the one charged: {_output(metering)}"
+
+
+# ---- a run that cannot be declared where its calls would be refused
+
+
+class _FailingOnce(Exception):
+    pass
+
+
+async def test_a_declaration_that_fails_once_is_tried_again() -> None:
+    proxies = _Proxies({"sbx": ["xai-proxy"]})
+    meter = RunMeter(proxies, _Repo())
+    real = proxies.declare_run
+    tries: list[str] = []
+
+    async def _once(proxy: str, *args: Any, **kw: Any) -> str:
+        tries.append(proxy)
+        if len(tries) == 1:
+            raise _FailingOnce("a moment away")
+        return await real(proxy, *args, **kw)
+
+    proxies.declare_run = _once  # type: ignore[method-assign]
+    window = await meter.begin("sbx", "run-1", "job-1", provider="xai")
+    assert tries == ["xai-proxy", "xai-proxy"], f"the declaration was tried {len(tries)} time(s)"
+    assert window.declared == {"xai-proxy": "b1"}, f"the run was not declared once tried again: {window.declared}"
+    assert getattr(window, "refusing", ()) == ()
+
+
+@pytest.mark.parametrize(
+    ("held", "provider", "refusing"),
+    [
+        ({("xai-proxy", "sbx")}, "xai", ("xai-proxy",)),
+        ({("xai-proxy", "sbx")}, None, ("xai-proxy",)),
+        (set(), "xai", ()),
+        ({("xai-proxy", "sbx")}, "custom", ()),
+    ],
+    ids=["held-and-its-provider-s", "held-and-no-provider", "not-held", "held-but-another-provider-s"],
+)
+async def test_a_run_not_declared_where_its_calls_would_be_refused_is_marked(
+    held: Any, provider: Any, refusing: Any
+) -> None:
+    """A proxy that refuses the sandbox's calls outside a declared run refuses every call of a run it was not told of:
+    where the run's calls go, the run is not started."""
+    proxies = _Proxies({"sbx": ["xai-proxy"]})
+    proxies.held = held  # type: ignore[attr-defined]
+    proxies.fail[("xai-proxy", "declare")] = RuntimeError("proxy away")
+    meter = RunMeter(proxies, _Repo())
+    window = await meter.begin("sbx", "run-1", "job-1", provider=provider)
+    assert proxies.calls.count(("xai-proxy", "declare")) == 2, "the declaration was not tried again"
+    assert getattr(window, "refusing", None) == refusing, f"the run was marked {getattr(window, 'refusing', None)}"

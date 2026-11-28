@@ -57,6 +57,7 @@ class MeteringProxies(Protocol):
     async def update_purses(self, proxy: str, purses: list[dict[str, Any]]) -> None: ...
     async def read_meter(self, proxy: str) -> dict[str, Any]: ...
     def declared_unordered(self, proxy: str, run_id: str) -> bool: ...
+    def held_to_runs(self, proxy: str, sandbox_id: str) -> bool: ...
     def replay_abandoned(self, proxy: str) -> bool: ...
 
 
@@ -84,6 +85,10 @@ class RunWindow:
     #: began, by (boot id, tally key), or None when they could not be read either. What they grew by is the proxy's
     #: count of the run (:meth:`RunMeter.end`).
     undeclared_from: dict[str, dict[tuple[str, str], Mapping[str, Any]] | None] = field(default_factory=dict)
+    #: The proxies the run could not be declared on, tried twice, that refuse the sandbox's calls outside a declared run
+    #: and that its calls go to (they serve its provider, or it names none): every call of it there would be refused,
+    #: so the run is not started (``ERR_RUN_NOT_DECLARED``).
+    refusing: tuple[str, ...] = ()
 
 
 def _unattributed_requests(tallies: list[Any]) -> int:
@@ -253,17 +258,31 @@ class RunMeter:
                     "purses": self._allocate(proxy, run_id, budget["scopes"]),
                 }
             try:
-                window.declared[proxy] = await self._proxies.declare_run(
+                window.declared[proxy] = await self._declare_twice(
                     proxy, sandbox_id, run_id, job_id, provider=provider, budget=held, models=models
                 )
             except Exception as exc:  # noqa: BLE001 — the run goes ahead; its charge allows for the gap
                 self._metrics.meter_admin_failed(proxy, "declare")
                 logger.warning("run_meter_declare_failed", proxy=proxy, run_id=run_id, error=str(exc))
                 self._leave(proxy, run_id)
+                if self._proxies.held_to_runs(proxy, sandbox_id) and (
+                    provider is None or provider in PROXY_PROVIDERS.get(proxy, ())
+                ):
+                    # It refuses every call of the sandbox outside a declared run, and the run's calls go there.
+                    window.refusing = (*window.refusing, proxy)
                 # Its calls there count under the sandbox's calls under no run: what those are now is where the
                 # run's own begin.
                 window.undeclared_from[proxy] = await self._unattributed(proxy, sandbox_id)
         return window
+
+    async def _declare_twice(self, proxy: str, sandbox_id: str, run_id: str, job_id: str | None, **kw: Any) -> str:
+        """Declare the run on ``proxy``, once more when the first try fails: a proxy that refuses calls outside a
+        declared run refuses every call of a run it was not told of."""
+        try:
+            return await self._proxies.declare_run(proxy, sandbox_id, run_id, job_id, **kw)
+        except Exception as exc:  # noqa: BLE001 — tried once more, and its failure is the caller's
+            logger.warning("run_meter_declare_retried", proxy=proxy, run_id=run_id, error=str(exc))
+            return await self._proxies.declare_run(proxy, sandbox_id, run_id, job_id, **kw)
 
     # ---- the budget ledger -----------------------------------------------------
 

@@ -61,6 +61,7 @@ from embry0.execution.proxy.llm_proxy import (
     Limits,
     Upstream,
 )
+from embry0.execution.proxy.metering import REQUIRE_RUN_FIELD
 from embry0.sandbox.local_llm_token import LLM_PROXY_URL
 
 logger = structlog.get_logger(__name__)
@@ -250,6 +251,9 @@ class ProxyManager:
         # (proxy, run id) of each run declared without waiting the replay out: it may have landed before a replayed
         # declaration, so its proxy's tally of it is not trusted whole. Taken back by declared_unordered at its end.
         self._unordered_runs: set[tuple[str, str]] = set()
+        # (proxy, sandbox) where the proxy said, at the sandbox's enrollment, that it refuses the sandbox's calls
+        # outside a declared run.
+        self._held_to_runs: set[tuple[str, str]] = set()
         # (proxy, run id) -> boot id -> what the run could have spent at that proxy process (its charges, and its
         # calls in flight at their ceilings), by its budget's rates, as the last read of it there said.
         self._run_spent: dict[tuple[str, str], dict[str, float]] = {}
@@ -664,8 +668,14 @@ class ProxyManager:
         local_llm: Upstream | None = None,
         provider_servers: Mapping[str, Upstream] | None = None,
         limits: Limits | None = None,
+        require_run: bool | None = None,
     ) -> str:
         """Enroll a new sandbox with all running credential proxies.
+
+        ``require_run`` (the settings document's ``budget.refuse_calls_outside_runs``), when given, tells each
+        metering proxy whether to refuse the sandbox's model calls outside a declared run. A proxy that does not
+        echo it (an image from before) is logged (``proxy_run_requirement_not_held``): it forwards such calls,
+        counted under no run, as before.
 
         Returns the bearer token to plumb into the sandbox.
 
@@ -838,6 +848,8 @@ class ProxyManager:
                 body[PROVIDER_SERVERS_FIELD] = provider_payload
             if name == "llm-proxy" and limits_body is not None:
                 body[LIMITS_FIELD] = limits_body
+            if name in METERED_PROXIES and require_run is not None:
+                body[REQUIRE_RUN_FIELD] = require_run
             response = await self._exec_admin_request(
                 container=name,
                 method="POST",
@@ -855,6 +867,14 @@ class ProxyManager:
                 await self._confirm_provider_servers(port, sandbox_id, provider_payload, response)
             if name == "llm-proxy" and limits_body is not None:
                 await self._confirm_limits(port, sandbox_id, limits_body, response)
+            if REQUIRE_RUN_FIELD in body:
+                if response.get(REQUIRE_RUN_FIELD) is not require_run:
+                    logger.warning("proxy_run_requirement_not_held", proxy=name, sandbox_id=sandbox_id)
+                    self._held_to_runs.discard((name, sandbox_id))
+                elif require_run:
+                    self._held_to_runs.add((name, sandbox_id))
+                else:
+                    self._held_to_runs.discard((name, sandbox_id))
 
         if xai_credential_id:
             logger.info("sandbox_xai_credential", sandbox_id=sandbox_id, credential_id=xai_credential_id)
@@ -1157,6 +1177,11 @@ class ProxyManager:
         logger.info("sandbox_enrolled_with_context_proxy", sandbox_id=sandbox_id, containers=granted)
         return [str(c) for c in granted]
 
+    def held_to_runs(self, proxy: str, sandbox_id: str) -> bool:
+        """Whether ``proxy`` said, at ``sandbox_id``'s enrollment, that it refuses the sandbox's calls outside a
+        declared run."""
+        return (proxy, sandbox_id) in self._held_to_runs
+
     async def unenroll_sandbox(self, sandbox_id: str) -> None:
         """Authoritative unenrollment (RAV-1070): retried per proxy, never raises.
 
@@ -1164,6 +1189,7 @@ class ProxyManager:
         still fails is logged at ERROR — its bearer stays live only until the
         enrollment TTL kills it (the fail-safe this retry loop backs onto).
         """
+        self._held_to_runs = {held for held in self._held_to_runs if held[1] != sandbox_id}
         if self._http is None:
             return
         targets: list[tuple[str, int]] = []

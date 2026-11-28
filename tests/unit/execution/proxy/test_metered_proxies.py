@@ -92,12 +92,17 @@ class _Upstream:
         return self.answers.pop(0)
 
 
-async def _xai(aiohttp_client: Any, upstream: _Upstream, **kw: Any) -> TestClient:
+async def _xai(
+    aiohttp_client: Any, upstream: _Upstream, *, enroll: dict[str, Any] | None = None, **kw: Any
+) -> TestClient:
     client = await aiohttp_client(create_xai_proxy_app(_ADMIN, **kw))
     enrolled = await client.post(
-        "/admin/enroll", json={"sandbox_id": "sbx-1", "sandbox_token": _TOKEN}, headers=_ADMIN_HEADERS
+        "/admin/enroll",
+        json={"sandbox_id": "sbx-1", "sandbox_token": _TOKEN, **(enroll or {})},
+        headers=_ADMIN_HEADERS,
     )
-    assert enrolled.status == 200
+    assert enrolled.status == 200, await enrolled.text()
+    client.enrolled = await enrolled.json()  # type: ignore[attr-defined]
     assert (await client.post("/admin/token", json={"access_token": "at-1"}, headers=_ADMIN_HEADERS)).status == 200
     route_upstream(client.app, upstream)
     return client
@@ -340,7 +345,9 @@ def _fake_servers_on_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     allow_loopback_test_servers(monkeypatch)
 
 
-async def _local(aiohttp_client: Any, server: Any, *, providers: bool = False, **kw: Any) -> TestClient:
+async def _local(
+    aiohttp_client: Any, server: Any, *, providers: bool = False, enroll: dict[str, Any] | None = None, **kw: Any
+) -> TestClient:
     """The llm-proxy with sbx-1 enrolled with ``server`` for the custom provider, and for openai too when ``providers``."""
     client = await aiohttp_client(create_llm_proxy_app(_ADMIN, **kw))
     server_of_sandbox = {
@@ -352,8 +359,11 @@ async def _local(aiohttp_client: Any, server: Any, *, providers: bool = False, *
     body: dict[str, Any] = {"sandbox_id": "sbx-1", "sandbox_token": _TOKEN, "local_llm": server_of_sandbox}
     if providers:
         body["provider_servers"] = {"openai": {**server_of_sandbox, "credential_id": "cred-o"}}
-    enrolled = await client.post("/admin/enroll", json={**body, "limits": LIMITS}, headers=_ADMIN_HEADERS)
-    assert enrolled.status == 200
+    enrolled = await client.post(
+        "/admin/enroll", json={**body, "limits": LIMITS, **(enroll or {})}, headers=_ADMIN_HEADERS
+    )
+    assert enrolled.status == 200, await enrolled.text()
+    client.enrolled = await enrolled.json()  # type: ignore[attr-defined]
     return client
 
 
@@ -381,7 +391,8 @@ async def test_a_local_model_call_under_no_run_is_refused_when_one_is_required(a
     client = await _local(aiohttp_client, model_server, require_run=True)
     resp = await client.post("/v1/chat/completions", json={"model": "qwen", "messages": []}, headers=_AUTH)
     assert resp.status == 403
-    assert (await resp.json())["error"]["code"] == "no_run"
+    code = (await resp.json())["error"]["code"]
+    assert code == "run_not_declared", f"a call outside a run was refused as {code}"
     assert model_server.seen == []
 
 
@@ -1142,3 +1153,187 @@ async def test_the_xai_proxy_lets_a_run_on_xai_through(aiohttp_client):
     resp = await client.post("/v1/messages", json=_messages(max_tokens=100, stream=False), headers=_AUTH)
     assert resp.status == 200, f"a call of a run on xai answered {resp.status}: {await resp.text()}"
     assert len(upstream.calls) == 1
+
+
+# --------------------------------------------------------------------------- no call outside a run
+
+
+#: The metered routes that took a call outside a run before the setting: each proxy, its path and its wire's call.
+_OUTSIDE_A_RUN = {
+    "xai-proxy messages": ("xai-proxy", "/v1/messages"),
+    "xai-proxy chat": ("xai-proxy", "/v1/chat/completions"),
+    "llm-proxy /v1": ("llm-proxy /v1", "/v1/chat/completions"),
+}
+
+
+async def _enrolled(aiohttp_client: Any, model_server: Any, proxy: str, upstream: _Upstream, enroll: Any) -> Any:
+    if proxy == "xai-proxy":
+        return await _xai(aiohttp_client, upstream, enroll=enroll)
+    client = await _local(aiohttp_client, model_server, enroll=enroll)
+    route_upstream(client.app, upstream)
+    return client
+
+
+def _outside_a_run_call(route: str) -> dict[str, Any]:
+    return (
+        _messages(max_tokens=100, stream=False) if route == "xai-proxy messages" else {"model": "qwen", "messages": []}
+    )
+
+
+@pytest.mark.parametrize("route", sorted(_OUTSIDE_A_RUN))
+async def test_a_sandbox_enrolled_to_refuse_calls_outside_runs_has_one_refused_and_never_sent(
+    aiohttp_client, model_server, route
+):
+    """No run, no charge to anyone: refused in the wire's shape, sent nowhere, counted nowhere."""
+    proxy, path = _OUTSIDE_A_RUN[route]
+    upstream = _Upstream()
+    client = await _enrolled(aiohttp_client, model_server, proxy, upstream, {"require_run": True})
+    assert client.enrolled.get("require_run") is True, f"the enrollment did not say it holds: {client.enrolled}"
+    resp = await client.post(path, json=_outside_a_run_call(route), headers=_AUTH)
+    assert resp.status == 403, f"{route} answered {resp.status} to a call outside a run"
+    answer = await resp.json(content_type=None)
+    if route == "xai-proxy messages":
+        error = answer.get("error", {})
+        shape = (error.get("type"), str(error.get("message", "")).split(":")[0])
+        assert shape == ("permission_error", "run_not_declared"), f"{route} refused it as {answer}"
+    else:
+        assert answer.get("error", {}).get("code") == "run_not_declared", f"{route} refused it as {answer}"
+    assert upstream.calls == [] and model_server.seen == [], f"{route} forwarded a call outside a run"
+    assert [t for t in (await _meter(client))["tallies"] if t["sandbox_id"] == "sbx-1"] == [], "it was counted"
+    assert (await _declare(client)).status == 200
+    upstream.answers.append(
+        _Answer(
+            (ANSWERS / ("anthropic-message.json" if route == "xai-proxy messages" else "openai-chat.json")).read_bytes()
+        )
+    )
+    model_server.answers.append(("application/json", (ANSWERS / "openai-chat.json").read_bytes()))
+    during = await client.post(path, json=_outside_a_run_call(route), headers=_AUTH)
+    assert during.status == 200, f"{route} answered {during.status} to a call of a declared run"
+
+
+@pytest.mark.parametrize("route", sorted(_OUTSIDE_A_RUN))
+@pytest.mark.parametrize("enroll", [{"require_run": False}, {}], ids=["told-not-to", "an-older-orchestrator"])
+async def test_a_sandbox_not_held_to_runs_has_a_call_outside_one_counted_under_no_run(
+    aiohttp_client, model_server, route, enroll
+):
+    proxy, path = _OUTSIDE_A_RUN[route]
+    upstream = _Upstream()
+    upstream.answers.append(
+        _Answer(
+            (ANSWERS / ("anthropic-message.json" if route == "xai-proxy messages" else "openai-chat.json")).read_bytes()
+        )
+    )
+    model_server.answers.append(("application/json", (ANSWERS / "openai-chat.json").read_bytes()))
+    client = await _enrolled(aiohttp_client, model_server, proxy, upstream, enroll)
+    resp = await client.post(path, json=_outside_a_run_call(route), headers=_AUTH)
+    assert resp.status == 200, f"{route} answered {resp.status}: {await resp.text()}"
+    await resp.read()
+    unattributed = [t for t in (await _meter(client))["tallies"] if t["run_id"] is None]
+    assert len(unattributed) == 1, f"the call was not counted under no run: {unattributed}"
+
+
+@pytest.mark.parametrize(
+    ("proxy", "method", "path"),
+    [
+        ("xai-proxy", "GET", "/v1/models"),
+        ("xai-proxy", "POST", "/v1/messages/count_tokens"),
+        ("llm-proxy /v1", "GET", "/v1/models"),
+    ],
+)
+async def test_what_bills_nothing_stays_open_outside_a_run(aiohttp_client, model_server, proxy, method, path):
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(b'{"data": [], "input_tokens": 3}'))
+    client = await _enrolled(aiohttp_client, model_server, proxy, upstream, {"require_run": True})
+    body = {"model": "grok-4.7", "messages": []} if method == "POST" else None
+    resp = await client.request(method, path, json=body, headers=_AUTH)
+    assert resp.status == 200, f"{method} {path} answered {resp.status} outside a run: {await resp.text()}"
+
+
+@pytest.mark.parametrize("proxy", ["xai-proxy", "llm-proxy /v1"])
+async def test_an_enrollment_again_says_afresh_whether_the_sandbox_is_held_to_runs(aiohttp_client, model_server, proxy):
+    upstream = _Upstream()
+    client = await _enrolled(aiohttp_client, model_server, proxy, upstream, {"require_run": True})
+    again = {"sandbox_id": "sbx-1", "sandbox_token": _TOKEN}
+    if proxy != "xai-proxy":
+        again.update(
+            local_llm={
+                "credential_id": "cred-a",
+                "upstream": f"http://127.0.0.1:{model_server.port}/v1",
+                "api_key": "",
+                "address": "127.0.0.1",
+            },
+            limits=LIMITS,
+        )
+    assert (await client.post("/admin/enroll", json=again, headers=_ADMIN_HEADERS)).status == 200
+    upstream.answers.append(_Answer((ANSWERS / "openai-chat.json").read_bytes()))
+    model_server.answers.append(("application/json", (ANSWERS / "openai-chat.json").read_bytes()))
+    resp = await client.post("/v1/chat/completions", json={"model": "qwen", "messages": []}, headers=_AUTH)
+    assert resp.status == 200, f"an enrollment again that does not say kept the sandbox held: {resp.status}"
+    for bad in ("true", 1, [True]):
+        refused = await client.post("/admin/enroll", json={**again, "require_run": bad}, headers=_ADMIN_HEADERS)
+        assert refused.status == 400, f"an enrollment with require_run {bad!r} was taken ({refused.status})"
+
+
+# --------------------------------------------------------------------------- what the xai-proxy forwards besides calls
+
+
+async def test_a_deferred_completion_is_refused_and_never_sent(aiohttp_client):
+    """Answered with a request id and fetched later by a read, its usage would never reach the meter, and its purse
+    would let it go at once."""
+    upstream = _Upstream()
+    client = await _xai(aiohttp_client, upstream)
+    assert (await _declare(client, provider="xai", budget=BUDGET)).status == 200
+    body = {"model": "grok-4.7", "messages": [], "max_tokens": 32000, "deferred": True}
+    resp = await client.post("/v1/chat/completions", json=body, headers=_AUTH)
+    assert resp.status == 400, f"a deferred completion answered {resp.status}"
+    assert _refusal_code("xai-proxy chat", await resp.json(content_type=None)) == ("error", "unmetered_content")
+    assert upstream.calls == [], "a deferred completion was forwarded"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/v1/chat/deferred-completion/req-1", "/v1/api-key", "/v1/language-models", "/v1/messages", "/v1/models/a/b"],
+)
+@pytest.mark.parametrize("declared", [True, False], ids=["in-a-run", "outside-a-run"])
+async def test_the_xai_proxy_forwards_no_read_but_the_model_listing(aiohttp_client, path, declared):
+    """A deferred completion's result and the account's own reads are no agent's: refused, in a run or out of one."""
+    upstream = _Upstream()
+    client = await _xai(aiohttp_client, upstream)
+    if declared:
+        assert (await _declare(client, provider="xai")).status == 200
+    for method in ("GET", "HEAD"):
+        resp = await client.request(method, path, headers=_AUTH)
+        assert resp.status == 404, f"{method} {path} answered {resp.status}"
+    assert upstream.calls == [], f"{path} was forwarded"
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/v1/models/grok-4.7"])
+async def test_the_xai_proxy_forwards_the_model_listing(aiohttp_client, path):
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(b'{"data": []}'))
+    client = await _xai(aiohttp_client, upstream)
+    resp = await client.get(path, headers=_AUTH)
+    assert resp.status == 200, f"GET {path} answered {resp.status}: {await resp.text()}"
+    assert len(upstream.calls) == 1
+
+
+@pytest.mark.parametrize("path", ["/v1/files", "/v1/api-key", "/v1/chat/deferred-completion/req-1", "/v1/embeddings"])
+async def test_the_llm_proxy_answers_only_its_two_routes(aiohttp_client, model_server, path):
+    client = await _local(aiohttp_client, model_server)
+    for method in ("GET", "POST"):
+        resp = await client.request(method, path, json={} if method == "POST" else None, headers=_AUTH)
+        assert resp.status in (404, 405), f"{method} {path} answered {resp.status}"
+    assert model_server.seen == [], f"{path} reached the server"
+
+
+@pytest.mark.parametrize("path", ["/v1/models/%2e%2e", "/v1/models/%2E%2E", "/v1/models/%2e", "/v1/models/.hidden"])
+async def test_a_model_read_whose_id_is_dots_is_refused(aiohttp_client, path):
+    """An encoded ``..`` reaches the route as the id "..", and the client upstream would resolve it to another path."""
+    from yarl import URL
+
+    upstream = _Upstream()
+    upstream.answers.append(_Answer(b'{"data": []}'))
+    client = await _xai(aiohttp_client, upstream)
+    resp = await client.get(URL(path, encoded=True), headers=_AUTH)
+    assert resp.status == 404, f"GET {path} answered {resp.status}"
+    assert upstream.calls == [], f"GET {path} was forwarded as {upstream.calls}"

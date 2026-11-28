@@ -20,6 +20,7 @@ Per-sandbox bearers are enrolled by the orchestrator at sandbox-create time via
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -38,6 +39,7 @@ from embry0.execution.proxy.enrollment import (
 )
 from embry0.execution.proxy.metering import (
     METER,
+    REQUIRE_RUN_FIELD,
     BudgetExceededError,
     Metered,
     ModelNotDeclaredError,
@@ -47,6 +49,7 @@ from embry0.execution.proxy.metering import (
     budget_answer,
     no_run_answer,
     read_call,
+    read_require_run,
     refusal_answer,
     register_meter_routes,
 )
@@ -70,6 +73,12 @@ PROVIDER = "xai"
 METERED_PATHS: dict[str, Wire] = {"messages": "anthropic", "chat/completions": "openai_chat"}
 #: Calls that are not reads and bill nothing.
 UNBILLED_PATHS = frozenset({"messages/count_tokens"})
+#: The reads under ``/v1`` the proxy forwards: the model listing and one model's entry, which an agent's client may ask
+#: for. Any other read is refused: a deferred completion's result is fetched by a read the meter never sees (its call
+#: is refused besides, ``deferred``), and the account's reads (its key, its billing) are no agent's. A model's id starts
+#: with a letter or a digit, so none is a path segment of dots (``..``, sent encoded) that the client upstream
+#: resolves to another path.
+READ_PATHS = re.compile(r"models(/[A-Za-z0-9][A-Za-z0-9._:-]{0,199})?")
 
 
 def _normalize_tool_schemas(body: bytes) -> bytes:
@@ -121,26 +130,36 @@ UPSTREAM_COUNTS: web.AppKey[dict[str, dict[str, int]]] = web.AppKey("upstream_co
 
 
 class _XaiCredentialEnroll:
-    """Remember which credential a sandbox enrolled, when the body names one.
+    """Remember which credential a sandbox enrolled, when the body names one, and whether its calls outside a
+    declared run are refused (``require_run``, echoed), when it says.
 
-    Absent or empty means the sandbox uses the global token (an API-key job,
-    or the file-backed refresher). A non-string is refused.
+    An absent or empty credential means the sandbox uses the global token (an
+    API-key job, or the file-backed refresher). A non-string is refused.
     """
 
-    def parse(self, app: web.Application, body: dict[str, Any]) -> str | None:
+    def parse(self, app: web.Application, body: dict[str, Any]) -> tuple[str | None, bool | None]:
+        try:
+            require_run = read_require_run(body)
+        except ValueError as exc:
+            raise EnrollRejected(str(exc)) from exc
         credential_id = body.get("xai_credential_id")
         if credential_id is None or credential_id == "":
-            return None
+            return None, require_run
         if not isinstance(credential_id, str):
             raise EnrollRejected("xai_credential_id must be a string")
-        return credential_id
+        return credential_id, require_run
 
-    def apply(self, app: web.Application, sandbox_id: str, parsed: str | None) -> dict[str, Any]:
-        if parsed:
-            app[XAI_CREDENTIAL_BY_SANDBOX][sandbox_id] = parsed
+    def apply(self, app: web.Application, sandbox_id: str, parsed: tuple[str | None, bool | None]) -> dict[str, Any]:
+        credential_id, require_run = parsed
+        if credential_id:
+            app[XAI_CREDENTIAL_BY_SANDBOX][sandbox_id] = credential_id
         else:
             app[XAI_CREDENTIAL_BY_SANDBOX].pop(sandbox_id, None)
-        return {}
+        if require_run is None:
+            return {}
+        if require_run:
+            app[METER].hold_to_runs(sandbox_id)
+        return {REQUIRE_RUN_FIELD: require_run}
 
 
 def _forget_sandbox(app: web.Application, sandbox_id: str) -> None:
@@ -306,8 +325,10 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 
     route = request.match_info.get("path", "").strip("/")
     wire = METERED_PATHS.get(route)
-    if wire is None and request.method not in ("GET", "HEAD") and route not in UNBILLED_PATHS:
-        logger.warning("xai_proxy_path_refused", sandbox_id=sandbox_id, method=request.method, path=route)
+    reading = request.method in ("GET", "HEAD")
+    allowed = READ_PATHS.fullmatch(route) is not None if reading else wire is not None or route in UNBILLED_PATHS
+    if not allowed:
+        logger.warning("xai_proxy_path_refused", sandbox_id=sandbox_id, method=request.method, path=route[:200])
         return web.json_response({"error": "not_found"}, status=404)
     # While a run is current, only a run on xAI: another provider's run is charged from its own provider's proxy, so
     # what it spent here would be counted under it and never charged (the llm-proxy holds its runs the same way).

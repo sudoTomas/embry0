@@ -289,8 +289,9 @@ The rules and their `promtool` tests are in `infra/prometheus/run-meter.rules*.y
 - `Embry0MeterReadsFailing` fires when a proxy's tallies have not been read for
   2 minutes, held 5 minutes (a proxy never read since the start counts);
 - `Embry0MeterCallsOutsideRuns` fires when a proxy counted calls under no run,
-  held 15 minutes. It must stay quiet before the proxies are set to refuse such
-  calls;
+  held 15 minutes. A proxy forwards such a call only where
+  `budget.refuse_calls_outside_runs` is false, or at an image from before it;
+  with it true (the default) the call is refused and counted nowhere;
 - `Embry0MeterReplayGivenUp` fires when what a proxy's given-up replay did not
   send has waited 15 minutes: it goes the moment the proxy answers, so the proxy
   is not answering.

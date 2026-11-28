@@ -779,9 +779,11 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > run is current, the xai-proxy refuses them for a run on any provider but xAI,
 > and both refuse a call naming another model (`model_not_declared`). `GET /admin/meter` answers every tally the proxy holds,
 > cumulative, with the proxy's boot id and each call still in flight at its
-> ceiling, so a reader that loses the proxy can still charge those. With
-> `METER_REQUIRE_RUN` a call from a sandbox with no declared run is refused
-> (403); without it, the call counts in that sandbox's unattributed tally.
+> ceiling, so a reader that loses the proxy can still charge those. With the
+> settings document's `budget.refuse_calls_outside_runs` (true by default, read
+> when a sandbox is enrolled) a metered call from a sandbox with no declared run
+> is refused (403, `run_not_declared`); with it false, the call counts in that
+> sandbox's unattributed tally.
 > Counting fails toward more, never less: an answer that ended whose usage
 > cannot be read is charged an estimate from its bytes (two bytes a token,
 > above what the providers count for ordinary text), one lost after the request
@@ -1509,6 +1511,7 @@ Failures populate the `jobs.error_code` column (migration 8) with one of the can
 | `ERR_AGENT_TIMEOUT` | Agent SDK call exceeded its configured timeout. The runner kills the agent inside the sandbox as well as its `docker exec` client, since the job pauses with its sandbox kept; `agent_runner_wall_clock_timeout` records whether that kill landed (`runner_stopped`). |
 | `ERR_NO_RESULT` | Sandbox produced no final `ResultMessage`. |
 | `ERR_BUDGET_OVERRUN` | The job ran and its per-job cap stopped it in-run (`overrun_mode=hard`). It spent money, so it counts toward its actor's rate limit and toward dispatch-attempt caps. Rows written before #331 also carry this code for gate refusals; readers tell those apart by evidence (no `traces` row and `budget_overrun_usd = 0`). |
+| `ERR_RUN_NOT_DECLARED` | An agent run could not be declared, tried twice, at a metering proxy its calls go to that refuses the sandbox's calls outside a declared run (`budget.refuse_calls_outside_runs`). Every call of it there would have been refused, so the run was not started ([providers.md](providers.md#metering-at-the-proxies)). |
 | `ERR_BUDGET_CALL_REFUSED` | A metering proxy refused a model call of the run (`budget_exceeded`): its ceiling, at the run's rates, would have taken the run past what its job, or the deployment's day or month, had left when the run was declared. The run fails with it, and for the job's cap in `hard` mode so does the job (its overrun 0); nothing of the call was sent or charged ([Budget Controls](#budget-controls)). |
 | `ERR_BUDGET_REFUSED` | The dispatch gate refused the job before any agent ran — a daily/monthly cap or the per-actor rate limit (#331). The only outcome exempt from rate-limit and attempt counts; the one definition is `gate_refusal_sql` (`embry0/storage/repositories/gate_refusal.py`). |
 | `ERR_MAX_RETRIES` | Reviewer rejected past `max_feedback_loops`. |

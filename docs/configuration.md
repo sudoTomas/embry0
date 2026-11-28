@@ -300,6 +300,7 @@ Each of these set a feature's policy before the feature moved into a document st
 | `OPENROUTER_CATALOG_REFRESH_HOURS` | the provider catalogue's openrouter.refresh_hours |
 | `LOCAL_LLM_SLOT_WAIT_SECONDS` | the settings document's local_models.slot_wait_seconds |
 | `LOCAL_LLM_MAX_REQUEST_BYTES` | the settings document's local_models.max_request_bytes |
+| `METER_REQUIRE_RUN` | the settings document's budget.refuse_calls_outside_runs |
 | `LOCAL_LLM_CONTEXT_TOKENS` | the provider catalogue's providers.custom.models.<model>.context_window |
 
 `SCOUT_TICK_SECONDS`, `PROPOSAL_BRIEFS_PER_TICK`,
@@ -552,6 +553,7 @@ What embry0 may spend: each job's ceiling, the daily and monthly caps, the unatt
 | `context_audit_max_jobs_per_tick` | whole number | `3` | ≥ 0, ≤ 50 | organization | Most context-audit jobs one round of the schedule (every context_audit.check_minutes) starts for an organization; the due repositories past it wait for the next round. 0 starts none. |
 | `area_map_job_usd` | number | `2.0` | > 0 | organization | The hard cap of one job that maps a repository's areas (POST /repos/{repo}/-/areas/map), in US dollars. |
 | `fix_job_usd` | number | `2.0` | > 0 | organization | The hard cap of the job that fixes one context-audit finding an owner accepted from the proposals, in US dollars. |
+| `refuse_calls_outside_runs` | true or false | `true` |  |  | Whether a metering proxy refuses a sandbox's model call made outside a declared agent run (403 run_not_declared), on the custom provider's /v1 at the llm-proxy and at the xai-proxy (a hosted provider's path refuses one always). Every model call embry0 makes in a sandbox is an agent run's, declared before it starts and ended after; a call outside one is no run's, and its charge is nobody's. Read when a sandbox is enrolled: a change reaches the next one. false forwards such a call and counts it as the sandbox's calls under no run (Embry0MeterCallsOutsideRuns). |
 | `continue_extra_max_usd` | number | `1000.0` | > 0 |  | The most a person may name as extra_budget_usd when they continue a job past its cap (POST /jobs/{id}/resume), in US dollars. |
 | `continue_may_exceed_ceiling` | true or false | `true` |  |  | Whether a person's continue may take a job past max_budget_per_job_usd. false makes the ceiling a hard limit: a continue adds only what is left under it, and a job already at it cannot be continued. |
 | `continue_past_ceiling_max` | whole number | `5` | ≥ 0 |  | How many times a person's continue may take one job past max_budget_per_job_usd, while continue_may_exceed_ceiling is true. Once that many have, the ceiling bounds the job's next continues as continue_may_exceed_ceiling false bounds every one: a continue adds at most what is left under it, and a job at the ceiling is not offered one. Continues that keep a job under the ceiling count against agent_questions.retry_rounds_cap alone. A job reads it when it starts and keeps it. 0: no continue may take a job past the ceiling. |

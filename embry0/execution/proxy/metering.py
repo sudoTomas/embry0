@@ -61,7 +61,7 @@ import math
 import re
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any, Literal
 
@@ -152,8 +152,9 @@ _STREAM_OPTIONS: dict[str, Any] = {"include_usage": True}
 #: price: OpenAI's web search; OpenRouter's plugins (web search, file parsing), its fallback ``models`` (an ``:online``
 #: id among them searches the web), its ``provider`` preferences and ``route`` (another upstream, at its own prices);
 #: xAI's live search (retrieved content and a fee a source); audio (billed at audio rates); predicted output (rejected
-#: prediction tokens bill as output); Anthropic's MCP servers and code execution container (billed by the hour).
-#: Compared with case folded.
+#: prediction tokens bill as output); Anthropic's MCP servers and code execution container (billed by the hour); xAI's
+#: ``deferred`` completions (answered with a request id, the completion fetched later by another request, so its usage
+#: never reaches the meter and its purse lets it go at once). Compared with case folded.
 _UNMETERED_FIELDS: frozenset[str] = frozenset(
     {
         "web_search_options",
@@ -166,6 +167,7 @@ _UNMETERED_FIELDS: frozenset[str] = frozenset(
         "prediction",
         "mcp_servers",
         "container",
+        "deferred",
     }
 )
 #: The ``modalities`` a request may ask for: text alone (``audio`` bills at audio rates).
@@ -1211,7 +1213,8 @@ class Meter:
 
     The orchestrator declares a sandbox's run before it starts (:meth:`declare`) and ends it after
     (:meth:`end`). A call is counted under the run its sandbox has then; with none, under the sandbox's
-    unattributed tally, or refused when ``require_run`` is set. A run whose sandbox declares another, or whose
+    unattributed tally, or refused when ``require_run`` is set or the sandbox's enrollment said so
+    (:meth:`hold_to_runs`, the settings document's ``budget.refuse_calls_outside_runs``). A run whose sandbox declares another, or whose
     enrollment ends, is ended; an ended tally is kept ``retention_seconds`` for the orchestrator to read.
     """
 
@@ -1225,6 +1228,8 @@ class Meter:
     ) -> None:
         self.boot_id = secrets.token_hex(8)
         self.require_run = require_run
+        #: The sandboxes whose enrollment said their calls outside a declared run are refused.
+        self._held_to_runs: set[str] = set()
         self._retention = retention_seconds
         self._max = max_tallies
         self._now = now
@@ -1364,8 +1369,14 @@ class Meter:
             self._ended[run_id] = tally  # its charge still counts until the orchestrator settles it
         return tally.snapshot()
 
+    def hold_to_runs(self, sandbox_id: str) -> None:
+        """Refuse ``sandbox_id``'s calls outside a declared run, as its enrollment says, until that enrollment ends
+        (:meth:`sandbox_gone`): an enrollment again ends the one before, so each says afresh."""
+        self._held_to_runs.add(sandbox_id)
+
     def sandbox_gone(self, sandbox_id: str) -> None:
         """The sandbox's enrollment ended: its run and its unattributed tally end, and stay to be read."""
+        self._held_to_runs.discard(sandbox_id)
         self._end_current(sandbox_id)
         key = self._live_unattributed.pop(sandbox_id, None)
         tally = self._unattributed.get(key) if key is not None else None
@@ -1397,7 +1408,7 @@ class Meter:
         run_id = self._current.get(sandbox_id)
         tally = self._runs.get(run_id) if run_id is not None else None
         if tally is None:
-            if self.require_run:
+            if self.require_run or sandbox_id in self._held_to_runs:
                 raise NoRunError(sandbox_id)
             key = self._live_unattributed.get(sandbox_id)
             tally = self._unattributed.get(key) if key is not None else None
@@ -1674,6 +1685,19 @@ def budget_answer(wire: Wire, refusal: BudgetExceededError) -> web.Response:
     return openai_error("budget_exceeded", refusal.message, 402)
 
 
+#: The enrollment field saying whether a sandbox's calls outside a declared run are refused (both metering proxies).
+REQUIRE_RUN_FIELD = "require_run"
+
+
+def read_require_run(body: Mapping[str, Any]) -> bool | None:
+    """An enrollment's :data:`REQUIRE_RUN_FIELD`: None when it names none (an orchestrator before it), else a yes or
+    no. Raises ValueError for anything else."""
+    value = body.get(REQUIRE_RUN_FIELD)
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValueError(f"{REQUIRE_RUN_FIELD} must be true or false")
+
+
 def refusal_answer(wire: Wire | None, code: str, message: str) -> web.Response:
     """A 403 refusal in the shape ``wire``'s client reads as final: the Messages API's ``permission_error`` with the
     code at the head of its message, else the OpenAI shape with ``code`` (a path no wire reads takes that too)."""
@@ -1685,6 +1709,4 @@ def refusal_answer(wire: Wire | None, code: str, message: str) -> web.Response:
 def no_run_answer(wire: Wire) -> web.Response:
     """The answer to a call from a sandbox with no run in progress, in the shape its client reads as final."""
     message = "embry0: no agent run is in progress for this sandbox, so its model calls are refused"
-    if wire == "anthropic":
-        return anthropic_error("permission_error", message, 403)
-    return web.json_response({"error": {"message": message, "type": "permission_error", "code": "no_run"}}, status=403)
+    return refusal_answer(wire, "run_not_declared", message)
