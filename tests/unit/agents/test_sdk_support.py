@@ -19,11 +19,22 @@ from embry0.agents.sdk_support import (
 )
 
 
-def _fake_sdk(monkeypatch: pytest.MonkeyPatch, options_cls: type, hook_event: Any) -> None:
+@dataclasses.dataclass
+class _Matcher:
+    """HookMatcher as the SDK declares it since 0.2.177: a failed callback can block its call."""
+
+    matcher: str | None = None
+    hooks: list[Any] = dataclasses.field(default_factory=list)
+    on_failure: Literal["continue", "block"] | None = None
+
+
+def _fake_sdk(
+    monkeypatch: pytest.MonkeyPatch, options_cls: type, hook_event: Any, matcher_cls: type = _Matcher
+) -> None:
     """Install a stand-in ``claude_agent_sdk`` (and ``.types``) for one test."""
     package = types.ModuleType("claude_agent_sdk")
     package.ClaudeAgentOptions = options_cls  # type: ignore[attr-defined]
-    package.HookMatcher = type("HookMatcher", (), {})  # type: ignore[attr-defined]
+    package.HookMatcher = matcher_cls  # type: ignore[attr-defined]
     sdk_types = types.ModuleType("claude_agent_sdk.types")
     sdk_types.HookEvent = hook_event  # type: ignore[attr-defined]
     package.types = sdk_types  # type: ignore[attr-defined]
@@ -58,6 +69,30 @@ def test_an_sdk_without_the_pre_tool_use_event_is_refused(monkeypatch: pytest.Mo
     _fake_sdk(monkeypatch, Options, Literal["PostToolUse"] | Literal["Stop"])
 
     with pytest.raises(SdkSupportError, match="PreToolUse"):
+        assert_sdk_supports_hooks()
+
+
+@pytest.mark.parametrize(
+    "matcher_cls",
+    [
+        dataclasses.make_dataclass("HookMatcher", [("matcher", str | None, None)]),
+        dataclasses.make_dataclass("HookMatcher", [("on_failure", Literal["continue"] | None, None)]),
+        type("HookMatcher", (), {"on_failure": None}),
+    ],
+    ids=["no-on-failure", "cannot-block", "not-a-dataclass"],
+)
+def test_an_sdk_whose_hooks_cannot_block_on_failure_is_refused(
+    monkeypatch: pytest.MonkeyPatch, matcher_cls: type
+) -> None:
+    """The Ring-3 hook refuses a call whose check does not complete, which needs HookMatcher(on_failure='block')."""
+
+    @dataclasses.dataclass
+    class Options:
+        hooks: dict[str, Any] | None = None
+
+    _fake_sdk(monkeypatch, Options, Literal["PreToolUse"], matcher_cls)
+
+    with pytest.raises(SdkSupportError, match="on_failure='block'"):
         assert_sdk_supports_hooks()
 
 

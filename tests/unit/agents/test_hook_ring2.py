@@ -444,3 +444,34 @@ async def test_the_registered_hook_refuses_a_skill_that_changed_while_the_cli_lo
     )
     spec = out["hookSpecificOutput"]
     assert spec["permissionDecision"] == "deny" and "changed while" in spec.get("permissionDecisionReason", ""), spec
+
+
+@pytest.mark.asyncio
+async def test_both_hooks_refuse_what_they_could_not_check(tmp_path, monkeypatch) -> None:
+    """A hook that raises, gives an answer the CLI cannot use or does not finish in time refuses the call or reload it
+    was asked about: both hooks are registered with on_failure='block' and a timeout."""
+    from embry0.agents.executor import HOOK_TIMEOUT_SECONDS
+
+    hooks = await _registered_hooks(tmp_path, monkeypatch)
+    assert {event: [(m.on_failure, m.timeout) for m in matchers] for event, matchers in hooks.items()} == {
+        "PreToolUse": [("block", HOOK_TIMEOUT_SECONDS)],
+        "ConfigChange": [("block", HOOK_TIMEOUT_SECONDS)],
+    }
+    assert HOOK_TIMEOUT_SECONDS == 60.0
+
+
+@pytest.mark.asyncio
+async def test_a_call_the_policy_could_not_check_is_refused(tmp_path, monkeypatch) -> None:
+    """The gate refuses, with a reason the agent reads, a call whose check raised."""
+    import embry0.agents.executor as executor_module
+
+    hook = (await _registered_hooks(tmp_path, monkeypatch))["PreToolUse"][0].hooks[0]
+
+    def broken_gate(*_args: Any, **_kwargs: Any) -> Any:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(executor_module, "gate_tool_call", broken_gate)
+    out = await hook({"tool_name": "Bash", "tool_input": {"command": "ls"}}, None, {})
+    decision = out["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "deny", out
+    assert decision["permissionDecisionReason"] == executor_module.GATE_FAILED_REASON
