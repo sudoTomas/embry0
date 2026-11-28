@@ -45,8 +45,10 @@ groups:
             counted since the last read. docs/providers.md, "Metering at the
             proxies".
       # Model calls counted under no declared run for 15 minutes: something in
-      # a sandbox calls the provider outside an agent run. Must stay quiet
-      # before the proxies are told to refuse such calls (METER_REQUIRE_RUN).
+      # a sandbox calls the provider outside an agent run, and the proxy
+      # forwarded it. It does only where budget.refuse_calls_outside_runs is
+      # false, or at a proxy image from before it: with it true (the default)
+      # such a call is refused and counted nowhere.
       - alert: Embry0MeterCallsOutsideRuns
         expr: |
           max by (proxy) (embry0_meter_unattributed_requests) > 0
@@ -57,7 +59,8 @@ groups:
           summary: "A metering proxy counts model calls under no run"
           description: >-
             {{ $labels.proxy }} forwarded model calls from a sandbox with no
-            declared run. They are kept in run_meter (tally_key
+            declared run: budget.refuse_calls_outside_runs is false, or the
+            proxy's image predates it. They are kept in run_meter (tally_key
             unattributed:<sandbox>:<started>) and charged to no job.
             docs/providers.md, "Metering at the proxies".
       # What a metering proxy's given-up replay did not send has waited 15

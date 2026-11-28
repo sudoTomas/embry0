@@ -38,6 +38,7 @@ from embry0.execution.proxy.enrollment import (
 )
 from embry0.execution.proxy.metering import (
     METER,
+    REQUIRE_RUN_FIELD,
     BudgetExceededError,
     Metered,
     ModelNotDeclaredError,
@@ -47,6 +48,7 @@ from embry0.execution.proxy.metering import (
     budget_answer,
     no_run_answer,
     read_call,
+    read_require_run,
     refusal_answer,
     register_meter_routes,
 )
@@ -121,26 +123,36 @@ UPSTREAM_COUNTS: web.AppKey[dict[str, dict[str, int]]] = web.AppKey("upstream_co
 
 
 class _XaiCredentialEnroll:
-    """Remember which credential a sandbox enrolled, when the body names one.
+    """Remember which credential a sandbox enrolled, when the body names one, and whether its calls outside a
+    declared run are refused (``require_run``, echoed), when it says.
 
-    Absent or empty means the sandbox uses the global token (an API-key job,
-    or the file-backed refresher). A non-string is refused.
+    An absent or empty credential means the sandbox uses the global token (an
+    API-key job, or the file-backed refresher). A non-string is refused.
     """
 
-    def parse(self, app: web.Application, body: dict[str, Any]) -> str | None:
+    def parse(self, app: web.Application, body: dict[str, Any]) -> tuple[str | None, bool | None]:
+        try:
+            require_run = read_require_run(body)
+        except ValueError as exc:
+            raise EnrollRejected(str(exc)) from exc
         credential_id = body.get("xai_credential_id")
         if credential_id is None or credential_id == "":
-            return None
+            return None, require_run
         if not isinstance(credential_id, str):
             raise EnrollRejected("xai_credential_id must be a string")
-        return credential_id
+        return credential_id, require_run
 
-    def apply(self, app: web.Application, sandbox_id: str, parsed: str | None) -> dict[str, Any]:
-        if parsed:
-            app[XAI_CREDENTIAL_BY_SANDBOX][sandbox_id] = parsed
+    def apply(self, app: web.Application, sandbox_id: str, parsed: tuple[str | None, bool | None]) -> dict[str, Any]:
+        credential_id, require_run = parsed
+        if credential_id:
+            app[XAI_CREDENTIAL_BY_SANDBOX][sandbox_id] = credential_id
         else:
             app[XAI_CREDENTIAL_BY_SANDBOX].pop(sandbox_id, None)
-        return {}
+        if require_run is None:
+            return {}
+        if require_run:
+            app[METER].hold_to_runs(sandbox_id)
+        return {REQUIRE_RUN_FIELD: require_run}
 
 
 def _forget_sandbox(app: web.Application, sandbox_id: str) -> None:

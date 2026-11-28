@@ -67,6 +67,7 @@ from embry0.execution.proxy.app_keys import HTTP_CLIENT
 from embry0.execution.proxy.enrollment import EnrollRejected, check_bearer, register_admin_routes
 from embry0.execution.proxy.metering import (
     METER,
+    REQUIRE_RUN_FIELD,
     BudgetExceededError,
     Metered,
     ModelNotDeclaredError,
@@ -75,6 +76,7 @@ from embry0.execution.proxy.metering import (
     budget_answer,
     no_run_answer,
     read_call,
+    read_require_run,
     refusal_answer,
     register_meter_routes,
 )
@@ -246,6 +248,8 @@ class Servers:
     local: Upstream | None = None
     providers: dict[str, Upstream] = field(default_factory=dict)
     limits: Limits = field(default_factory=Limits)
+    #: Whether the sandbox's calls outside a declared run are refused; None when the enrollment does not say.
+    require_run: bool | None = None
 
 
 class _UpstreamEnroll:
@@ -262,13 +266,22 @@ class _UpstreamEnroll:
             raise EnrollRejected(f"{PROVIDER_SERVERS_FIELD} names no provider")
         if LIMITS_FIELD not in body:
             raise EnrollRejected(f"an enrollment names the sandbox's limits at its servers ({LIMITS_FIELD})")
-        return Servers(local, providers, parse_limits(body[LIMITS_FIELD], max_request_bytes=app[MAX_REQUEST_BYTES]))
+        try:
+            require_run = read_require_run(body)
+        except ValueError as exc:
+            raise EnrollRejected(str(exc)) from exc
+        limits = parse_limits(body[LIMITS_FIELD], max_request_bytes=app[MAX_REQUEST_BYTES])
+        return Servers(local, providers, limits, require_run)
 
     def apply(self, app: web.Application, sandbox_id: str, parsed: Servers) -> dict[str, Any]:
         # An enrollment again ends the sandbox's earlier one first (``on_unenroll``, :func:`_forget`), so a server
         # this one does not name is already gone.
         app[LIMITS_BY_SANDBOX][sandbox_id] = parsed.limits
         answer: dict[str, Any] = {LIMITS_FIELD: parsed.limits.to_body()}
+        if parsed.require_run:
+            app[METER].hold_to_runs(sandbox_id)
+        if parsed.require_run is not None:
+            answer[REQUIRE_RUN_FIELD] = parsed.require_run
         if parsed.local is not None:
             app[UPSTREAM_BY_SANDBOX][sandbox_id] = parsed.local
             answer[LOCAL_LLM_FIELD] = _confirmed(parsed.local)

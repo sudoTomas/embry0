@@ -779,9 +779,11 @@ An additional proxy — the **per-job embry0 API proxy** that exposes CreateIssu
 > run is current, the xai-proxy refuses them for a run on any provider but xAI,
 > and both refuse a call naming another model (`model_not_declared`). `GET /admin/meter` answers every tally the proxy holds,
 > cumulative, with the proxy's boot id and each call still in flight at its
-> ceiling, so a reader that loses the proxy can still charge those. With
-> `METER_REQUIRE_RUN` a call from a sandbox with no declared run is refused
-> (403); without it, the call counts in that sandbox's unattributed tally.
+> ceiling, so a reader that loses the proxy can still charge those. With the
+> settings document's `budget.refuse_calls_outside_runs` (true by default, read
+> when a sandbox is enrolled) a metered call from a sandbox with no declared run
+> is refused (403, `run_not_declared`); with it false, the call counts in that
+> sandbox's unattributed tally.
 > Counting fails toward more, never less: an answer that ended whose usage
 > cannot be read is charged an estimate from its bytes (two bytes a token,
 > above what the providers count for ordinary text), one lost after the request

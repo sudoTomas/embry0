@@ -104,7 +104,7 @@ tests:
               proxy: llm-proxy
             exp_annotations:
               summary: "A metering proxy counts model calls under no run"
-              description: "llm-proxy forwarded model calls from a sandbox with no declared run. They are kept in run_meter (tally_key unattributed:<sandbox>:<started>) and charged to no job. docs/providers.md, \"Metering at the proxies\"."
+              description: "llm-proxy forwarded model calls from a sandbox with no declared run: budget.refuse_calls_outside_runs is false, or the proxy's image predates it. They are kept in run_meter (tally_key unattributed:<sandbox>:<started>) and charged to no job. docs/providers.md, \"Metering at the proxies\"."
 
   # Seeded 0: quiet. Given up from minute 10, never answered again: fires once 15 minutes have held, then clears
   # once the proxy answers (0 from minute 40). This is the rule shown able to fire.

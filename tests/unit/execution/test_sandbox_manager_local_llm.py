@@ -436,3 +436,38 @@ async def test_a_resumed_sandbox_is_enrolled_under_the_limits_in_force_now() -> 
     mgr._local_models = _limits(2048, 60)
     await _reenroll(mgr, custom_credential_id="cred-custom")
     assert _enrolled_limits(pm) == (2048, 60.0), f"a resumed sandbox kept no limits of now: {_enrolled_limits(pm)}"
+
+
+def _budget(refuse: bool) -> AsyncMock:
+    """A reader of the settings document's budget section, as production passes the manager."""
+    from embry0.settings.sections.budget import BudgetSettings
+
+    try:
+        return AsyncMock(return_value=BudgetSettings(refuse_calls_outside_runs=refuse))
+    except Exception as exc:  # noqa: BLE001 — a section without the key
+        pytest.fail(f"the budget section has no refuse_calls_outside_runs: {exc}")
+
+
+async def test_a_sandbox_is_enrolled_holding_it_to_runs_as_the_budget_section_says_when_it_is_created() -> None:
+    mgr, _, pm = _proxied_manager({"custom": _CUSTOM})
+    for refuse in (False, True):
+        mgr._budget = _budget(refuse)
+        await mgr.create(f"job-{refuse}", repo="acme/widgets", llm_providers=["custom"])
+        named = pm.enroll_sandbox.await_args.kwargs.get("require_run")
+        assert named is refuse, f"refuse_calls_outside_runs {refuse} enrolled the sandbox with {named}"
+
+
+async def test_without_a_reader_a_sandbox_is_held_to_runs() -> None:
+    """The section's default: every model call a sandbox makes is an agent run's."""
+    mgr, _, pm = _proxied_manager({"custom": _CUSTOM})
+    await mgr.create("job-1", repo="acme/widgets", llm_providers=["custom"])
+    named = pm.enroll_sandbox.await_args.kwargs.get("require_run")
+    assert named is True, f"a sandbox with no reader was enrolled with require_run {named}"
+
+
+async def test_a_resumed_sandbox_is_held_to_runs_as_the_section_says_now() -> None:
+    mgr, pm, _calls = _reenrolling({"custom": _CUSTOM})
+    mgr._budget = _budget(False)
+    await _reenroll(mgr, custom_credential_id="cred-custom")
+    named = pm.enroll_sandbox.await_args.kwargs.get("require_run")
+    assert named is False, f"a resumed sandbox was enrolled with require_run {named}"

@@ -1621,6 +1621,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from embry0.skills.store import SkillStore
 
     app.state.skill_store = SkillStore(config.skills_store_path, daemon_root=config.skills_store_daemon_path)
+    from embry0.settings.sections.budget import BUDGET
     from embry0.settings.sections.local_models import LOCAL_MODELS
     from embry0.settings.store import section_reader
 
@@ -1643,6 +1644,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         docker_access_registry=ReposRepository(db, default_forge=config.default_forge),
         # Local models: the request cap and timeout each sandbox is enrolled with at the llm-proxy.
         local_models=section_reader(app.state.settings, LOCAL_MODELS),
+        # Budget: whether the metering proxies refuse a sandbox's calls outside a run (refuse_calls_outside_runs).
+        budget=section_reader(app.state.settings, BUDGET),
         runtime=runtime,
         # Spec 3.3: every sandbox gets the enabled skill sources, read-only.
         # Built here, like the registry above: _init_app_state creates

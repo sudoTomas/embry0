@@ -70,3 +70,32 @@ async def test_xai_proxy_health_reads_admin_health(monkeypatch) -> None:
     report = await pm.xai_proxy_health()
     assert captured[-1]["path"] == "/admin/health", f"health must GET /admin/health, got {captured[-1]!r}"
     assert report == {"credentials": {}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("required", [True, False])
+async def test_the_metering_proxies_alone_are_told_whether_the_sandbox_is_held_to_runs(monkeypatch, required) -> None:
+    """budget.refuse_calls_outside_runs goes with the enrollment to each metering proxy, and to no other."""
+    pm, captured = await _manager(monkeypatch)
+    try:
+        await pm.enroll_sandbox("sb-1", github_token="ghp_SECRET", forge="github", require_run=required)
+    except TypeError as exc:
+        pytest.fail(f"an enrollment cannot say whether the sandbox is held to runs: {exc}")
+    assert _body(captured, "xai-proxy").get("require_run") is required, _body(captured, "xai-proxy")
+    for name in ("git-proxy", "github-proxy", "gitlab-proxy", "auth-proxy"):
+        assert "require_run" not in _body(captured, name), f"{name} was told whether the sandbox is held to runs"
+
+
+@pytest.mark.asyncio
+async def test_a_metering_proxy_that_does_not_echo_the_requirement_is_logged(monkeypatch) -> None:
+    """An image from before forwards a call outside a run, counted under no run: the orchestrator says so."""
+    from structlog.testing import capture_logs
+
+    pm, _captured = await _manager(monkeypatch)
+    with capture_logs() as logs:
+        try:
+            await pm.enroll_sandbox("sb-1", github_token="ghp_SECRET", forge="github", require_run=True)
+        except TypeError as exc:
+            pytest.fail(f"an enrollment cannot say whether the sandbox is held to runs: {exc}")
+    events = [e for e in logs if e.get("event") == "proxy_run_requirement_not_held"]
+    assert [e.get("proxy") for e in events] == ["xai-proxy"], f"what was logged: {[e.get('event') for e in logs]}"

@@ -49,6 +49,9 @@ def test_every_default_is_the_cap_embry0_had_before_the_section() -> None:
         "continue_default_extra_usd": None,
         # USER_RETRY_ROUNDS_CAP's default bounded continues past the ceiling before agent_questions (#179)
         "continue_past_ceiling_max": 5,
+        # METER_REQUIRE_RUN, which nothing set, left the proxies forwarding calls outside a run; every model call a
+        # sandbox makes is an agent run's, so the setting refuses them from the start
+        "refuse_calls_outside_runs": True,
     }
 
 

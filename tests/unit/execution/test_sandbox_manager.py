@@ -621,6 +621,8 @@ async def test_create_passes_resolved_token_to_enroll_sandbox(monkeypatch):
         git_push=False,
         git_push_branches=(),
         job_id="job-repo",
+        # The budget section's refuse_calls_outside_runs, its default without a reader.
+        require_run=True,
     )
 
 

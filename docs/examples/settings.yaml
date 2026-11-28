@@ -231,6 +231,16 @@ budget:
   # accepted from the proposals, in US dollars.
   # fix_job_usd: 2.0
 
+  # Whether a metering proxy refuses a sandbox's model call made outside a
+  # declared agent run (403 run_not_declared), on the custom provider's /v1 at
+  # the llm-proxy and at the xai-proxy (a hosted provider's path refuses one
+  # always). Every model call embry0 makes in a sandbox is an agent run's,
+  # declared before it starts and ended after; a call outside one is no run's,
+  # and its charge is nobody's. Read when a sandbox is enrolled: a change
+  # reaches the next one. false forwards such a call and counts it as the
+  # sandbox's calls under no run (Embry0MeterCallsOutsideRuns).
+  # refuse_calls_outside_runs: true
+
   # The most a person may name as extra_budget_usd when they continue a job
   # past its cap (POST /jobs/{id}/resume), in US dollars.
   # continue_extra_max_usd: 1000.0

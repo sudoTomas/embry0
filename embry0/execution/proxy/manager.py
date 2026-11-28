@@ -61,6 +61,7 @@ from embry0.execution.proxy.llm_proxy import (
     Limits,
     Upstream,
 )
+from embry0.execution.proxy.metering import REQUIRE_RUN_FIELD
 from embry0.sandbox.local_llm_token import LLM_PROXY_URL
 
 logger = structlog.get_logger(__name__)
@@ -664,8 +665,14 @@ class ProxyManager:
         local_llm: Upstream | None = None,
         provider_servers: Mapping[str, Upstream] | None = None,
         limits: Limits | None = None,
+        require_run: bool | None = None,
     ) -> str:
         """Enroll a new sandbox with all running credential proxies.
+
+        ``require_run`` (the settings document's ``budget.refuse_calls_outside_runs``), when given, tells each
+        metering proxy whether to refuse the sandbox's model calls outside a declared run. A proxy that does not
+        echo it (an image from before) is logged (``proxy_run_requirement_not_held``): it forwards such calls,
+        counted under no run, as before.
 
         Returns the bearer token to plumb into the sandbox.
 
@@ -838,6 +845,8 @@ class ProxyManager:
                 body[PROVIDER_SERVERS_FIELD] = provider_payload
             if name == "llm-proxy" and limits_body is not None:
                 body[LIMITS_FIELD] = limits_body
+            if name in METERED_PROXIES and require_run is not None:
+                body[REQUIRE_RUN_FIELD] = require_run
             response = await self._exec_admin_request(
                 container=name,
                 method="POST",
@@ -855,6 +864,8 @@ class ProxyManager:
                 await self._confirm_provider_servers(port, sandbox_id, provider_payload, response)
             if name == "llm-proxy" and limits_body is not None:
                 await self._confirm_limits(port, sandbox_id, limits_body, response)
+            if REQUIRE_RUN_FIELD in body and response.get(REQUIRE_RUN_FIELD) is not require_run:
+                logger.warning("proxy_run_requirement_not_held", proxy=name, sandbox_id=sandbox_id)
 
         if xai_credential_id:
             logger.info("sandbox_xai_credential", sandbox_id=sandbox_id, credential_id=xai_credential_id)

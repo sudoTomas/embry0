@@ -15,6 +15,7 @@ say it::
       context_audit_max_jobs_per_tick: 3
       continue_may_exceed_ceiling: false  # a person's continue stays under the ceiling
       continue_past_ceiling_max: 5        # continues that may take one job past the ceiling
+      refuse_calls_outside_runs: true     # a metering proxy refuses a sandbox's model call outside an agent run
 
 **No cap.** For the four fleet limits, ``0`` sets no limit, as their
 variables and the dispatch gate always read it; a key left out (or taken out
@@ -32,6 +33,12 @@ organizations stored. The dollar caps have no bound of their own, so with no
 ceiling (``0``) nothing bounds them. ``context_audit_max_jobs_per_tick``
 keeps the bound of 50 an organization's setting had, as a guard against a
 typo.
+
+**Calls outside a run.** ``refuse_calls_outside_runs`` is read when a sandbox
+is enrolled with the metering proxies (the xai-proxy, and the llm-proxy for a
+sandbox with a model server there), so a change reaches the next sandbox. It
+replaces the proxies' ``METER_REQUIRE_RUN``, which nothing set, so the proxies
+never refused such a call; it is no longer read.
 
 Before this section the five fleet keys lived in the ``budget_config`` row and
 their variables. Neither is read any more (:mod:`embry0.settings.env`); the
@@ -116,6 +123,17 @@ class BudgetSettings(SectionModel):
         description=(
             "The hard cap of the job that fixes one context-audit finding an owner accepted from the proposals, "
             "in US dollars."
+        ),
+    )
+    refuse_calls_outside_runs: bool = Field(
+        default=True,
+        description=(
+            "Whether a metering proxy refuses a sandbox's model call made outside a declared agent run "
+            "(403 run_not_declared), on the custom provider's /v1 at the llm-proxy and at the xai-proxy (a hosted "
+            "provider's path refuses one always). Every model call embry0 makes in a sandbox is an agent run's, "
+            "declared before it starts and ended after; a call outside one is no run's, and its charge is "
+            "nobody's. Read when a sandbox is enrolled: a change reaches the next one. false forwards such a "
+            "call and counts it as the sandbox's calls under no run (Embry0MeterCallsOutsideRuns)."
         ),
     )
     continue_extra_max_usd: float = Field(
